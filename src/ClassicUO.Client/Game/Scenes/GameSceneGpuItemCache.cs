@@ -48,6 +48,12 @@ namespace ClassicUO.Game.Scenes
         public ulong Tiles;
         public bool Valid;
         public int Generation;
+        // pa-gpusig (GpuItemGen): the chunk's render generation at the build, the tiles to compare by signature the next time
+        // they are served (not served in a pass since), the prepare pass that last saw the cache, the range key at the build
+        public uint RenderGen;
+        public ulong PollTiles;
+        public uint PrepPass;
+        public ulong RangeKey;
         // a tile was left out for a passing reason (text, fading in, object handles): rebuild from this frame on (0 = never)
         public uint RetryFrame;
         public int LitCount;
@@ -182,7 +188,11 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects;
+        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects, _gpuItemKeyGen;
+        // pa-gpusig (GpuItemGen): the switch this pass, the prepare pass count, the player's range key this pass
+        private bool _gpuItemGenOn;
+        private uint _gpuItemPrepPass;
+        private ulong _gpuItemRangeKey;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
         private Uo.Render.PackSet _gpuItemKeyPack;
         private Item _gpuSelContainer;
@@ -210,6 +220,8 @@ namespace ClassicUO.Game.Scenes
             _gpuItemCheckNow = false;
             _gpuServeTiles = 0;
             _gpuCheckTiles = 0;
+            // a cache that misses a pass (this one ends early, or its chunk isn't prepared) polls all its tiles next time
+            _gpuItemPrepPass++;
 
             if (!_gpuSkipEnabled)
             {
@@ -222,12 +234,21 @@ namespace ClassicUO.Game.Scenes
             bool range = profile.NoColorObjectsOutOfRange;
             bool mixed = Settings.GlobalSettings.GpuPrepareItemCacheMixed;
             bool effects = want && Settings.GlobalSettings.GpuPrepareItemCacheEffects;
+            bool gen = GpuItemGen.Enabled;
             var world = _gpuWorld.World;
 
+#if CUO_DEVTOOLS
+            if (GpuItemGen.Check)
+            {
+                GpuItemGen.Report(gen);
+            }
+#endif
+
             if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || mixed != _gpuItemKeyMixed ||
-                effects != _gpuItemKeyEffects || !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
+                effects != _gpuItemKeyEffects || gen != _gpuItemKeyGen || !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
             {
                 _gpuItemGeneration++;
+                _gpuItemKeyGen = gen;
                 _gpuItemKeyOn = want;
                 _gpuItemKeyGray = gray;
                 _gpuItemKeyRange = range;
@@ -244,6 +265,8 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gpuItemCacheOn = true;
+            _gpuItemGenOn = gen;
+            _gpuItemRangeKey = range ? GpuItemGen.RangeKey(_world) : 0;
             _gpuSelContainer = SelectedObject.SelectedContainer;
 
             // =every: every other frame, so each check frame follows a served one (the capture-order comparison needs it)
@@ -492,6 +515,9 @@ namespace ClassicUO.Game.Scenes
             cache.Valid = true;
             cache.Generation = _gpuItemGeneration;
             cache.RetryFrame = transient ? GpuRetryClock + 30 : 0;
+            cache.RenderGen = chunk.GpuItemRenderGen;
+            cache.PollTiles = 0;
+            cache.RangeKey = _gpuItemRangeKey;
             chunk.GpuItemsDirty = false;
         }
 
@@ -509,12 +535,33 @@ namespace ClassicUO.Game.Scenes
             {
                 BuildGpuItemCache(chunk, cache);
             }
+            else if (_gpuItemGenOn && cache.RenderGen != chunk.GpuItemRenderGen)
+            {
+                // pa-gpusig: an item changed in place since the build (GpuItemGen.Touch)
+#if CUO_DEVTOOLS
+                if (GpuItemGen.Check)
+                {
+                    GpuItemGen.CountGenRebuild(GpuItemAnySignatureChanged(chunk, cache));
+                }
+#endif
+                BuildGpuItemCache(chunk, cache);
+            }
+            else if (cache.PrepPass + 1 != _gpuItemPrepPass)
+            {
+                // pa-gpusig: a pass went by without this prepare (the chunk out of view or not walked, the cache off): the
+                // walk may have visited every tile
+                cache.PollTiles = cache.Tiles;
+            }
+
+            cache.PrepPass = _gpuItemPrepPass;
 
             // a mobile the walk stops at (the walk's max Z) would end the tile before the items behind it
             ulong serve = cache.Tiles & walkTiles & ~chunk.GpuMobileStopMask;
 
             if (serve == 0)
             {
+                cache.PollTiles = cache.Tiles;
+
                 return;
             }
 
@@ -549,9 +596,14 @@ namespace ClassicUO.Game.Scenes
                 cache.CheckFrame = _drawFrame;
                 cache.CheckTiles = serve;
                 _gpuCheckTiles = serve;
+                // this pass walks every tile
+                cache.PollTiles = cache.Tiles;
 
                 return;
             }
+
+            // pa-gpusig: the tiles left to the walk this pass are compared by signature the next time they are served
+            cache.PollTiles |= cache.Tiles & ~serve;
 
             // tiles with mobiles stay in the walk, which then skips their items; E7: a tile with walked-alone items leaves it
             // even with mobiles (GpuServeMixedTile walks them, in tile order with those items)
@@ -561,8 +613,116 @@ namespace ClassicUO.Game.Scenes
             _gpuServeTiles = serve;
         }
 
-        // The served entries' signatures still match (else the tile is walked and the chunk re-extracted next frame).
-        private bool GpuItemTileValid(Chunk chunk, GpuItemCache cache, int s, int e)
+        // The served entries are unchanged (else the tile is walked and the chunk re-extracted next frame). serving: the tile
+        // is served this pass (not a check pass's expectation), so a passed poll is remembered.
+        private bool GpuItemTileValid(Chunk chunk, GpuItemCache cache, int b, int s, int e, bool serving)
+        {
+            switch (GpuItemGen.Decide(_gpuItemGenOn, chunk, cache, b, _gpuItemKeyRange, _gpuItemRangeKey))
+            {
+                case GpuItemGen.TileCheck.Trust:
+#if CUO_DEVTOOLS
+                    if (GpuItemGen.Check)
+                    {
+                        GpuItemGenJudge(chunk, cache, s, e);
+                    }
+#endif
+                    return true;
+
+                case GpuItemGen.TileCheck.Fallback:
+                    // pa-gpusig: a change after this pass's prepare (the same-frame fallback), or a range bit flipped
+                    return GpuItemGenFallback(chunk);
+            }
+
+            if (!GpuItemTileValidSig(chunk, cache, s, e))
+            {
+#if CUO_DEVTOOLS
+                if (_gpuItemGenOn && GpuItemGen.Check)
+                {
+                    GpuItemGen.CountFallback();
+                }
+#endif
+                return false;
+            }
+
+            if (_gpuItemGenOn)
+            {
+                // pa-gpusig: a polled tile (the walk had it since its last check) that passed is trusted again
+                if (serving)
+                {
+                    cache.PollTiles &= ~(1UL << b);
+                }
+
+#if CUO_DEVTOOLS
+                if (GpuItemGen.Check)
+                {
+                    GpuItemGen.CountPolled();
+                }
+#endif
+            }
+
+            return true;
+        }
+
+        private bool GpuItemGenFallback(Chunk chunk)
+        {
+            chunk.GpuItemsDirty = true;
+            FrameStats.Inc(FrameCounter.ItemCacheFallbacks);
+
+            if (_gpuItemCheckSame)
+            {
+                _gpuItemFallbackTotal++;
+            }
+
+#if CUO_DEVTOOLS
+            if (GpuItemGen.Check)
+            {
+                GpuItemGen.CountFallback();
+            }
+#endif
+            return false;
+        }
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_GPU_SIG_CHECK: the old decision next to a trusted tile: every entry whose signature changed
+        // (or that left the chunk) is a mismatch
+        private void GpuItemGenJudge(Chunk chunk, GpuItemCache cache, int s, int e)
+        {
+            GpuItemGen.CountTrusted(e - s);
+
+            for (int i = s; i < e; i++)
+            {
+                ref GpuItemCache.Entry en = ref cache.Entries[i];
+                Item item = en.Item;
+                GpuItemSignature(item, out ulong a, out ulong b);
+                bool otherChunk = !ReferenceEquals(item.TileChunk, chunk);
+
+                if (a != en.Sig0 || b != en.Sig1 || otherChunk)
+                {
+                    GpuItemGen.Mismatch(item, chunk, en.Tile, en.Sig0, en.Sig1, a, b, otherChunk);
+                }
+            }
+        }
+
+        // CLEANUP(release): CUO_GPU_SIG_CHECK: a generation rebuild that the signatures would not have asked for
+        private bool GpuItemAnySignatureChanged(Chunk chunk, GpuItemCache cache)
+        {
+            for (int i = 0; i < cache.Count; i++)
+            {
+                ref GpuItemCache.Entry en = ref cache.Entries[i];
+                GpuItemSignature(en.Item, out ulong a, out ulong b);
+
+                if (a != en.Sig0 || b != en.Sig1 || !ReferenceEquals(en.Item.TileChunk, chunk))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+#endif
+
+        // The served entries' signatures still match (the switch off, or a polled tile).
+        private bool GpuItemTileValidSig(Chunk chunk, GpuItemCache cache, int s, int e)
         {
             for (int i = s; i < e; i++)
             {
@@ -647,7 +807,7 @@ namespace ClassicUO.Game.Scenes
             GpuItemCache cache = chunk.GpuItems;
             int s = cache.TileStart[b], e = cache.TileStart[b + 1];
 
-            if (!GpuItemTileValid(chunk, cache, s, e))
+            if (!GpuItemTileValid(chunk, cache, b, s, e, true))
             {
                 return false;
             }
@@ -923,7 +1083,7 @@ namespace ClassicUO.Game.Scenes
             GpuItemCache cache = chunk.GpuItems;
             int s = cache.TileStart[b], e = cache.TileStart[b + 1];
 
-            if (!GpuItemTileValid(chunk, cache, s, e) || (cache.WalkTiles & 1UL << b) != 0 && !GpuItemWalkedValid(chunk, cache, b))
+            if (!GpuItemTileValid(chunk, cache, b, s, e, false) || (cache.WalkTiles & 1UL << b) != 0 && !GpuItemWalkedValid(chunk, cache, b))
             {
                 // served, this tile would have been walked: nothing to compare
                 cache.CheckTiles &= ~(1UL << b);

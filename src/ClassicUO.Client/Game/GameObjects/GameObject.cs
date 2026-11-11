@@ -524,6 +524,12 @@ namespace ClassicUO.Game.GameObjects
             msg.OwnerIncarnation = Incarnation;
             TextContainer.Add(msg);
 
+            if (this is Item)
+            {
+                // pa-gpusig: an item with text leaves the Gpu item cache (GpuItemCacheReason)
+                Scenes.GpuItemGen.Touch(this);
+            }
+
             if (!InTextOwners && this is Entity entity)
             {
                 InTextOwners = true;
