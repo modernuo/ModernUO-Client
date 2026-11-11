@@ -512,7 +512,7 @@ namespace ClassicUO
             UO.Arts?.AdvanceFrame();
             // anim_atlas_lru: the page clock, and with the switch on the budget and evictions (nothing holds atlas textures
             // between frames except MobileFrameCache's Legacy replays, which check Animations.AtlasEpoch)
-            UO.Animations?.Tick(Time.Ticks, FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive));
+            UO.Animations?.Tick(ClassicUO.Renderer.Animations.AtlasPageClock.MonotonicMs(), FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive));
 
             // the renderer can be switched at runtime (-worldrenderer command, DevBench world:legacy)
             if (_titleShowsLegacy == Settings.GlobalSettings.UseGpuWorldRenderer)

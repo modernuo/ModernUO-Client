@@ -43,6 +43,29 @@ namespace ClassicUO.Renderer.Animations
                 page.LastUseMs = NowMs;
             }
         }
+
+        /// <summary>
+        /// Marks every page a direction's frames sit on. Frames are uploaded in order, so the pages form consecutive runs: one
+        /// store per run (a direction of large frames on small pages can span more than two pages). No allocation.
+        /// </summary>
+        public static void TouchFrames(ReadOnlySpan<SpriteInfo> frames)
+        {
+            Texture2D last = null;
+
+            for (int i = 0; i < frames.Length; i++)
+            {
+                Texture2D texture = frames[i].Texture;
+
+                if (texture != null && !ReferenceEquals(texture, last))
+                {
+                    last = texture;
+                    Touch(texture);
+                }
+            }
+        }
+
+        /// <summary>The LRU clock: monotonic 64-bit milliseconds (Time.Ticks is a uint that wraps after ~49.7 days).</summary>
+        public static long MonotonicMs() => Environment.TickCount64;
     }
 
     /// <summary>

@@ -430,29 +430,9 @@ namespace ClassicUO.Renderer.Animations
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static uint DirKey(ushort body, byte action, byte dir) => body | ((uint)action << 16) | ((uint)dir << 24);
 
-        // a direction's frames are uploaded in order, so they sit on one page or two consecutive ones: its first and last
-        // frames with a texture name them
         private static void TouchPages(SpriteInfo[] sprites)
         {
-            for (int i = 0; i < sprites.Length; i++)
-            {
-                if (sprites[i].Texture != null)
-                {
-                    AtlasPageClock.Touch(sprites[i].Texture);
-
-                    break;
-                }
-            }
-
-            for (int i = sprites.Length - 1; i >= 0; i--)
-            {
-                if (sprites[i].Texture != null)
-                {
-                    AtlasPageClock.Touch(sprites[i].Texture);
-
-                    break;
-                }
-            }
+            AtlasPageClock.TouchFrames(sprites);
 #if CUO_DEVTOOLS
             if (LruCheck)
             {

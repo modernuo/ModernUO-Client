@@ -1,6 +1,9 @@
 using System;
+using System.Runtime.CompilerServices;
 using ClassicUO.Game;
+using ClassicUO.Renderer;
 using ClassicUO.Renderer.Animations;
+using Microsoft.Xna.Framework.Graphics;
 using FluentAssertions;
 using Xunit;
 
@@ -195,6 +198,63 @@ namespace ClassicUO.UnitTests.Renderer
         public void Touch_ignores_untracked_textures()
         {
             AtlasPageClock.Touch(null);
+        }
+
+        // a page texture without a device: only its Tag is used (no finalizer, it was never initialised)
+        private static Texture2D FakePage(AtlasPage page)
+        {
+            var texture = (Texture2D)RuntimeHelpers.GetUninitializedObject(typeof(Texture2D));
+            GC.SuppressFinalize(texture);
+            texture.Tag = page;
+
+            return texture;
+        }
+
+        [Fact]
+        public void A_direction_over_three_pages_touches_every_page()
+        {
+            // nine 512x512 frames on 1024^2 pages: four, four and one frame on three pages, plus an empty frame
+            var pages = new[] { new AtlasPage(0, 0), new AtlasPage(1, 0), new AtlasPage(2, 0) };
+            var textures = Array.ConvertAll(pages, FakePage);
+            var frames = new SpriteInfo[10];
+
+            for (int i = 0; i < 9; i++)
+            {
+                frames[i].Texture = textures[i / 4];
+            }
+
+            long saved = AtlasPageClock.NowMs;
+
+            try
+            {
+                AtlasPageClock.NowMs = 123_456;
+                AtlasPageClock.TouchFrames(frames);
+            }
+            finally
+            {
+                AtlasPageClock.NowMs = saved;
+            }
+
+            pages.Should().OnlyContain(p => p.LastUseMs == 123_456);
+        }
+
+        [Fact]
+        public void The_clock_is_64_bit_and_policy_times_past_the_uint_wrap_work()
+        {
+            AtlasPageClock.MonotonicMs().Should().BeGreaterThan(0);
+
+            // a session past 49.7 days: the uint Time.Ticks would have wrapped to a small value here
+            long wrap = (long)uint.MaxValue + 1;
+            var p = Policy(budget: 1);
+            p.ShrinkQuietMs = 180_000;
+            Select(p, wrap + 10_000, wrap - 60_000, wrap + 9_000, 0).Should().Equal(0);
+
+            var q = Policy(budget: 3, floor: 2);
+            q.ShrinkQuietMs = 180_000;
+            q.Tick(wrap - 100_000, false);
+            q.Tick(wrap + 80_000, false).Should().BeTrue();
+            q.OnReload(wrap + 70_000, wrap + 90_000).Should().BeTrue(); // thrash after the boundary, cooldown since the shrink passed
+            q.BudgetPages.Should().Be(3);
         }
     }
 }
