@@ -55,33 +55,31 @@ namespace ClassicUO.Game.GameObjects
 
         private static bool IsCoinGraphic(ushort g) => g == 0x0EEA || g == 0x0EED || g == 0x0EF0;
 
-        public ushort DisplayedGraphic
+        public ushort DisplayedGraphic => DisplayedGraphicOf(Graphic);
+
+        /// <summary><see cref="DisplayedGraphic"/> for a reader that already read <see cref="GameObject.Graphic"/>.</summary>
+        internal ushort DisplayedGraphicOf(ushort graphic)
         {
-            get
+            if (IsCoinGraphic(graphic))
             {
-                ushort graphic = Graphic;
+                ushort amount = Amount;
 
-                if (IsCoinGraphic(graphic))
+                if (amount > 5)
                 {
-                    ushort amount = Amount;
-
-                    if (amount > 5)
-                    {
-                        return (ushort)(graphic + 2);
-                    }
-
-                    if (amount > 1)
-                    {
-                        return (ushort)(graphic + 1);
-                    }
-                }
-                else if (IsMulti)
-                {
-                    return MultiGraphic;
+                    return (ushort)(graphic + 2);
                 }
 
-                return graphic;
+                if (amount > 1)
+                {
+                    return (ushort)(graphic + 1);
+                }
             }
+            else if (IsMulti)
+            {
+                return MultiGraphic;
+            }
+
+            return graphic;
         }
 
 
@@ -107,8 +105,10 @@ namespace ClassicUO.Game.GameObjects
 
         public int MultiDistanceBonus { get; private set; }
 
+        internal const ushort CORPSE_GRAPHIC = 0x2006;
+
         public bool IsCorpse => /*MathHelper.InRange(Graphic, 0x0ECA, 0x0ED2) ||*/
-            Graphic == 0x2006;
+            Graphic == CORPSE_GRAPHIC;
 
         public bool OnGround => !SerialHelper.IsValid(Container);
 
