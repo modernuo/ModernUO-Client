@@ -20,7 +20,8 @@ namespace ClassicUO.UnitTests.Ecs
             "world_anim_system",
             "world_step_system",
             "ecs_effects",
-            "ecs_effect_motion"
+            "ecs_effect_motion",
+            "ecs_effect_endpoints"
         };
 
         [Fact]

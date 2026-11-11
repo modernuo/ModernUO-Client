@@ -16,31 +16,19 @@ namespace ClassicUO.Game
     /// <c>EffectManager</c> gets an entity with an <see cref="EffectState"/> (no serial, not in the mirror's serial index). The
     /// state owns the animation and lifetime (frame, next change time, duration), which <see cref="Animate"/> and
     /// <see cref="AnimateLightning"/> advance with the legacy rules (the object's <c>AnimIndex</c>, <c>AnimationGraphic</c> and
-    /// <c>NextChangeFrameTime</c> become write-through caches for the views). With <c>ecs_effect_endpoints</c> the kinds' motion
-    /// is the motion step over the state too (EffectSystem.Motion.cs); without it the objects run the legacy motion and
-    /// position, offset, angle and target are published to the state after each update. The visiting order is
-    /// <c>EffectManager.Update</c>'s list order and no random number is drawn. Tile placement is the object's own
-    /// (<c>SetInWorldTile</c>); the objects are kept in <see cref="DynamicTileIndex"/>.
+    /// <c>NextChangeFrameTime</c> become write-through caches for the views). The source and target are references to their
+    /// mirror records in the state (T8 ownership), and the kinds' motion is the motion step over the state
+    /// (EffectSystem.Motion.cs); T9 deleted the object path of <c>ecs_effect_endpoints</c> and <c>ecs_effect_motion</c>. The
+    /// visiting order is <c>EffectManager.Update</c>'s list order and no random number is drawn. Tile placement is the
+    /// object's own (<c>SetInWorldTile</c>); the objects are kept in <see cref="DynamicTileIndex"/>.
     /// </summary>
     internal static partial class EffectSystem
     {
 #if CUO_DEVTOOLS
         // CLEANUP(release): the checker
         public static readonly bool GlobalCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_CHECK") == "1";
-
-        // CLEANUP(release): the gate's override of ecs_effect_endpoints (CUO_ECS_EFFECT_ENDPOINTS=1|0) and its checker
-        public static readonly bool GlobalEndpoints = Environment.GetEnvironmentVariable("CUO_ECS_EFFECT_ENDPOINTS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? true
-        };
-
-        public static readonly bool GlobalEndpointCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_ENDPOINT_CHECK") == "1";
 #else
         public const bool GlobalCheck = false;
-        public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? true;
-        public const bool GlobalEndpointCheck = false;
 #endif
 
         /// <summary>Checker counts (all worlds): frames compared, effects compared, mismatches.</summary>
@@ -76,10 +64,7 @@ namespace ClassicUO.Game
             s.Flags = (byte)((e.IsEnabled ? EffectState.FLAG_ENABLED : 0) | (e.CanCreateExplosionEffect ? EffectState.FLAG_EXPLODES : 0) |
                              (e is MovingEffect m && m.FixedDir ? EffectState.FLAG_FIXED_DIR : 0));
 
-            if (e.World.EffectEndpointsOn)
-            {
-                BindEndpoints(e, ref s);
-            }
+            BindEndpoints(e, ref s);
 
             if (e is DragEffect drag)
             {
@@ -88,7 +73,10 @@ namespace ClassicUO.Game
 
             e.Publish(ref s);
             e.EcsEntity = e.World.Ecs.Mirror.Store.CreateEntity(s);
-            DropObjects(e);
+
+            // the state references the endpoints from now on
+            e.Source = null;
+            e.Target = null;
         }
 
         public static void Unregister(GameEffect e)
@@ -97,15 +85,6 @@ namespace ClassicUO.Game
             {
                 e.EcsEntity.DeleteEntity();
                 e.EcsEntity = default;
-            }
-        }
-
-        /// <summary>Copies the object's position, offset, angle and target to its state (after its update).</summary>
-        public static void Publish(GameEffect e)
-        {
-            if (!e.EcsEntity.IsNull)
-            {
-                e.Publish(ref EcsRead.Get<EffectState>(e.EcsEntity));
             }
         }
 
@@ -196,18 +175,16 @@ namespace ClassicUO.Game
             return true;
         }
 
-        // ---- T8 ownership (ecs_effect_endpoints): source and target as references in the state
+        // ---- T8 ownership: source and target as references in the state
 
-        /// <summary>Endpoint checker counts (all worlds): reads compared, mismatches; endpoints that could not be bound to a
-        /// record (an object without one: it is treated as a ground point), records removed without the hook.</summary>
-        public static long EndpointReads, EndpointMismatches, EndpointsUnbound, EndpointsUnhooked;
-
-        private static uint s_nextEndpointLog;
+        /// <summary>Endpoint counts (all worlds): endpoints that could not be bound to a record (an object without one: it is
+        /// treated as a ground point), records removed without the hook.</summary>
+        public static long EndpointsUnbound, EndpointsUnhooked;
 
         /// <summary>
         /// Register: the constructor's source and target objects become references to their mirror records (T4's checked
         /// lookup: World holds the instance and the record is of its kind). An object without a record is treated as a ground
-        /// point at its current position. The objects are kept only for the checker.
+        /// point at its current position. Register drops the objects once the entity exists.
         /// </summary>
         private static void BindEndpoints(GameEffect e, ref EffectState s)
         {
@@ -225,8 +202,7 @@ namespace ClassicUO.Game
             }
             else if (e.Source != null)
             {
-                // a ground point on both of the checker's paths too (counted, not compared): SetSource(GameObject) already put
-                // the effect at the object's position
+                // a ground point (counted): SetSource(GameObject) already put the effect at the object's position
                 e.Source = null;
                 EndpointsUnbound++;
             }
@@ -245,25 +221,12 @@ namespace ClassicUO.Game
             {
                 // Codex audit (ecs-effects-own) P2: the target becomes a ground point at the object's position; without this
                 // the effect's own target coordinates (0,0,0 when a target object was given) would be read once the object is
-                // dropped. The object goes now, so the checker's two paths agree on the ground point (counted, not compared).
+                // dropped (counted).
                 e.TargetX = e.Target.X;
                 e.TargetY = e.Target.Y;
                 e.TargetZ = e.Target.Z;
                 e.Target = null;
                 EndpointsUnbound++;
-            }
-
-            e.UsesEndpoints = true;
-            e.EndpointCheck = e.World.EffectEndpointsCheckOn;
-        }
-
-        /// <summary>After Register created the entity: without the checker the effect no longer holds its endpoint objects.</summary>
-        private static void DropObjects(GameEffect e)
-        {
-            if (e.UsesEndpoints && !e.EndpointCheck)
-            {
-                e.Source = null;
-                e.Target = null;
             }
         }
 
@@ -319,17 +282,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>The target is an object, live or gone (the legacy <c>Target != null</c>).</summary>
-        public static bool HasTarget(GameEffect e)
-        {
-            bool has = (EcsRead.Get<EffectState>(e.EcsEntity).Ends & EffectState.END_TARGET) != 0;
-
-            if (e.EndpointCheck)
-            {
-                CompareFlag(e, "has target", has, e.Target != null);
-            }
-
-            return has;
-        }
+        public static bool HasTarget(GameEffect e) => (EcsRead.Get<EffectState>(e.EcsEntity).Ends & EffectState.END_TARGET) != 0;
 
         /// <summary>The object World holds for the live source (views: depth and light; the client-side target cursor); null
         /// for a ground source or a gone one.</summary>
@@ -341,17 +294,6 @@ namespace ClassicUO.Game
             if (Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity))
             {
                 obj = (s.Ends & EffectState.END_SOURCE_MOBILE) != 0 ? e.World.FindMobile(s.SourceSerial) : e.World.FindItem(s.SourceSerial);
-            }
-
-            if (e.EndpointCheck)
-            {
-                EndpointReads++;
-                GameObject legacy = e.Source != null && !e.Source.IsDestroyed ? e.Source : null;
-
-                if (!ReferenceEquals(obj, legacy))
-                {
-                    EndpointMismatch($"effect 0x{e.Graphic:X4} source object ECS 0x{s.SourceSerial:X8} {(obj == null ? "none" : obj.GetType().Name)} | object {(legacy == null ? "none" : legacy.GetType().Name)}");
-                }
             }
 
             return obj;
@@ -386,7 +328,7 @@ namespace ClassicUO.Game
         {
             for (GameEffect f = (GameEffect)world.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
-                if (!f.UsesEndpoints || f.EcsEntity.IsNull)
+                if (f.EcsEntity.IsNull)
                 {
                     continue;
                 }
@@ -434,7 +376,7 @@ namespace ClassicUO.Game
         {
             for (GameEffect f = (GameEffect)world.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
-                if (!f.UsesEndpoints || f.EcsEntity.IsNull)
+                if (f.EcsEntity.IsNull)
                 {
                     continue;
                 }
@@ -462,65 +404,6 @@ namespace ClassicUO.Game
                         s.TargetSerial = serial;
                     }
                 }
-            }
-        }
-
-        private static void CompareEndpoint(GameEffect e, string what, (ushort x, ushort y, sbyte z) ecs, (ushort x, ushort y, sbyte z) legacy)
-        {
-            EndpointReads++;
-
-            if (ecs != legacy)
-            {
-                EndpointMismatch($"effect 0x{e.Graphic:X4} {what} ECS ({ecs.x},{ecs.y},{ecs.z}) | object ({legacy.x},{legacy.y},{legacy.z})");
-            }
-        }
-
-        private static void CompareFlag(GameEffect e, string what, bool ecs, bool legacy)
-        {
-            EndpointReads++;
-
-            if (ecs != legacy)
-            {
-                EndpointMismatch($"effect 0x{e.Graphic:X4} {what}: ECS {ecs} | object {legacy}");
-            }
-        }
-
-        /// <summary>CUO_EFFECT_ENDPOINT_CHECK, end of the effects stage: the serials equal the objects', and the 5 s summary.</summary>
-        public static void CheckEndpoints(EffectManager manager)
-        {
-            for (GameEffect e = (GameEffect)manager.Items; e != null; e = (GameEffect)e.Next)
-            {
-                if (e.IsDestroyed || !e.UsesEndpoints || !e.EndpointCheck || e.EcsEntity.IsNull)
-                {
-                    continue;
-                }
-
-                ref readonly EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-                uint src = (e.Source as GameObjects.Entity)?.Serial ?? 0;
-                uint trg = (e.Target as GameObjects.Entity)?.Serial ?? 0;
-                EndpointReads++;
-
-                if (s.SourceSerial != src || s.TargetSerial != trg)
-                {
-                    EndpointMismatch($"effect 0x{e.Graphic:X4} serials ECS 0x{s.SourceSerial:X8} -> 0x{s.TargetSerial:X8} | object 0x{src:X8} -> 0x{trg:X8}");
-                }
-            }
-
-            if (Time.Ticks >= s_nextEndpointLog)
-            {
-                s_nextEndpointLog = Time.Ticks + 5000;
-                Log.Info($"[effect-endpoint-check] {EndpointReads} reads compared, {EndpointMismatches} mismatches, {EndpointsUnbound} unbound, {EndpointsUnhooked} unhooked removals");
-            }
-        }
-
-        internal static void EndpointMismatch(string text)
-        {
-            EndpointMismatches++;
-            Observer?.Invoke(text);
-
-            if (EndpointMismatches <= 10)
-            {
-                Log.Warn($"[effect-endpoint-check] mismatch: {text}");
             }
         }
 

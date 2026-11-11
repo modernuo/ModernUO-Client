@@ -70,18 +70,6 @@ namespace ClassicUO.Game
 
         public bool EffectsCheckOn => EffectsCheckOverride ?? EffectSystem.GlobalCheck;
 
-        /// <summary>Tests: the endpoint switch for this World (null: <c>ecs_effect_endpoints</c>, read once at startup).</summary>
-        internal bool? EffectEndpointsOverride;
-
-        /// <summary>Tests: the endpoint checker for this World (null: <c>CUO_EFFECT_ENDPOINT_CHECK=1</c>).</summary>
-        internal bool? EffectEndpointsCheckOverride;
-
-        /// <summary>T8 ownership (<c>ecs_effect_endpoints</c>, default off): effects reference their source and target by mirror
-        /// record and serial, and read their positions from the ECS. Decided per effect when it registers.</summary>
-        public bool EffectEndpointsOn => EffectEndpointsOverride ?? EffectSystem.GlobalEndpoints;
-
-        public bool EffectEndpointsCheckOn => EffectEndpointsCheckOverride ?? EffectSystem.GlobalEndpointCheck;
-
         public bool ActiveItemsCheckOn => ActiveItemsCheckOverride ?? s_activeItemsCheck;
 
         /// <summary>Checker counts: frames compared, mismatches found.</summary>

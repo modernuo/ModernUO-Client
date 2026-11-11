@@ -10,12 +10,12 @@ using Position = ClassicUO.Ecs.Position;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// T8 ownership phase 2: the kinds' motion as steps over <see cref="EffectState"/> (with <c>ecs_effect_endpoints</c>;
-    /// T9 deleted <c>ecs_effect_motion</c>'s off path and its replay checker). Each step resolves the endpoints it needs once
+    /// T8 ownership phase 2: the kinds' motion as steps over <see cref="EffectState"/> (T9 deleted the object path of
+    /// <c>ecs_effect_endpoints</c> and <c>ecs_effect_motion</c>, and their checkers). Each step resolves the endpoints it needs once
     /// (the source's gone test, position and offset from one row; a moving effect's target likewise), runs the base rules
     /// (source gone, <see cref="Animate"/>) in the legacy order, then the kind's motion on the state's fields, and writes the
     /// results to the object for the views (position through <c>SetInWorldTile</c>, which owns the tile placement). The steps
-    /// replace the per-update <see cref="Publish"/>. No random number is drawn.
+    /// are the only writer of the object's motion fields. No random number is drawn.
     /// </summary>
     internal static partial class EffectSystem
     {
@@ -37,10 +37,10 @@ namespace ClassicUO.Game
         // ---- endpoints, once per update
 
         // The source's position (its record's while it lives, the last resolved one once gone, the effect's own for a ground
-        // point) and whether it is gone; `offset` the source object's offset when `wantOffset` (FixedEffect). With the endpoint
-        // checker compared with the source object (lightning never tested the source for gone).
-        private static (ushort x, ushort y, sbyte z) ResolveSource(GameEffect e, ref EffectState s, bool testsGone, bool wantOffset,
-            out bool gone, out Vector3 offset)
+        // point) and whether it is gone (lightning never tests it); `offset` the source object's offset when `wantOffset`
+        // (FixedEffect).
+        private static (ushort x, ushort y, sbyte z) ResolveSource(GameEffect e, ref EffectState s, bool wantOffset, out bool gone,
+            out Vector3 offset)
         {
             (ushort x, ushort y, sbyte z) r;
             gone = false;
@@ -72,26 +72,6 @@ namespace ClassicUO.Game
                 r = (s.SourceX, s.SourceY, s.SourceZ);
             }
 
-            if (e.EndpointCheck)
-            {
-                if (testsGone)
-                {
-                    CompareFlag(e, "source destroyed", gone, e.Source != null && e.Source.IsDestroyed);
-                }
-
-                CompareEndpoint(e, "source", r, e.LegacySource());
-
-                if (wantOffset && !gone)
-                {
-                    CompareFlag(e, "source offset", (s.Ends & EffectState.END_SOURCE) != 0, e.Source != null);
-
-                    if (e.Source != null && !e.Source.IsDestroyed && offset != e.Source.Offset)
-                    {
-                        EndpointMismatch($"effect 0x{e.Graphic:X4} source offset ECS {offset} | object {e.Source.Offset}");
-                    }
-                }
-            }
-
             return r;
         }
 
@@ -117,7 +97,7 @@ namespace ClassicUO.Game
             return e.World.FindItem(s.SourceSerial)?.Offset ?? default;
         }
 
-        private static (ushort x, ushort y, sbyte z) ResolveTarget(GameEffect e, ref EffectState s, out bool gone)
+        private static (ushort x, ushort y, sbyte z) ResolveTarget(ref EffectState s, out bool gone)
         {
             gone = false;
 
@@ -137,15 +117,7 @@ namespace ClassicUO.Game
             }
 
             // a ground target is the effect's target coordinates, which Register published into the state
-            (ushort x, ushort y, sbyte z) r = (s.TargetX, s.TargetY, s.TargetZ);
-
-            if (e.EndpointCheck)
-            {
-                CompareFlag(e, "target destroyed", gone, e.Target != null && e.Target.IsDestroyed);
-                CompareEndpoint(e, "target", r, e.LegacyTarget());
-            }
-
-            return r;
+            return (s.TargetX, s.TargetY, s.TargetZ);
         }
 
         private static void SetMovingFlag(GameEffect e, ref EffectState s)
@@ -162,7 +134,7 @@ namespace ClassicUO.Game
         {
             ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
             bool hasSource = (s.Ends & EffectState.END_SOURCE) != 0;
-            (ushort x, ushort y, sbyte z) = ResolveSource(e, ref s, true, true, out bool gone, out Vector3 offset);
+            (ushort x, ushort y, sbyte z) = ResolveSource(e, ref s, true, out bool gone, out Vector3 offset);
 
             if (gone)
             {
@@ -217,7 +189,7 @@ namespace ClassicUO.Game
             }
 
             ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            (ushort x, ushort y, sbyte z) = ResolveSource(e, ref s, false, false, out _, out _);
+            (ushort x, ushort y, sbyte z) = ResolveSource(e, ref s, false, out _, out _);
             bool moved = s.X != x || s.Y != y || s.Z != z;
 
             if (moved)
@@ -253,7 +225,7 @@ namespace ClassicUO.Game
             e.OffsetY = s.OffsetY;
             e.LastMoveTime = s.MoveTime;
 
-            ResolveSource(e, ref s, true, false, out bool gone, out _);
+            ResolveSource(e, ref s, false, out bool gone, out _);
 
             if (gone)
             {
@@ -274,7 +246,7 @@ namespace ClassicUO.Game
         public static bool StepMoving(MovingEffect e)
         {
             ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            (int sX, int sY, int sZ) = ResolveSource(e, ref s, true, false, out bool sourceGone, out _);
+            (int sX, int sY, int sZ) = ResolveSource(e, ref s, false, out bool sourceGone, out _);
 
             if (sourceGone)
             {
@@ -290,7 +262,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            (ushort tx, ushort ty, sbyte tz) = ResolveTarget(e, ref s, out bool targetGone);
+            (ushort tx, ushort ty, sbyte tz) = ResolveTarget(ref s, out bool targetGone);
 
             if (targetGone)
             {
@@ -389,7 +361,6 @@ namespace ClassicUO.Game
 
             if (moved)
             {
-                e.Source = null;
                 e.SetInWorldTile(x, y, z);
             }
 
