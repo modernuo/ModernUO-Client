@@ -11,10 +11,11 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// T9 (<c>ecs_active_items_source</c>): the per-frame item update list with the ECS as its source. Each listed item has an
-    /// <see cref="ActiveItemEntry"/> entity holding the item and its slot; <see cref="Item.ActiveEntryId"/> is the reverse handle
-    /// (the O(1) membership test). The rules are <see cref="ActiveItemList"/>'s: an added item takes the next slot, and a removal
-    /// moves the last slot's item into the freed one. The visiting order is rebuilt from the entities by <see cref="Rebuild"/>
+    /// T9: the per-frame item update list (corpses, items whose handles just opened) with the ECS as its source (T9 deleted
+    /// <c>ecs_active_items_source</c>' off path, World's list). Each listed item has an <see cref="ActiveItemEntry"/> entity
+    /// holding the item and its slot, and the <see cref="ItemActive"/> tag on its mirror entity; <see cref="Item.ActiveEntryId"/>
+    /// is the reverse handle (the O(1) membership test). The rules are the old list's: an added item takes the next slot, and a
+    /// removal moves the last slot's item into the freed one (the order every caller relied on). The visiting order is rebuilt from the entities by <see cref="Rebuild"/>
     /// (a scatter by slot into a reused array, no sort, no allocation) at the start of every active item stage; adds and
     /// removals keep that array in step until the next rebuild, so readers between rebuilds see the same order.
     /// <para>
@@ -55,7 +56,7 @@ namespace ClassicUO.Game
         public EcsEntity EntryOf(Item item) => item.ActiveEntryId == 0 ? default : _store.GetEntityById(item.ActiveEntryId);
 
         /// <summary>Lists <paramref name="item"/> in the next slot unless it is listed. True when it was added.</summary>
-        public bool Add(Item item, bool mirrorTag)
+        public bool Add(Item item)
         {
             if (item.ActiveEntryId != 0)
             {
@@ -70,16 +71,13 @@ namespace ClassicUO.Game
             _order[slot] = item;
             _count = slot + 1;
 
-            if (mirrorTag)
-            {
-                ActiveItemList.SetTag(item, true);
-            }
+            SetTag(item, true);
 
             return true;
         }
 
         /// <summary>Unlists the item in <paramref name="index"/>: the last slot's item takes the slot.</summary>
-        public void SwapRemoveAt(int index, bool mirrorTag)
+        public void SwapRemoveAt(int index)
         {
             Item item = _order[index];
             int last = _count - 1;
@@ -98,13 +96,10 @@ namespace ClassicUO.Game
             entry.DeleteEntity();
             item.ActiveEntryId = 0;
 
-            if (mirrorTag)
-            {
-                ActiveItemList.SetTag(item, false);
-            }
+            SetTag(item, false);
         }
 
-        public void Clear(bool mirrorTag)
+        public void Clear()
         {
             _scratch.Clear();
 
@@ -124,7 +119,7 @@ namespace ClassicUO.Game
                 }
 
                 e.DeleteEntity();
-                Unlist(item, mirrorTag);
+                Unlist(item);
             }
 
             _scratch.Clear();
@@ -132,7 +127,7 @@ namespace ClassicUO.Game
             // what is left names items whose entries were deleted outside the store (only the checker's tests do that)
             for (int h = 0; h < _handleEnd; h++)
             {
-                Unlist(_items[h], mirrorTag);
+                Unlist(_items[h]);
             }
 
             Array.Clear(_order, 0, _count);
@@ -142,7 +137,7 @@ namespace ClassicUO.Game
             _freeCount = 0;
         }
 
-        private static void Unlist(Item item, bool mirrorTag)
+        private static void Unlist(Item item)
         {
             if (item == null)
             {
@@ -151,10 +146,7 @@ namespace ClassicUO.Game
 
             item.ActiveEntryId = 0;
 
-            if (mirrorTag)
-            {
-                ActiveItemList.SetTag(item, false);
-            }
+            SetTag(item, false);
         }
 
         /// <summary>
@@ -162,7 +154,7 @@ namespace ClassicUO.Game
         /// that) and unlists their items, so neither the table nor a stale <see cref="Item.ActiveEntryId"/> outlives the entry.
         /// Runs only when the handles in use and the entries differ; the marks array grows with the table, no other allocation.
         /// </summary>
-        private void ReclaimOrphans(bool mirrorTag)
+        private void ReclaimOrphans()
         {
             if (_handleMarks.Length < _items.Length)
             {
@@ -198,7 +190,7 @@ namespace ClassicUO.Game
                 if (item != null && _handleMarks[h] != _markStamp)
                 {
                     FreeHandle(h);
-                    Unlist(item, mirrorTag);
+                    Unlist(item);
                 }
             }
         }
@@ -246,14 +238,14 @@ namespace ClassicUO.Game
         /// 0..n-1 once each (the order then holds the entries in query order, and <paramref name="error"/> says why); the rules
         /// above never leave them so. Handles no live entry names are reclaimed first (<see cref="ReclaimOrphans"/>).
         /// </summary>
-        public bool Rebuild(bool mirrorTag, out string error)
+        public bool Rebuild(out string error)
         {
             error = null;
             int n = _query.Count;
 
             if (_handleEnd - _freeCount != n)
             {
-                ReclaimOrphans(mirrorTag);
+                ReclaimOrphans();
             }
             Grow(n);
             Array.Clear(_order, 0, Math.Max(_count, n));
@@ -283,7 +275,7 @@ namespace ClassicUO.Game
 
             if (!ok)
             {
-                // keep every entry visitable (the checker reports the error): fill the order in query order
+                // keep every entry visitable (World reports the error): fill the order in query order
                 int k = 0;
 
                 foreach (var (entries, _) in _query.Chunks)
@@ -299,6 +291,21 @@ namespace ClassicUO.Game
             }
 
             return ok;
+        }
+
+        private static void SetTag(Item item, bool on)
+        {
+            if (item.TryScalarEntity(out EcsEntity e))
+            {
+                if (on)
+                {
+                    e.AddTag<ItemActive>();
+                }
+                else if (e.Tags.Has<ItemActive>())
+                {
+                    e.RemoveTag<ItemActive>();
+                }
+            }
         }
 
         private void Grow(int size)

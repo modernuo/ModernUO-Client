@@ -657,7 +657,7 @@ namespace ClassicUO.Game.UI.Gumps
             _mapTexture?.Dispose();
             _mapTexture = null;
 
-            // read on the game thread: LoadMap runs on a task, and the race is ECS storage with ecs_small_fields
+            // read on the game thread: LoadMap runs on a task, and the race is ECS storage
             bool gargoyle = GameObject.PlayerIsGargoyle(World);
             int load = _mapImages.Request();
 

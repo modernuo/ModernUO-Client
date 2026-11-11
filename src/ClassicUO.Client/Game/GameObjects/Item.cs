@@ -66,11 +66,7 @@ namespace ClassicUO.Game.GameObjects
 
         private bool _isMulti;
 
-        /// <summary>W5: listed in World's <c>ActiveItemList</c> (the list is the source with <c>ecs_active_items_source</c> off, the
-        /// checker's shadow with it on). Read membership through <c>World.IsItemListed</c>.</summary>
-        internal bool InUpdateList;
-
-        /// <summary>T9 (<c>ecs_active_items_source</c>): the id of this item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity while it
+        /// <summary>T9: the id of this item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity while it
         /// is listed, 0 otherwise (the O(1) membership test; an id, not an Entity, to keep Item 12 bytes smaller). Read membership
         /// through <c>World.IsItemListed</c>.</summary>
         internal int ActiveEntryId;
@@ -187,7 +183,7 @@ namespace ClassicUO.Game.GameObjects
         public ushort Amount { get { ScalarReads.Count(ScalarField.Amount); return _amount; } set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
         public uint Container { get { ScalarReads.Count(ScalarField.Container); return _container; } set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
 
-        // ecs_small_fields: the record's ItemTraits with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
+        // the record's ItemTraits (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
         public bool IsDamageable
         {
             get => SmallFields.Routed(World) ? SmallFields.ItemBit(this, SmallField.IsDamageable, ClassicUO.Ecs.ItemTraitBits.Damageable, _isDamageable) : _isDamageable;

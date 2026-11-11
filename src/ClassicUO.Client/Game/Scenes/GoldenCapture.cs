@@ -241,7 +241,7 @@ namespace ClassicUO.Game.Scenes
             w.Write($"golden {FORMAT}\n");
             w.Write($"name {_name} frame {_frameIndex} renderer {renderer}\n");
             w.Write($"paths gpu_ecs_sprites={(s.GpuEcsSprites ? 1 : 0)} legacy_ecs_sprites={(LegacySpriteSink.On ? 1 : 0)} " +
-                    $"ecs_effect_sprites={(EffectSpriteSink.On ? 1 : 0)} gpu_prepare_item_cache={(s.GpuPrepareItemCache ? 1 : 0)} " +
+                    $"ecs_effect_sprites=1 gpu_prepare_item_cache={(s.GpuPrepareItemCache ? 1 : 0)} " +
                     $"hide_mobiles={(HideMobiles ? 1 : 0)}\n");
 
             if (_world?.Player is { } p)

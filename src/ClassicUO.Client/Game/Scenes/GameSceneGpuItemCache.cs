@@ -341,7 +341,7 @@ namespace ClassicUO.Game.Scenes
             bool transient = false;
             bool mixed = _gpuItemKeyMixed;
             bool fx = _gpuItemKeyEffects;
-            ulong mergeCells = TileWalk.MergeCells(chunk, DynamicTileIndex.Merged);
+            ulong mergeCells = TileWalk.MergeCells(chunk);
             ulong walk = chunk.GpuWalkMask;
 
             for (int b = 0; b < 64; b++)
@@ -357,7 +357,7 @@ namespace ClassicUO.Game.Scenes
                 int reason = 0;
                 bool any = false, alone = false;
 
-                // T6b (world_tile_index): the served run is built in the merged order the walk reads
+                // T6b: the served run is built in the merged order the walk reads
                 for (GameObject obj = TileWalk.Open(chunk, b, mergeCells, out TileWalk tileWalk, out bool mergedWalk); obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
                     // mobiles are walked on their own (GpuServeCachedTile's callers), E6: effects too
@@ -665,8 +665,8 @@ namespace ClassicUO.Game.Scenes
                 // mobiles or effects too (the tile left walkTiles): one pass over the tile list, walking the mobiles, effects
                 // and walked-alone items in their order (a corpse and a mobile share the animations list, a fading item, a
                 // fading mobile and a fading effect the transparent one)
-                // T6b (world_tile_index): the merged order, as the full walk would read it
-                for (GameObject obj = TileWalk.Open(chunk, b, TileWalk.MergeCells(chunk, DynamicTileIndex.Merged), out TileWalk tileWalk, out bool mergedWalk);
+                // T6b: the merged order, as the full walk would read it
+                for (GameObject obj = TileWalk.Open(chunk, b, TileWalk.MergeCells(chunk), out TileWalk tileWalk, out bool mergedWalk);
                      obj != null;
                      obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {

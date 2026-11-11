@@ -9,13 +9,11 @@ src/ClassicUO.Client/DevBench.cs|Y|1
 src/ClassicUO.Client/DevBench.cs|Z|1
 src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Hue|1
-src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Offset|2
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|AnimIndex|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|LastAnimationChangeTime|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|_direction|1
-src/ClassicUO.Client/Game/GameObjects/FixedEffect.cs|Offset|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Graphic|2
@@ -60,9 +58,6 @@ src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Y|1
 src/ClassicUO.Client/Game/GameObjects/Multi.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|_inWarMode|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
-src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|X|1
-src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Y|1
-src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Z|1
 src/ClassicUO.Client/Game/Managers/CorpseManager.cs|Layer|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Graphic|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Hue|1

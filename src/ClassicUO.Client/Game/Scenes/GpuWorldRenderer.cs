@@ -409,11 +409,9 @@ namespace ClassicUO.Game.Scenes
         };
 
         /// <summary>
-        /// T7b part 3 (ecs_effect_sprites): one effect of the effect list. While the switch is on an effect the extract handles
-        /// is emitted from its state (<see cref="EffectSpriteExtract"/>, <see cref="GpuEffectResolve"/>) with the view's light;
-        /// otherwise, and for lightning, effects without a state and art the pack lacks, its view is captured
-        /// (<see cref="DrawObject"/>). CUO_EFFECT_SPRITE_CHECK compares both (not in the E12 probe pass, which the probe's own
-        /// comparison covers).
+        /// T7b part 3: one effect of the effect list. An effect the extract handles is emitted from its state
+        /// (<see cref="EffectSpriteExtract"/>, <see cref="GpuEffectResolve"/>) with the view's light; lightning, effects without
+        /// a state and art the pack lacks have their view captured (<see cref="DrawObject"/>).
         /// </summary>
         public bool DrawEffect(UltimaBatcher2D batcher, GameEffect effect, float depth)
         {
@@ -423,19 +421,9 @@ namespace ClassicUO.Game.Scenes
                 GoldenCapture.Mark(effect, _dynamicCount);
             }
 #endif
-            if (EffectSpriteExtract.Handles(effect))
+            if (EffectSpriteExtract.Handles(effect) && TryEmitEffect(effect, depth, out bool drawn))
             {
-#if CUO_DEVTOOLS
-                if (EffectSpriteCheck.Active && !Probe)
-                {
-                    return CompareEffect(batcher, effect, depth);
-                }
-#endif
-
-                if (EffectSpriteSink.On && TryEmitEffect(effect, depth, out bool drawn))
-                {
-                    return drawn;
-                }
+                return drawn;
             }
 
             return DrawObject(batcher, effect, depth);
@@ -474,46 +462,6 @@ namespace ClassicUO.Game.Scenes
 
             return true;
         }
-
-#if CUO_DEVTOOLS
-        // CUO_EFFECT_SPRITE_CHECK: the extract's instances, then the view's capture after them; the switch's stay
-        private bool CompareEffect(UltimaBatcher2D batcher, GameEffect effect, float depth)
-        {
-            int start = _dynamicCount;
-            int lightsBefore = _scene?.LightCount ?? 0;
-
-            if (!TryEmitEffect(effect, depth, out bool ecsDrawn))
-            {
-                EffectSpriteCheck.GpuViewPath();
-
-                return DrawObject(batcher, effect, depth);
-            }
-
-            int ecsEnd = _dynamicCount;
-            int lightsEcs = _scene?.LightCount ?? 0;
-            (ushort, int, int) pickEcs = EffectSpriteCheck.PickEntry(EffectSpriteSink.Extract);
-            int fallbacks = CaptureFallbacks;
-            bool viewDrawn = DrawObject(batcher, effect, depth);
-            (ushort, int, int) pickView = EffectSpriteCheck.PickEntry(EffectSpriteSink.Extract);
-            int viewEnd = _dynamicCount;
-
-            EffectSpriteCheck.CompareGpu(effect, new ReadOnlySpan<SpriteInstance>(_dynamic, start, ecsEnd - start),
-                new ReadOnlySpan<SpriteInstance>(_dynamic, ecsEnd, viewEnd - ecsEnd), ecsDrawn, viewDrawn, CaptureFallbacks != fallbacks, pickEcs, pickView,
-                _scene, lightsBefore, lightsEcs);
-
-            if (EffectSpriteSink.On)
-            {
-                _dynamicCount = ecsEnd;
-
-                return ecsDrawn;
-            }
-
-            Array.Copy(_dynamic, ecsEnd, _dynamic, start, viewEnd - ecsEnd);
-            _dynamicCount = start + viewEnd - ecsEnd;
-
-            return viewDrawn;
-        }
-#endif
 
         /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>
         public bool DrawObject(UltimaBatcher2D batcher, GameObject obj, float depth, bool shadowOnly = false)

@@ -26,25 +26,7 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
-            {
-                EffectSystem.StepLightning(this);
-
-                return;
-            }
-
-            if (!IsDestroyed)
-            {
-                if (EffectSystem.AnimateLightning(this))
-                {
-                    (var x, var y, var z) = GetSource();
-
-                    if (X != x || Y != y || Z != z)
-                    {
-                        SetInWorldTile(x, y, z);
-                    }
-                }
-            }
+            EffectSystem.StepLightning(this);
         }
     }
 }

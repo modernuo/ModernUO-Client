@@ -45,7 +45,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void PlaceMobile_Of_Another_Mobile_Writes_No_Second_Record(Start start, int packet)
         {
             World oldWorld = Build(start), newWorld = Build(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             MobPacket p = Packets[packet];
             long writes = 0;
 
@@ -432,7 +431,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Hits_Mana_Stamina_And_Attributes_Equal_The_Old_Path(Start start, StatusStart status)
         {
             World oldWorld = BuildStatus(start, status), newWorld = BuildStatus(start, status);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             // 0xA1 on a mobile, an item and a missing serial; a zero HitsMax after a non-zero one, and back
@@ -476,7 +474,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void CharacterStatus_Equals_The_Old_Path(Start start, StatusStart status)
         {
             World oldWorld = BuildStatus(start, status), newWorld = BuildStatus(start, status);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             foreach (StatusPacket s in new[]
@@ -511,7 +508,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void CharacterStatus_Of_The_Player_Equals_The_Old_Path(byte type)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
@@ -556,7 +552,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void NewHealthbarUpdate_Equals_The_Old_Path(Start start, int list, bool cv7000)
         {
             World oldWorld = Build(start), newWorld = Build(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             (ushort, bool)[] entries = HealthbarLists[list];
 
@@ -731,7 +726,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void AnimateMobile_Equals_The_Old_Path(Start start, AnimPacket kind)
         {
             World oldWorld = Build(start), newWorld = Build(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             // a later tick than the start's, so the due times differ from the start's clock
@@ -1002,7 +996,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Boat_Steps_Equal_The_Old_Path(Start start)
         {
             World oldWorld = BuildBoat(start), newWorld = BuildBoat(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             var old = new OldBoat(oldWorld);
             BoatMovingManager boats = newWorld.BoatMovingManager;
@@ -1104,7 +1097,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Multi_Reload_In_The_Upsert_Ends_The_Boat_Movement_As_Before_T1(bool throws)
         {
             World oldWorld = BuildMovingBoat(), newWorld = BuildMovingBoat();
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = throws;
 
             foreach (World w in new[] { oldWorld, newWorld })
@@ -1241,7 +1233,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void FillSpellbook_Equals_The_Old_Path(bool existing)
         {
             World oldWorld = Build(Start.Standing), newWorld = Build(Start.Standing);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             if (existing)

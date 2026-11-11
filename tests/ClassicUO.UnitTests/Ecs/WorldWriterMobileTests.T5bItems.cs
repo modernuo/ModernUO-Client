@@ -115,7 +115,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Ecs_Corpse_Advance_Equals_The_Legacy_ProcessAnimation(int layer, bool usedLayer, ushort body, byte start)
         {
             World oldWorld = BuildT5bItem(layer, usedLayer, body, start), newWorld = BuildT5bItem(layer, usedLayer, body, start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Item a = oldWorld.Items.Get(CORPSE), b = newWorld.Items.Get(CORPSE);
             var src = new FakeCorpseSource { Max = 1000 };

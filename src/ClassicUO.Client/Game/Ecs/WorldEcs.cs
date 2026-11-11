@@ -275,7 +275,7 @@ namespace ClassicUO.Game
             }
 
             // T5d: a listed item's tag follows its list membership whenever its record is written (a replaced record starts
-            // without the tag, and ActiveItemList.Add returns early for an item already listed)
+            // without the tag, and ActiveItemStore.Add returns early for an item already listed)
             if (entity is Item listed && _world.IsItemListed(listed)
                 && Mirror.TryGetEntity(listed.Serial, false, out EcsEntity tagged) && !tagged.Tags.Has<ItemActive>())
             {
@@ -815,7 +815,7 @@ namespace ClassicUO.Game
                 EffectSystem.OnRecordRemoving(_world, record);
             }
 
-            // ecs_boat_steps: a boat's pending steps outlive its record until the next frame (BoatStepSystem.Park)
+            // a boat's pending steps outlive its record until the next frame (BoatStepSystem.Park)
             if (entity is Item && Mirror.TryGetEntity(entity.Serial, out EcsEntity boat) && boat.TryGetComponent(out BoatSteps steps))
             {
                 _world.BoatMovingManager.Steps.Park(entity.Serial, in steps);

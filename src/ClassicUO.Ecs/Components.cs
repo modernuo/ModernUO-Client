@@ -631,18 +631,17 @@ namespace ClassicUO.Ecs
 
     /// <summary>
     /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>. It owns the
-    /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances; position, offset,
-    /// angle and target are published by the effect's own update (the kinds' motion rules stay on the object). The entity has no
+    /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances. The entity has no
     /// serial and is not in the mirror's serial index.
     /// <para>
-    /// With <c>ecs_effect_endpoints</c> the source and target are referenced here, not as objects: <see cref="Ends"/> says
+    /// The source and target are referenced here, not as objects: <see cref="Ends"/> says
     /// which of them is a world entity (else a ground point), <see cref="SourceEntity"/>/<see cref="TargetEntity"/> are their
     /// mirror records and <see cref="SourceSerial"/>/<see cref="TargetSerial"/> their serials (the death re-key moves both to
     /// the new record). <see cref="SourceX"/>.. and <see cref="TargetX"/>.. hold the endpoint's last resolved position, which
     /// stays when its record is removed (the object kept its coordinates when it was destroyed).
     /// </para>
     /// <para>
-    /// With <c>ecs_effect_motion</c> the kinds' motion is computed here too (<c>EffectSystem</c>'s motion step): position,
+    /// The kinds' motion is computed here too (<c>EffectSystem</c>'s motion step): position,
     /// offset (<see cref="OffsetZ"/> included), angle, the moving effect's target and the drag effect's next move time
     /// (<see cref="MoveTime"/>); the object's fields are written from these values for the views.
     /// </para>

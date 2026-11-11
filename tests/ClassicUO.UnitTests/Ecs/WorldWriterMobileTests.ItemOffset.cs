@@ -10,22 +10,16 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // ecs_item_offset: the boat operations write an item's offset (the boat's, the bag's on its deck) into its ItemOffset
-    // component from the values they write to the Item; ItemOffsets.Read serves the extract's Gather and the item pick from it,
-    // and CUO_ITEM_OFFSET_CHECK compares the two. The boat runs through the real BoatMovingManager with the switch off or on:
-    // under way (mid-step), stop (a step completes), a turn (ClearSteps' reset), a passenger leaving the list, the boat removed.
+    // The boat operations write an item's offset (the boat's, the bag's on its deck) into its ItemOffset component from the
+    // values they write to the Item; ItemOffsets.Read serves the extract's Gather and the item pick from it, and
+    // CUO_ITEM_OFFSET_CHECK compares the two (T9 deleted ecs_item_offset's off path). The boat runs through the real
+    // BoatMovingManager: under way (mid-step), stop (a step completes), a turn (ClearSteps' reset), a passenger leaving the
+    // list, the boat removed.
     public partial class WorldWriterMobileTests
     {
-        [Fact]
-        public void The_ItemOffset_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().EcsItemOffset.Should().BeTrue();
-        }
-
-        private static World BuildOffsetBoat(bool on)
+        private static World BuildOffsetBoat()
         {
             World world = BuildBoat(Start.Standing);
-            world.ItemOffsetOverride = on;
             world.Writer.ThrowOnViolation = true;
 
             return world;
@@ -38,9 +32,9 @@ namespace ClassicUO.UnitTests.Ecs
             return world.Ecs.Mirror.TryGetEntity(serial, false, out EcsEntity e) && e.TryGetComponent(out c);
         }
 
-        // every item of the boat: the component equals the Item's offset (absent = zero) with the switch on, is never added
-        // with it off; the readers' answer is the Item's offset either way, and the checker finds nothing
-        private static void AssertItemOffsets(World world, bool on, string because)
+        // every item of the boat: the component equals the Item's offset (absent = zero); the readers' answer is the Item's
+        // offset, and the checker finds nothing
+        private static void AssertItemOffsets(World world, string because)
         {
             foreach (uint serial in new[] { BOAT, BAG })
             {
@@ -54,24 +48,12 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 world.Ecs.Mirror.TryGetEntity(serial, false, out EcsEntity e).Should().BeTrue($"0x{serial:X8} has a record ({because})");
-                bool has = e.TryGetComponent(out ItemOffset c);
-
-                if (on)
-                {
-                    new Vector3(c.X, c.Y, c.Z).Should().Be(it.Offset, $"0x{serial:X8} component ({because})");
-                }
-                else
-                {
-                    has.Should().BeFalse($"0x{serial:X8} switch off: no component ({because})");
-                }
-
+                e.TryGetComponent(out ItemOffset c);
+                new Vector3(c.X, c.Y, c.Z).Should().Be(it.Offset, $"0x{serial:X8} component ({because})");
                 ItemOffsets.Read(it).Should().Be(it.Offset, $"0x{serial:X8} read ({because})");
 
-                if (on)
-                {
-                    // the item extract's Gather: the component from the row ReadRecord holds
-                    ItemOffsets.ReadRow(it, true, EcsRead.Row(e)).Should().Be(it.Offset, $"0x{serial:X8} row read ({because})");
-                }
+                // the item extract's Gather: the component from the row ReadRecord holds
+                ItemOffsets.ReadRow(it, true, EcsRead.Row(e)).Should().Be(it.Offset, $"0x{serial:X8} row read ({because})");
             }
 
             // a mobile passenger's offset is its Steps component (T6c), never an ItemOffset
@@ -86,20 +68,18 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW;
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Boat_Operations_Write_The_ItemOffset_Component_With_The_Switch_On(bool on)
+        [Fact]
+        public void The_Boat_Operations_Write_The_ItemOffset_Component()
         {
             ItemOffsets.CheckOverride = true;
             ItemOffsets.ResetCounters();
 
             try
             {
-                World world = BuildOffsetBoat(on);
+                World world = BuildOffsetBoat();
                 BoatMovingManager boats = world.BoatMovingManager;
                 Item boat = world.Items.Get(BOAT), bag = world.Items.Get(BAG);
-                AssertItemOffsets(world, on, "start");
+                AssertItemOffsets(world, "start");
                 TryItemOffset(world, BOAT, out _).Should().BeFalse("no component before the first non-zero offset");
 
                 // under way: a step east with the mobile and the bag on deck, two frames mid-step
@@ -114,15 +94,15 @@ namespace ClassicUO.UnitTests.Ecs
                     Frame(world, NOW + t);
                     boat.Offset.Should().NotBe(Vector3.Zero, "mid-step");
                     bag.Offset.Should().Be(boat.Offset);
-                    AssertItemOffsets(world, on, $"mid-step {t}");
+                    AssertItemOffsets(world, $"mid-step {t}");
                 }
 
                 // stop: the step completes, every offset back to zero (the component stays, zero)
                 Frame(world, NOW + 700);
                 boat.X.Should().Be(1001, "the step completed");
                 (boat.Offset, bag.Offset).Should().Be((Vector3.Zero, Vector3.Zero));
-                AssertItemOffsets(world, on, "stopped");
-                TryItemOffset(world, BOAT, out _).Should().Be(on, "the component is kept once added");
+                AssertItemOffsets(world, "stopped");
+                TryItemOffset(world, BOAT, out _).Should().BeTrue("the component is kept once added");
 
                 // a second step, mid-way, then a turn: the multi reload's ClearSteps resets the boat and its passengers
                 Time.Ticks = NOW + 800;
@@ -131,10 +111,10 @@ namespace ClassicUO.UnitTests.Ecs
                 boats.PushItemToList(BOAT, BAG, -1, 1, 0);
                 Frame(world, NOW + 1000);
                 boat.Offset.Should().NotBe(Vector3.Zero, "mid-step");
-                AssertItemOffsets(world, on, "second step");
+                AssertItemOffsets(world, "second step");
                 boats.ClearSteps(BOAT);
                 (boat.Offset, bag.Offset).Should().Be((Vector3.Zero, Vector3.Zero));
-                AssertItemOffsets(world, on, "turned");
+                AssertItemOffsets(world, "turned");
 
                 // a passenger leaves: the next 0xF6 lists only the mobile; the bag keeps the offset it had, in both places
                 Time.Ticks = NOW + 1100;
@@ -149,18 +129,18 @@ namespace ClassicUO.UnitTests.Ecs
                 Frame(world, NOW + 1400);
                 bag.Offset.Should().Be(left, "no longer carried");
                 boat.Offset.Should().NotBe(left, "the boat moved on");
-                AssertItemOffsets(world, on, "passenger left");
+                AssertItemOffsets(world, "passenger left");
 
                 // the boat removed (0x1D) mid-step: its record goes, the manager drops its steps, the bag keeps its offset
                 world.Writer.RemoveWorldItem(boat, out _);
                 Frame(world, NOW + 1500);
                 world.Items.Get(BOAT).Should().BeNull();
-                AssertItemOffsets(world, on, "boat removed");
+                AssertItemOffsets(world, "boat removed");
 
                 ItemOffsets.Diffs.Should().Be(0);
-                (ItemOffsets.Checks > 0).Should().Be(on, "the checker compares only what the ECS served");
-                (ItemOffsets.Reads > 0).Should().Be(on, "ECS reads only with the switch on");
-                (ItemOffsets.Writes > 0).Should().Be(on, "ECS writes only with the switch on");
+                ItemOffsets.Checks.Should().BeGreaterThan(0);
+                ItemOffsets.Reads.Should().BeGreaterThan(0);
+                ItemOffsets.Writes.Should().BeGreaterThan(0);
                 ItemOffsets.Fallbacks.Should().Be(0);
                 world.Writer.Violations.Should().Be(0);
                 world.Writer.InScope.Should().BeFalse();
@@ -175,7 +155,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Mobile_Passenger_Gets_No_ItemOffset_And_A_Zero_Offset_Adds_None()
         {
-            World world = BuildOffsetBoat(true);
+            World world = BuildOffsetBoat();
             Mobile m = world.Mobiles.Get(MOB);
             Item bag = world.Items.Get(BAG);
 
@@ -196,17 +176,15 @@ namespace ClassicUO.UnitTests.Ecs
             (c.X, c.Y, c.Z).Should().Be((0f, 0f, 0f));
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Read_Serves_The_Component_With_The_Switch_On_And_The_Checker_Reports_A_Difference(bool on)
+        [Fact]
+        public void Read_Serves_The_Component_And_The_Checker_Reports_A_Difference()
         {
             ItemOffsets.CheckOverride = true;
             ItemOffsets.ResetCounters();
 
             try
             {
-                World world = BuildOffsetBoat(on);
+                World world = BuildOffsetBoat();
                 Item bag = world.Items.Get(BAG);
                 world.Writer.FollowBoat(bag, new Vector3(1, 2, 3));
 
@@ -214,22 +192,14 @@ namespace ClassicUO.UnitTests.Ecs
                 bag.Offset = new Vector3(7, 8, 9);
                 Vector3 read = ItemOffsets.Read(bag);
 
-                if (on)
-                {
-                    read.Should().Be(new Vector3(1, 2, 3), "the component is the source");
-                    (ItemOffsets.Reads, ItemOffsets.Checks, ItemOffsets.Diffs).Should().Be((1L, 1L, 1L));
-                }
-                else
-                {
-                    read.Should().Be(new Vector3(7, 8, 9), "the Item is the source");
-                    (ItemOffsets.Reads, ItemOffsets.Checks, ItemOffsets.Diffs).Should().Be((0L, 0L, 0L));
-                }
+                read.Should().Be(new Vector3(1, 2, 3), "the component is the source");
+                (ItemOffsets.Reads, ItemOffsets.Checks, ItemOffsets.Diffs).Should().Be((1L, 1L, 1L));
 
                 // the checker off: no comparison
                 ItemOffsets.CheckOverride = false;
                 ItemOffsets.Read(bag);
-                ItemOffsets.Checks.Should().Be(on ? 1 : 0);
-                ItemOffsets.Summary(world).Should().Contain(on ? "ecs_item_offset on" : "ecs_item_offset off");
+                ItemOffsets.Checks.Should().Be(1);
+                ItemOffsets.Summary().Should().StartWith("[item-offset-check] writes");
             }
             finally
             {
@@ -246,7 +216,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             try
             {
-                var world = new World { ItemOffsetOverride = true };
+                var world = new World();
 
                 // a detached instance (the house placement preview): TryScalarEntity has nothing to find
                 Item preview = Item.Create(world, 0);
