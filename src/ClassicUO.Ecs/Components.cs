@@ -110,10 +110,10 @@ namespace ClassicUO.Ecs
         public byte Layer;
     }
 
-    // legacy-sprites-fix (ecs_item_draw_row): the item record values the sprite extract reads every frame for every drawn item
+    // legacy-sprites-fix: the item record values the sprite extract reads every frame for every drawn item
     // (Graphic, Hue, Position, Flags, Amount, Layer, the OnGround and Multi tags), packed in one 14-byte row so the draw reads
     // one cache line instead of one per component. Every item has it from its creation; WorldMirror.UpsertItem, the one
-    // writer of those values, writes it from the same values (CUO_ITEM_DRAW_ROW_CHECK compares it with the components).
+    // writer of those values, writes it from the same values (ItemDrawRowTests compares it with the components).
     public struct ItemDrawRow : IComponent
     {
         public const byte ON_GROUND = 1, MULTI = 2;

@@ -90,7 +90,7 @@ namespace ClassicUO.Game
             public World World;
             public Profile Profile;
             public StaticTiles[] StaticData;
-            public bool HasPlayer, PlayerDeadGray, Highlight, NoColorOutOfRange, GridLoot, FieldsReplaced, DrawRowOn;
+            public bool HasPlayer, PlayerDeadGray, Highlight, NoColorOutOfRange, GridLoot, FieldsReplaced;
             public int RangeX, RangeY, ViewRange;
         }
 
@@ -101,7 +101,6 @@ namespace ClassicUO.Game
         internal static void BeginFrame()
         {
             _frame.World = null;
-            ItemDrawRows.LogSummary();
         }
 
         private static ref readonly GatherFrame TakeFrame(World world, Profile profile)
@@ -129,7 +128,6 @@ namespace ClassicUO.Game
             f.PlayerDeadGray = player != null && player.IsDead && profile.EnableBlackWhiteEffect;
             f.GridLoot = profile.GridLootType > 0;
             f.FieldsReplaced = profile.FieldsType == 2;
-            f.DrawRowOn = ItemDrawRows.On;
 
             return ref f;
         }
@@ -148,7 +146,7 @@ namespace ClassicUO.Game
 
             World world = item.World;
             ref readonly GatherFrame f = ref TakeFrame(world, ProfileManager.CurrentProfile);
-            bool record = ReadRecord(item, f.StaticData, ref i, out ushort y, out ClassicUO.Ecs.EcsRow data, f.DrawRowOn);
+            bool record = ReadRecord(item, f.StaticData, ref i, out ushort y, out ClassicUO.Ecs.EcsRow data);
 
             i.AllowedToDraw = item.AllowedToDraw;
 
@@ -200,19 +198,14 @@ namespace ClassicUO.Game
 
         /// <summary><see cref="ReadRecord(Item, StaticTiles[], ref ItemSpriteInput, out ushort)"/>, also giving the record's row
         /// (default without a record) for the reads that follow it (the ItemOffset component). True: the item has a record.</summary>
-        internal static bool ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y, out ClassicUO.Ecs.EcsRow data) =>
-            ReadRecord(item, staticData, ref i, out y, out data, ItemDrawRows.On);
-
-        /// <summary><paramref name="drawRow"/>: <c>ecs_item_draw_row</c>, the record's values from its packed
-        /// <see cref="ClassicUO.Ecs.ItemDrawRow"/> (one cache line) when it has one.</summary>
-        internal static bool ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y, out ClassicUO.Ecs.EcsRow data,
-            bool drawRow)
+        internal static bool ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y, out ClassicUO.Ecs.EcsRow data)
         {
             bool record = item.TryScalarEntity(out EcsEntity e);
             data = record ? ClassicUO.Ecs.EcsRead.Row(e) : default;
 
-            if (record && drawRow && data.Has<ClassicUO.Ecs.ItemDrawRow>())
+            if (record)
             {
+                // the packed ItemDrawRow (one cache line); every item record has it from its creation
                 ref readonly ClassicUO.Ecs.ItemDrawRow r = ref data.Get<ClassicUO.Ecs.ItemDrawRow>();
                 i.Serial = item.Serial;
                 i.Graphic = r.Graphic;
@@ -231,54 +224,25 @@ namespace ClassicUO.Game
                     i.Layer = r.Layer;
                 }
 
-                if (ItemDrawRows.Check)
-                {
-                    ItemDrawRows.Compare(item, in data, in r);
-                }
-
                 return true;
             }
 
-            if (record)
-            {
-                i.Serial = item.Serial;
-                i.Graphic = data.Get<ClassicUO.Ecs.Graphic>().Value;
-                i.Hue = data.Get<ClassicUO.Ecs.Hue>().Value;
-                ref readonly ClassicUO.Ecs.Position p = ref data.Get<ClassicUO.Ecs.Position>();
-                i.X = p.X;
-                y = p.Y;
-                var flags = (Flags)data.Get<ClassicUO.Ecs.Flags>().Value;
-                i.Hidden = (flags & Flags.Hidden) != 0;
-                i.Movable = (flags & Flags.Movable) != 0;
-                Friflo.Engine.ECS.Tags tags = data.Tags;
-                i.OnGround = tags.Has<ClassicUO.Ecs.OnGround>();
-                i.Multi = tags.Has<ClassicUO.Ecs.MultiTag>();
-            }
-            else
-            {
-                i.Serial = item.Serial;
-                i.Graphic = item.Graphic;
-                i.Hue = item.Hue;
-                i.X = item.X;
-                y = item.Y;
-                i.Hidden = item.IsHidden;
-                i.Movable = (item.Flags & Flags.Movable) != 0;
-                i.Amount = item.Amount;
-                i.Layer = (byte)item.Layer;
-                i.OnGround = item.OnGround;
-                i.Multi = item.IsMulti;
-            }
+            // the house placement preview has no record: the GameObject's cached fields
+            i.Serial = item.Serial;
+            i.Graphic = item.Graphic;
+            i.Hue = item.Hue;
+            i.X = item.X;
+            y = item.Y;
+            i.Hidden = item.IsHidden;
+            i.Movable = (item.Flags & Flags.Movable) != 0;
+            i.Amount = item.Amount;
+            i.Layer = (byte)item.Layer;
+            i.OnGround = item.OnGround;
+            i.Multi = item.IsMulti;
 
             ReadTile(item, staticData, ref i);
 
-            if (record && i.UsesItemData)
-            {
-                ref readonly ClassicUO.Ecs.ItemData d = ref data.Get<ClassicUO.Ecs.ItemData>();
-                i.Amount = d.Amount;
-                i.Layer = d.Layer;
-            }
-
-            return record;
+            return false;
         }
 
         // the tiledata row of the item's graphic (the multi's graphic for a multi)
@@ -292,68 +256,6 @@ namespace ClassicUO.Game
             i.TileContainer = tile.IsContainer;
             i.TileStackable = tile.IsStackable;
             i.TileHeavy = tile.Weight > 90;
-        }
-    }
-
-    /// <summary>
-    /// legacy-sprites-fix, <c>ecs_item_draw_row</c> (default off): Gather reads the item's <see cref="ClassicUO.Ecs.ItemDrawRow"/>.
-    /// CUO_ITEM_DRAW_ROW_CHECK=1 compares every row read with the record's components ([item-draw-row-check], a summary
-    /// every 5 s).
-    /// </summary>
-    internal static class ItemDrawRows
-    {
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override and the checker
-        private static readonly bool? _env = ClassicUO.Game.Scenes.LegacySpriteSink.ParseSwitch(Environment.GetEnvironmentVariable("CUO_ECS_ITEM_DRAW_ROW"));
-        public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_ITEM_DRAW_ROW_CHECK") == "1";
-#else
-        private static readonly bool? _env = null;
-        public const bool Check = false;
-#endif
-
-        /// <summary>Tests: wins over the env override and the setting.</summary>
-        internal static bool? Override;
-
-        public static bool On => Override ?? _env ?? Configuration.Settings.GlobalSettings?.EcsItemDrawRow ?? true;
-
-        public static long Checks, Diffs;
-        private static int _logged;
-        private static uint _logAt;
-
-        internal static void Compare(Item item, in ClassicUO.Ecs.EcsRow data, in ClassicUO.Ecs.ItemDrawRow r)
-        {
-            Checks++;
-            ref readonly ClassicUO.Ecs.Position p = ref data.Get<ClassicUO.Ecs.Position>();
-            ref readonly ClassicUO.Ecs.ItemData d = ref data.Get<ClassicUO.Ecs.ItemData>();
-            Friflo.Engine.ECS.Tags tags = data.Tags;
-            byte bits = (byte)((tags.Has<ClassicUO.Ecs.OnGround>() ? ClassicUO.Ecs.ItemDrawRow.ON_GROUND : 0) |
-                               (tags.Has<ClassicUO.Ecs.MultiTag>() ? ClassicUO.Ecs.ItemDrawRow.MULTI : 0));
-            ushort g = data.Get<ClassicUO.Ecs.Graphic>().Value, h = data.Get<ClassicUO.Ecs.Hue>().Value;
-            byte f = data.Get<ClassicUO.Ecs.Flags>().Value;
-
-            if (r.Graphic == g && r.Hue == h && r.X == p.X && r.Y == p.Y && r.Z == p.Z && r.Flags == f && r.Amount == d.Amount &&
-                r.Layer == d.Layer && r.Bits == bits)
-            {
-                return;
-            }
-
-            Diffs++;
-
-            if (_logged++ < 20)
-            {
-                Utility.Logging.Log.Warn($"[item-draw-row-check] 0x{item.Serial:X8}: row g 0x{r.Graphic:X4} h {r.Hue} {r.X},{r.Y},{r.Z} f {r.Flags} a {r.Amount} l {r.Layer} b {r.Bits}; record g 0x{g:X4} h {h} {p.X},{p.Y},{p.Z} f {f} a {d.Amount} l {d.Layer} b {bits}");
-            }
-        }
-
-        internal static void LogSummary()
-        {
-            if (!Check || Time.Ticks < _logAt)
-            {
-                return;
-            }
-
-            _logAt = Time.Ticks + 5000;
-            Utility.Logging.Log.Info($"[item-draw-row-check] ecs_item_draw_row {(On ? "on" : "off")}: checked {Checks}, different {Diffs}");
         }
     }
 

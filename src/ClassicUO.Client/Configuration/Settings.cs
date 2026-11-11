@@ -137,12 +137,6 @@ namespace ClassicUO.Configuration
         // legacy-flip (owner decision 2026-11-10, bench-000564); off = the views.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; } = true;
 
-        // legacy-sprites-fix: the item sprite extract's Gather reads the item's packed ItemDrawRow component (one row,
-        // written by WorldMirror.UpsertItem with the record) instead of the Graphic, Hue, Position, Flags and ItemData
-        // components. CUO_ECS_ITEM_DRAW_ROW=1|0 overrides it in developer builds; CUO_ITEM_DRAW_ROW_CHECK=1 compares the row
-        // with the components at every read. Off = the components. Default on since legacy-flip (bench-000564).
-        [JsonPropertyName("ecs_item_draw_row")] public bool EcsItemDrawRow { get; set; } = true;
-
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.
