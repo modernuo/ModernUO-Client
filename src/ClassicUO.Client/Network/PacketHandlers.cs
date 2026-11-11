@@ -67,6 +67,9 @@ namespace ClassicUO.Network
         private int _generation;
         private int _pluginGeneration;
 
+        /// <summary>Times parsing stopped at a packet whose bytes had not all arrived yet (a header or body cut by a read).</summary>
+        public int PartialPacketWaits { get; private set; }
+
         public int ParsePackets(NetClient socket, World world, Span<byte> data)
         {
             lock (_queueLock)
@@ -134,9 +137,8 @@ namespace ClassicUO.Network
                         )
                     )
                     {
-                        Log.Warn(
-                            $"Invalid ID: {packetID:X2} | off: {offset} | len: {packetlength} | stream.pos: {stream.Length}"
-                        );
+                        // a variable-length header cut after its first or second byte: wait for the rest, like a cut body
+                        PartialPacketWaits++;
 
                         break;
                     }
@@ -151,11 +153,11 @@ namespace ClassicUO.Network
                     }
                     else if (stream.Length < packetlength)
                     {
-                        Log.Warn(
-                            $"need more data ID: {packetID:X2} | off: {offset} | len: {packetlength} | stream.pos: {stream.Length}"
-                        );
+                        // The packet continues in bytes not received yet (a TCP read, a 4 KB drain slice or the frame's
+                        // drain cap ended inside it). It stays queued and is completed by the next ParsePackets; this is
+                        // normal under load, so it is counted, not logged.
+                        PartialPacketWaits++;
 
-                        // need more data
                         break;
                     }
                     else
@@ -253,6 +255,7 @@ namespace ClassicUO.Network
             }
         }
 
+        // False when the header is not complete yet: a variable-length packet needs 3 bytes to know its length.
         private static bool GetPacketInfo(
             NetClient socket,
             CircularBuffer buffer,
