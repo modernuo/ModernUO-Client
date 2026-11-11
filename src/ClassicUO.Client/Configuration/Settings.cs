@@ -150,6 +150,12 @@ namespace ClassicUO.Configuration
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;
 
+        // item-pool: the items World drops (out of range, deleted, swept) wait 2 s in a bounded pool (8,192 items, ~2.3 MB)
+        // and are reset and reused for the items that enter range next (ItemPool), instead of a new Item each. Read once at
+        // startup (CUO_ITEM_POOL=1|0 overrides it in developer builds; CUO_ITEM_POOL_CHECK=1 compares every reused item with a
+        // new one). Default off.
+        [JsonPropertyName("item_pool")] public bool ItemPool { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

@@ -13,7 +13,13 @@ src/ClassicUO.Client/Game/GameObjects/Entity.cs|AnimIndex|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|LastAnimationChangeTime|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|Serial|1
-src/ClassicUO.Client/Game/GameObjects/Entity.cs|_direction|1
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_animIndex|1
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_direction|2
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_executeAnimation|1
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_flags|1
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_lastAnimationChangeTime|1
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_lastStepTime|1
+src/ClassicUO.Client/Game/GameObjects/Entity.cs|_serial|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Graphic|2
@@ -28,7 +34,13 @@ src/ClassicUO.Client/Game/GameObjects/Item.cs|Direction|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Layer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|_isMulti|1
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_amount|1
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_container|1
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_isDamageable|1
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_isMulti|2
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_layer|1
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_lightID|1
+src/ClassicUO.Client/Game/GameObjects/Item.cs|_usedLayer|1
 src/ClassicUO.Client/Game/GameObjects/Land.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimIndex|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFrameCount|4
@@ -76,3 +88,4 @@ src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|IsFemale|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Race|1
 src/ClassicUO.Client/Game/World.cs|Container|1
+src/ClassicUO.Client/Game/World.cs|Serial|1
