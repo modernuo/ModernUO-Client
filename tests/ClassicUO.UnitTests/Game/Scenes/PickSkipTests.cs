@@ -17,13 +17,24 @@ namespace ClassicUO.UnitTests.Game.Scenes
     {
         public PickSkipTests()
         {
-            PickSkip.ResetForTests();
+            Reset();
         }
 
         public void Dispose()
         {
-            PickSkip.ResetForTests();
+            Reset();
             SelectedObject.TranslatedMousePositionByViewport = Point.Zero;
+        }
+
+        // the checker and its test hooks exist only in developer builds (CUO_DEVTOOLS)
+        private static void Reset()
+        {
+#if CUO_DEVTOOLS
+            PickSkip.ResetForTests();
+#else
+            PickSkip.OverrideForTests = null;
+            PickSkip.Off = false;
+#endif
         }
 
         private static Land LandUnderMouse(World world)
@@ -51,6 +62,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             PickSkip.Off.Should().Be(off);
         }
 
+#if CUO_DEVTOOLS
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -93,5 +105,6 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             PickSkip.Mismatches.Should().Be(0);
         }
+#endif
     }
 }
