@@ -84,7 +84,7 @@ namespace ClassicUO.Game
         public int LightCount;
 
         /// <summary>
-        /// legacy_ecs_sprites (LegacySpriteSink): the Legacy batcher calls the last select resolved to, relative to the draw
+        /// The Legacy sink (LegacySpriteSink): the Legacy batcher calls the last select resolved to, relative to the draw
         /// origin (position + walking offset), with the recipe of their depth, plus FrameInfo and the lights. Recorded only
         /// when the selection is cacheable, the mobile is not seated and every layer and record had its atlas texture (the
         /// atlas only gains textures, so a recorded texture and rect stay valid). Replayed while the selection

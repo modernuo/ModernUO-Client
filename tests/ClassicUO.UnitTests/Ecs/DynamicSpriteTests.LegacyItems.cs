@@ -7,7 +7,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // legacy_ecs_sprites: the sink draws an item's records as the select makes them (ItemSpriteExtract.SelectDraw). Golden: the
+    // The Legacy sink draws an item's records as the select makes them (ItemSpriteExtract.SelectDraw). Golden: the
     // batcher calls and side effects of Select + LegacySpriteResolve.DrawAll (which the tests above hold to the view's calls).
     public partial class DynamicSpriteTests
     {

@@ -126,13 +126,6 @@ namespace ClassicUO.Configuration
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
 
-        // T7b (ecs-transition-plan.md, T7): the Legacy world draws mobiles and world items from the ECS extract (select, then
-        // LegacySpriteResolve to the FNA atlas through the Art/Animations loaders) at the render list's view.Draw position,
-        // instead of MobileView/ItemView.Draw. Effects stay on their views. CUO_LEGACY_ECS_PARITY=1 compares the view's
-        // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default on since
-        // legacy-flip (owner decision 2026-11-10, bench-000564); off = the views.
-        [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; } = true;
-
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

@@ -12,7 +12,7 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // legacy_ecs_sprites: MobileSpriteExtract.DrawLegacy replays the Legacy calls MobileFrameCache recorded. Golden: the batcher
+    // The Legacy sink: MobileSpriteExtract.DrawLegacy replays the Legacy calls MobileFrameCache recorded. Golden: the batcher
     // calls of a fresh select + resolve at the same draw origin and depth (which the tests above hold to the view's calls).
     public partial class DynamicSpriteTests
     {
