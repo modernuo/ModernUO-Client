@@ -79,8 +79,10 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void On_A_Swept_Or_Force_Removed_Item_Comes_Back_Reset_After_The_Quarantine()
         {
+#if CUO_DEVTOOLS
             ItemPool.CheckOverride = true;
             long mismatches = ItemPool.Mismatches;
+#endif
 
             try
             {
@@ -120,12 +122,16 @@ namespace ClassicUO.UnitTests.Ecs
                 w.ItemPool.Count.Should().Be(0);
                 AddItem(w, ROCK).Should().NotBeSameAs(rock).And.NotBeSameAs(coin, "the pool is empty: a new Item");
 
+#if CUO_DEVTOOLS
                 ItemPool.Mismatches.Should().Be(mismatches, "every reused item equals a new Item after the reset");
                 ItemPool.Checks.Should().BeGreaterThan(0);
+#endif
             }
             finally
             {
+#if CUO_DEVTOOLS
                 ItemPool.CheckOverride = null;
+#endif
             }
         }
 
@@ -248,6 +254,7 @@ namespace ClassicUO.UnitTests.Ecs
             damage.ParentReused.Should().BeTrue();
         }
 
+#if CUO_DEVTOOLS
         [Fact]
         public void A_Bench_Pick_Target_Key_Rejects_A_Reused_Item()
         {
@@ -384,5 +391,6 @@ namespace ClassicUO.UnitTests.Ecs
             cache.SetValue(dirty, Dirty(cache.FieldType, null, 0));
             ItemPool.ResetDifferences(fresh, dirty).Should().ContainSingle().Which.Should().Contain("_textExpiredContainer");
         }
+#endif
     }
 }
