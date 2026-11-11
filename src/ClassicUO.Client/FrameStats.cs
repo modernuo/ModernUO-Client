@@ -812,12 +812,14 @@ namespace ClassicUO
 
             sb.Append(inv, $"[framestats] {_tag} window {_windowIndex}: {n} frames in {seconds:0.00} s = {n / seconds:0} fps; ")
               .Append(inv, $"gc gen0 {gc0} gen1 {gc1} gen2 {gc2}, pause {pauseMs:0.00} ms, alloc {allocTotal / Math.Max(1, n)} B/frame (all threads)\n")
-              .Append("  phase                      avg      p50      p95      p99  (ms)\n");
+              .Append("  phase                      avg      p50      p95      p99      max  (ms)\n");
 
             json.Append(inv, $"FRAMESTATS {{\"tag\":\"{_tag}\",\"window\":{_windowIndex},\"frames\":{n},\"seconds\":{seconds:0.000},\"fps\":{n / seconds:0.0},")
                 .Append(inv, $"\"phases_on\":{(On ? "true" : "false")},\"prep_detail\":{(Detail ? "true" : "false")},\"gc0\":{gc0},\"gc1\":{gc1},\"gc2\":{gc2},\"gc_pause_ms\":{pauseMs:0.000},")
                 .Append(inv, $"\"alloc_per_frame\":{allocTotal / Math.Max(1, n)},\"phases\":{{");
 
+            // per-phase window max, appended as its own key at the end so parsers that index the phase arrays keep working
+            var maxes = new StringBuilder(1024);
             bool first = true;
 
             for (int p = 0; p < PHASES; p++)
@@ -827,9 +829,10 @@ namespace ClassicUO
                     continue;
                 }
 
-                Stats(_phase[p], n, _sortScratch, out double avg, out double p50, out double p95, out double p99);
-                sb.Append(inv, $"  {_phaseNames[p],-24} {avg,7:0.000}  {p50,7:0.000}  {p95,7:0.000}  {p99,7:0.000}\n");
+                Stats(_phase[p], n, _sortScratch, out double avg, out double p50, out double p95, out double p99, out double pmax);
+                sb.Append(inv, $"  {_phaseNames[p],-24} {avg,7:0.000}  {p50,7:0.000}  {p95,7:0.000}  {p99,7:0.000}  {pmax,7:0.000}\n");
                 json.Append(first ? "" : ",").Append(inv, $"\"{_phaseKeys[p]}\":[{avg:0.0000},{p50:0.0000},{p95:0.0000},{p99:0.0000}]");
+                maxes.Append(first ? "" : ",").Append(inv, $"\"{_phaseKeys[p]}\":{pmax:0.0000}");
                 first = false;
             }
 
@@ -986,12 +989,14 @@ namespace ClassicUO
                 }
 
                 sb.Append(inv, $"  controls (at report)     {controls}\n");
-                json.Append(inv, $"}},\"controls\":{controls}}}");
+                json.Append(inv, $"}},\"controls\":{controls}");
             }
             else
             {
-                json.Append("}}");
+                json.Append("}");
             }
+
+            json.Append(",\"phases_max\":{").Append(maxes).Append("}}");
 
             Log.Info(sb.ToString());
             Log.Info(json.ToString());
@@ -1010,9 +1015,9 @@ namespace ClassicUO
             return n;
         }
 
-        private static void Stats(float[] values, int n, float[] scratch, out double avg, out double p50, out double p95, out double p99)
+        private static void Stats(float[] values, int n, float[] scratch, out double avg, out double p50, out double p95, out double p99, out double max)
         {
-            avg = p50 = p95 = p99 = 0;
+            avg = p50 = p95 = p99 = max = 0;
 
             if (n == 0)
             {
@@ -1032,6 +1037,7 @@ namespace ClassicUO
             p50 = scratch[n / 2];
             p95 = scratch[(int)(n * 0.95)];
             p99 = scratch[(int)(n * 0.99)];
+            max = scratch[n - 1];
         }
 
         private static void StatsI(int[] values, int n, int[] scratch, out double avg, out int p50, out int p95, out int max)
