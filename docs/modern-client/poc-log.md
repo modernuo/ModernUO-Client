@@ -6324,3 +6324,13 @@ Base poc/modern-client 69e56394e. Wave A, agent A3 (A1: world-state switches, A2
 - **Effect on quiet-1108's recorded cost** (Legacy world_prepare +4-6 % at ls_z1): plausibly lower, not measured. The merged walk ran `SkipDynamic` on every list object it passed (three failing type tests, `GameEffect` a non-sealed base) at its start and at every list step; that is gone. Dev builds (the timing builds are CuoDevTools NativeAOT) also lose a per-`Next` shadow-cursor test and a static read per chunk in `MergeCells`, and `TileWalk` is one reference smaller. The final quiet pass measures it.
 - **Costs.** None (memory: the dev-only shadow list is gone; per-object fields unchanged).
 - **Jobs (submitted, not awaited; handoff cuo-poc-state/handoffs/t9-delete-a3.md).** Dev JIT build of fa28397ac (`scratchpad/t9-delete-a3/bin`), NativeAOT dev build (`aot-new`), base = the shared wave-A AOT build of 69e56394e. Gates at the defaults with every remaining checker and perf-15 part 2: bench-000568 (Gpu, uistate), bench-000569 (Legacy); pass line "T9A3 PASS". Allocations base vs new, handles and tour: bench-000570 (Gpu), bench-000571 (Legacy); expected equal. Golden base vs new (gtest, gls): bench-000572; expected "GOLDEN SAME". No timing (parked; the final quiet pass measures).
+## Renderer options (2026-11-10, `bg/renderer-options`)
+
+Base `bg/t9-wave-a` ff5cc065e. Owner decisions: the world renderer override is reachable from the game, the Legacy renderer is kept and renamed for players.
+
+- **Options menu.** General page, under the FPS options: "World renderer (takes effect on next start)" with Automatic (recommended) / GPU / Compatibility. Apply writes `world_renderer` (`auto`, `gpu`, `compatibility`) and saves settings.json only when it changed. No runtime switch outside `CUO_DEVTOOLS`.
+- **Rename.** Player-visible "Legacy" is "Compatibility". `ParseMode` accepts `legacy` and `compatibility` (either case); `-worldrenderer` too. Internal names (`WorldRendererMode.Legacy`, the `legacy` runtime renderer string, `[renderer]` log lines that scripts parse) are unchanged.
+- **Window title.** `[Compatibility renderer]` only with `CUO_DEVTOOLS`.
+- **Error box (forced gpu fails).** "The GPU renderer you selected could not start.", the reason on its own line, then how to recover (Automatic in Options, or `world_renderer` "auto" in settings.json). The log line no longer says "GPU world renderer".
+- **Tests.** `RendererSelectionTests`: each setting value (legacy/compatibility/auto/gpu), `SettingValue` round trip.
+- **Costs.** None.
