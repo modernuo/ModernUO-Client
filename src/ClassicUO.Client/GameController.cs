@@ -137,7 +137,7 @@ namespace ClassicUO
                 if (_waiter.Ready)
                 {
                     NetClient.MainThreadId = Environment.CurrentManagedThreadId;
-                    NetClient.SendQueuedWake = _waiter.Wake;
+                    Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
                 }
             }
 
@@ -1400,7 +1400,7 @@ namespace ClassicUO
         {
             Scene?.Dispose();
 
-            NetClient.SendQueuedWake = null;
+            Volatile.Write(ref NetClient.SendQueuedWake, null); // a captured wake after this is a no-op (Wake checks disposal)
             _waiter?.Dispose();
 
             base.OnExiting(sender, args);

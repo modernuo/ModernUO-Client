@@ -662,10 +662,13 @@ namespace ClassicUO.Network
                 }
             }
 
-            if (!dropped && SendQueuedWake != null && Environment.CurrentManagedThreadId != MainThreadId)
+            // event_loop: a plugin thread's send is flushed by the main loop, so end its wait now. Read once: OnExiting clears
+            // it from the main thread while a plugin thread may be here.
+            var wake = Volatile.Read(ref SendQueuedWake);
+
+            if (!dropped && wake != null && Environment.CurrentManagedThreadId != MainThreadId)
             {
-                // event_loop: a plugin thread's send is flushed by the main loop, so end its wait now
-                SendQueuedWake();
+                wake();
             }
 
             if (dropped)
