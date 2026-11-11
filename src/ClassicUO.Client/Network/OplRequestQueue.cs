@@ -29,9 +29,13 @@ namespace ClassicUO.Network
     /// <item>A serial is pending at most once. A sent serial is not sent again for a hover or gump request until
     /// <see cref="RetryMs"/> passed without an answer; a revision request for a revision other than the one last requested
     /// queues it again.</item>
-    /// <item>World's removal of the object (deleted, out of range) drops its request; an answer ends the in-flight state.</item>
+    /// <item>World's removal of the object (deleted, out of range) drops its request. An answer ends the in-flight state and
+    /// cancels a pending request it already satisfies (a hover one, or one for the answer's revision); a pending request for
+    /// another revision stays.</item>
     /// </list>
-    /// The rings and the entry table grow by doubling and are kept; draining allocates nothing. CUO_OPL_SPREAD_CHECK=1
+    /// A ring slot is live only while its entry is pending in that bucket with the slot's sequence number, so a removed or
+    /// moved request leaves a stale slot; a full ring drops its stale slots before it grows, and all rings are emptied when
+    /// nothing is pending. The rings and the entry table grow by doubling and are kept; draining allocates nothing. CUO_OPL_SPREAD_CHECK=1
     /// (developer builds, <see cref="OplSpreadCheck"/>) checks the sends against the requests.
     /// </summary>
     internal sealed class OplRequestQueue
@@ -47,13 +51,20 @@ namespace ClassicUO.Network
         {
             public uint Revision;
             public uint SentTick;
+            public uint Seq;
             public byte Bucket;
             public bool Pending;
             public bool HasRevision;
         }
 
+        private struct Slot
+        {
+            public uint Serial;
+            public uint Seq;
+        }
+
         private readonly Dictionary<uint, Entry> _entries = new Dictionary<uint, Entry>(1024);
-        private readonly uint[][] _rings = new uint[BucketCount][];
+        private readonly Slot[][] _rings = new Slot[BucketCount][];
         private readonly int[] _head = new int[BucketCount];
         private readonly int[] _count = new int[BucketCount];
         private readonly uint[] _batch = new uint[MaxPerPacket];
@@ -61,19 +72,37 @@ namespace ClassicUO.Network
         private uint _lastTick;
         private bool _started;
         private int _pending;
+        private uint _seq;
 
         /// <summary>The object's distance from the player in tiles, or -1 when unknown (bound once by PacketHandlers).</summary>
         public Func<uint, int> DistanceOf;
 
         /// <summary>Session counts: requests queued, merged into a pending or in-flight one, serials sent, packets handed to
-        /// the sink, pending requests dropped by a removal, stale ring slots skipped.</summary>
-        public long Queued, Merged, Sent, Packets, Dropped, Skipped;
+        /// the sink, pending requests dropped by a removal, pending requests an answer satisfied, stale ring slots skipped
+        /// or compacted away.</summary>
+        public long Queued, Merged, Sent, Packets, Dropped, Satisfied, Skipped;
 
         public OplRequestQueue()
         {
             for (int i = 0; i < BucketCount; i++)
             {
-                _rings[i] = new uint[i == FarBucket ? 1024 : 64];
+                _rings[i] = new Slot[i == FarBucket ? 1024 : 64];
+            }
+        }
+
+        /// <summary>Tests: the slots of all rings together.</summary>
+        internal int RingCapacity
+        {
+            get
+            {
+                int n = 0;
+
+                foreach (Slot[] ring in _rings)
+                {
+                    n += ring.Length;
+                }
+
+                return n;
             }
         }
 
@@ -115,9 +144,10 @@ namespace ClassicUO.Network
 
                     if (urgent && e.Bucket != UrgentBucket)
                     {
-                        // the old slot stays in its ring and is skipped there (its bucket no longer matches)
+                        // the old slot stays in its ring and is skipped there (its bucket and sequence no longer match)
                         e.Bucket = UrgentBucket;
-                        Push(UrgentBucket, serial);
+                        e.Seq = ++_seq;
+                        Push(UrgentBucket, serial, e.Seq);
                     }
 
                     Merged++;
@@ -125,7 +155,7 @@ namespace ClassicUO.Network
                     return false;
                 }
 
-                if (kind == OplRequestKind.Revision ? e.HasRevision && e.Revision == revision : now - e.SentTick < RetryMs)
+                if (kind == OplRequestKind.Revision ? e.HasRevision && SameRevision(e.Revision, revision) : now - e.SentTick < RetryMs)
                 {
                     Merged++;
 
@@ -145,23 +175,40 @@ namespace ClassicUO.Network
 
             e.Pending = true;
             e.Bucket = (byte) (urgent ? UrgentBucket : BucketFor(serial));
-            Push(e.Bucket, serial);
+            e.Seq = ++_seq;
+            Push(e.Bucket, serial, e.Seq);
             _pending++;
             Queued++;
 
             return true;
         }
 
-        /// <summary>The server answered for <paramref name="serial"/>: an in-flight request ends (a pending one stays).</summary>
-        public void Answered(uint serial)
+        /// <summary>The server answered for <paramref name="serial"/> with <paramref name="revision"/>: an in-flight request
+        /// ends; a pending one the answer satisfies (a hover or gump request, or one for that revision) is cancelled; a pending
+        /// one for another revision stays.</summary>
+        public void Answered(uint serial, uint revision)
         {
             ref Entry e = ref CollectionsMarshal.GetValueRefOrNullRef(_entries, serial);
 
-            if (!Unsafe.IsNullRef(ref e) && !e.Pending)
+            if (Unsafe.IsNullRef(ref e))
+            {
+                return;
+            }
+
+            if (!e.Pending)
             {
                 _entries.Remove(serial);
             }
+            else if (!e.HasRevision || SameRevision(e.Revision, revision))
+            {
+                _entries.Remove(serial);
+                _pending--;
+                Satisfied++;
+            }
         }
+
+        /// <summary>0xDC revisions may carry the 0x40000000 flag that the 0xD6 answer's lacks (ObjectPropertiesListManager.IsRevisionEquals).</summary>
+        public static bool SameRevision(uint a, uint b) => a == b || (a & ~0x40000000u) == (b & ~0x40000000u);
 
         /// <summary>World removed the object: its request is dropped.</summary>
         public void Remove(uint serial)
@@ -202,6 +249,13 @@ namespace ClassicUO.Network
             _tokens = Math.Min(cap, _tokens + perSecond * (dt / 1000.0));
 
             packets = 0;
+
+            if (_pending == 0)
+            {
+                // every slot left is stale
+                Array.Clear(_count);
+            }
+
             int n = 0;
             int sent = 0;
 
@@ -266,18 +320,19 @@ namespace ClassicUO.Network
 
         private bool TryPop(int bucket, uint now, out uint serial)
         {
-            uint[] ring = _rings[bucket];
+            Slot[] ring = _rings[bucket];
             int mask = ring.Length - 1;
 
             while (_count[bucket] != 0)
             {
-                serial = ring[_head[bucket]];
+                Slot slot = ring[_head[bucket]];
                 _head[bucket] = (_head[bucket] + 1) & mask;
                 _count[bucket]--;
+                serial = slot.Serial;
 
                 ref Entry e = ref CollectionsMarshal.GetValueRefOrNullRef(_entries, serial);
 
-                if (!Unsafe.IsNullRef(ref e) && e.Pending && e.Bucket == bucket)
+                if (IsLive(ref e, bucket, slot.Seq))
                 {
                     e.Pending = false;
                     e.SentTick = now;
@@ -294,24 +349,57 @@ namespace ClassicUO.Network
             return false;
         }
 
-        private void Push(int bucket, uint serial)
+        private static bool IsLive(ref Entry e, int bucket, uint seq) => !Unsafe.IsNullRef(ref e) && e.Pending && e.Bucket == bucket && e.Seq == seq;
+
+        // drops the stale slots of a ring in place, order kept (a write never passes the read position)
+        private void Compact(int bucket)
         {
-            uint[] ring = _rings[bucket];
+            Slot[] ring = _rings[bucket];
+            int mask = ring.Length - 1;
+            int head = _head[bucket];
+            int count = _count[bucket];
+            int w = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                Slot slot = ring[(head + i) & mask];
+
+                if (IsLive(ref CollectionsMarshal.GetValueRefOrNullRef(_entries, slot.Serial), bucket, slot.Seq))
+                {
+                    ring[(head + w) & mask] = slot;
+                    w++;
+                }
+            }
+
+            Skipped += count - w;
+            _count[bucket] = w;
+        }
+
+        private void Push(int bucket, uint serial, uint seq)
+        {
+            Slot[] ring = _rings[bucket];
 
             if (_count[bucket] == ring.Length)
             {
-                uint[] bigger = new uint[ring.Length * 2];
+                // a full ring first drops its stale slots; it grows only when more than half of it is live, so the live
+                // slots bound its size (at most 4x) and compaction stays rare
+                Compact(bucket);
 
-                for (int i = 0; i < _count[bucket]; i++)
+                if (_count[bucket] > ring.Length / 2)
                 {
-                    bigger[i] = ring[(_head[bucket] + i) & (ring.Length - 1)];
-                }
+                    Slot[] bigger = new Slot[ring.Length * 2];
 
-                _rings[bucket] = ring = bigger;
-                _head[bucket] = 0;
+                    for (int i = 0; i < _count[bucket]; i++)
+                    {
+                        bigger[i] = ring[(_head[bucket] + i) & (ring.Length - 1)];
+                    }
+
+                    _rings[bucket] = ring = bigger;
+                    _head[bucket] = 0;
+                }
             }
 
-            ring[(_head[bucket] + _count[bucket]) & (ring.Length - 1)] = serial;
+            ring[(_head[bucket] + _count[bucket]) & (ring.Length - 1)] = new Slot { Serial = serial, Seq = seq };
             _count[bucket]++;
         }
 

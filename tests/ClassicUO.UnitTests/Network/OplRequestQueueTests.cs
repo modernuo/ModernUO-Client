@@ -99,7 +99,7 @@ namespace ClassicUO.UnitTests.Network
             Drain(30);
             _sent.Should().Equal(7u, 7u);
 
-            _q.Answered(7);
+            _q.Answered(7, 6);
             _q.IsInFlight(7).Should().BeFalse();
             _q.Request(7, OplRequestKind.Revision, 7, 40).Should().BeTrue();
             Drain(50);
@@ -112,10 +112,93 @@ namespace ClassicUO.UnitTests.Network
             _q.Request(7, OplRequestKind.Revision, 5, 0);
             Drain(10);
             _q.Request(7, OplRequestKind.Revision, 6, 20);
-            _q.Answered(7);
+            _q.Answered(7, 5);
             _q.IsPending(7).Should().BeTrue();
             Drain(30);
             _sent.Should().Equal(7u, 7u);
+        }
+
+        [Fact]
+        public void An_Answer_Cancels_A_Pending_Request_It_Satisfies()
+        {
+            // sent for revision 5, notified of 6, and the answer already carries 6 (0xDC's 0x40000000 flag ignored)
+            _q.Request(7, OplRequestKind.Revision, 5, 0);
+            Drain(10);
+            _q.Request(7, OplRequestKind.Revision, 0x40000006, 20);
+            _q.Answered(7, 6);
+            _q.IsPending(7).Should().BeFalse();
+            _q.PendingCount.Should().Be(0);
+            _q.Satisfied.Should().Be(1);
+
+            // a hover request is satisfied by any answer
+            _q.Request(8, OplRequestKind.Hover, 0, 20);
+            _q.Answered(8, 3);
+            _q.PendingCount.Should().Be(0);
+
+            Drain(30);
+            _sent.Should().Equal(7u);
+        }
+
+        [Fact]
+        public void Enqueue_Remove_Cycles_Keep_The_Rings_Bounded()
+        {
+            int start = _q.RingCapacity;
+
+            for (uint i = 0; i < 200_000; i++)
+            {
+                uint s = 1 + i % 5000;
+                _distance[s] = (int) (i % 25);
+                _q.Request(s, OplRequestKind.Revision, i, i);
+
+                if (i % 3 == 0)
+                {
+                    // promotion leaves a stale slot in the distance ring
+                    _q.Request(s, OplRequestKind.Hover, 0, i);
+                }
+
+                _q.Remove(s);
+            }
+
+            _q.PendingCount.Should().Be(0);
+            _q.RingCapacity.Should().Be(start);
+
+            // the same serial queued again and again while pending once: one live slot, the rest compacted away
+            for (uint i = 0; i < 100_000; i++)
+            {
+                _q.Request(9, OplRequestKind.Revision, i, i);
+                _q.Remove(9);
+            }
+
+            _q.Request(9, OplRequestKind.Revision, 1, 0);
+            _q.RingCapacity.Should().Be(start);
+            Drain(10);
+            _sent.Should().Equal(9u);
+        }
+
+        [Fact]
+        public void Compaction_Keeps_The_Order_And_Sends_Each_Once()
+        {
+            // 3,000 far requests with every other one removed: the far ring (1,024) compacts and grows in between
+            for (uint s = 1; s <= 3000; s++)
+            {
+                _q.Request(s, OplRequestKind.Revision, 1, 0);
+
+                if (s % 2 == 0)
+                {
+                    _q.Remove(s);
+                }
+            }
+
+            Drain(0);
+            Drain(1000);
+            var expected = new List<uint>();
+
+            for (uint s = 1; s <= 3000; s += 2)
+            {
+                expected.Add(s);
+            }
+
+            _sent.Should().Equal(expected);
         }
 
         [Fact]
@@ -330,8 +413,8 @@ namespace ClassicUO.UnitTests.Network
 
                 if (frame % 3 == 0)
                 {
-                    q.Answered(hovered);
-                    OplSpreadCheck.Answered(hovered);
+                    q.Answered(hovered, 0);
+                    OplSpreadCheck.Answered(hovered, 0);
                 }
 
                 OplSpreadCheck.FrameEnd(_now, packets, sent, true, 600);
@@ -375,6 +458,21 @@ namespace ClassicUO.UnitTests.Network
             OplSpreadCheck.Demand(3, OplRequestKind.Revision, 2, 10);
             OplSpreadCheck.Sent(3, 10);
             OplSpreadCheck.Duplicates.Should().Be(1);
+
+            // an answer that already carries the pending revision satisfies it: a later send is redundant
+            OplSpreadCheck.Demand(5, OplRequestKind.Revision, 1, 0);
+            OplSpreadCheck.Sent(5, 0);
+            OplSpreadCheck.Demand(5, OplRequestKind.Revision, 2, 10);
+            OplSpreadCheck.Answered(5, 2);
+            OplSpreadCheck.Satisfied.Should().Be(1);
+            OplSpreadCheck.Sent(5, 20);
+            OplSpreadCheck.Unrequested.Should().Be(2);
+
+            // hover latency counts from the hover that promoted a waiting revision request
+            OplSpreadCheck.Demand(6, OplRequestKind.Revision, 1, 0);
+            OplSpreadCheck.Demand(6, OplRequestKind.Hover, 0, 3000);
+            OplSpreadCheck.Sent(6, 3010);
+            OplSpreadCheck.MaxUrgentLatencyMs.Should().Be(10);
 
             // never sent
             OplSpreadCheck.Demand(4, OplRequestKind.Revision, 1, 0);

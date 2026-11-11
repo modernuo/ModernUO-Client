@@ -12,7 +12,8 @@ namespace ClassicUO.Network
     /// (<c>opl_request_budget</c> on: <see cref="OplRequestQueue"/>; off: the old list). Every request the old path would
     /// send (each AddMegaClilocRequest) opens a demand unless one is open: pending, or sent and unanswered (a hover or gump
     /// request within <see cref="OplRequestQueue.RetryMs"/>, a revision request for the same revision). Each demand must be
-    /// sent once within CUO_OPL_SPREAD_CHECK_SECONDS (default 120) unless World removes the object first. Logs
+    /// sent once within CUO_OPL_SPREAD_CHECK_SECONDS (default 120) unless World removes the object or an answer satisfies it
+    /// first (then a send is reported as unrequested). Logs
     /// <c>[opl-spread-check] miss|duplicate|unrequested</c> lines (the first 200) and a summary every 5 s with the switch,
     /// the counts and the most 0xD6 packets and serials sent in one frame.
     /// </summary>
@@ -23,6 +24,7 @@ namespace ClassicUO.Network
         private struct State
         {
             public uint DemandTick;
+            public uint UrgentTick;
             public uint SentTick;
             public uint Revision;
             public bool Pending;
@@ -49,7 +51,7 @@ namespace ClassicUO.Network
         private static uint s_nextSummary;
         private static int s_logged;
 
-        public static long Demands, Merged, Sends, Duplicates, Unrequested, Dropped, Misses;
+        public static long Demands, Merged, Sends, Duplicates, Unrequested, Dropped, Satisfied, Misses;
         public static int MaxFramePackets, MaxFrameSerials, FramesSending;
         public static uint MaxLatencyMs, MaxUrgentLatencyMs;
 
@@ -60,7 +62,7 @@ namespace ClassicUO.Network
             s_states.Clear();
             s_nextSummary = 0;
             s_logged = 0;
-            Demands = Merged = Sends = Duplicates = Unrequested = Dropped = Misses = 0;
+            Demands = Merged = Sends = Duplicates = Unrequested = Dropped = Satisfied = Misses = 0;
             MaxFramePackets = MaxFrameSerials = FramesSending = 0;
             MaxLatencyMs = MaxUrgentLatencyMs = 0;
         }
@@ -79,7 +81,12 @@ namespace ClassicUO.Network
                         st.HasRevision = true;
                     }
 
-                    st.Urgent |= urgent;
+                    if (urgent && !st.Urgent)
+                    {
+                        // the hover latency counts from the hover, not from the revision request it promoted
+                        st.Urgent = true;
+                        st.UrgentTick = now;
+                    }
                     s_states[serial] = st;
                     Merged++;
 
@@ -105,6 +112,7 @@ namespace ClassicUO.Network
             st.Pending = true;
             st.Urgent = urgent;
             st.DemandTick = now;
+            st.UrgentTick = now;
             st.MissLogged = false;
             s_states[serial] = st;
             Demands++;
@@ -134,9 +142,9 @@ namespace ClassicUO.Network
                     MaxLatencyMs = latency;
                 }
 
-                if (st.Urgent && latency > MaxUrgentLatencyMs)
+                if (st.Urgent && now - st.UrgentTick > MaxUrgentLatencyMs)
                 {
-                    MaxUrgentLatencyMs = latency;
+                    MaxUrgentLatencyMs = now - st.UrgentTick;
                 }
             }
 
@@ -145,11 +153,24 @@ namespace ClassicUO.Network
             s_states[serial] = st;
         }
 
-        public static void Answered(uint serial)
+        /// <summary>An answer with <paramref name="revision"/>: ends the in-flight state and satisfies a pending demand for a
+        /// hover or gump, or for that revision (a later send of it is reported as unrequested); a pending demand for another
+        /// revision stays.</summary>
+        public static void Answered(uint serial, uint revision)
         {
-            if (s_states.TryGetValue(serial, out State st) && !st.Pending)
+            if (!s_states.TryGetValue(serial, out State st))
+            {
+                return;
+            }
+
+            if (!st.Pending)
             {
                 s_states.Remove(serial);
+            }
+            else if (!st.HasRevision || OplRequestQueue.SameRevision(st.Revision, revision))
+            {
+                s_states.Remove(serial);
+                Satisfied++;
             }
         }
 
@@ -223,7 +244,7 @@ namespace ClassicUO.Network
             }
 
             Log.Info(
-                $"[opl-spread-check] opl_request_budget={budget} ({(budget > 0 ? "on" : "off")}), demands {Demands}, merged {Merged}, sends {Sends}, duplicates {Duplicates}, unrequested {Unrequested}, dropped {Dropped}, misses {Misses}, pending {pending} (oldest {oldest} ms), max/frame packets {MaxFramePackets} serials {MaxFrameSerials}, frames sending {FramesSending}, max latency {MaxLatencyMs} ms (hover/gump {MaxUrgentLatencyMs} ms)"
+                $"[opl-spread-check] opl_request_budget={budget} ({(budget > 0 ? "on" : "off")}), demands {Demands}, merged {Merged}, sends {Sends}, duplicates {Duplicates}, unrequested {Unrequested}, dropped {Dropped}, satisfied {Satisfied}, misses {Misses}, pending {pending} (oldest {oldest} ms), max/frame packets {MaxFramePackets} serials {MaxFrameSerials}, frames sending {FramesSending}, max latency {MaxLatencyMs} ms (hover/gump {MaxUrgentLatencyMs} ms)"
             );
         }
 

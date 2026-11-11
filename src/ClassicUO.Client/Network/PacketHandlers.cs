@@ -5104,11 +5104,11 @@ namespace ClassicUO.Network
 
             uint revision = p.ReadUInt32BE();
 
-            Handler._oplQueue?.Answered(serial);
+            Handler._oplQueue?.Answered(serial, revision);
 #if CUO_DEVTOOLS
             if (OplSpreadCheck.On)
             {
-                OplSpreadCheck.Answered(serial);
+                OplSpreadCheck.Answered(serial, revision);
             }
 #endif
 
