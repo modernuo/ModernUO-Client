@@ -527,7 +527,7 @@ namespace ClassicUO.UnitTests.Ecs
         [MemberData(nameof(LegacyItemCases))]
         public void Legacy_Item_Missing_Art_Draws_The_Placeholder(string name) => Legacy_Item_Resolve_Makes_The_Views_Batcher_Calls(name);
 
-        // gpu_ecs_sprites: missing art draws Arts.GetArt's placeholder (sprite 0) like the view, less the offset its own size
+        // the Gpu extract: missing art draws Arts.GetArt's placeholder (sprite 0) like the view, less the offset its own size
         // gives ((46 >> 1) - 22 = 1, 50 - 44 = 6); a stack draws the placeholder twice
         [Theory]
         [InlineData("missing", 1)]

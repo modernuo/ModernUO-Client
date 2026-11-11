@@ -274,8 +274,7 @@ namespace ClassicUO.Game
 
             // The mirror bit is history (GetAnimDirection keeps it for directions 3 and 7). The Mobile holds it: MobileView
             // advances it in capture mode, the Gpu world's ECS sprite path writes the ECS result back. One history, so
-            // switching gpu_ecs_sprites mid-session can't start from a stale bit. GetAnimDirection is idempotent, so
-            // sampling after the view drew (EcsParity) gives the same selection.
+            // switching renderers mid-session can't start from a stale bit.
             AnimStateFlags f = m.ViewFlipped ? AnimStateFlags.Mirror : 0;
 
             if (m.AnimationFromServer) f |= AnimStateFlags.FromServer;

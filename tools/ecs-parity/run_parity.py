@@ -1,7 +1,7 @@
 # W3 parity runs (docs/modern-client/testing/ecs-animation.md).
 # Logs in with a throwaway settings.json (password from CUO_TEST_PASSWORD, written encrypted, never on a command line),
-# runs an -ecsdriver scenario with CUO_ECS_PARITY and -ecscheck, closes the client, copies the log to --out and deletes
-# the temp folder.
+# runs an -ecsdriver scenario with -ecscheck (and CUO_ECS_PARITY, read only by builds before gpu_ecs_sprites was deleted),
+# closes the client, copies the log to --out and deletes the temp folder.
 #
 #   set CUO_TEST_PASSWORD=...   (PowerShell: $env:CUO_TEST_PASSWORD = '...')
 #   python tools/ecs-parity/run_parity.py --exe bin/Release/net10.0/cuo.exe --script tools/ecs-parity/bank.txt --out <scratch>/bank.log
@@ -12,7 +12,7 @@ p.add_argument('--exe', required=True)
 p.add_argument('--script', required=True, help='-ecsdriver scenario file')
 p.add_argument('--out', required=True, help='where the client log is copied')
 p.add_argument('--user', default='kbatman3')
-p.add_argument('--parity', default='1', help='CUO_ECS_PARITY: compare every Nth Gpu frame')
+p.add_argument('--parity', default='1', help='CUO_ECS_PARITY (builds before gpu_ecs_sprites was deleted): compare every Nth Gpu frame')
 p.add_argument('--ecscheck', default='120', help='-ecscheck interval in frames')
 p.add_argument('--timeout', type=float, default=240)
 p.add_argument('--pack', default=r'C:\Repositories\uo-packs\classic-1.0')

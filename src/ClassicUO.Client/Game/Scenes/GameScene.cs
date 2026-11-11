@@ -423,7 +423,7 @@ namespace ClassicUO.Game.Scenes
             );
         }
 
-        // the light list so far (EcsParity compares the lights the ECS sprite path adds with the view's)
+        // the light list so far (LegacyEcsParity compares the lights the sink adds with the view's)
         internal int LightCount => _lightCount;
 
         internal (byte Id, ushort Color, bool IsHue, int X, int Y) LightAt(int i) =>

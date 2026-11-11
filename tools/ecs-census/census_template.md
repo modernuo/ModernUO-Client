@@ -90,7 +90,7 @@ Classes:
 | `Layer` | **A** cold | for a corpse it is the death direction (`ProcessAnimation`) |
 | `Price` | **A** cold | vendor list |
 | `IsDamageable` | **A** cold | |
-| `LightID` | **A** hot | the lights rule reads it (`CUO_ECS_PARITY`) |
+| `LightID` | **A** hot | the lights rule reads it |
 | `UsedLayer` | **A** cold | corpse flag (running flag of the death direction) |
 | `IsMulti` (`_isMulti`) | **A** cold | multi flag; the setter resets `MultiInfo`, `MultiDistanceBonus` |
 | `DisplayedGraphic` (`_displayedGraphic`) | A cold | display override; **no world writer exists** (section 3: the only setters are on `ItemHold`, which has its own field) |

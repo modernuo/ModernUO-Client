@@ -108,7 +108,7 @@ namespace ClassicUO.Configuration
         // (GameSceneGpuPrepare). Off = the full walk, as Legacy does it.
         [JsonPropertyName("gpu_prepare_skip_baked")] public bool GpuPrepareSkipBaked { get; set; } = true;
 
-        // Gpu world renderer, with gpu_prepare_skip_baked and gpu_ecs_sprites: settled ground items' sprites are cached per
+        // Gpu world renderer, with gpu_prepare_skip_baked: settled ground items' sprites are cached per
         // chunk and their tiles left out of the walk (W4, GameSceneGpuItemCache). Off = every item walked and extracted.
         [JsonPropertyName("gpu_prepare_item_cache")] public bool GpuPrepareItemCache { get; set; } = true;
 
@@ -125,10 +125,6 @@ namespace ClassicUO.Configuration
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
-
-        // Gpu world renderer: mobiles' dynamic sprites come from the ECS (MobileAnimationSystem + MobileSpriteExtract)
-        // instead of capturing MobileView.Draw. Off = the capture, the parity yardstick (EcsParity).
-        [JsonPropertyName("gpu_ecs_sprites")] public bool GpuEcsSprites { get; set; } = true;
 
         // T7b (ecs-transition-plan.md, T7): the Legacy world draws mobiles and world items from the ECS extract (select, then
         // LegacySpriteResolve to the FNA atlas through the Art/Animations loaders) at the render list's view.Draw position,

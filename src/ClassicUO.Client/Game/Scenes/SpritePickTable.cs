@@ -13,8 +13,8 @@ namespace ClassicUO.Game.Scenes
     /// object. Picking (MobileView/ItemView.CheckMouseSelection) runs in the list fill, before the frame's draw, so it reads
     /// the previous draw's state: a mobile's frame rectangle (FrameInfo) and mirror bit, an art item's drawn graphic and
     /// draw offset (the art entry's Width/Height), a corpse's mirror bit. Filled by the Legacy sink (<c>legacy_ecs_sprites</c>)
-    /// and the Gpu world's extract path (<c>gpu_ecs_sprites</c>); objects the last draw didn't record (drawn by their view,
-    /// served from the Gpu item cache, drawn on an EcsParity frame, not drawn) and items whose graphic changed since read the
+    /// and the Gpu world's extracts; objects the last draw didn't record (drawn by their view,
+    /// served from the Gpu item cache, not drawn) and items whose graphic changed since read the
     /// GameObject side effects as before, which the draws still write: the mirror bit is GetAnimDirection history the
     /// animation system reads, FrameInfo is read by the player's circle and the drag select, the art entry by statics.
     /// Two buffers: a draw writes one and <see cref="Commit"/> makes it the one read, so a draw that isn't committed (the
