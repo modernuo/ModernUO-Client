@@ -27,7 +27,8 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 
 | What | Where | Estimate | Status |
 |---|---|---|---|
-| Pool `Item`s entering range | `World.GetOrCreateItem` (280 B each) | ~4.3 MB per 15 s of ls_walk | open |
+| Pool `Item`s entering range | `World.GetOrCreateItem` (280 B each) | ~4.3 MB per 15 s of ls_walk | switch `item_pool` (default off, `bg/item-pool`); alloc jobs pending, then flip |
+| Pre-size the item pool's queue, or prefill the pool at login | `ItemPool` (`Queue<Entry>` grows by doubling to 8,192 entries, a 128 KB LOH array once) | one LOH allocation; first-walk reuse | open (after the item-pool alloc results) |
 | Measure text without rasterizing for the `RenderedText` atlas path | RenderedText / FontsLoader | part of ~40 % of ls_walk allocation | open |
 | Presize or pool `GpuItemCache` arrays | `Array.Resize` | ~1 MB per 15 s Gpu ls_walk | open (signatures go with T9) |
 | Cache `ClilocLoader.Translate` + `CapitalizeAllWords` for empty args | ClilocLoader | ~2.2 MB per 15 s ls_walk | open |

@@ -168,6 +168,39 @@ namespace ClassicUO.Game
 
         internal Chunk[] SpareChunkSlots => _spareSlots;
 
+        /// <summary>item_pool: the destroyed items World dropped, reused by <see cref="GetOrCreateItem(uint, out bool)"/>. Kept
+        /// across <see cref="Clear"/>, released by <see cref="ReleasePools"/>.</summary>
+        internal ItemPool ItemPool => _itemPool ??= new ItemPool(this);
+
+        // created at the first use with the switch on: with item_pool off the World allocates nothing for it
+        private ItemPool _itemPool;
+
+        /// <summary>Tests: whether this World created its pool.</summary>
+        internal bool ItemPoolCreated => _itemPool != null;
+
+        /// <summary>Tests: the switch for this World (null: the <c>item_pool</c> setting, read once at startup).</summary>
+        internal bool? ItemPoolOverride;
+
+        internal bool ItemPoolOn => ItemPoolOverride ?? ItemPool.SettingOn;
+
+        // every removal of a destroyed item from Items: with item_pool on, the item is offered to the pool
+        private void DropItem(uint serial)
+        {
+            if (!ItemPoolOn)
+            {
+                Items.Remove(serial);
+
+                return;
+            }
+
+            Item item = Items.Get(serial);
+
+            if (Items.Remove(serial) && item.IsDestroyed)
+            {
+                ItemPool.Offer(item);
+            }
+        }
+
         /// <summary>MapWarmup filled this World's pools for the current login (World.Clear re-arms it).</summary>
         internal bool WarmupDone;
 
@@ -175,6 +208,11 @@ namespace ClassicUO.Game
         /// keeps its chunks or map objects alive.</summary>
         public void ReleasePools()
         {
+            if (_itemPool != null || ItemPoolOn)
+            {
+                ItemPool.Close();
+            }
+
             ChunkPool.Close();
             MapRecycler.Close();
             _spareSlots = null;
@@ -764,10 +802,15 @@ namespace ClassicUO.Game
             {
                 for (int i = 0; i < _toRemove.Count; i++)
                 {
-                    Items.Remove(_toRemove[i]);
+                    DropItem(_toRemove[i]);
                 }
 
                 _toRemove.Clear();
+            }
+
+            if (ItemPoolOn)
+            {
+                ItemPool.Commit(Time.Ticks);
             }
 
             if (ActiveCheck)
@@ -822,7 +865,7 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < _toRemove.Count; i++)
             {
-                Items.Remove(_toRemove[i]);
+                DropItem(_toRemove[i]);
             }
 
             _toRemove.Clear();
@@ -983,15 +1026,26 @@ namespace ClassicUO.Game
 
             if (item != null && item.IsDestroyed)
             {
-                Items.Remove(serial);
+                DropItem(serial);
                 item = null;
             }
 
             isNew = item == null;
 
-            if (isNew /*|| item.IsDestroyed*/)
+            if (isNew)
             {
-                item = Item.Create(this, serial);
+                // item_pool: a reused item comes back reset to a new Item's state
+                item = ItemPoolOn ? ItemPool.Take(Time.Ticks) : null;
+
+                if (item != null)
+                {
+                    item.Serial = serial;
+                }
+                else
+                {
+                    item = Item.Create(this, serial);
+                }
+
                 Items.Add(item);
             }
 
@@ -1135,7 +1189,7 @@ namespace ClassicUO.Game
 
             if (forceRemove)
             {
-                Items.Remove(serial);
+                DropItem(serial);
             }
         }
 
@@ -1440,6 +1494,7 @@ namespace ClassicUO.Game
             MessageManager.PromptData = default;
             _effectManager.Clear();
             _toRemove.Clear();
+            _itemPool?.ClearPending();
 
             ClearActiveItems();
             _destroyedItems.Clear();

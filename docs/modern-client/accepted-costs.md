@@ -36,6 +36,7 @@ Columns: change (commit), cost, what it buys, revisit idea. "After-T9 pass" mean
 | Change | Cost | Buys | Revisit |
 |---|---|---|---|
 | T4 thin handles | ~+32 B per Item (16 B Friflo handle + fields), ~0.8 MB at 25k items | handle-based ECS access | shrinks when T9 deletes cached fields |
+| `item_pool` (`bg/item-pool`, default off; cost applies once on) | pool cap 8,192 items: worst case ~2.3 MB of retired items (280 B each) + 128 KB queue array; items wait 2 s (quarantine) before reuse, so the pool also holds them ~2 s longer than before; +1 B per Item (`InItemPool`) | ls_walk item allocation (~4.3 MB per 15 s) and its gen0 share; alloc results pending | lower the cap to the measured peak; prefill at login |
 | T6b tile index | `TNext`/`TPrevious` 16 B per item, mobile and effect, now always null (~0.5 MB at 30k) | - (left over) | goes with T9: list-object base class off dynamics (own slice after wave B; also folds in dead `Mobile.FindChair` branch) |
 | tile-head (1150d9b3a) / tile-index-2 (8b1f355cd) | ~544 B per chunk (`_heads`), <= ~0.3 MB at 300 chunks; 8 B per chunk occupancy mask | O(1) head; bit test per tile | after-T9 pass |
 | T9 child-list slice B | `LinkedObject` 24 B per object on Item/Mobile (2-5 MB) | - | revisited (eb0f70ed0): moved off `BaseGameObject`, ~1.5 MB saved |

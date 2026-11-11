@@ -521,6 +521,7 @@ namespace ClassicUO.Game.GameObjects
             }
 
             msg.Owner = this;
+            msg.OwnerIncarnation = Incarnation;
             TextContainer.Add(msg);
 
             if (!InTextOwners && this is Entity entity)
