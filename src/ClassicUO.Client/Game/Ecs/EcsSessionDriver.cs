@@ -632,7 +632,6 @@ namespace ClassicUO.Game
                     return true;
 
                 case "parity":
-                    Scenes.LegacyEcsParity.Summary();
                     Scenes.SpritePickTable.Summary();
 
                     return false;
@@ -1180,14 +1179,6 @@ namespace ClassicUO.Game
 
                     return false;
 
-                // legacysprites on|off|default: legacy_ecs_sprites for this session (LegacySpriteSink.Override): the Legacy
-                // world's mobiles and items from the sink or their views (T9 golden captures of both paths)
-                case "legacysprites" when args.Length > 0:
-                    LegacySpriteSink.Override = args[0] switch { "on" => true, "off" => false, _ => null };
-                    Log.Info($"[ECS] driver: legacy_ecs_sprites override {args[0]}");
-
-                    return false;
-
                 // logout: drop the socket, then swap to the login scene (World.Clear) and exit; log back in with a new process
                 case "logout":
                     ReleaseMouse();
@@ -1199,7 +1190,6 @@ namespace ClassicUO.Game
                 case "quit":
                     ReleaseMouse();
                     world.Ecs.RunCheck(true);
-                    Scenes.LegacyEcsParity.Summary();
                     Scenes.SpritePickTable.Summary();
                     Client.Game.Exit();
 
