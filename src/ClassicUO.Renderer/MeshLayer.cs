@@ -240,7 +240,7 @@ namespace ClassicUO.Renderer
 
         /// <summary>A key for <see cref="SetHue(int, float, float, long)"/>: never 0 for an epoch other than 0.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static long HueKey(int epoch, ushort hue) => ((long)(uint)epoch << 16) | hue;
+        public static long HueKey(int epoch, ushort graphic, ushort hue) => ((long)(uint)epoch << 32) | ((long)graphic << 16) | hue;
 
         /// <summary>This frame's visible index data (6 per visible sprite).</summary>
         public ReadOnlySpan<short> VisibleIndices => _visibleIndexData.AsSpan(0, VisibleSpriteCount * 6);

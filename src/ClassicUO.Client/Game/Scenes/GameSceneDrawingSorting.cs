@@ -576,9 +576,9 @@ namespace ClassicUO.Game.Scenes
             ushort objHue = obj.Hue;
             var source = new SceneMeshHue(this, obj, objHue);
 
-            // mesh_hue_on_change: the sprite keeps its vertex hue while the frame-wide inputs (epoch) and the object's hue
-            // are those it was computed from
-            if (MeshHueEpoch.Apply(layer, obj.MeshSpriteIndex, _meshHueOnChange, _meshHueEpoch.Epoch, objHue, ref source))
+            // mesh_hue_on_change: the sprite keeps its vertex hue while the frame-wide inputs (epoch) and the object's graphic
+            // (partial-hue flag; a season swap changes it in place) and hue are those it was computed from
+            if (MeshHueEpoch.Apply(layer, obj.MeshSpriteIndex, _meshHueOnChange, _meshHueEpoch.Epoch, obj.Graphic, objHue, ref source))
             {
 #if CUO_DEVTOOLS
                 if (_meshHueCheck)

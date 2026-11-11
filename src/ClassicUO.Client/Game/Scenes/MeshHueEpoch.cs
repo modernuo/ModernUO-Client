@@ -14,8 +14,9 @@ namespace ClassicUO.Game.Scenes
     /// <summary>
     /// mesh_hue_on_change: the frame-wide inputs of a meshed sprite's hue (Legacy chunk meshes). <see cref="Epoch"/> moves
     /// when one of them changes; a sprite whose <see cref="Renderer.MeshLayer.HueKeyAt"/> holds this epoch and its object's
-    /// hue keeps its vertex hue without a recompute. The per-object inputs that stay out of the key (partial-hue flag,
-    /// stretched land) only change with the graphic or the land's geometry, which rebuild the chunk mesh (keys reset).
+    /// graphic and hue keeps its vertex hue without a recompute. The graphic is in the key because it can change in place
+    /// without a mesh rebuild (World.ChangeSeason, Static.SetGraphic) and selects the partial-hue flag. Stretched land
+    /// changes only with the land's geometry, which rebuilds the chunk mesh (keys reset).
     /// </summary>
     internal sealed class MeshHueEpoch
     {
@@ -54,17 +55,18 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>
         /// Sets the sprite's vertex hue from <paramref name="source"/>: every call with <paramref name="onChange"/> off; with it
-        /// on only when the sprite's key is not this epoch and <paramref name="objHue"/>. Returns true when the hue was kept.
+        /// on only when the sprite's key is not this epoch, <paramref name="objGraphic"/> and <paramref name="objHue"/>.
+        /// Returns true when the hue was kept.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool Apply<T>(MeshLayer layer, int index, bool onChange, int epoch, ushort objHue, ref T source)
+        public static bool Apply<T>(MeshLayer layer, int index, bool onChange, int epoch, ushort objGraphic, ushort objHue, ref T source)
             where T : struct, IMeshHueSource
         {
             float hueX, hueY;
 
             if (onChange)
             {
-                long key = MeshLayer.HueKey(epoch, objHue);
+                long key = MeshLayer.HueKey(epoch, objGraphic, objHue);
 
                 if (layer.HueKeyAt(index) == key)
                 {
