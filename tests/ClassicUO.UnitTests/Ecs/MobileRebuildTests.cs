@@ -567,7 +567,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             var owner = new Mobile(world, MOBILE);
-            var mount = new Item(world) { Serial = 0x4000_0001, Graphic = MOUNT };
+            var mount = new Item(world) { Serial = 0x4000_0001 };
+            mount.TestSetGraphic(MOUNT);
             mount.TestSetLayer(Layer.Mount);
             owner.Preview = new PreviewEquipment();
             owner.Preview.Wear(mount);
@@ -596,14 +597,16 @@ namespace ClassicUO.UnitTests.Ecs
 
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse("no mount item");
 
-            var tiller = new Item(world) { Serial = 0x4000_0001, Graphic = TILLER };
+            var tiller = new Item(world) { Serial = 0x4000_0001 };
+            tiller.TestSetGraphic(TILLER);
             tiller.TestSetLayer(Layer.Mount);
             m.Preview = new PreviewEquipment();
             m.Preview.Wear(tiller);
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse("a boat's tiller");
 
             var m2 = new Mobile(world, MOBILE + 1);
-            var horse = new Item(world) { Serial = 0x4000_0002, Graphic = MOUNT };
+            var horse = new Item(world) { Serial = 0x4000_0002 };
+            horse.TestSetGraphic(MOUNT);
             horse.TestSetLayer(Layer.Mount);
             m2.Preview = new PreviewEquipment();
             m2.Preview.Wear(horse);
@@ -615,7 +618,7 @@ namespace ClassicUO.UnitTests.Ecs
             _tiles[MOUNT].AnimID = 0;
             MobileAnimationSystem.IsMounted(m2, _tiles).Should().BeTrue("the Mounts table gives the body");
 
-            horse.Graphic = 0x7FFF;
+            horse.TestSetGraphic(0x7FFF);
             MobileAnimationSystem.IsMounted(m2, _tiles).Should().BeTrue("a graphic past the tiledata reads AnimID 0; the item graphic is the body");
 
             world.Clear();
@@ -627,7 +630,9 @@ namespace ClassicUO.UnitTests.Ecs
             var world = new World();
             var m = new Mobile(world, MOBILE);
             m.Preview = new PreviewEquipment();
-            var zero = new Item(world) { Serial = 0, Graphic = MOUNT };
+            var zero = new Item(world) { Serial = 0 };
+            zero.TestSetGraphic(MOUNT);
+
             zero.TestSetLayer(Layer.Mount);
             m.Preview.Wear(zero);
 

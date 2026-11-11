@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using System;
 using System.IO;
 using ClassicUO.Assets;
@@ -229,30 +230,61 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // season (Static.UpdateGraphicBySeason) and Static.SetGraphic: the Graphic setter notes the chunk
             var map = new MapT(_world, 0, 4, 4);
             map.LoadEmptyChunkForTest(0, 0);
-            var book = new Item(_world) { Graphic = Plain, X = 7, Y = 7, Z = 20 };
+            var book = new Item(_world) { X = 7, Y = 7, Z = 20 };
+            book.TestSetGraphic(Plain);
             map.GetChunk(7, 7, false).AddGameObject(book, 7, 7);
 
             Update(map, 6, 6, 0).Should().BeTrue();
             AssertOutside();
 
-            book.Graphic = Plain; // unchanged: no recompute
+            book.TestSetGraphic(Plain); // unchanged: no recompute
             Update(map, 6, 6, 0).Should().BeFalse();
 
-            book.Graphic = Roof;
+            book.TestSetGraphic(Roof);
             map.DecisionDirty.Should().BeTrue();
             Update(map, 6, 6, 0).Should().BeTrue();
             AssertHidden(20);
 
             // a mobile's body change is not an input
-            var mobile = new Mobile(_world) { Graphic = 0x190, X = 7, Y = 7, Z = 0 };
+            var mobile = new Mobile(_world) { X = 7, Y = 7, Z = 0 };
+            mobile.TestSetGraphic(0x190);
+
             map.GetChunk(7, 7, false).AddGameObject(mobile, 7, 7);
             Update(map, 6, 6, 0);
-            mobile.Graphic = 0x191;
+            mobile.TestSetGraphic(0x191);
             map.DecisionDirty.Should().BeFalse();
         }
 
         [Fact]
+        public void A_Funnel_Graphic_Change_Of_A_Placed_Item_Recomputes()
+        {
+            // T9 S9: the record is the item's graphic; the operation notes the in-place change (Entity.GraphicCommitted), as
+            // the removed setter did. 0xBF/0x1B (FillSpellbook) on a ground book
+            const uint Book = 0x4000_0B00;
+            var map = new MapT(_world, 0, 4, 4);
+            map.LoadEmptyChunkForTest(0, 0);
+            _world.Writer.FillSpellbook(Book, Plain, 0, 0);
+            Item book = _world.Items.Get(Book);
+            book.X = 7;
+            book.Y = 7;
+            book.Z = 20;
+            map.GetChunk(7, 7, false).AddGameObject(book, 7, 7);
+
+            Update(map, 6, 6, 0).Should().BeTrue();
+            AssertOutside();
+
+            _world.Writer.FillSpellbook(Book, Plain, 0, 0); // unchanged: no recompute
+            Update(map, 6, 6, 0).Should().BeFalse();
+
+            _world.Writer.FillSpellbook(Book, Roof, 0, 0);
+            map.DecisionDirty.Should().BeTrue();
+            Update(map, 6, 6, 0).Should().BeTrue();
+            AssertHidden(20);
+        }
+
+        [Fact]
         public void InvalidateDecision_Recomputes()
+
         {
             // World.ChangeSeason calls it after swapping the graphics
             var map = new MapT(_world, 0, 4, 4);

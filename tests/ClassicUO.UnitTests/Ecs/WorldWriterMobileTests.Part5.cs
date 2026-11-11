@@ -22,7 +22,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void OldEnterWorld(Mobile m, ushort graphic, ushort x, ushort y, sbyte z, Direction dir)
         {
-            m.Graphic = graphic;
+            m.TestSetGraphic(graphic);
             OldCheckGraphicChange(m);
             m.SetInWorldTile(x, y, z);
             m.TestSetDirection(dir);
@@ -370,7 +370,8 @@ namespace ClassicUO.UnitTests.Ecs
 
                 foreach (ushort g in new ushort[] { 0x25E, 0x3DB, 0x190 })
                 {
-                    Pair(() => { a.Graphic = g; OldCheckGraphicChange(a); oldWorld.Ecs.Sync(a); }, () => newWorld.Writer.SetMobileGraphic(b, g, checkBody: true));
+                    Pair(() => { a.TestSetGraphic(g); OldCheckGraphicChange(a); oldWorld.Ecs.Sync(a); }, () => newWorld.Writer.SetMobileGraphic(b, g, checkBody: true));
+
                     AssertSameWorld(oldWorld, newWorld);
                 }
             }
@@ -404,7 +405,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (Mobile s in new[] { a, b })
             {
-                s.Graphic = 0x190;
+                s.TestSetGraphic(0x190);
                 s.TestSetDirection(Direction.East);
                 s.X = 1000;
                 s.Y = 1000;
@@ -486,7 +487,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = BuildRemove(start, out lootPlacement);
             Item chest = world.GetOrCreateItem(CHEST);
-            chest.Graphic = 0xE40;
+            chest.TestSetGraphic(0xE40);
             chest.SetInWorldTile(1003, 1000, 0);
             Item coin = world.Writer.UpsertWorldItem(COIN, 0xEED, 0, 5, 1003, 1000, 0, 0, 0, 0, 0, out _, out coinPlacement);
             coin.TestSetContainer(CHEST);
@@ -626,8 +627,8 @@ namespace ClassicUO.UnitTests.Ecs
             Pair(() => a.NotorietyFlag = NotorietyFlag.Murderer, () => newWorld.Writer.SetNotoriety(b, NotorietyFlag.Murderer));
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             // (T9 S5: the detached player has no record, so the body's sex is not kept: a misconfigured server's case; T9 S6:
-            // nor its direction)
-            (b.Graphic, b.IsFemale, b.X, b.Direction, b.NotorietyFlag, b.Steps.Count).Should().Be(((ushort)0x25E, false, (ushort)1000, Direction.North, NotorietyFlag.Murderer, 0));
+            // nor its direction; T9 S9: nor its body)
+            (b.Graphic, b.IsFemale, b.X, b.Direction, b.NotorietyFlag, b.Steps.Count).Should().Be(((ushort)0, false, (ushort)1000, Direction.North, NotorietyFlag.Murderer, 0));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
 
@@ -687,7 +688,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             var world = new World();
             Mobile m = world.GetOrCreateMobile(0x0000_3200);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
             world.Writer.UpsertMobile(m, m.Serial, 0x190, 0, 1001, 1001, 0, Direction.Down, 0, 0, out _, out WorldWriter.Placement p);
             world.Writer.PlaceMobile(p);

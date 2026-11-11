@@ -13,8 +13,6 @@ namespace ClassicUO.Game
     /// <summary>T1: the class-A world-state properties that report their writes to <see cref="FunnelCheck"/>.</summary>
     internal enum FunnelField : byte
     {
-        Graphic,
-        Hue,
         X,
         Y,
         Z,

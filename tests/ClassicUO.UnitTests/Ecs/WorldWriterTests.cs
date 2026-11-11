@@ -72,13 +72,13 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 item.IsMulti = true;
                 item.WantUpdateMulti = (graphic & 0x3FFF) != item.Graphic || item.X != p.X || item.Y != p.Y || item.Z != p.Z || item.Hue != p.Hue;
-                item.Graphic = (ushort)(graphic & 0x3FFF);
+                item.TestSetGraphic((ushort)(graphic & 0x3FFF));
             }
             else
             {
                 item.TestSetIsDamageable(p.Type == 3);
                 item.IsMulti = false;
-                item.Graphic = graphic;
+                item.TestSetGraphic(graphic);
             }
 
             item.X = p.X;
@@ -199,18 +199,18 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(MOB);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
 
             Item bag = world.GetOrCreateItem(BAG);
-            bag.Graphic = 0xE75;
+            bag.TestSetGraphic(0xE75);
             bag.SetInWorldTile(1001, 1000, 0);
 
             if (start != Start.None)
             {
                 Item it = world.GetOrCreateItem(ITEM);
-                it.Graphic = start == Start.GroundCorpse ? (ushort)0x2006 : (ushort)0x1515;
-                it.Hue = 0x21;
+                it.TestSetGraphic(start == Start.GroundCorpse ? (ushort)0x2006 : (ushort)0x1515);
+                it.TestSetHue(0x21);
                 it.TestSetAmount(3);
 
                 switch (start)
@@ -246,12 +246,12 @@ namespace ClassicUO.UnitTests.Ecs
 
                 // contents inside ITEM, two levels, so a removal has a subtree to remove
                 Item child = world.GetOrCreateItem(CHILD);
-                child.Graphic = 0xF7A;
+                child.TestSetGraphic(0xF7A);
                 child.TestSetContainer(ITEM);
                 it.PushToBack(child);
                 world.Ecs.Sync(child);
                 Item grandchild = world.GetOrCreateItem(GRANDCHILD);
-                grandchild.Graphic = 0xF7B;
+                grandchild.TestSetGraphic(0xF7B);
                 grandchild.TestSetContainer(CHILD);
                 child.PushToBack(grandchild);
                 world.Ecs.Sync(grandchild);
@@ -917,7 +917,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             item = world.GetOrCreateItem(serial);
-            item.Graphic = graphic;
+            item.TestSetGraphic(graphic);
             OldItemCheckGraphicChange(item);
             item.TestSetAmount(amount);
             item.FixHue(hue);
@@ -942,7 +942,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = Build(start);
             Item box = world.GetOrCreateItem(CORPSEBOX);
-            box.Graphic = 0x2006;
+            box.TestSetGraphic(0x2006);
             box.SetInWorldTile(1003, 1000, 0);
             Item inside = world.GetOrCreateItem(0x4000_7021);
             inside.TestSetContainer(CORPSEBOX);
@@ -1123,10 +1123,10 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameCorpseBox(oldWorld, newWorld);
 
             // negative fixture: a replacement whose cache differs after its commit (the mirror record still equal) is found
-            b.Hue ^= 1;
+            b.TestSetHue((ushort)(b.Hue ^ 1));
             Action corrupted = () => AssertSameWorld(oldWorld, newWorld);
             corrupted.Should().Throw<Exception>("the replacement item's cache is compared");
-            b.Hue ^= 1;
+            b.TestSetHue((ushort)(b.Hue ^ 1));
         }
 
         // T9 child-list slice B: a world the funnel wrote has no child list: its children are the ECS's (WorldState.Children,
@@ -1290,13 +1290,13 @@ namespace ClassicUO.UnitTests.Ecs
             World world = BuildWithCorpse(start);
             Item box = world.Items.Get(CORPSEBOX);
             Item plain = world.Items.Get(0x4000_7021);
-            plain.Graphic = 0x1F03;
+            plain.TestSetGraphic(0x1F03);
             world.Ecs.Sync(plain);
 
             foreach ((uint serial, bool first) in new[] { (KEPT1, true), (KEPT2, false) })
             {
                 Item k = world.GetOrCreateItem(serial);
-                k.Graphic = 0x1515;
+                k.TestSetGraphic(0x1515);
                 k.TestSetLayer(Layer.Shirt);
                 k.TestSetContainer(CORPSEBOX);
 
@@ -1437,10 +1437,12 @@ namespace ClassicUO.UnitTests.Ecs
             static World BuildTwin()
             {
                 World w = Build(Start.Worn); // MOB wears ITEM (> CHILD > GRANDCHILD)
+                // T9 S9: the twin has no record (the mirror keeps the mobile's under the serial), so no graphic either: a
+                // record written for it would replace the mobile's (its old 0xE75 was a cache-only write)
                 Item twin = w.GetOrCreateItem(MOB, out _);
-                twin.Graphic = 0xE75;
                 Item inner = w.GetOrCreateItem(0x4000_7061, out _);
-                inner.Graphic = 0xF7C;
+
+                inner.TestSetGraphic(0xF7C);
                 inner.TestSetContainer(MOB);
                 twin.PushToBack(inner);
                 AttachLists(w);
@@ -1529,8 +1531,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Item item = world.GetOrCreateItem(serial);
 
-            item.Graphic = h.Graphic;
-            item.Hue = h.Hue;
+            item.TestSetGraphic(h.Graphic);
+            item.TestSetHue(h.Hue);
             item.TestSetAmount(h.Amount);
             item.TestSetFlags(h.Flags);
             item.TestSetLayer(h.Layer);
@@ -1605,7 +1607,7 @@ namespace ClassicUO.UnitTests.Ecs
             bool worn = item != null && item.Container == MOB;
 
             Item before = world.GetOrCreateItem(WORN_BEFORE);
-            before.Graphic = 0x1F7B;
+            before.TestSetGraphic(0x1F7B);
             before.TestSetLayer(Layer.Pants);
             before.TestSetContainer(MOB);
 
@@ -1624,7 +1626,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Item after = world.GetOrCreateItem(WORN_AFTER);
-            after.Graphic = 0x1F7C;
+            after.TestSetGraphic(0x1F7C);
             after.TestSetLayer(Layer.Helmet);
             after.TestSetContainer(MOB);
             m.PushToBack(after);
@@ -1832,7 +1834,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             shown = item.Container;
 
-            item.Graphic = e.Graphic;
+            item.TestSetGraphic(e.Graphic);
             item.TestSetLayer(e.Layer);
             item.TestSetContainer(e.Container);
             item.FixHue(e.Hue);
@@ -2037,7 +2039,7 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (var e in entries)
             {
                 Item item = world.GetOrCreateItem(e.Serial);
-                item.Graphic = e.Graphic;
+                item.TestSetGraphic(e.Graphic);
                 item.FixHue(e.Hue);
                 item.TestSetAmount(1);
                 LegacyLists.RemoveItemFromContainer(world, item);
@@ -2123,7 +2125,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Mobile m = world.Mobiles.Get(MOB);
                 Item pack = world.GetOrCreateItem(PACK);
-                pack.Graphic = 0x0E75;
+                pack.TestSetGraphic(0x0E75);
                 pack.TestSetLayer(Layer.Backpack);
                 pack.TestSetContainer(MOB);
                 m.PushToBack(pack);
@@ -2471,19 +2473,19 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.GetOrCreateMobile(MOB);
             FunnelCheck.Reset();
 
-            it.Graphic = 1;
-            it.Hue = 2;
+            // T9 S9: Graphic and Hue have no setter on items and mobiles any more; Y stands in
+            it.Y = 1;
             it.Z = 3;
             m.X = 4;
             m.NotorietyFlag = NotorietyFlag.Ally;
 
-            FunnelCheck.Count(FunnelField.Graphic).Should().Be(1);
-            FunnelCheck.Count(FunnelField.Hue).Should().Be(1);
+            FunnelCheck.Count(FunnelField.Y).Should().Be(1);
             FunnelCheck.Count(FunnelField.Z).Should().Be(1);
             FunnelCheck.Count(FunnelField.X).Should().Be(1);
             FunnelCheck.Count(FunnelField.NotorietyFlag).Should().Be(1);
-            FunnelCheck.Total.Should().Be(5);
-            FunnelCheck.Sites.Keys.Should().Contain(k => k.Item1 == FunnelField.Graphic && k.Item2.Contains(nameof(Direct_Writes_To_Held_Objects_Are_Counted_Per_Field)),
+            FunnelCheck.Total.Should().Be(4);
+            FunnelCheck.Sites.Keys.Should().Contain(k => k.Item1 == FunnelField.Y && k.Item2.Contains(nameof(Direct_Writes_To_Held_Objects_Are_Counted_Per_Field)),
+
                 "the caller is the test method, not the setter");
         }
 
@@ -2633,7 +2635,7 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Total.Should().Be(0);
 
             // outside an operation the same writes count again
-            b.Hue = 3;
+            b.Z = 3; // (T9 S9: Hue has no setter any more)
             FunnelCheck.Total.Should().Be(1);
         }
 
@@ -2702,7 +2704,7 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.GetOrCreateMobile(0x0000_3100);
             Item bag = world.GetOrCreateItem(0x4000_7101);
             Item worn = world.GetOrCreateItem(0x4000_7104);
-            worn.Graphic = 0x1515;
+            worn.TestSetGraphic(0x1515);
             worn.TestSetContainer(m.Serial);
             worn.TestSetLayer(Layer.Shirt);
             m.PushToBack(worn);
@@ -2745,17 +2747,17 @@ namespace ClassicUO.UnitTests.Ecs
 
             // the house placement preview and the character-creation mobiles: objects no World dictionary holds
             Item preview = Item.Create(world, 0);
-            preview.Graphic = 0x4000;
+            preview.TestSetGraphic(0x4000);
             preview.X = 1;
             Mobile fake = Mobile.Create(world, 0x0000_3200);
-            fake.Graphic = 0x190;
+            fake.TestSetGraphic(0x190);
             fake.TestSetIsFemale(true);
 
             // a stale instance whose serial World now holds with another object
             Item stale = Item.Create(world, ITEM);
             world.GetOrCreateItem(ITEM);
             FunnelCheck.Reset();
-            stale.Hue = 1;
+            stale.TestSetHue(1);
 
             FunnelCheck.Total.Should().Be(0);
         }
@@ -2768,7 +2770,7 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Enabled = false;
             FunnelCheck.Reset();
 
-            it.Graphic = 1;
+            it.TestSetGraphic(1);
 
             FunnelCheck.Total.Should().Be(0);
         }

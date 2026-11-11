@@ -76,25 +76,51 @@ namespace ClassicUO.Game.GameObjects
         public sbyte FoliageIndex = -1;
         // T1: every A setter reports to FunnelCheck (CUO_FUNNEL_CHECK=1, CUO_DEVTOOLS builds only; the call is compiled out
         // otherwise). Writes on world objects outside a WorldWriter scope are counted as direct writes.
-        private ushort _graphic, _hue;
+
+        /// <summary>
+        /// T9 S9: the graphic from where its kind keeps it: land, statics and multi components on the object
+        /// (<see cref="TileListObject"/>, not world state), an item's or mobile's record (<see cref="Entity.RecordGraphic"/>),
+        /// an effect's <see cref="ClassicUO.Ecs.EffectState"/>. The sealed list kinds are tested first (the walks read them
+        /// most); a receiver typed as one of them reads <see cref="TileListObject.Graphic"/> directly.
+        /// </summary>
         public ushort Graphic
         {
-            get => _graphic;
-            set
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get
             {
-                FunnelCheck.Write(this, FunnelField.Graphic);
-
-                // a placed object's graphic changed in place (no tile-list change: the 0xBF/0x1B spellbook content, a
-                // season swap, Static.SetGraphic): its tiledata flags are an input of the max-Z decision (mobiles are not)
-                if (value != _graphic && TileChunk != null && this is not Mobile)
+                if (this is Static || this is Land || this is Multi)
                 {
-                    TileChunk.OwnerMap?.NoteContentChanged(TileChunk.X, TileChunk.Y);
+                    return Unsafe.As<TileListObject>(this).Graphic;
                 }
 
-                _graphic = value;
+                if (this is Item || this is Mobile)
+                {
+                    return Unsafe.As<Entity>(this).RecordGraphic;
+                }
+
+                return this is GameEffect effect ? EffectSystem.GraphicOf(effect) : (ushort)0;
             }
         }
-        public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _hue = value; } }
+
+        /// <summary>T9 S9: the hue from where its kind keeps it, as <see cref="Graphic"/>.</summary>
+        public ushort Hue
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get
+            {
+                if (this is Static || this is Land || this is Multi)
+                {
+                    return Unsafe.As<TileListObject>(this).Hue;
+                }
+
+                if (this is Item || this is Mobile)
+                {
+                    return Unsafe.As<Entity>(this).RecordHue;
+                }
+
+                return this is GameEffect effect ? EffectSystem.HueOf(effect) : (ushort)0;
+            }
+        }
         /// <summary>
         /// T9 S7: the object's screen offset from where its kind keeps it: an item's ItemOffset component
         /// (<see cref="ItemOffsets"/>), an effect's <see cref="ClassicUO.Ecs.EffectState"/>, a mobile's step offset and a boat
@@ -542,10 +568,8 @@ namespace ClassicUO.Game.GameObjects
             IsDestroyed = true;
             PriorityZ = 0;
             IsPositionChanged = false;
-            Hue = 0;
             RealScreenPosition = Point.Zero;
             IsFlipped = false;
-            Graphic = 0;
             ObjectHandlesStatus = ObjectHandlesStatus.NONE;
             FrameInfo = Rectangle.Empty;
         }
@@ -574,8 +598,6 @@ namespace ClassicUO.Game.GameObjects
             ScreenPositionGen = 0;
             _averageOverTime = null;
             FoliageIndex = -1;
-            Graphic = 0;
-            Hue = 0;
             PriorityZ = 0;
             TileChunk = null;
             TileCell = 0;

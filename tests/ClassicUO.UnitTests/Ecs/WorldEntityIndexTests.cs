@@ -20,7 +20,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Mobile AddMobile(World w, uint serial)
         {
             Mobile m = w.GetOrCreateMobile(serial);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1001, 1000, 0);
             w.Ecs.Sync(m);
 
@@ -30,7 +30,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item AddItem(World w, uint serial, uint container = 0xFFFF_FFFF)
         {
             Item i = w.GetOrCreateItem(serial);
-            i.Graphic = 0x0EED;
+            i.TestSetGraphic(0x0EED);
 
             if (container == 0xFFFF_FFFF)
             {

@@ -59,8 +59,32 @@ namespace ClassicUO.UnitTests.Ecs
             AnimationTimer timer = motion ? oldMobile.GetComponent<AnimationTimer>() : AnimationTimer.MobileDefault;
             Steps steps = motion ? oldMobile.GetComponent<Steps>() : default;
 
+            // T9 S9: likewise the graphic and hue (the instance's fields before; the Sync below reads the getters, which
+            // find no record under the new serial yet)
+            ushort graphic = 0, hue = 0;
+
+            if (ecs.Mirror.TryGetEntity(oldSerial, entity is Mobile, out EcsEntity source))
+            {
+                graphic = source.GetComponent<Graphic>().Value;
+                hue = source.GetComponent<Hue>().Value;
+            }
+
             ecs.Mirror.Remove(oldSerial);
             ecs.Sync(entity);
+
+            if (!entity.IsDestroyed && ecs.Mirror.TryGetEntity(entity.Serial, entity is Mobile, out EcsEntity written))
+            {
+                written.GetComponent<Graphic>().Value = graphic;
+                written.GetComponent<Hue>().Value = hue;
+
+                if (written.HasComponent<ItemDrawRow>())
+                {
+                    ref ItemDrawRow row = ref written.GetComponent<ItemDrawRow>();
+                    row.Graphic = graphic;
+                    row.Hue = hue;
+                }
+            }
+
 
             if (entity is Mobile moved && !entity.IsDestroyed && ecs.Mirror.TryGetEntity(entity.Serial, true, out EcsEntity fresh))
             {

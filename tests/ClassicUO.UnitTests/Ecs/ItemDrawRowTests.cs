@@ -87,8 +87,8 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Item it = world.GetOrCreateItem(ITEM0 + (uint)i);
                 int kind = rnd.Next(100);
-                it.Graphic = kind < 10 ? (ushort)0x0EED : kind < 15 ? (ushort)0x2006 : (ushort)(0x0100 + rnd.Next(0x3F00));
-                it.Hue = (ushort)rnd.Next(0, 0x0BB8);
+                it.TestSetGraphic(kind < 10 ? (ushort)0x0EED : kind < 15 ? (ushort)0x2006 : (ushort)(0x0100 + rnd.Next(0x3F00)));
+                it.TestSetHue((ushort)rnd.Next(0, 0x0BB8));
                 it.TestSetAmount(kind < 30 ? (ushort)rnd.Next(2, 500) : (ushort)1);
                 it.X = (ushort)(1400 + rnd.Next(64));
                 it.Y = (ushort)(1600 + rnd.Next(64));
@@ -106,7 +106,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 foreach (Item it in items)
                 {
-                    it.Hue = (ushort)rnd.Next(0, 0x0BB8);
+                    it.TestSetHue((ushort)rnd.Next(0, 0x0BB8));
                     it.X++;
                     it.Z = (sbyte)rnd.Next(-5, 40);
                     it.TestSetAmount((ushort)rnd.Next(1, 600));

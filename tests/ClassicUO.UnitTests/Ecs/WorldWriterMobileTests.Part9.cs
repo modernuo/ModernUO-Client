@@ -88,11 +88,11 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Item bank = OpenBank(world, p);
             Item vault = world.GetOrCreateItem(VAULT);
-            vault.Graphic = 0xE7D;
+            vault.TestSetGraphic(0xE7D);
             vault.TestSetContainer(BANK);
             bank.PushToBack(vault);
             Item coin = world.GetOrCreateItem(COIN9);
-            coin.Graphic = 0xEED;
+            coin.TestSetGraphic(0xEED);
             coin.TestSetAmount(7);
             coin.TestSetContainer(VAULT);
             vault.PushToBack(coin);
@@ -102,22 +102,22 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(bank);
 
             Item pack = world.GetOrCreateItem(PACK9);
-            pack.Graphic = 0xE75;
+            pack.TestSetGraphic(0xE75);
             pack.TestSetLayer(Layer.Backpack);
             pack.TestSetContainer(p.Serial);
             p.PushToBack(pack);
             Item kept = world.GetOrCreateItem(KEPT);
-            kept.Graphic = 0xF0E;
+            kept.TestSetGraphic(0xF0E);
             kept.TestSetContainer(PACK9);
             pack.PushToBack(kept);
             world.Ecs.Sync(pack);
             world.Ecs.Sync(kept);
 
             Item ground = world.GetOrCreateItem(GROUND);
-            ground.Graphic = 0x1F14;
+            ground.TestSetGraphic(0x1F14);
             ground.SetInWorldTile(1003, 1000, 0);
             Item loot = world.GetOrCreateItem(LOOT9);
-            loot.Graphic = 0x1F15;
+            loot.TestSetGraphic(0x1F15);
             loot.TestSetContainer(BAG);
             world.Items.Get(BAG).PushToBack(loot);
             world.Ecs.Sync(loot);

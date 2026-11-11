@@ -155,13 +155,13 @@ namespace ClassicUO.UnitTests.Ecs
             var world = new World();
 
             Item orphan = world.GetOrCreateItem(MOUNT);
-            orphan.Graphic = 0x3EA0;
+            orphan.TestSetGraphic(0x3EA0);
             orphan.TestSetLayer(Layer.Mount);
             orphan.TestSetContainer(SERIAL);
             world.Ecs.Sync(orphan);
 
             Mobile rider = world.GetOrCreateMobile(SERIAL);
-            rider.Graphic = 0x190;
+            rider.TestSetGraphic(0x190);
             world.Ecs.Sync(rider);
             world.Ecs.Mirror.GetEquipment(SERIAL).Count.Should().Be(1, "the index holds the orphan by its container");
             MobileAnimationSystem.IsMounted(rider, tiles).Should().BeFalse("the rider's own list doesn't hold it, as IsMounted sees it");
@@ -176,9 +176,9 @@ namespace ClassicUO.UnitTests.Ecs
             MobileAnimationSystem.IsMounted(rider, tiles).Should().BeTrue();
 
             // a boat's tiller on the mount layer isn't riding
-            orphan.Graphic = 0x3E96;
+            orphan.TestSetGraphic(0x3E96);
             MobileAnimationSystem.IsMounted(rider, tiles).Should().BeFalse();
-            orphan.Graphic = 0x3EA0;
+            orphan.TestSetGraphic(0x3EA0);
 
             // the rider leaves; a new mobile reuses the serial while the item still names it as container
             // (World.RemoveMobile removes a rider's children with it, so none stays attached to a gone rider: the mirror gives
@@ -187,7 +187,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Mobiles.Remove(SERIAL);
             world.Ecs.Mirror.Remove(SERIAL);
             Mobile next = world.GetOrCreateMobile(SERIAL);
-            next.Graphic = 0x190;
+            next.TestSetGraphic(0x190);
             world.Ecs.Sync(next);
             world.Ecs.Mirror.TryGetEntity(SERIAL, out EcsEntity e2).Should().BeTrue();
             e2.Tags.Has<EquipmentDirty>().Should().BeTrue("a new entity starts dirty, so its slots are rebuilt from the new mobile");
@@ -224,7 +224,7 @@ namespace ClassicUO.UnitTests.Ecs
             // the setters write the caches only: IsFemale's record bit is committed first, as WorldWriter's operations do
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             world.Ecs.Sync(m);
             ShouldMatchFresh(world, m);
             Pushed(world, SERIAL).Flags.Should().Be(AnimStateFlags.Human);
@@ -254,7 +254,7 @@ namespace ClassicUO.UnitTests.Ecs
             m.TestSetFlags(Flags.Hidden | Flags.WarMode);
             world.Ecs.Sync(m);
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Hidden).And.HaveFlag(AnimStateFlags.WarMode);
-            m.Graphic = 0x193;
+            m.TestSetGraphic(0x193);
             world.Ecs.Sync(m);
             Pushed(world, SERIAL).Body.Should().Be(0x191);
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Dead);
@@ -283,7 +283,7 @@ namespace ClassicUO.UnitTests.Ecs
             // the setters write the caches only: IsFemale's record bit is committed first, as WorldWriter's operations do
             var world = new World();
             Mobile old = world.GetOrCreateMobile(SERIAL);
-            old.Graphic = 0x190;
+            old.TestSetGraphic(0x190);
             world.Ecs.Sync(old);
             world.Ecs.CommitMobileBit(old, MobileTraitBits.Female, true);
             old.TestSetIsFemale(true);
@@ -295,7 +295,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.Remove(SERIAL);
             Mobile next = world.GetOrCreateMobile(SERIAL);
             next.Should().NotBeSameAs(old);
-            next.Graphic = 0x190;
+            next.TestSetGraphic(0x190);
             world.Ecs.Sync(next);
             Pushed(world, SERIAL).Flags.Should().NotHaveFlag(AnimStateFlags.Female, "a new entity starts from the new mobile's state");
 

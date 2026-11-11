@@ -277,8 +277,22 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        /// <summary>
+        /// T9 S9: the house placement preview item. Its graphic and hue live in a preview record of its own (owner: the scene,
+        /// <see cref="WorldEcs.ReleasePreviews"/> when it goes), as the preview gumps' objects.
+        /// </summary>
+        internal static Item CreatePlacementPreview(World world, object owner, ushort model, ushort hue)
+        {
+            Item preview = Item.Create(world, HouseManager.PLACEMENT_PREVIEW_SERIAL);
+            preview.IsMulti = true;
+            world.Writer.SetPreviewItem(owner, preview, model, hue, Layer.Invalid, 0xFFFF_FFFF);
+
+            return preview;
+        }
+
         public override void Unload()
         {
+
             if (IsDestroyed)
             {
                 return;
@@ -286,6 +300,10 @@ namespace ClassicUO.Game.Scenes
 
             // a login that never reached its hold (disconnect): the warm-up collection must not wait for a later scene
             Map.MapWarmup.Cancel("game scene unloaded");
+
+            // T9 S9: the house placement preview's record, when the scene goes while placing
+            _world.Ecs.ReleasePreviews(this);
+
 
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
                 Camera.Bounds.X,
@@ -1089,10 +1107,7 @@ namespace ClassicUO.Game.Scenes
             {
                 if (_multi == null)
                 {
-                    _multi = Item.Create(_world, 0);
-                    _multi.Graphic = _world.TargetManager.MultiTargetInfo.Model;
-                    _multi.Hue = _world.TargetManager.MultiTargetInfo.Hue;
-                    _multi.IsMulti = true;
+                    _multi = CreatePlacementPreview(_world, this, _world.TargetManager.MultiTargetInfo.Model, _world.TargetManager.MultiTargetInfo.Hue);
                 }
 
                 if (SelectedObject.Object is GameObject gobj)
@@ -1153,6 +1168,7 @@ namespace ClassicUO.Game.Scenes
                 _world.HouseManager.RemoveMultiTargetHouse();
                 _multi.Destroy();
                 _multi = null;
+                _world.Ecs.ReleasePreviews(this);
             }
 
             if (_isMouseLeftDown && !Client.Game.UO.GameCursor.ItemHold.Enabled)

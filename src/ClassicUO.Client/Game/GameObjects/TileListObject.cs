@@ -13,6 +13,36 @@ namespace ClassicUO.Game.GameObjects
         public TileListObject TNext;
         public TileListObject TPrevious;
 
+        // T9 S9: land, statics and multi components are not world state: their graphic and hue stay on the object. Items,
+        // mobiles and effects read theirs from the ECS (GameObject.Graphic dispatches by kind; these hide it so a receiver
+        // typed as a list kind reads the field without the dispatch)
+        private ushort _graphic, _hue;
+
+        public new ushort Graphic
+        {
+            [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+            get => _graphic;
+            set
+            {
+                // a placed object's graphic changed in place (no tile-list change: a season swap, Static.SetGraphic): its
+                // tiledata flags are an input of the max-Z decision. Items get the same note from WorldWriter's operations
+                // (Item.GraphicCommitted)
+                if (value != _graphic && TileChunk != null)
+                {
+                    TileChunk.OwnerMap?.NoteContentChanged(TileChunk.X, TileChunk.Y);
+                }
+
+                _graphic = value;
+            }
+        }
+
+        public new ushort Hue
+        {
+            [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+            get => _hue;
+            set => _hue = value;
+        }
+
         /// <summary>Takes this object out of its tile list, joining its neighbours (RemoveFromTile).</summary>
         public void Unlink()
         {
@@ -30,10 +60,24 @@ namespace ClassicUO.Game.GameObjects
             TPrevious = null;
         }
 
+        public override void Destroy()
+        {
+            if (IsDestroyed)
+            {
+                return;
+            }
+
+            base.Destroy();
+            _graphic = 0;
+            _hue = 0;
+        }
+
         public override void ResetForReuse()
         {
             base.ResetForReuse();
             TNext = TPrevious = null;
+            _graphic = 0;
+            _hue = 0;
         }
     }
 }

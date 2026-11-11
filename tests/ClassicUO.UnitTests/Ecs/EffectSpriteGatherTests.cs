@@ -31,7 +31,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Mobile AddMobile(World w, uint serial, int x, int y)
         {
             Mobile m = w.GetOrCreateMobile(serial);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile((ushort)x, (ushort)y, 0);
             w.Ecs.Sync(m);
 

@@ -115,7 +115,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             world.Ecs.Sync(m);
             ShouldMatchMobile(world, m);
             // Mobile.Create uses the constructor that sets no timers: a new mobile is due at once, runs one Update, then its timers are set
@@ -153,12 +153,12 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile old = world.GetOrCreateMobile(SERIAL);
-            old.Graphic = 0x190;
+            old.TestSetGraphic(0x190);
             world.Ecs.Sync(old);
 
             world.Mobiles.Remove(SERIAL);
             Mobile next = world.GetOrCreateMobile(SERIAL);
-            next.Graphic = 0x190;
+            next.TestSetGraphic(0x190);
             world.Ecs.Sync(next);
 
             MobileClock before = Pushed(world, SERIAL);
@@ -172,7 +172,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             world.Ecs.Sync(m);
 
             // T9 S8c: the timer is the record's; its write keeps the clock (no push, no resync)
@@ -188,7 +188,7 @@ namespace ClassicUO.UnitTests.Ecs
             // no steps, timers in the future
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             world.Ecs.Sync(m);
             m.SetAnimDue((long)Time.Ticks + 100000);
             m.SetAnimation(0xFF);
@@ -202,7 +202,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             world.Ecs.Sync(m);
             world.Ecs.Mirror.TryGetEntity(SERIAL, out EcsEntity e).Should().BeTrue();
 
@@ -264,7 +264,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Mobile m = world.GetOrCreateMobile(serial);
                 oracle[serial] = m;
-                m.Graphic = 0x190;
+                m.TestSetGraphic(0x190);
                 world.Ecs.Sync(m);
             }
 
@@ -323,7 +323,7 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint s in new uint[] { 10, 11, 12 })
             {
                 Mobile m = world.GetOrCreateMobile(s);
-                m.Graphic = 0x190;
+                m.TestSetGraphic(0x190);
                 world.Ecs.Sync(m);
                 world.Ecs.Mirror.TryGetEntity(s, out EcsEntity e);
                 e.GetComponent<MobileClock>() = Clock(0, 0, MobileClockFlags.Stepping);

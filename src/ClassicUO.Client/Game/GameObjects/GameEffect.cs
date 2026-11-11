@@ -21,8 +21,8 @@ namespace ClassicUO.Game.GameObjects
         {
             _manager = manager;
 
-            Graphic = graphic;
-            Hue = hue;
+            CreatedGraphic = graphic;
+            CreatedHue = hue;
             AllowedToDraw = CanBeDrawn(world, graphic);
             AlphaHue = 0xFF;
             AnimDataFrame = Client.Game?.UO?.FileManager?.AnimData?.CalculateCurrentGraphic(graphic) ?? default;
@@ -58,6 +58,10 @@ namespace ClassicUO.Game.GameObjects
         }
 
         public bool IsMoving => (!EcsEntity.IsNull ? EffectSystem.HasTarget(this) : Target != null) || TargetX != 0 && TargetY != 0;
+
+        /// <summary>T9 S9: the constructor's graphic and hue, for <see cref="EffectSystem.Register"/> only: from then on the
+        /// effect's Graphic and Hue are its state's (0 before it registers and once it is destroyed).</summary>
+        internal readonly ushort CreatedGraphic, CreatedHue;
 
         public bool CanCreateExplosionEffect;
         public AnimDataFrame AnimDataFrame;

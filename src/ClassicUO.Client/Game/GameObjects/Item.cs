@@ -101,22 +101,29 @@ namespace ClassicUO.Game.GameObjects
 
         public Item(World world) : base(world, 0) { }
 
-        public bool IsCoin => Graphic == 0x0EEA || Graphic == 0x0EED || Graphic == 0x0EF0;
+        // T9 S9: Graphic reads the record; each of these reads it once
+        public bool IsCoin => IsCoinGraphic(Graphic);
+
+        private static bool IsCoinGraphic(ushort g) => g == 0x0EEA || g == 0x0EED || g == 0x0EF0;
 
         public ushort DisplayedGraphic
         {
             get
             {
-                if (IsCoin)
+                ushort graphic = Graphic;
+
+                if (IsCoinGraphic(graphic))
                 {
-                    if (Amount > 5)
+                    ushort amount = Amount;
+
+                    if (amount > 5)
                     {
-                        return (ushort)(Graphic + 2);
+                        return (ushort)(graphic + 2);
                     }
 
-                    if (Amount > 1)
+                    if (amount > 1)
                     {
-                        return (ushort)(Graphic + 1);
+                        return (ushort)(graphic + 1);
                     }
                 }
                 else if (IsMulti)
@@ -124,9 +131,10 @@ namespace ClassicUO.Game.GameObjects
                     return MultiGraphic;
                 }
 
-                return Graphic;
+                return graphic;
             }
         }
+
 
         public bool IsLocked => (Flags & Flags.Movable) == 0 && ItemData.Weight > 90;
 
