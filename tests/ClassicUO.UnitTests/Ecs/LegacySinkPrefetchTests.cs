@@ -129,20 +129,17 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.True(it.TryScalarEntity(out _));
         }
 
-        public static TheoryData<int, int, int, bool> PrefetchCases
+        public static TheoryData<int, int, int> PrefetchCases
         {
             get
             {
-                var cases = new TheoryData<int, int, int, bool>();
+                var cases = new TheoryData<int, int, int>();
 
-                foreach (bool row in new[] { false, true })
-                {
-                    cases.Add(16, 8, 4, row);
-                    cases.Add(0, 0, 0, row);
-                    cases.Add(1, 1, 1, row);
-                    cases.Add(16, 0, 4, row);
-                    cases.Add(64, 64, 64, row);
-                }
+                cases.Add(16, 8, 4);
+                cases.Add(0, 0, 0);
+                cases.Add(1, 1, 1);
+                cases.Add(16, 0, 4);
+                cases.Add(64, 64, 64);
 
                 return cases;
             }
@@ -160,8 +157,8 @@ namespace ClassicUO.UnitTests.Ecs
             return tiles;
         }
 
-        // what the item draw reads of an item (ItemSpriteInput.ReadRecord, Gather's record part) in the given row state
-        private static string ReadDraw(GameObject obj, StaticTiles[] tiles, bool drawRow)
+        // what the item draw reads of an item (ItemSpriteInput.ReadRecord, Gather's record part)
+        private static string ReadDraw(GameObject obj, StaticTiles[] tiles)
         {
             if (obj is not Item it)
             {
@@ -169,7 +166,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             ItemSpriteInput a = default;
-            bool record = ItemSpriteInput.ReadRecord(it, tiles, ref a, out ushort y, out _, drawRow);
+            bool record = ItemSpriteInput.ReadRecord(it, tiles, ref a, out ushort y, out _);
 
             return $"{record} {a.Serial:X8} {a.Graphic:X4} {a.Hue} {a.Amount} {a.X},{y} {a.Layer} {a.OnGround} {a.Multi} {a.Hidden} " +
                    $"{a.Movable} {a.TileLight} {a.TilePartialHue} {a.TileAnimated} {a.TileContainer} {a.TileStackable} {a.MultiGraphic:X4}";
@@ -209,11 +206,11 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         // legacy-flip (Codex: the prefetch stage was untested): DrawWorldRenderList calls Prefetch(list, i) before it draws
-        // entry i. With any distances and either ecs_item_draw_row state, that loop reads the same draw input for every entry,
+        // entry i. With any distances, that loop reads the same draw input for every entry,
         // in the same order, as the loop without prefetch, and leaves the list as it was.
         [Theory]
         [MemberData(nameof(PrefetchCases))]
-        public void Prefetch_Does_Not_Change_What_Is_Drawn_Or_The_Order(int obj, int node, int row, bool drawRow)
+        public void Prefetch_Does_Not_Change_What_Is_Drawn_Or_The_Order(int obj, int node, int row)
         {
             var world = new World();
             StaticTiles[] tiles = Tiles();
@@ -224,39 +221,31 @@ namespace ClassicUO.UnitTests.Ecs
 
             for (int i = 0; i < list.Length; i++)
             {
-                want.Add(ReadDraw(list[i], tiles, drawRow));
+                want.Add(ReadDraw(list[i], tiles));
             }
 
             var got = new List<string>();
 
             for (int i = 0; i < list.Length; i++)
             {
-                LegacySpriteSink.Prefetch(list, i, (obj, node, row), drawRow);
-                got.Add(ReadDraw(list[i], tiles, drawRow));
+                LegacySpriteSink.Prefetch(list, i, (obj, node, row));
+                got.Add(ReadDraw(list[i], tiles));
             }
 
             Assert.Equal(want, got);
             Assert.Equal(before, list);
-
-            // and the row state's read is the component read (the prefetch picked no stale input)
-            for (int i = 0; i < list.Length; i++)
-            {
-                Assert.Equal(ReadDraw(list[i], tiles, !drawRow), got[i]);
-            }
         }
 
         // lists shorter than the distances, the first and last entries, an empty list, a list of mobiles only, and a null entry
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Prefetch_Edge_Cases_Read_Nothing_Out_Of_Range(bool drawRow)
+        [Fact]
+        public void Prefetch_Edge_Cases_Read_Nothing_Out_Of_Range()
         {
             var world = new World();
             StaticTiles[] tiles = Tiles();
             (int, int, int) ahead = LegacySpriteSink.ParsePrefetch(null);
 
-            LegacySpriteSink.Prefetch(ReadOnlySpan<GameObject>.Empty, 0, ahead, drawRow);
-            LegacySpriteSink.Prefetch(ReadOnlySpan<GameObject>.Empty, 0, (64, 64, 64), drawRow);
+            LegacySpriteSink.Prefetch(ReadOnlySpan<GameObject>.Empty, 0, ahead);
+            LegacySpriteSink.Prefetch(ReadOnlySpan<GameObject>.Empty, 0, (64, 64, 64));
 
             foreach (int count in new[] { 1, 2, 3, 4, 5, 8, 9, 16, 17 })
             {
@@ -266,14 +255,14 @@ namespace ClassicUO.UnitTests.Ecs
 
                 foreach (GameObject o in list)
                 {
-                    want.Add(ReadDraw(o, tiles, drawRow));
+                    want.Add(ReadDraw(o, tiles));
                 }
 
                 for (int i = 0; i < list.Length; i++)
                 {
-                    LegacySpriteSink.Prefetch(list, i, ahead, drawRow);
-                    LegacySpriteSink.Prefetch(list, i, (count, count, count), drawRow);
-                    Assert.Equal(want[i], ReadDraw(list[i], tiles, drawRow));
+                    LegacySpriteSink.Prefetch(list, i, ahead);
+                    LegacySpriteSink.Prefetch(list, i, (count, count, count));
+                    Assert.Equal(want[i], ReadDraw(list[i], tiles));
                 }
             }
 
@@ -284,19 +273,19 @@ namespace ClassicUO.UnitTests.Ecs
 
             for (int i = 0; i < mobiles.Length; i++)
             {
-                LegacySpriteSink.Prefetch(mobiles, i, (1, 1, 1), drawRow);
-                LegacySpriteSink.Prefetch(mobiles, i, ahead, drawRow);
+                LegacySpriteSink.Prefetch(mobiles, i, (1, 1, 1));
+                LegacySpriteSink.Prefetch(mobiles, i, ahead);
             }
 
-            string itemRead = ReadDraw(it, tiles, drawRow);
+            string itemRead = ReadDraw(it, tiles);
 
             for (int i = 0; i < withNull.Length; i++)
             {
-                LegacySpriteSink.Prefetch(withNull, i, (1, 1, 1), drawRow);
-                LegacySpriteSink.Prefetch(withNull, i, (2, 2, 2), drawRow);
+                LegacySpriteSink.Prefetch(withNull, i, (1, 1, 1));
+                LegacySpriteSink.Prefetch(withNull, i, (2, 2, 2));
             }
 
-            Assert.Equal(itemRead, ReadDraw(it, tiles, drawRow));
+            Assert.Equal(itemRead, ReadDraw(it, tiles));
             Assert.True(it.TryScalarEntity(out _));
         }
 

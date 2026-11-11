@@ -7,9 +7,9 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // legacy-sprites-fix, ecs_item_draw_row: Gather's record read from the packed ItemDrawRow (switch on) gives the input the
-    // separate components give (switch off), for every kind of item and after every kind of record write; the row follows
-    // the record through updates, moves into and out of containers and the multi flag.
+    // legacy-sprites-fix: Gather's record read from the packed ItemDrawRow gives the input the separate components give (the
+    // reference read below, the path the row replaced), for every kind of item and after every kind of record write; the row
+    // follows the record through updates and the multi flag. This is the check that WorldMirror writes the row consistently.
     public class ItemDrawRowTests
     {
         private const uint ITEM0 = 0x4000_0000;
@@ -28,12 +28,45 @@ namespace ClassicUO.UnitTests.Ecs
             return tiles;
         }
 
+        // the component-by-component read the row replaced (test reference)
+        private static void ReadFromComponents(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y)
+        {
+            Assert.True(item.TryScalarEntity(out Friflo.Engine.ECS.Entity e));
+            ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
+            i.Serial = item.Serial;
+            i.Graphic = data.Get<ClassicUO.Ecs.Graphic>().Value;
+            i.Hue = data.Get<ClassicUO.Ecs.Hue>().Value;
+            ref readonly ClassicUO.Ecs.Position p = ref data.Get<ClassicUO.Ecs.Position>();
+            i.X = p.X;
+            y = p.Y;
+            var flags = (Flags)data.Get<ClassicUO.Ecs.Flags>().Value;
+            i.Hidden = (flags & Flags.Hidden) != 0;
+            i.Movable = (flags & Flags.Movable) != 0;
+            i.OnGround = data.Tags.Has<ClassicUO.Ecs.OnGround>();
+            i.Multi = data.Tags.Has<ClassicUO.Ecs.MultiTag>();
+            i.MultiGraphic = item.MultiGraphic;
+            ref StaticTiles tile = ref staticData[i.Multi ? i.MultiGraphic : i.Graphic];
+            i.TileLight = tile.IsLight;
+            i.TilePartialHue = tile.IsPartialHue;
+            i.TileAnimated = tile.IsAnimated;
+            i.TileContainer = tile.IsContainer;
+            i.TileStackable = tile.IsStackable;
+            i.TileHeavy = tile.Weight > 90;
+
+            if (i.UsesItemData)
+            {
+                ref readonly ClassicUO.Ecs.ItemData d = ref data.Get<ClassicUO.Ecs.ItemData>();
+                i.Amount = d.Amount;
+                i.Layer = d.Layer;
+            }
+        }
+
         private static void AssertSameInput(Item it, StaticTiles[] tiles)
         {
             ItemSpriteInput a = default, b = default;
-            bool ra = ItemSpriteInput.ReadRecord(it, tiles, ref a, out ushort ya, out _, false);
-            bool rb = ItemSpriteInput.ReadRecord(it, tiles, ref b, out ushort yb, out _, true);
-            Assert.Equal(ra, rb);
+            ReadFromComponents(it, tiles, ref a, out ushort ya);
+            bool rb = ItemSpriteInput.ReadRecord(it, tiles, ref b, out ushort yb, out _);
+            Assert.True(rb);
             Assert.Equal(ya, yb);
             Assert.Equal(
                 (a.Serial, a.Graphic, a.Hue, a.Amount, a.X, a.Layer, a.OnGround, a.Multi, a.Hidden, a.Movable, a.TileLight, a.TilePartialHue,
@@ -49,7 +82,6 @@ namespace ClassicUO.UnitTests.Ecs
             StaticTiles[] tiles = Tiles();
             var rnd = new Random(11);
             var items = new Item[300];
-            long diffs = ItemDrawRows.Diffs;
 
             for (int i = 0; i < items.Length; i++)
             {
@@ -84,30 +116,6 @@ namespace ClassicUO.UnitTests.Ecs
                     AssertSameInput(it, tiles);
                 }
             }
-
-            ItemDrawRows.Override = true;
-
-            try
-            {
-                Assert.True(ItemDrawRows.On);
-            }
-            finally
-            {
-                ItemDrawRows.Override = null;
-            }
-
-            Assert.Equal(diffs, ItemDrawRows.Diffs);
-        }
-
-        [Fact]
-        public void Switch_Is_On_By_Default_And_The_Override_Wins()
-        {
-            Assert.True(new ClassicUO.Configuration.Settings().EcsItemDrawRow);
-            ItemDrawRows.Override = false;
-            Assert.False(ItemDrawRows.On);
-            ItemDrawRows.Override = true;
-            Assert.True(ItemDrawRows.On);
-            ItemDrawRows.Override = null;
         }
     }
 }
