@@ -1,76 +1,58 @@
 # Accepted costs ledger
 
-Every change merged with a measured or known cost in time or memory, kept for the final performance audit at the end of the PoC. Each cost is small on its own; added together they could lower the frame rate.
+Every merged change with a measured or known cost in time or memory, kept for the final performance audit. Rule (owner, 2026-11-02): a cost can be fine when it buys a feature, correctness or the ECS architecture, but it is listed here, even at ~1 %. Add a row at every merge that accepts a cost; mark it **Revisited** when a later change removes it. Pools, caches, prefill and atlases with MB figures are also in [memory-footprint.md](memory-footprint.md).
 
-The owner's rule (2026-11-02): a cost can be fine when it buys a feature, correctness or the ECS architecture. It still has to be listed here, so the final audit can check each area and decide whether to revisit it. Agents and the coordinator add a row whenever a merge accepts a cost, including "within budget" ones, and mark a row **Revisited** when a later change removes it.
-
-Columns: what costs, how much (measured or estimated, with the scene), what it buys, where to look first if it has to go.
+Columns: change (commit), cost, what it buys, revisit idea. "After-T9 pass" means the single full timing pass planned once T9 settles the switches (per-switch timing was never run).
 
 ## Frame time
 
-| Merge | Cost | Buys | Revisit idea |
+| Change | Cost | Buys | Revisit |
 |---|---|---|---|
-| T7b part 1 (extract split) | +24 ns per captured item in `Gather` (ECS read; micro-bench, 201 rounds): about 1 % of Gpu world_prepare at the large scene, zoom 2.5; negligible at Britain. Quiet timing parked. | Extract reads the ECS, not the GameObject: a prerequisite for deleting the caches in T9 | **Partly revisited (02c0ef387):** EcsRead halves it (30–40 → 16–22 ns per item over the old field reads) |
-| T4 (thin handles) | An ECS read is 9–25 ns against 1–5 ns from the cached field. Hot fields stay cached; cold fields (e.g. a status bar's 4 reads, +23–37 ns) read the ECS at UI rates. | One source of truth for world state | Same helper; keep hot fields cached until then |
-| Friflo `GetComponent` (systemic) | 6–9 ns per single read in 4.0.0-preview.2 (virtual heap); the "25 ns" was inside a larger record read. **Partly revisited (02c0ef387):** the hottest per-frame reads use `EcsRead` (3.8–5.3 ns; five reads through a row 24 → 12.6 ns). `WorldMirror`/`WorldWriter` still call Friflo. | — | A stable Friflo release (main has no virtual heap): see docs/dev/ecs-friflo.md |
-| T9 child-list slice B fix chain | Attach-time walks: `WouldCycle` (parent chain) and `SubtreeDeeperThan` (moved subtree) on each attach packet; `WorldMirror.ParentOf` probes up to 3 components per level. Packets only, nothing per frame. | No server packet can loop the container graph or crash the client | Cache parent and subtree height per record |
+| Gradual ECS dual-path cost (quiet-1108, tip 957237f06 vs b 34fec0e52) | Gpu large scene frame +0.07-0.14 ms p50 (+6-8 %), mostly world_prepare (+7-9 %), small scenes equal. Legacy world_prepare +0.05-0.27 ms, update +0.004-0.03 ms, frame equal or better; scene_draw_ui +0.04, fx text +0.024 at `ls_z25`. Two bisect passes: steps of +0.02-0.05 ms, no single culprit | ECS conversion running beside the old paths | re-measure after T9 (owner, 2026-11-08) |
+| Legacy world_prepare regression (3b2d360e5, de26150aa) | ~0.65 ms (+20 %) at the large spot remains (3.96 vs 3.29 ms NativeAOT), spread over many small additions to the shared tile walk; Legacy world draw +0.25 ms | - | a Legacy-only walk (~450 duplicated lines), with the Legacy-on-ECS project |
+| `world_tile_index` default on (d54ab5109) | Legacy world_prepare +4-6 % at ls_z1 (bench-000416..421); Gpu and Legacy frame neutral | items, mobiles, effects only in the ECS-maintained tile index | after-T9 pass; Legacy walk's merge of list and index |
+| T7b part 1 (extract split) | +24 ns per captured item in `Gather` (~1 % of Gpu world_prepare, large scene zoom 2.5) | extract reads the ECS, prerequisite for deleting caches | partly revisited (02c0ef387): `EcsRead` 30-40 to 16-22 ns |
+| T4 thin handles | ECS read 9-25 ns vs 1-5 ns cached field; cold fields (status bar: 4 reads, +23-37 ns) read the ECS | one source of truth | keep hot fields cached until T9 |
+| Friflo `GetComponent` (systemic) | 6-9 ns per read (4.0.0-preview.2); hottest reads use `EcsRead` (3.8-5.3 ns); `WorldMirror`/`WorldWriter` still call Friflo | - | stable Friflo release (docs/dev/ecs-friflo.md) |
+| `ecs_small_fields` on (cc163f59b) | ~10-25 ns per getter read (corpse `UsedLayer`, light `LightID`, player race per static at chunk load); off: one test per getter | small Class A fields owned by the ECS | after-T9 pass; derive `MobileInputs` copies from the record (T9) |
+| `ecs_item_offset` on (187b39519) | handle check + `EcsRead.TryGet` (~4-5 ns) per drawn item and per item pick | item boat offset owned by the ECS | partly revisited (b607aa19a `ReadRow`); open: "has offset" flag (perf-opportunities) |
+| `ecs_boat_steps` on (48f7290f3) | per frame a key snapshot and a lookup per boat that ever queued a step | boat motion as component + system | after-T9 pass |
+| `ecs_active_items_source` on (8e53a5453) | entity create/delete per list add/remove, per-frame query count, O(listed) scatter | active item list from the ECS | after-T9 pass |
+| `ecs_step_mount_inputs` on (250070441) | one component read per step decision; slot rebuild after equipment change (not measured) | mount state for steps from the ECS | - |
+| `ecs_effect_endpoints` on (f1774c07f) | ~10-15 ns per endpoint read; every object destroy walks live effects while any exist | effects reference ECS records | after-T9 pass; the destroy walk if many effects live |
+| `ecs_effect_motion` on (d43602c52) | one player record read per effects pass | effect motion as `EffectSystem` steps | - |
+| `ecs_effect_sprites` on (bc60ed53d) | per drawn effect: `EffectState` get, tiledata read, source lookup (estimated) | both renderers draw effects from the extract | delete `GameEffectView` draw once `legacy_ecs_sprites` is on |
+| `ecs_item_draw_row` + `legacy_ecs_sprites` flip (owner, 2026-11-10; bench-000564) | one row write per item update (memory below); frame vs off: 0.992 / 0.986, world_draw 0.989 / 0.977 (ls_z1 / ls_z25), i.e. parity | Legacy draws from the ECS extract | goes with T9 view deletion |
+| `legacy_ecs_sprites` mobile cache (e079d5368) | miss frames copy calls (~0.1 us per mobile on <= 10 % of frames) | Legacy mobiles replay batcher calls (~90 % of draws at the large scene) | share entries per (body, equipment, frame) |
+| world index slices (`world_entity_index`, default on b96b6b956) | one array store per mirror upsert; one dictionary op per change in the bookkeeping dictionaries | `World.Get`/`GetItem`/`GetMobile`/`Holds` from the ECS index | slice 5: delete the dictionaries |
+| perf-cpu-1109 (456bb0606) | `Items.Add`/`Remove` write two more fields; `Clear` walks items once (logout only) | `World.Holds` for an item is a field compare | goes with the item dictionary (slice 5) |
+| T9 child-list slice B fix chain | attach-time `WouldCycle`/`SubtreeDeeperThan` walks and `ParentOf` (up to 3 probes per level); packets only | no packet can loop the container graph or crash | cache parent and subtree height per record |
+| ecs-effects-own, tile-head, tile-index-2 | effect-destroy walk, ~1-2 ns Serial+kind check; one OR/AND-NOT per placement | O(1) tile-list head (the `TPrevious` walk was 7-8 % of Legacy britain_z); bit test per walked tile | after-T9 pass |
+| decode-stall | two `SetThreadPriority` calls per blocking decode wait | 2 ms wait under load ~500 ms to ~4 ms p50 | - |
+| perf-alloc-5 | none in time | refused walks no longer allocate | - |
 
-## Memory
-
-| Merge | Cost | Buys | Revisit idea |
-|---|---|---|---|
-| T4 (thin handles) | About +32 B per Item (the 16-byte Friflo handle plus fields): about 0.8 MB per client at 25k items | Handle-based ECS access | Shrinks once T9 deletes the cached fields |
-| T6b (tile index) | `TNext`/`TPrevious` 16 B per item, mobile and effect, now always null | — (left over) | Move the links to a list-node base for Land/Static/Multi, or a side table |
-| T9 child-list slice B | `LinkedObject` fields on Item/Mobile unused: 24 B per object, about 2–5 MB per client | — (left over) | **Revisited (linked-object, eb0f70ed0):** `LinkedObject` moved off `BaseGameObject`; about 1.5 MB per client saved (estimated) |
-| EcsRead (02c0ef387) | Depends on Friflo 4.0.0-preview.2 internals (a field offset, `[UnsafeAccessor]` names) until the upgrade; the fallback branch costs +0.25 ns per row read at 25k entities; a thread-static scratch copy per special heap type per thread (none today) | Faster ECS reads | Delete or thin the helper at the Friflo upgrade |
-| perf-11 | Corpse layer tables: 8 × `Item[256]`, about 17 KB per client; can keep destroyed corpse items alive until reused | Corpse layer reads without a scan (about 500 scans → 0 per frame in the corpse scene) | Cache serials instead of Items, or clear on destroy |
-
-For pools, caches, prefill and atlases with their MB cost, see [memory-footprint.md](memory-footprint.md).
-
-## 2026-11-07
+## Memory (per client)
 
 | Change | Cost | Buys | Revisit |
 |---|---|---|---|
-| tile-head (1150d9b3a) | ~544 B per chunk (`_heads`, 64 refs), ≤ ~0.3 MB per client with the 300-chunk pool | O(1) tile-list head; the `TPrevious` walk was 7–8 % of Legacy britain_z samples | quiet timing parked (`measure/tile-head/`) |
-| tile-index-2 (8b1f355cd) | 8 B per chunk index (occupied-cell mask); one OR/AND-NOT per placement | one bit test per walked tile instead of a call + loads | quiet timing parked (`measure/tile-index-2/`) |
-| ecs-effects-own (endpoints, default off) | ~40 B per live effect (< 0.05 MB); with the switch on ~10–15 ns per endpoint read, ~25 ns per drawn effect with a source, a walk of live effects per object destroy, ~1–2 ns Serial+kind check | effects reference ECS records, not objects | phase 2 folds reads into one step per effect |
-| ecs-item-offset (default off) | 12 B per item that ever rode a moving boat; ~4–5 ns per drawn item with the switch on | item offset owned by the ECS | read from the row Gather already holds |
-| decode-stall (b-merge pending push) | two `SetThreadPriority` calls per blocking decode wait | 2 ms wait under load ~500 ms → ~4 ms p50 | — |
-
-## 2026-11-08
-
-| Change | Cost | Buys | Revisit |
-|---|---|---|---|
-| ecs-active-items (3d5bc9a90; `ecs_active_items_source`, default off) | item handle table and free list: 64 entries each to start, grown to the peak listed count (a few KB); one extra array read per entry in `Rebuild` when the switch is on | entries hold int handles, so removed items are not kept reachable | quiet timing parked |
-| ecs-wave1c (3695805e2; `ecs_small_fields`, default off) | switch on: ~10–25 ns per getter read (estimated; e.g. corpse extract `UsedLayer` per corpse, the light pass `LightID` per light item); switch off: one extra test per getter; memory < 0.1 MB per client | small Class A fields (item LightID/IsDamageable/UsedLayer, mobile Race/SpeedMode/IsFemale/IsRenamable, player InWarMode) owned by the ECS | quiet timing never run per switch; covered by the after-T9 pass; derive `MobileInputs`' copies from the record once the caches go |
-| perf-alloc-sites-2 (5c6b682a7) | reused text pixel buffer, up to 1 MB per client (game thread only) | text rasterizing no longer allocates a `uint[]` per string (steady main thread 40 → 0 B/frame p50; ls_walk allocation about halved) | shrink after a burst, or rasterize straight into the atlas |
-| worldmap-texture (398510734) | none new: peak while a facet map loads is still ~235 MB per client (decoded image + texture); the texture is now freed on close (saves ~117.5 MB after closing). Codex P3 accepted: the `Log.Info` at WorldMapGump.cs:1563 sits before the ownership transfer, so a throwing logger would leak the new texture until finalization | no off-thread GPU create/dispose; fixes the reopen/close crash | move the log inside the cleanup `try` at the next touch |
-| perf-alloc-5 | two `PathObject` lists kept at their peak size (pathfinder) | refused walks no longer allocate (handles-walk 420/464 → 4 B/frame) | trim after a long path |
-| quiet-1108: gradual ECS dual-path cost (tip 957237f06 vs b 34fec0e52, before T5) | Gpu large scene: frame about +0.07–0.14 ms p50 (+6–8 %), mostly world_prepare (+7–9 %); small scenes equal. Legacy: world_prepare +0.05–0.27 ms and update +0.004–0.03 ms in the large scene, frame equal or better (draw got cheaper); a..tip also added scene_draw_ui +0.04 ms and fx text +0.024 ms at `ls_z25`. Bisected in two passes: small steps of +0.02–0.05 ms, no single culprit | the ECS conversion running beside the old paths (switches and checkers) | **re-measure after T9** with the switches settled (one full timing pass; owner, 2026-11-08) |
-| legacy-sprites-cost (e079d5368; `legacy_ecs_sprites`, default off) | memory with the switch on: one `LegacyEntry[]` per drawn mobile in its `MobileFrameCache`, ~56 B × 12–24 calls (~1 KB), so ~2 MB per client at ~2,000 mobiles drawn, allocated when a mobile is first drawn (corpses window: one 67–120 KB frame per window, 19 B/frame average, p50 0); miss frames copy the calls (~0.1 µs per mobile on ≤ 10 % of frames). Codex P3 accepted: turning the switch off at runtime keeps surviving mobiles' peak-sized arrays until they leave (dev-only toggle, bounded per mobile). Nothing with the switch off | Legacy mobiles replay their batcher calls (~90 % of draws at the large scene) instead of select + resolve; expected 0.4–1 ms of the 1.38 ms ls_z25 world_draw rise (timing parked) | share entries per (body, equipment, frame); free the arrays when the switch goes off |
-| tile-index-flip (d54ab5109; `world_tile_index` now default on) | Legacy world_prepare +4–6 % at ls_z1 (quiet-1108, bench-000416..421); Legacy frame and Gpu neutral. Memory: none new; the flip removes the "index kept for effects while off" overlap (~0.5–1.5 MB) | items, mobiles and effects live only in the ECS-maintained tile index; T9 can drop `TNext`/`TPrevious` from dynamics | re-time in the after-T9 pass; the Legacy walk's merge of list and index |
-
-## 2026-11-09
-
-ecs-flip-8 (ca89426bc) and ecs-flip-8-sprites (14efa571a) turned eight switches on by default. Their costs were accepted when each was built (default off, rows above where they existed); from now they apply to every client. None was timed per switch: the arms are in `measure/ecs-flip-8/job-timing-*-PARKED.sh` for the after-T9 pass.
-
-| Change | Cost | Buys | Revisit |
-|---|---|---|---|
-| `ecs_item_offset` on (187b39519) | a handle check and `EcsRead.TryGet` (~4–5 ns) per drawn item per frame in `Gather` and per item pick; 12 B per item that ever rode a moving boat | the item's boat offset owned by the ECS | **partly revisited** (legacy-sprites-items, b607aa19a): `ItemOffsets.ReadRow` reads from the row `Gather` already holds |
-| `ecs_boat_steps` on (48f7290f3) | per frame, a key snapshot and a lookup per boat that ever queued a step; ~90 B per moved boat plus 16 B per passenger slot | boat motion as an ECS component and system | after-T9 timing pass |
-| `ecs_small_fields` on (cc163f59b) | an ECS read (~10–25 ns) instead of a field load for `UsedLayer` per corpse, `LightID` per light item and the player race per static at chunk load; `MobileTraits` 3 B and `ItemTraits` 2 B per record (< 0.1 MB at the large scene) | the small Class A fields owned by the ECS | after-T9 timing pass; derive `MobileInputs`' copies from the record (T9) |
-| `ecs_active_items_source` on (8e53a5453) | an entity create/delete per list add/remove, a per-frame query count and an O(listed) scatter; Item +4 B and a handle table of a few KB | the active item list from the ECS, entries that do not keep removed items reachable | after-T9 timing pass |
-| `ecs_step_mount_inputs` on (250070441) | one component read per step decision; a slot rebuild after an equipment change (no figure measured) | mount state for steps from the ECS | — |
-| `ecs_effect_endpoints` on (f1774c07f) | ~40 B per live effect; ~10–15 ns per endpoint read; every object destroy walks the live effects while any exist | effects reference ECS records, not objects | after-T9 timing pass; the destroy walk if many effects live at once |
-| `ecs_effect_motion` on (d43602c52) | +8 B per live effect; one player record read per effects pass (fewer ECS reads than endpoints alone) | effect motion as `EffectSystem` steps | — |
-| `ecs_effect_sprites` on (bc60ed53d) | per drawn effect: one `EffectState` get, a tiledata read and the source lookup the view also does, instead of the view's draw (estimated); one `EffectSpriteExtract` and a 16-entry checker buffer per client | both renderers draw effects from the extract over `EffectState` | delete `GameEffectView`'s draw once `legacy_ecs_sprites` is on |
-| t9-world-index slice 1 (a2ad0b43b; `world_entity_index`, default off) | the mirror's handle table, 8 B per entity id, always maintained (32 KB initial, ~0.1–0.4 MB at a large scene's peak id); one array store per mirror upsert in both switch states | `World.Get`/`GetItem`/`GetMobile` from the ECS serial index; the step towards deleting the `Items`/`Mobiles` tables | weigh against the `Items`/`Mobiles` tables' memory once they are deleted (later slices) |
-
-## 2026-11-09 and 2026-11-10
-
-| Change | Cost | Buys | Revisit |
-|---|---|---|---|
-| perf-cpu-1109 (456bb0606; `ItemTable` held flag, no switch) | three fields per `Item` (a reference, a uint, a bool): ~16 B per item with padding, ~0.3 MB per client at 20k items; `Items.Add`/`Remove` write two fields more; `Clear` walks the items once (logout only) | `World.Holds` for an item is a field compare, not a dictionary lookup, in the active item loop and the destroyed-item sweep | goes with the item dictionary in world index slice 5 |
-| t9-world-index slice 3 part 2 (19e61bf18; `world_entity_index`, default off) | `Mobile.TableKey`: 4 B per mobile (< 0.02 MB at 2k mobiles); one reusable `List<Item>` in `WorldWriter` for re-keys; with the switch off each converted reader and `Holds` pay one or two flag tests | `World.Holds` from the tables' marks, no dictionary lookup per identity guard | goes with the dictionaries in slice 5 |
-| t9-world-index slice 4 (2cfd8b244; `world_entity_index`, default off) | the ordered item table: ~12 B per slot (8 B `Item[]` + 4 B key array, grown by doubling, never shrunk until `Clear`) beside the dictionary, plus `Item.Ordinal` 4 B per item: ~0.5 MB at 25k items; a few more stores per Add/Remove | the update order carried by slots, so the item dictionary can go | slice 5: delete the dictionary walk, or keep the dictionary only as World's serial key |
-
+| T4 thin handles | ~+32 B per Item (16 B Friflo handle + fields), ~0.8 MB at 25k items | handle-based ECS access | shrinks when T9 deletes cached fields |
+| T6b tile index | `TNext`/`TPrevious` 16 B per item, mobile and effect, now always null (~0.5 MB at 30k) | - (left over) | goes with T9: list-object base class off dynamics (own slice after wave B; also folds in dead `Mobile.FindChair` branch) |
+| tile-head (1150d9b3a) / tile-index-2 (8b1f355cd) | ~544 B per chunk (`_heads`), <= ~0.3 MB at 300 chunks; 8 B per chunk occupancy mask | O(1) head; bit test per tile | after-T9 pass |
+| T9 child-list slice B | `LinkedObject` 24 B per object on Item/Mobile (2-5 MB) | - | revisited (eb0f70ed0): moved off `BaseGameObject`, ~1.5 MB saved |
+| T3 equipment (0x78) | +8 B `Mobile.EquipCache` | layering cache without per-packet cost | T9 frees more |
+| `EcsRead` (02c0ef387) | depends on Friflo 4.0.0-preview.2 internals (field offset, `[UnsafeAccessor]`); fallback +0.25 ns per row read at 25k entities | faster ECS reads | delete or thin at the Friflo upgrade |
+| perf-11 corpse layer tables | 8 x `Item[256]`, ~17 KB; may keep destroyed corpse items alive until reused | ~500 scans to 0 per frame in the corpse scene | cache serials or clear on destroy |
+| ecs-effects-own (endpoints) / `ecs_effect_motion` | ~40 B + 8 B per live effect (< 0.05 MB) | see above | - |
+| ecs-item-offset | 12 B per item that ever rode a moving boat; `ecs_boat_steps` ~90 B per moved boat + 16 B per passenger slot | boat offset and motion in the ECS | - |
+| `ecs_small_fields` | `MobileTraits` 3 B + `ItemTraits` 2 B per record (< 0.1 MB) | see above | - |
+| `ecs_active_items_source` | item handle table + free list (a few KB), Item +4 B | removed items not kept reachable | - |
+| `ecs_item_draw_row` | ~0.35 MB at 25k items | Legacy draw-row parity | - |
+| `legacy_ecs_sprites` mobile cache | one `LegacyEntry[]` per drawn mobile, ~56 B x 12-24 calls (~1 KB): ~2 MB at ~2k mobiles, allocated at first draw (corpses window: one 67-120 KB frame, 19 B/frame avg). Switch off at runtime keeps arrays of surviving mobiles until they leave (dev-only toggle, Codex P3) | see above | free arrays when the switch goes off |
+| `world_entity_index` | handle table 8 B per entity id (32 KB initial, ~0.1-0.4 MB peak); slice 3: `Mobile.TableKey` 4 B per mobile + one reusable `List<Item>` in `WorldWriter`; slice 4: ordered item table ~12 B per slot + `Item.Ordinal` 4 B (~0.5 MB at 25k items); bookkeeping dictionaries ~0.6 MB | identity, order and holds without the dictionaries | slice 5: drop the dictionary walk, decide the bookkeeping dictionaries |
+| perf-cpu-1109 | ~16 B per Item for the held flag (reference, uint, bool), ~0.3 MB at 20k | field compare for `World.Holds` | goes with the item dictionary (slice 5) |
+| perf-alloc-sites-2 (5c6b682a7) | reused text pixel buffer up to 1 MB (game thread) | steady main thread 40 to 0 B/frame p50; ls_walk allocation about halved | shrink after a burst or rasterize into the atlas |
+| perf-alloc-5 | two `PathObject` lists kept at peak size | refused walks no longer allocate | trim after a long path |
+| worldmap-texture (398510734) | none new: peak during a facet map load ~235 MB (image + texture); texture freed on close (saves ~117.5 MB) | no off-thread GPU create/dispose; fixes the reopen crash | move the `Log.Info` inside the cleanup `try` |
+| Large-scale fixes (a122f2cc1) | Gpu capacity 131,072 sprites and 128 animation layers: +64 MB | no silently dropped sprites, no page flicker | - |
+| Login warm-up (11174c3cf) | 22-31 ms and ~32 MB at login (chunk pool 300, land/static recycler pools) | natural collections in the first minute 4-7 to 0-1 | per-process only; see 4K pool caps (owner-review) |
+| Cliloc uncompressed (owner, 2026-10-31) | +11.5 MiB on disk | startup load 1.6 vs 8.6 ms | `--cliloc-brotli` available |
