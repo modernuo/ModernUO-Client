@@ -47,8 +47,8 @@ namespace ClassicUO.UnitTests.Ecs
             Item item = world.GetOrCreateItem(serial);
 
             world.RemoveItemFromContainer(item);
-            item.Container = corpse.Serial;
-            item.Layer = layer;
+            item.TestSetContainer(corpse.Serial);
+            item.TestSetLayer(layer);
             corpse.PushToBack(item);
             world.Ecs.Sync(item);
             WorldWriterTests.AttachLists(world);
@@ -81,12 +81,12 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint serial in new[] { MOB, OTHER })
             {
                 Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
-                Pair(() => { a.SpeedMode = CharacterSpeedType.FastUnmount; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmount));
+                Pair(() => { a.TestSetSpeedMode(CharacterSpeedType.FastUnmount); oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmount));
                 Pair(() => a.IsDead = true, () => newWorld.Writer.SetDead(b, true));
                 AssertSameWorld(oldWorld, newWorld);
                 Pair(() => a.IsDead = false, () => newWorld.Writer.SetDead(b, false));
                 // war mode on another mobile: the setter is empty (war mode is a flag), the inputs are committed as pushed
-                Pair(() => a.InWarMode = true, () => newWorld.Writer.SetWarMode(b, true));
+                Pair(() => a.TestSetInWarMode(true), () => newWorld.Writer.SetWarMode(b, true));
                 AssertSameWorld(oldWorld, newWorld);
             }
 
@@ -120,11 +120,11 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (bool war in new[] { true, true, false })
             {
-                Pair(() => a.InWarMode = war, () => newWorld.Writer.SetWarMode(b, war));
+                Pair(() => a.TestSetInWarMode(war), () => newWorld.Writer.SetWarMode(b, war));
                 AssertSameWorld(oldWorld, newWorld);
             }
 
-            Pair(() => { a.SpeedMode = CharacterSpeedType.CantRun; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
+            Pair(() => { a.TestSetSpeedMode(CharacterSpeedType.CantRun); oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
             Pair(() => OldScalarWrites.Name(a, "Avatar"), () => newWorld.Writer.SetName(b, "Avatar"));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
@@ -139,8 +139,8 @@ namespace ClassicUO.UnitTests.Ecs
             corpse.SetInWorldTile(1002, 1000, 0);
             Item loot = world.GetOrCreateItem(CLOOT);
             loot.Graphic = 0x1F03;
-            loot.Container = CORPSE;
-            loot.Layer = Layer.Robe;
+            loot.TestSetContainer(CORPSE);
+            loot.TestSetLayer(Layer.Robe);
             corpse.PushToBack(loot);
             world.Ecs.Sync(loot);
             WorldWriterTests.AttachLists(world);
@@ -188,7 +188,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceCorpseEquipment(world.Get(CORPSE), ITEM, Layer.Pants);
             world.Ecs.CommitObserver = null;
 
-            seen.Should().Equal((0xFFFF_FFFFu, Layer.Shirt, MOB), (CORPSE, Layer.Pants, MOB));
+            // T9 S5: the getter is the record, so the final commit sees the detached one's Container
+            seen.Should().Equal((0xFFFF_FFFFu, Layer.Shirt, MOB), (CORPSE, Layer.Pants, 0xFFFF_FFFFu));
         }
 
         [Fact]
@@ -269,7 +270,8 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.SetDead(player, true);
 
                 world.Writer.Violations.Should().Be(0);
-                MiscOf(player).Should().Be("speed FastUnmount dead True war True");
+                // T9 S5: the speed and war modes are the record's only, so they are not kept either
+                MiscOf(player).Should().Be("speed Normal dead True war False");
                 // T9: the detached player has no record, so the name is accepted but not kept (a misconfigured server's case)
                 player.Name.Should().BeNull();
             }
@@ -1000,8 +1002,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.RemoveDeadMobile(m, f0, d0);
             m.IsDestroyed.Should().BeTrue();
 
-            // the removed mobile has no record left, so its name reads null (T9: no cache)
-            (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(((string)null, "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
+            // the removed mobile has no record left, so its name and speed mode read the defaults (T9, S5: no cache)
+            (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(((string)null, "bag", 5u, CharacterSpeedType.Normal, true, 0x4000_7302u));
             FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key, the frame advance and the corpse animation's end");
         }
 

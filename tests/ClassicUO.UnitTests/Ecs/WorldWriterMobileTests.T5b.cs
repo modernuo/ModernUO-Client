@@ -178,7 +178,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
                 case T5bStart.WarMode:
-                    m.Flags |= Flags.WarMode;
+                    m.TestSetFlags(m.Flags | Flags.WarMode);
                     world.Ecs.Sync(m);
 
                     break;

@@ -178,7 +178,7 @@ namespace ClassicUO.UnitTests.Ecs
                 case IdleStart.Animating: OldAnimate(m, AnimPacket.NewCharacterAnimation); break;
                 // a plain Mobile's InWarMode setter does nothing: its getter reads the WarMode flag (Codex audit of part 8, P3)
                 case IdleStart.WarMode:
-                    m.Flags |= Flags.WarMode;
+                    m.TestSetFlags(m.Flags | Flags.WarMode);
                     world.Ecs.Sync(m);
                     m.InWarMode.Should().BeTrue("the war-mode start is in war mode");
 
@@ -551,7 +551,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW + 5_200;
             // the inputs push writes the clock too (WriteInputs -> WriteClock), and ClockWrites is per World
             long ca = oldWorld.Ecs.ClockWrites, cb = newWorld.Ecs.ClockWrites;
-            Pair(() => a.Direction = Direction.West, () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
+            Pair(() => a.TestSetDirection(Direction.West), () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
             (newWorld.Ecs.ClockWrites - cb).Should().Be(oldWorld.Ecs.ClockWrites - ca, "the turn pushes its inputs (and clock) as the old turn did");
             AssertSameWorld(oldWorld, newWorld);
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
@@ -661,12 +661,12 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Item bank = world.GetOrCreateItem(BANK);
             bank.Graphic = 0xE7C;
-            bank.Layer = Layer.Bank;
-            bank.Container = p.Serial;
+            bank.TestSetLayer(Layer.Bank);
+            bank.TestSetContainer(p.Serial);
             p.PushToBack(bank);
             Item gold = world.GetOrCreateItem(GOLD);
             gold.Graphic = 0xEED;
-            gold.Container = BANK;
+            gold.TestSetContainer(BANK);
             bank.PushToBack(gold);
             bank.Opened = true;
 
@@ -1206,9 +1206,9 @@ namespace ClassicUO.UnitTests.Ecs
             // the preview mobile (character creation: serial 1, race change: serial 0) and its clothes
             WorldWriterMobileTests.TestPlayer preview = WorldWriterMobileTests.TestPlayer.Create(world, 1);
             preview.Clear();
-            preview.Race = RaceType.ELF;
-            preview.IsFemale = true;
-            preview.Flags |= Flags.Female;
+            preview.TestSetRace(RaceType.ELF);
+            preview.TestSetIsFemale(true);
+            preview.TestSetFlags(preview.Flags | Flags.Female);
             preview.Graphic = 0x025E;
             preview.Hue = 0x83EA;
 
@@ -1219,8 +1219,8 @@ namespace ClassicUO.UnitTests.Ecs
                 Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
                 item.Graphic = 0x1518;
                 item.Hue = 0x0021;
-                item.Layer = layer;
-                item.Container = preview;
+                item.TestSetLayer(layer);
+                item.TestSetContainer(preview);
                 preview.PushToBack(item);
                 item.Hue = 0x0022; // a colour pick
             }

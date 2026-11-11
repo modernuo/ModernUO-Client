@@ -47,7 +47,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Mobile m = s.World.GetOrCreateMobile(serial);
             m.Graphic = 0x190;
-            m.Flags = flags;
+            m.TestSetFlags(flags);
             m.NotorietyFlag = noto;
             m.SetInWorldTile((ushort)x, (ushort)y, 0);
             s.World.Ecs.Sync(m);
@@ -260,7 +260,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item bag = AddGround(s, 0x4000_0010, 1005, 1000);
             Item inside = s.World.GetOrCreateItem(0x4000_0011);
             inside.Graphic = 0xEED;
-            inside.Container = bag.Serial;
+            inside.TestSetContainer(bag.Serial);
             bag.PushToBack(inside);
             inside.X = 1000 + 90;
             inside.Y = 1000;
@@ -320,8 +320,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item far = s.World.GetOrCreateItem(0x4000_0022);
             far.Graphic = 0xEED;
-            far.Container = 0x1001 | 0x8000_0000;
-            far.Layer = Layer.Shirt;
+            far.TestSetContainer(0x1001 | 0x8000_0000);
+            far.TestSetLayer(Layer.Shirt);
             far.X = 1000 + 60;
             far.Y = 1000;
             s.World.Ecs.Sync(far);
@@ -329,8 +329,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item near = s.World.GetOrCreateItem(0x4000_0023);
             near.Graphic = 0xEED;
-            near.Container = 0x1001 | 0x8000_0000;
-            near.Layer = Layer.Pants;
+            near.TestSetContainer(0x1001 | 0x8000_0000);
+            near.TestSetLayer(Layer.Pants);
             near.X = 1000 + 3;
             near.Y = 1000;
             s.World.Ecs.Sync(near);

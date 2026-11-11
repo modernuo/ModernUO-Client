@@ -175,31 +175,23 @@ namespace ClassicUO.Game.GameObjects
             && ItemData.Layer != (int)Layer.Face
             && Graphic != 0;
 
-        private ushort _amount;
-        private uint _container = 0xFFFF_FFFF;
-        private bool _isDamageable;
-        private Layer _layer;
-        private byte _lightID;
-        public ushort Amount { get { ScalarReads.Count(ScalarField.Amount); return _amount; } set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
-        public uint Container { get { ScalarReads.Count(ScalarField.Container); return _container; } set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
+        // T9 S5: Amount, Container, Layer and the traits (LightID, IsDamageable, UsedLayer) live only in the record (the world
+        // mirror's, or a preview's: Entity.TryRecord); WorldWriter's operations commit them. Without a record (an item not yet
+        // committed, the house placement preview, a destroyed instance) they read the defaults a new Item had; a spellbook's
+        // spell entry (FillSpellbook: no record) reads its spell number and its book (RecordlessAmount/Container).
+        public ushort Amount => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Amount(e) : RecordlessAmount();
 
-        // the record's ItemTraits (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
-        public bool IsDamageable
-        {
-            get => SmallFields.Routed(World) ? SmallFields.ItemBit(this, SmallField.IsDamageable, ClassicUO.Ecs.ItemTraitBits.Damageable, _isDamageable) : _isDamageable;
-            set { FunnelCheck.Write(this, FunnelField.IsDamageable); _isDamageable = value; }
-        }
-        public Layer Layer { get { ScalarReads.Count(ScalarField.Layer); return _layer; } set { FunnelCheck.Write(this, FunnelField.Layer); _layer = value; } }
-        public byte LightID
-        {
-            get => SmallFields.Routed(World) ? SmallFields.LightId(this) : _lightID;
-            set { FunnelCheck.Write(this, FunnelField.LightID); _lightID = value; }
-        }
+        public uint Container => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Container(e) : RecordlessContainer();
+
+        public bool IsDamageable => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.ItemBit(e, ClassicUO.Ecs.ItemTraitBits.Damageable);
+
+        public Layer Layer => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Layer)EcsScalars.Layer(e) : Layer.Invalid;
+
+        public byte LightID => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.LightId(e) : (byte)0;
 
         public Rectangle? MultiInfo;
         public bool Opened;
 
-        private bool _usedLayer;
         public uint Price
         {
             get
@@ -209,20 +201,16 @@ namespace ClassicUO.Game.GameObjects
                 return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : 0;
             }
         }
-        public bool UsedLayer
-        {
-            get => SmallFields.Routed(World) ? SmallFields.ItemBit(this, SmallField.UsedLayer, ClassicUO.Ecs.ItemTraitBits.UsedLayer, _usedLayer) : _usedLayer;
-            set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; }
-        }
 
-        // ecs_small_fields: the cache behind the getters (the checker's other side, and the seed of a record created later)
-        internal byte CachedLightId => _lightID;
+        public bool UsedLayer => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.ItemBit(e, ClassicUO.Ecs.ItemTraitBits.UsedLayer);
 
-        internal ClassicUO.Ecs.ItemTraits CachedTraits => new ClassicUO.Ecs.ItemTraits
-        {
-            LightId = _lightID,
-            Bits = (_isDamageable ? ClassicUO.Ecs.ItemTraitBits.Damageable : 0) | (_usedLayer ? ClassicUO.Ecs.ItemTraitBits.UsedLayer : 0)
-        };
+        // a spell entry's amount is its spell number, which FillSpellbook also gave it as its serial
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private ushort RecordlessAmount() => World != null && World.State.IsSpellEntry(this, out _) ? (ushort)Serial : (ushort)0;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private uint RecordlessContainer() => World != null && World.State.IsSpellEntry(this, out uint book) ? book : 0xFFFF_FFFF;
+
         public bool WantUpdateMulti = true;
 
         public static Item Create(World world, uint serial)
@@ -391,23 +379,10 @@ namespace ClassicUO.Game.GameObjects
 
         private static readonly System.Collections.Generic.List<MultiInfo> NoMultis = new System.Collections.Generic.List<MultiInfo>(0);
 
+        // T9 S5: a corpse's direction, UsedLayer and Layer are WorldWriter's (CorpseState in its item operations); the
+        // callers here (the house placement preview, DevBench's chair) only need the derived state
         public override void CheckGraphicChange(byte animIndex = 0)
         {
-            if (!IsMulti && IsCorpse)
-            {
-                Direction dir = Direction;
-                CorpseState(ref dir, out bool usedLayer, out Layer layer);
-                AnimIndex = 99;
-                UsedLayer = usedLayer;
-
-                if (usedLayer)
-                {
-                    Direction = dir;
-                }
-
-                Layer = layer;
-            }
-
             RefreshGraphicState();
         }
 

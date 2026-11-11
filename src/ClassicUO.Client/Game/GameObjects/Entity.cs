@@ -22,7 +22,6 @@ namespace ClassicUO.Game.GameObjects
     internal abstract class Entity : GameObject, IEquatable<Entity>
     {
         private static readonly RenderedText[] _hitsPercText = new RenderedText[101];
-        private Direction _direction;
 
 
         protected Entity(World world, uint serial) : base(world)
@@ -56,6 +55,23 @@ namespace ClassicUO.Game.GameObjects
             return EcsEntityHeld && EcsEntitySerial == _serial && EcsEntityEpoch == World.Ecs.Mirror.Epoch && !IsDestroyed || FindScalarEntity(out e);
         }
 
+        /// <summary>
+        /// T9 S5: the record the record-only getters read: <see cref="TryScalarEntity"/>'s world record or, for a detached
+        /// preview object (the character-creation and race-change gumps'), its preview record (<c>WorldEcs.Previews</c>).
+        /// Only the getters use it: the systems and extracts that call <see cref="TryScalarEntity"/> stay world-only.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool TryRecord(out Friflo.Engine.ECS.Entity e) => TryScalarEntity(out e) || FindPreviewRecord(out e);
+
+        // previews are rare: no handle caching (the preview mirror has its own epoch)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool FindPreviewRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            return !IsDestroyed && World?.Ecs != null && World.Ecs.TryGetPreviewRecord(this, out e);
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool FindScalarEntity(out Friflo.Engine.ECS.Entity e)
         {
@@ -82,11 +98,19 @@ namespace ClassicUO.Game.GameObjects
         private byte _animIndex;
         private bool _executeAnimation = true;
         private long _lastAnimationChangeTime;
-        private Flags _flags;
         public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
         public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
         internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
-        public Flags Flags { get { ScalarReads.Count(ScalarField.Flags); return _flags; } set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
+
+        // T9 S6: Flags and Direction live only in the record (Flags, Facing: every record has both); WorldWriter's operations
+        // commit them. Without one (an item before its first commit, the house placement preview, a destroyed or stale
+        // instance, the detached player): None and North, the values a new object had
+        public Flags Flags
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Flags)EcsScalars.FlagBits(e) : Flags.None;
+        }
+
         public byte HitsPercentage;
 
         // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
@@ -131,24 +155,24 @@ namespace ClassicUO.Game.GameObjects
 
         public Direction Direction
         {
-            get
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Direction)EcsScalars.Facing(e) : Direction.North;
+        }
+
+        /// <summary>
+        /// T9 S6: what the removed Direction setter did after its field write, for <see cref="WorldWriter"/>'s operations to
+        /// call where they wrote it, after committing the record: the direction-change hook (the player's door check) when the
+        /// committed direction differs from <paramref name="before"/>, then the Sync (folded inside a folding operation;
+        /// for an unfolded mobile it publishes the inputs, as the setter's Sync did).
+        /// </summary>
+        internal void DirectionCommitted(Direction before)
+        {
+            if (Direction != before)
             {
-                ScalarReads.Count(ScalarField.Direction);
-
-                return _direction;
+                OnDirectionChanged();
             }
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.Direction);
 
-                if (_direction != value)
-                {
-                    _direction = value;
-                    OnDirectionChanged();
-                }
-
-                World.Ecs.Sync(this);
-            }
+            World.Ecs.Sync(this);
         }
 
         public bool Exists => World.Contains(Serial);

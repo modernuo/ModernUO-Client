@@ -109,12 +109,12 @@ namespace ClassicUO.UnitTests.Ecs
         {
             switch (m.Graphic)
             {
-                case 0x0190: case 0x0192: m.IsFemale = false; m.Race = RaceType.HUMAN; break;
-                case 0x0191: case 0x0193: m.IsFemale = true; m.Race = RaceType.HUMAN; break;
-                case 0x025D: m.IsFemale = false; m.Race = RaceType.ELF; break;
-                case 0x025E: m.IsFemale = true; m.Race = RaceType.ELF; break;
-                case 0x029A: m.IsFemale = false; m.Race = RaceType.GARGOYLE; break;
-                case 0x029B: m.IsFemale = true; m.Race = RaceType.GARGOYLE; break;
+                case 0x0190: case 0x0192: m.TestSetIsFemale(false); m.TestSetRace(RaceType.HUMAN); break;
+                case 0x0191: case 0x0193: m.TestSetIsFemale(true); m.TestSetRace(RaceType.HUMAN); break;
+                case 0x025D: m.TestSetIsFemale(false); m.TestSetRace(RaceType.ELF); break;
+                case 0x025E: m.TestSetIsFemale(true); m.TestSetRace(RaceType.ELF); break;
+                case 0x029A: m.TestSetIsFemale(false); m.TestSetRace(RaceType.GARGOYLE); break;
+                case 0x029B: m.TestSetIsFemale(true); m.TestSetRace(RaceType.GARGOYLE); break;
             }
         }
 
@@ -137,12 +137,12 @@ namespace ClassicUO.UnitTests.Ecs
 
                 mobile.Graphic = (ushort)(graphic + p.GraphicInc);
                 OldCheckGraphicChange(mobile);
-                mobile.Direction = p.Direction & Direction.Up;
+                mobile.TestSetDirection(p.Direction & Direction.Up);
                 mobile.FixHue(p.Hue);
                 mobile.X = p.X;
                 mobile.Y = p.Y;
                 mobile.Z = p.Z;
-                mobile.Flags = p.Flags;
+                mobile.TestSetFlags(p.Flags);
             }
             else
             {
@@ -161,7 +161,7 @@ namespace ClassicUO.UnitTests.Ecs
                     mobile.X = p.X;
                     mobile.Y = p.Y;
                     mobile.Z = p.Z;
-                    mobile.Direction = cleaned_dir;
+                    mobile.TestSetDirection(cleaned_dir);
                     mobile.IsRunning = isrun;
                     mobile.ClearSteps();
                 }
@@ -171,7 +171,7 @@ namespace ClassicUO.UnitTests.Ecs
                     mobile.X = p.X;
                     mobile.Y = p.Y;
                     mobile.Z = p.Z;
-                    mobile.Direction = cleaned_dir;
+                    mobile.TestSetDirection(cleaned_dir);
                     mobile.IsRunning = isrun;
                     mobile.ClearSteps();
                 }
@@ -179,7 +179,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             mobile.Graphic = (ushort)(graphic & 0x3FFF);
             mobile.FixHue(p.Hue);
-            mobile.Flags = p.Flags;
+            mobile.TestSetFlags(p.Flags);
 
             beforePlacement?.Invoke(mobile);
 
@@ -246,16 +246,16 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.GetOrCreateMobile(MOB);
             m.Graphic = 0x190;
             m.Hue = 0x83EA;
-            m.Flags = Flags.None;
-            m.Direction = Direction.North;
+            m.TestSetFlags(Flags.None);
+            m.TestSetDirection(Direction.North);
             m.NotorietyFlag = NotorietyFlag.Innocent;
             m.SetInWorldTile(1000, 1000, 0);
 
             // a worn item, so a body change's equipment-dirty tag shows
             Item worn = world.GetOrCreateItem(ITEM);
             worn.Graphic = 0x1515;
-            worn.Container = MOB;
-            worn.Layer = Layer.Shirt;
+            worn.TestSetContainer(MOB);
+            worn.TestSetLayer(Layer.Shirt);
             m.PushToBack(worn);
             world.Ecs.Sync(worn);
 
@@ -392,7 +392,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             Pair(() => OldUpsertMobile(oldWorld, p, m =>
             {
-                OracleTraits.Sync(oldWorld); // the old path wrote the small fields' caches only
                 seenOld = Snapshot(m);
             }), () => NewUpsertMobile(newWorld, p, m => seenNew = Snapshot(m)));
 
@@ -441,7 +440,7 @@ namespace ClassicUO.UnitTests.Ecs
             switch (kind)
             {
                 case BodyPacket.UpdateCharacter:
-                    m.Flags = flags;
+                    m.TestSetFlags(flags);
                     m.Graphic = graphic;
                     OldCheckGraphicChange(m);
                     m.FixHue(hue);
@@ -453,16 +452,16 @@ namespace ClassicUO.UnitTests.Ecs
                     m.Graphic = graphic;
                     OldCheckGraphicChange(m);
                     m.FixHue(hue);
-                    m.Flags = flags;
+                    m.TestSetFlags(flags);
                     world.Ecs.Sync(m);
 
                     break;
 
                 default:
                     m.Graphic = graphic;
-                    m.Direction = dir & Direction.Mask;
+                    m.TestSetDirection(dir & Direction.Mask);
                     m.FixHue(hue);
-                    m.Flags = flags;
+                    m.TestSetFlags(flags);
                     m.SetInWorldTile(x, y, z);
 
                     break;
@@ -545,7 +544,7 @@ namespace ClassicUO.UnitTests.Ecs
             // an item (a corpse, as after a death) under the same serial
             Item corpse = world.GetOrCreateItem(DEAD);
             corpse.Graphic = 0x2006;
-            corpse.Amount = 0x190;
+            corpse.TestSetAmount(0x190);
             corpse.SetInWorldTile(1000, 1001, 0);
             WorldWriterTests.AttachLists(world);
 
@@ -848,17 +847,22 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.TryGetEntity(OTHER, out EcsEntity eo);
             long writes = world.Ecs.MobileMirrorWrites;
 
+            ushort hue = e.GetComponent<ClassicUO.Ecs.Hue>().Value;
+
+            // T9 S6: Direction has no setter (its Sync was the hook used here); the Hue cache and an explicit Sync stand in
             world.Ecs.BeginFold(m);
-            m.Direction = Direction.West; // Sync: folded
+            m.Hue = 0x0456;
+            world.Ecs.Sync(m); // Sync: folded
             m.NotorietyFlag = NotorietyFlag.Murderer; // PushInputs: folded
             m.IsRunning = true; // PushInputs: folded
-            other.Direction = Direction.West; // another instance: syncs
+            other.Hue = 0x0456;
+            world.Ecs.Sync(other); // another instance: syncs
             world.Ecs.EndFold(m);
 
             world.Ecs.MobileMirrorWrites.Should().Be(writes + 1, "only the bystander's Sync wrote");
-            e.GetComponent<Facing>().Value.Should().Be((byte)Direction.North);
+            e.GetComponent<ClassicUO.Ecs.Hue>().Value.Should().Be(hue);
             Inputs(world, MOB).Should().Be(Inputs(Build(Start.Standing), MOB), "the folded pushes did not run");
-            eo.GetComponent<Facing>().Value.Should().Be((byte)Direction.West);
+            eo.GetComponent<ClassicUO.Ecs.Hue>().Value.Should().Be(0x0456);
 
             m.IsRunning = true; // after the fold: pushes again
             e.GetComponent<MobileInputs>().Flags.Should().NotBe(Inputs(Build(Start.Standing), MOB).Flags, "the running bit is pushed");
@@ -892,18 +896,18 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item pack = world.GetOrCreateItem(PACK);
             pack.Graphic = 0xE75;
-            pack.Layer = Layer.Backpack;
-            pack.Container = MOB;
+            pack.TestSetLayer(Layer.Backpack);
+            pack.TestSetContainer(MOB);
             m.PushToBack(pack);
             world.Ecs.Sync(pack);
 
             Item loot = world.Writer.UpsertWorldItem(LOOT, 0xE76, 0, 1, 1000, 1000, 0, 0, 0, 0, 0, out _, out lootPlacement);
-            loot.Container = PACK;
+            loot.TestSetContainer(PACK);
             pack.PushToBack(loot);
             world.Ecs.Sync(loot);
             Item gem = world.GetOrCreateItem(GEM);
             gem.Graphic = 0xF10;
-            gem.Container = LOOT;
+            gem.TestSetContainer(LOOT);
             loot.PushToBack(gem);
             world.Ecs.Sync(gem);
             WorldWriterTests.AttachLists(world);
@@ -1039,7 +1043,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(player);
             player.Graphic = 0x190;
             player.Hue = 0x83EA;
-            player.Direction = Direction.North;
+            player.TestSetDirection(Direction.North);
             player.NotorietyFlag = NotorietyFlag.Innocent;
             player.SetInWorldTile(1000, 1000, 0);
             player.UpdateRealScreenPositionOnly(0, 0);
@@ -1061,7 +1065,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
             else
             {
-                p.Direction = to;
+                p.TestSetDirection(to);
             }
 
             int x = p.X, y = p.Y;
@@ -1175,7 +1179,8 @@ namespace ClassicUO.UnitTests.Ecs
             );
 
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
-            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0x191, (ushort)1005, (ushort)1006, (sbyte)3, Direction.South));
+            // T9 S6: the detached player has no record, so its direction is not kept (a misconfigured server's case)
+            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0x191, (ushort)1005, (ushort)1006, (sbyte)3, Direction.North));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
@@ -1206,18 +1211,19 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void BodyState_Equals_The_Old_CheckGraphicChange()
         {
-            // the oracle and the fixture write only the caches, and both read the record the same way
+            // the oracle writes the record; T9 S5 deleted Mobile.CheckGraphicChange (no caller wrote a body outside the
+            // funnel), so BodyState (what the funnel's body operations commit) is compared with it
             var world = new World();
 
             for (int g = 0; g <= 0x500; g++)
             {
-                Mobile a = world.GetOrCreateMobile(0x100), b = world.GetOrCreateMobile(0x101);
-                a.IsFemale = b.IsFemale = true;
-                a.Race = b.Race = RaceType.ELF;
-                a.Graphic = b.Graphic = (ushort)g;
+                Mobile a = world.GetOrCreateMobile(0x100);
+                a.TestSetIsFemale(true);
+                a.TestSetRace(RaceType.ELF);
+                a.Graphic = (ushort)g;
                 OldCheckGraphicChange(a);
-                b.CheckGraphicChange();
-                (b.IsFemale, b.Race).Should().Be((a.IsFemale, a.Race), $"graphic 0x{g:X}");
+                bool body = Mobile.BodyState((ushort)g, out bool female, out RaceType race);
+                (body ? female : true, body ? race : RaceType.ELF).Should().Be((a.IsFemale, a.Race), $"graphic 0x{g:X}");
             }
         }
 
@@ -1259,7 +1265,6 @@ namespace ClassicUO.UnitTests.Ecs
         private static void AssertSameWorld(World a, World b, uint mob = MOB)
         {
             // the old path writes the small fields' caches only: its records take them before the comparison
-            OracleTraits.Sync(a);
             b.Items.Count.Should().Be(a.Items.Count);
             b.Mobiles.Count.Should().Be(a.Mobiles.Count);
             b.ActiveItems.Select(i => i.Serial).Should().Equal(a.ActiveItems.Select(i => i.Serial));
@@ -1443,11 +1448,11 @@ namespace ClassicUO.UnitTests.Ecs
             // 0x1D: the mobile with a queued step, its equipment and a backpack's contents (the removal owns the subtree)
             Item pack = world.GetOrCreateItem(0x4000_7110);
             pack.Graphic = 0xE75;
-            pack.Layer = Layer.Backpack;
-            pack.Container = n.Serial;
+            pack.TestSetLayer(Layer.Backpack);
+            pack.TestSetContainer(n.Serial);
             n.PushToBack(pack);
             Item loot = world.GetOrCreateItem(0x4000_7111);
-            loot.Container = pack.Serial;
+            loot.TestSetContainer(pack.Serial);
             pack.PushToBack(loot);
             WorldWriterTests.AttachLists(world);
             world.Writer.UpsertMobile(n, n.Serial, 0x191, 0, 1003, 1003, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p3);

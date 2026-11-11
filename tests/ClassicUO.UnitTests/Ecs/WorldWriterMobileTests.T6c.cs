@@ -64,7 +64,7 @@ namespace ClassicUO.UnitTests.Ecs
                 case StepScenario.AcrossChunks:
                 case StepScenario.Parked:
                     m.SetInWorldTile(1006, 1000, 0);
-                    m.Direction = Direction.East;
+                    m.TestSetDirection(Direction.East);
                     world.Ecs.Sync(m);
                     Time.Ticks = NOW - 100;
 

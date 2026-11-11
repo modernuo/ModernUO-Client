@@ -75,7 +75,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item it = world.GetOrCreateItem(ITEM);
             it.Graphic = 0x1515;
-            it.Container = BAG;
+            it.TestSetContainer(BAG);
             world.Ecs.Sync(it);
             world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord r).Should().BeTrue();
             r.OnGround.Should().BeFalse();
@@ -84,7 +84,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.GetContents(BAG).Count.Should().Be(1);
 
             // what a ground drop does: the container is cleared, then the item is placed
-            it.Container = WorldMirror.NO_CONTAINER;
+            it.TestSetContainer(WorldMirror.NO_CONTAINER);
             it.UpdateRealScreenPositionOnly(0, 0);
             it.SetInWorldTile(500, 600, 2);
 

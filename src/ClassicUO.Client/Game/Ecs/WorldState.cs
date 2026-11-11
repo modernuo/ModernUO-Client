@@ -212,6 +212,38 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
+        /// T9 S5: whether <paramref name="item"/> is a held spell entry, and its book: the record-less Item getters' answer
+        /// for an entry (Amount = its spell number = its serial, Container = the book). Serials 1-64 only (no world item has
+        /// one); a scan of the held sets otherwise (a few books, at most 64 entries each), no allocation.
+        /// </summary>
+        internal bool IsSpellEntry(Item item, out uint book)
+        {
+            book = 0xFFFF_FFFF;
+
+            if (_spellEntries.Count == 0 || item.Serial - 1 >= 64)
+            {
+                return false;
+            }
+
+            foreach (KeyValuePair<uint, SpellEntrySet> pair in _spellEntries)
+            {
+                SpellEntrySet set = pair.Value;
+
+                for (int i = 0; i < set.Count; i++)
+                {
+                    if (ReferenceEquals(set.Entries[i], item))
+                    {
+                        book = pair.Key;
+
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Codex audit P2 (#3): the book's record went (destroyed: a removal, the bank's, a map change's) or its set changed
         /// (a clear, a refill): its entries go now, not at the next read (a removed book is never read again).
         /// </summary>

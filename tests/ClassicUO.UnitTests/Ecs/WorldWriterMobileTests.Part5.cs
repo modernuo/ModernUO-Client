@@ -25,7 +25,7 @@ namespace ClassicUO.UnitTests.Ecs
             m.Graphic = graphic;
             OldCheckGraphicChange(m);
             m.SetInWorldTile(x, y, z);
-            m.Direction = dir;
+            m.TestSetDirection(dir);
         }
 
         private static void NewEnterWorld(World world, Mobile m, ushort graphic, ushort x, ushort y, sbyte z, Direction dir)
@@ -83,7 +83,6 @@ namespace ClassicUO.UnitTests.Ecs
             b.OnMoved.Should().BeNull("the position callback ran");
             b.OnTurned.Should().BeNull("the direction callback ran");
             b.Direction.Should().Be(Direction.South);
-            OracleTraits.Sync(oldWorld); // the old path wrote the small fields' caches only
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
@@ -119,7 +118,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.SetInWorldTile((ushort)x, (ushort)y, z);
             }
 
-            m.Direction = dir;
+            m.TestSetDirection(dir);
         }
 
         private static void NewDenyWalk(World world, Mobile m, int x, int y, sbyte z, Direction dir)
@@ -209,7 +208,7 @@ namespace ClassicUO.UnitTests.Ecs
             m.X = (ushort)step.X;
             m.Y = (ushort)step.Y;
             m.Z = step.Z;
-            m.Direction = (Direction)step.Direction;
+            m.TestSetDirection((Direction)step.Direction);
             m.IsRunning = step.Run;
             m.OffsetX = 0;
             m.OffsetY = 0;
@@ -355,8 +354,10 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World oldWorld = Build(start), newWorld = Build(start);
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
-                a.Direction = b.Direction = Direction.Left;
-                a.Flags = b.Flags = Flags.WarMode;
+                a.TestSetDirection(Direction.Left);
+                b.TestSetDirection(Direction.Left);
+                a.TestSetFlags(Flags.WarMode);
+                b.TestSetFlags(Flags.WarMode);
                 oldWorld.Ecs.Sync(a);
                 newWorld.Ecs.Sync(b);
 
@@ -397,7 +398,7 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (Mobile s in new[] { a, b })
             {
                 s.Graphic = 0x190;
-                s.Direction = Direction.East;
+                s.TestSetDirection(Direction.East);
                 s.X = 1000;
                 s.Y = 1000;
             }
@@ -481,7 +482,7 @@ namespace ClassicUO.UnitTests.Ecs
             chest.Graphic = 0xE40;
             chest.SetInWorldTile(1003, 1000, 0);
             Item coin = world.Writer.UpsertWorldItem(COIN, 0xEED, 0, 5, 1003, 1000, 0, 0, 0, 0, 0, out _, out coinPlacement);
-            coin.Container = CHEST;
+            coin.TestSetContainer(CHEST);
             chest.PushToBack(coin);
             world.Ecs.Sync(coin);
             WorldWriterTests.AttachLists(world);
@@ -617,7 +618,9 @@ namespace ClassicUO.UnitTests.Ecs
             Pair(() => OldDenyWalk(a, 1000, 1000, 0, Direction.West), () => NewDenyWalk(newWorld, b, 1000, 1000, 0, Direction.West));
             Pair(() => a.NotorietyFlag = NotorietyFlag.Murderer, () => newWorld.Writer.SetNotoriety(b, NotorietyFlag.Murderer));
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
-            (b.Graphic, b.IsFemale, b.X, b.Direction, b.NotorietyFlag, b.Steps.Count).Should().Be(((ushort)0x25E, true, (ushort)1000, Direction.West, NotorietyFlag.Murderer, 0));
+            // (T9 S5: the detached player has no record, so the body's sex is not kept: a misconfigured server's case; T9 S6:
+            // nor its direction)
+            (b.Graphic, b.IsFemale, b.X, b.Direction, b.NotorietyFlag, b.Steps.Count).Should().Be(((ushort)0x25E, false, (ushort)1000, Direction.North, NotorietyFlag.Murderer, 0));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
 
@@ -710,13 +713,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             // the range sweep: a walking mobile wearing an item, a ground bag holding an item
             Item worn = world.GetOrCreateItem(0x4000_7210);
-            worn.Layer = Layer.Shirt;
-            worn.Container = m.Serial;
+            worn.TestSetLayer(Layer.Shirt);
+            worn.TestSetContainer(m.Serial);
             m.PushToBack(worn);
             Item bag = world.GetOrCreateItem(0x4000_7211);
             bag.SetInWorldTile(1005, 1005, 0);
             Item inside = world.GetOrCreateItem(0x4000_7212);
-            inside.Container = bag.Serial;
+            inside.TestSetContainer(bag.Serial);
             bag.PushToBack(inside);
             WorldWriterTests.AttachLists(world);
             world.Writer.UpsertMobile(m, m.Serial, 0x190, 0, (ushort)(m.X + 1), m.Y, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p2);
