@@ -268,21 +268,21 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// The clock and sound part of <see cref="Draw"/>, for frames whose draw is skipped (skip_draw_when_minimized): the wind
-        /// timer keeps rolling and its thunder/wind sound still plays (once, where Draw plays it per drawn effect), and finished
-        /// weather resets. Effect positions do not move; the next Draw takes the new wind speeds.
+        /// timer keeps rolling and its thunder/wind sound still plays (once, where Draw plays it per drawn effect), and expired
+        /// weather ends at once. Effect positions do not move; the next Draw takes the new wind speeds.
         /// </summary>
         public void SimulateSkippedDraw()
         {
             if (_timer < Time.Ticks)
             {
-                if (CurrentCount == 0)
-                {
-                    Reset();
+                // Draw lets the particles drain off screen first, which needs the draw; with it skipped, expired weather ends at
+                // once (by time, not by particle count) so no wind or thunder rolls past the weather's timeout
+                Reset();
 
-                    return;
-                }
+                return;
             }
-            else if (Type == WeatherType.WT_INVALID_0 || Type == WeatherType.WT_INVALID_1)
+
+            if (Type == WeatherType.WT_INVALID_0 || Type == WeatherType.WT_INVALID_1)
             {
                 return;
             }
