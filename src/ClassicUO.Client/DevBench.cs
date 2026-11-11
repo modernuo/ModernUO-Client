@@ -2182,13 +2182,24 @@ namespace ClassicUO
                         else
                         {
                             var chair = world.GetOrCreateItem(chairSerial);
-                            chair.X = world.Player.X;
-                            chair.Y = world.Player.Y;
-                            chair.Z = world.Player.Z;
+
+                            // T9 S10: a dev-only position write outside the funnel (no packet places a local item), exempt
+                            // from CUO_FUNNEL_CHECK by scope like the teleport's
+                            using (FunnelCheck.DevWrite())
+                            {
+                                chair.X = world.Player.X;
+                                chair.Y = world.Player.Y;
+                                chair.Z = world.Player.Z;
+                            }
+
                             world.Writer.SetLocalItemLook(chair, Convert.ToUInt16(arg, 16), chair.Hue);
                             chair.CheckGraphicChange();
 
-                            chair.SetInWorldTile(chair.X, chair.Y, chair.Z);
+                            using (FunnelCheck.DevWrite())
+                            {
+                                chair.SetInWorldTile(chair.X, chair.Y, chair.Z);
+                            }
+
                             world.Ecs.Sync(chair);
                         }
 

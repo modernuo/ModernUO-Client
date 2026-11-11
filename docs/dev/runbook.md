@@ -203,7 +203,8 @@ Notable test classes:
 
 | Class | Covers |
 |---|---|
-| `Ecs/WriteSiteBudgetTests` | Fails when direct writes to world-state fields grow or shrink against `Ecs/WriteSiteAllowlist.txt` |
+| `Ecs/ClassAMemberTests` | Fails when a record-only world-state field gets a setter or a backing field, or a cache field loses its setter |
+| `Ecs/WriteSiteBudgetTests` | Fails when direct writes to the world-state fields that keep a setter grow or shrink against `Ecs/WriteSiteAllowlist.txt` |
 | `Ecs/WorldWriterTests`, `Ecs/WorldWriterMobileTests*` | The `WorldWriter` operations and their ECS mirror |
 | `Ecs/WorldState*Tests` | ECS readers and their checkers (contents, equipment) |
 | `Ecs/LayerRules*Tests` | The equipment layering rules |
@@ -214,7 +215,7 @@ Notable test classes:
 
 ### The write-site budget
 
-`WriteSiteBudgetTests` scans `src/ClassicUO.Client` with a regex scanner. It compares the count of direct writes to class A (ECS-owned) fields, per file and field, with `tests/ClassicUO.UnitTests/Ecs/WriteSiteAllowlist.txt`. The count may only go down. The test fails on a new write, and also when the allowlist is above the real count. Regenerate the allowlist only on purpose, and say why in the PR:
+`WriteSiteBudgetTests` scans `src/ClassicUO.Client` with a regex scanner. It compares the count of direct writes to the class A (ECS-owned) fields that still have a setter (X/Y/Z, `Serial`, the Mobile's notoriety, input and step-sound fields, an item's animation fields and `IsMulti`, the Mobile's step-queue methods), per file and field, with `tests/ClassicUO.UnitTests/Ecs/WriteSiteAllowlist.txt`. The count may only go down. The test fails on a new write, and also when the allowlist is above the real count. Regenerate the allowlist only on purpose, and say why in the PR:
 
 ```
 CUO_WRITE_BUDGET_REGEN=1 dotnet test <repo>/tests/ClassicUO.UnitTests -c Release --filter WriteSiteBudgetTests
@@ -241,8 +242,8 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | Variable | Meaning |
 |---|---|
 | `CUO_LAYER_CACHE_CHECK=1\|N` | Dev. Compare cached `LayerDecision` entries with a fresh decision on every hit (`N`: every Nth hit); logs `[layers] cache checks` every 5 s |
-| `CUO_MOBILE_UPDATE_CHECK=1\|stats` | Dev. Check the mobile clock and the skipped mobiles against `Mobile.Update` every frame; `stats` only counts and times |
-| `CUO_FUNNEL_CHECK=1` | Dev. Report writes to class A fields made outside the `WorldWriter` funnel |
+| `CUO_MOBILE_UPDATE_CHECK=1\|stats` | Dev. Mobile clock and step system statistics (counts and times; `Mobile.Update` and its comparison are gone) |
+| `CUO_FUNNEL_CHECK=1` | Dev. Report writes to the class A fields that keep a setter (X/Y/Z and the other caches) and the Mobile's record helpers made outside the `WorldWriter` funnel |
 | `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1\|every`, `CUO_GPU_SKIP_CHECK` | Check the Gpu world prepare shortcuts against the full work |
 | `CUO_W5_CHECK=1`, `CUO_MOBILE_CACHE_CHECK=1`, `CUO_MOBILE_INPUT_CHECK=1` | Check the active item list, the mobile frame cache and the pushed inputs |
 | `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI target with a replay every N frames |

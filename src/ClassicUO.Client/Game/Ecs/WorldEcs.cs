@@ -943,9 +943,6 @@ namespace ClassicUO.Game
             Data.LayerCacheCheck.LogSummary();
 #endif
 
-            // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
-            ScalarReads.EndFrame();
-
 #if CUO_DEVTOOLS
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
@@ -1126,10 +1123,11 @@ namespace ClassicUO.Game
             bool onGround = item.Container == WorldMirror.NO_CONTAINER || item.Container == 0;
             ParentKind kind = onGround ? ParentKind.None : WorldMirror.IsWearerSerial(item.Container) ? ParentKind.Equipped : ParentKind.Contained;
 
-            // T9 S6/S9: Direction, Flags, Graphic and Hue read the record (nothing to compare)
-            if (r.IsMobile || r.X != item.X || r.Y != item.Y || r.Z != item.Z ||
-                r.Amount != item.Amount || r.IsMulti != item.IsMulti ||
-                r.OnGround != onGround || r.ParentKind != kind || (!onGround && r.Parent != item.Container) ||
+            // T9 S5/S6/S9: Amount, Container, Direction, Flags, Graphic and Hue read the record (nothing to compare). T9 S11: left
+            // are the position cache and IsMulti against the record, and the record's own consistency: the OnGround tag and the
+            // parent kind against its ContainedIn/EquippedOn parent, EquippedOn's layer against ItemData's
+            if (r.IsMobile || r.X != item.X || r.Y != item.Y || r.Z != item.Z || r.IsMulti != item.IsMulti ||
+                r.OnGround != onGround || r.ParentKind != kind ||
                 (kind == ParentKind.Equipped && r.Layer != (byte)item.Layer))
             {
                 Report
@@ -1143,8 +1141,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // -ecscheck v2 (T1 funnel part 9): every item's Layer and, T9, its health-bar percentage. The name, hits and price are
-        // record-only since T9 (no cache to compare).
+        // -ecscheck v2 (T1 funnel part 9): an item's health-bar percentage. The name, hits and price are record-only since T9,
+        // the layer since T9 S5 (no cache to compare).
         private void CompareItemExtras(Item item, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(item.Serial, out MirrorExtras x))
@@ -1152,7 +1150,7 @@ namespace ClassicUO.Game
                 return; // CompareItem reported it missing
             }
 
-            if (x.ItemLayer != (byte)item.Layer || StalePercentage(item, in x))
+            if (StalePercentage(item, in x))
             {
                 Report
                 (

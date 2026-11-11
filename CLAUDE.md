@@ -59,7 +59,7 @@ dotnet test tests/Uo.Converter.Tests -c Release
 
 ### World-state writes go through `WorldWriter`
 
-`WorldWriter` (`src/ClassicUO.Client/Game/Ecs/WorldWriter.cs`) is the one writer of world-object state (items, mobiles, equipment, containers). Each operation matches a packet's meaning, not a field. It computes the new values, writes the ECS and the `GameObject` cache from the same values, then runs derived-state helpers. Operations do not nest. `FunnelCheck` (`CUO_FUNNEL_CHECK=1`) reports writes made outside it. Add new packet handling as a `WorldWriter` operation; do not set world fields from a handler.
+`WorldWriter` (`src/ClassicUO.Client/Game/Ecs/WorldWriter.cs`) is the one writer of world-object state (items, mobiles, equipment, containers). Each operation matches a packet's meaning, not a field. It computes the new values and commits them to the object's ECS record, which is the only copy of most fields. The position (X/Y/Z) and a few small caches stay on the object and are written from the same values (see Class A fields). Then it runs derived-state helpers. Operations do not nest. `FunnelCheck` (`CUO_FUNNEL_CHECK=1`) reports writes to those caches made outside it. Add new packet handling as a `WorldWriter` operation; do not set world fields from a handler.
 
 ### New ECS paths: switch plus checker
 
@@ -71,7 +71,7 @@ The client reads art, maps, tile data, hues, animations, gumps, fonts, text and 
 
 ### Class A fields: no new direct writes
 
-Class A fields are the ECS-owned world-state fields of `GameObject`, `Entity`, `Item` and `Mobile` (graphic, hue, position, direction, flags, hits, amount, container, layer and so on). Do not add direct writes to them. `tests/ClassicUO.UnitTests/Ecs/WriteSiteBudgetTests.cs` counts the writes per file and field against `WriteSiteAllowlist.txt` and fails if the count grows or shrinks. Removing writes lowers the budget: regenerate with `CUO_WRITE_BUDGET_REGEN=1 dotnet test tests/ClassicUO.UnitTests --filter WriteSiteBudgetTests`. Regenerate only on purpose, and say so in the PR.
+Class A fields are the ECS-owned world-state fields of `GameObject`, `Entity`, `Item` and `Mobile` (graphic, hue, position, direction, flags, hits, amount, container, layer and so on). Most are record-only: a get-only property that reads the ECS record, with no setter and no backing field. Do not add a setter or a cache field to one; `tests/ClassicUO.UnitTests/Ecs/ClassAMemberTests.cs` fails if you do. A few keep a setter, written only by `WorldWriter`: X/Y/Z (the position cache, kept because the render and update walks read it per object), `Serial`, the Mobile's `NotorietyFlag`, `IsDead`, `IsRunning` and step-sound fields, and an item's animation fields and `IsMulti`. Do not add direct writes to them. `tests/ClassicUO.UnitTests/Ecs/WriteSiteBudgetTests.cs` counts their writes outside `WorldWriter` per file and field against `WriteSiteAllowlist.txt` and fails if the count grows or shrinks. Removing writes lowers the budget: regenerate with `CUO_WRITE_BUDGET_REGEN=1 dotnet test tests/ClassicUO.UnitTests --filter WriteSiteBudgetTests`. Regenerate only on purpose, and say so in the PR.
 
 ### Performance changes
 

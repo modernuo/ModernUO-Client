@@ -162,36 +162,12 @@ namespace ClassicUO.Game.GameObjects
 
         // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
         // set HitsPercentage from the values they write (RefreshHitsPercentage)
-        public ushort Hits
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.Hits);
+        public ushort Hits => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hits(e) : (ushort)0;
 
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hits(e) : (ushort)0;
-            }
-        }
-
-        public ushort HitsMax
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.HitsMax);
-
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.HitsMax(e) : (ushort)0;
-            }
-        }
+        public ushort HitsMax => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.HitsMax(e) : (ushort)0;
         public bool IsClicked;
         private uint _serial;
-        public string Name
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.Name);
-
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Name(e) : null;
-            }
-        }
+        public string Name => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Name(e) : null;
 
         public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }
         public HitsRequestStatus HitsRequest;

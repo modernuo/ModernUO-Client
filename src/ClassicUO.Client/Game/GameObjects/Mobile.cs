@@ -426,12 +426,7 @@ namespace ClassicUO.Game.GameObjects
 
         public NotorietyFlag NotorietyFlag
         {
-            get
-            {
-                ScalarReads.Count(ScalarField.NotorietyFlag);
-
-                return _notorietyFlag;
-            }
+            get => _notorietyFlag;
             set
             {
                 FunnelCheck.Write(this, FunnelField.NotorietyFlag);
@@ -455,45 +450,13 @@ namespace ClassicUO.Game.GameObjects
         public CharacterSpeedType SpeedMode =>
             TryRecord(out Friflo.Engine.ECS.Entity e) ? (CharacterSpeedType)EcsScalars.SpeedMode(e) : CharacterSpeedType.Normal;
 
-        public ushort Stamina
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.Stamina);
+        public ushort Stamina => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : (ushort)0;
 
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : (ushort)0;
-            }
-        }
+        public ushort StaminaMax => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : (ushort)0;
 
-        public ushort StaminaMax
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.StaminaMax);
+        public ushort Mana => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : (ushort)0;
 
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : (ushort)0;
-            }
-        }
-
-        public ushort Mana
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.Mana);
-
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : (ushort)0;
-            }
-        }
-
-        public ushort ManaMax
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.ManaMax);
-
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : (ushort)0;
-            }
-        }
+        public ushort ManaMax => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : (ushort)0;
 
         public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
 
