@@ -6713,3 +6713,25 @@ Base 5812d469a. Two items from the CrossUO scout (perf-opportunities.md), checke
 - **Verification.** Dev unit suite 3575 passed, 6 skipped; client build OK with and without CuoDevTools. Scene c1-maxz and
   the clipdump numbers: job bench6-000015 (pending at handoff).
 - No accepted costs: the switch is off by default, the off path adds no work, and the cut path is out of line and rare.
+
+## 2026-11-11 clip-2: geometric depth prototype, Gpu renderer (bg/clip-2)
+
+- **Root cause confirmed with the dump** (bench6-000015, design note section 2): the anchor is MobileView's posY + 19, 3 rows
+  above the tile centre, the same for every layer; the body's strip 1 is its last 4 rows (the feet; mounted: the horse's
+  last 11 rows) at 3125.38 against the walls' 3123.88 / corner 3124.88. The +3 strip bonus is the bug, not the anchor.
+- **c1-maxz had 0 cuts** because `[add` + `target ground` placed both statics at the land's z 0. gen_scenes.py now places
+  them with `[TileXYZ` at z 125 / 130. Re-run queued (clip-dump).
+- **Switch `depth_model`** (default off; CUO_DEPTH_MODEL=1|0, driver `depthmodel on|off`): the Gpu renderer writes X + Y of
+  the visible 3D point per pixel (Uo.Render/GeoDepth.cs, sprite.hlsl PSMainGeo, own pipelines). Classes from tiledata at
+  bake time, no pack change and no per-graphic cases: land and flat statics are planes (lowered 1.5 tile sums), walls are
+  vertical faces on the tile's back edges (orientation free), other statics are boxes, and a mobile's body, mount and
+  equipment share one anchor (a billboard, a ground plane below the centre, capped by the own tile's front faces). Items,
+  multis, effects, shadows and seated mobiles still use their key. Legacy is unchanged (plan: per-vertex depth, the
+  classes are piecewise linear).
+- **Verification.** Dev unit suite 3592 passed, 6 skipped (17 new DepthModelTests: acceptance #1's geometry with feet
+  and hooves behind the walls and over the floors, boxes, the anchor encoding, both switch states). Client builds with and
+  without CuoDevTools. Shots with the switch on (bench6-000018) and the default-path golden/gates (bench6-000020,
+  bench2-000018, bench3-000012) were pending at handoff (cuo-poc-state/handoffs/clip-2.md).
+- **Accepted costs** (estimates, machine not quiet): switch off, the vertex shader writes 8 more interpolants and tests one
+  more bit (well under 1 % of VS time). Switch on, depth from the fragment shader turns off early depth rejection in the
+  opaque pass: expected the main cost, to be measured on the large scene.
