@@ -888,12 +888,12 @@ namespace ClassicUO.Game
             {
                 // Legacy: the view draws Arts.GetArt's placeholder for art the pack lacks, offset by the placeholder's size
                 // (the resolve does that). Its art entry write is discarded (GetEntry of missing art is a scratch entry), so
-                // picking keeps 0, 0 and nothing is stored here. The Gpu path draws nothing.
+                // picking keeps 0, 0 and nothing is stored here. The Gpu path emits the same record (GpuSpriteResolve places it).
                 if (_batcher != null)
                 {
                     DrawArt(graphic, x, y, true, hue, depth + 0.5f);
                 }
-                else if (_selectOnly)
+                else
                 {
                     var missing = new DynamicSprite
                     {

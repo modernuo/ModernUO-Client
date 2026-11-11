@@ -298,6 +298,15 @@ namespace ClassicUO.UnitTests.Ecs
 
             for (int i = 0; i < n; i++)
             {
+                // the view lights a light-only item where its layer sits among the drawn ones
+                for (int k = 0; side != null && k < eq.LightCount; k++)
+                {
+                    if (eq.LightBefore[k] == order[i])
+                    {
+                        side.Lights.Add((eq.LightItems[k], drawX, drawY));
+                    }
+                }
+
                 EquipSlot slot = eq.Slots[order[i]];
                 byte group = slot.Group == 0xFF ? s.Group : slot.Group;
                 ViewDrawInternal(calls, src, slot.DrawBody, group, s.Dir, s.Frame, true, drawX, drawY, mirror, false, depth, mountOffset,
@@ -309,7 +318,10 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 for (int i = 0; i < eq.LightCount; i++)
                 {
-                    side.Lights.Add((eq.LightItems[i], drawX, drawY));
+                    if (eq.LightBefore[i] >= n)
+                    {
+                        side.Lights.Add((eq.LightItems[i], drawX, drawY));
+                    }
                 }
 
                 ref Rectangle fi = ref side.FrameInfo;
@@ -515,15 +527,41 @@ namespace ClassicUO.UnitTests.Ecs
         [MemberData(nameof(LegacyItemCases))]
         public void Legacy_Item_Missing_Art_Draws_The_Placeholder(string name) => Legacy_Item_Resolve_Makes_The_Views_Batcher_Calls(name);
 
-        [Fact]
-        public void Item_Emit_Of_Missing_Art_Draws_Nothing_On_The_Gpu_Path()
+        // gpu_ecs_sprites: missing art draws Arts.GetArt's placeholder (sprite 0) like the view, less the offset its own size
+        // gives ((46 >> 1) - 22 = 1, 50 - 44 = 6); a stack draws the placeholder twice
+        [Theory]
+        [InlineData("missing", 1)]
+        [InlineData("missing-stack", 2)]
+        public void Item_Emit_Of_Missing_Art_Draws_The_Placeholder_On_The_Gpu_Path(string name, int copies)
         {
             (ArtLoader arts, GpuSpriteTables tables) = ArtFixture();
             var extract = new ItemSpriteExtract(arts, null);
-            ItemSpriteInput input = ItemCase("missing");
+            ItemSpriteInput input = ItemCase(name);
 
             Assert.True(extract.Emit(in input, in tables, 15, -40, 700, 300, 455.5f));
-            Assert.Equal(0, extract.Instances.Length);
+            Assert.Equal(copies, extract.Instances.Length);
+
+            // the stack's first copy is the 5 pixel up-left one
+            for (int i = 0; i < copies; i++)
+            {
+                int shift = copies == 2 && i == 0 ? 5 : 0;
+                Assert.Equal(700 - 1 - shift + 15 + 1, extract.Instances[i].X);
+                Assert.Equal(300 - 6 - shift - 40 + 3, extract.Instances[i].Y);
+                Assert.Equal(3u, extract.Instances[i].PageHue & 0xFFFF);
+            }
+
+            // the select half resolves to the same instances
+            Assert.True(extract.Select(in input, false, 700, 300, 455.5f));
+            Assert.Equal(copies, extract.Selected.Length);
+            var got = new Uo.Render.SpriteInstance[2];
+            int count = 0;
+
+            foreach (ref readonly DynamicSprite s in extract.Selected)
+            {
+                GpuSpriteResolve.Resolve(in tables, in s, 15, -40, ref got, ref count);
+            }
+
+            Assert.Equal(copies, count);
         }
 
         // ---- the switch and the checker ----
