@@ -424,7 +424,8 @@ namespace ClassicUO.Game
 
         // ---- CUO_STEP_CHECK
 
-        /// <summary>Differences between the component (and the record's position and facing) and the Mobile; null when equal.</summary>
+        /// <summary>Differences between the component (and the record's position) and the Mobile; null when equal (T9 S6: the
+        /// facing is the record's).</summary>
         internal static string Diff(Mobile m, EcsEntity e)
         {
             ref readonly StepsComponent s = ref EcsRead.Get<StepsComponent>(e);
@@ -461,11 +462,6 @@ namespace ClassicUO.Game
             if (p.X != m.X || p.Y != m.Y || p.Z != m.Z)
             {
                 return $"position ({p.X},{p.Y},{p.Z}) vs ({m.X},{m.Y},{m.Z})";
-            }
-
-            if ((EcsRead.Get<Facing>(e).Value & 7) != ((byte)m.Direction & 7))
-            {
-                return $"facing {e.GetComponent<Facing>().Value} vs {m.Direction}";
             }
 
             return null;

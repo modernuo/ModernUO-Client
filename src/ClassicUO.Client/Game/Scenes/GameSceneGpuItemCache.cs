@@ -318,7 +318,17 @@ namespace ClassicUO.Game.Scenes
         // when the player moves or the server changes the view range (0xC8).
         private void GpuItemSignature(Item item, out ulong a, out ulong b)
         {
-            a = item.Graphic | (ulong)item.Hue << 16 | (ulong)item.Amount << 32 | (ulong)(byte)item.Flags << 48 | (ulong)item.AlphaHue << 56;
+            // T9 S6: Amount and Flags are record-only: one record lookup and row for both (none: the defaults, 0)
+            ulong amount = 0, flags = 0;
+
+            if (item.TryRecord(out Friflo.Engine.ECS.Entity rec))
+            {
+                ClassicUO.Ecs.EcsRow row = ClassicUO.Ecs.EcsRead.Row(rec);
+                amount = row.Get<ClassicUO.Ecs.ItemData>().Amount;
+                flags = row.Get<ClassicUO.Ecs.Flags>().Value;
+            }
+
+            a = item.Graphic | (ulong)item.Hue << 16 | amount << 32 | flags << 48 | (ulong)item.AlphaHue << 56;
             ulong state = (item.AllowedToDraw ? 1UL : 0) | (item.IsDestroyed ? 2UL : 0) | (item.TextContainer != null && !item.TextContainer.IsEmpty ? 4UL : 0) |
                           (item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ? 8UL : 0) | (item.Offset != Vector3.Zero ? 16UL : 0) |
                           (_gpuItemKeyRange && item.Distance > _world.ClientViewRange ? 32UL : 0);

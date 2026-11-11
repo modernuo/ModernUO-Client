@@ -137,12 +137,12 @@ namespace ClassicUO.UnitTests.Ecs
 
                 mobile.Graphic = (ushort)(graphic + p.GraphicInc);
                 OldCheckGraphicChange(mobile);
-                mobile.Direction = p.Direction & Direction.Up;
+                mobile.TestSetDirection(p.Direction & Direction.Up);
                 mobile.FixHue(p.Hue);
                 mobile.X = p.X;
                 mobile.Y = p.Y;
                 mobile.Z = p.Z;
-                mobile.Flags = p.Flags;
+                mobile.TestSetFlags(p.Flags);
             }
             else
             {
@@ -161,7 +161,7 @@ namespace ClassicUO.UnitTests.Ecs
                     mobile.X = p.X;
                     mobile.Y = p.Y;
                     mobile.Z = p.Z;
-                    mobile.Direction = cleaned_dir;
+                    mobile.TestSetDirection(cleaned_dir);
                     mobile.IsRunning = isrun;
                     mobile.ClearSteps();
                 }
@@ -171,7 +171,7 @@ namespace ClassicUO.UnitTests.Ecs
                     mobile.X = p.X;
                     mobile.Y = p.Y;
                     mobile.Z = p.Z;
-                    mobile.Direction = cleaned_dir;
+                    mobile.TestSetDirection(cleaned_dir);
                     mobile.IsRunning = isrun;
                     mobile.ClearSteps();
                 }
@@ -179,7 +179,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             mobile.Graphic = (ushort)(graphic & 0x3FFF);
             mobile.FixHue(p.Hue);
-            mobile.Flags = p.Flags;
+            mobile.TestSetFlags(p.Flags);
 
             beforePlacement?.Invoke(mobile);
 
@@ -246,8 +246,8 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.GetOrCreateMobile(MOB);
             m.Graphic = 0x190;
             m.Hue = 0x83EA;
-            m.Flags = Flags.None;
-            m.Direction = Direction.North;
+            m.TestSetFlags(Flags.None);
+            m.TestSetDirection(Direction.North);
             m.NotorietyFlag = NotorietyFlag.Innocent;
             m.SetInWorldTile(1000, 1000, 0);
 
@@ -440,7 +440,7 @@ namespace ClassicUO.UnitTests.Ecs
             switch (kind)
             {
                 case BodyPacket.UpdateCharacter:
-                    m.Flags = flags;
+                    m.TestSetFlags(flags);
                     m.Graphic = graphic;
                     OldCheckGraphicChange(m);
                     m.FixHue(hue);
@@ -452,16 +452,16 @@ namespace ClassicUO.UnitTests.Ecs
                     m.Graphic = graphic;
                     OldCheckGraphicChange(m);
                     m.FixHue(hue);
-                    m.Flags = flags;
+                    m.TestSetFlags(flags);
                     world.Ecs.Sync(m);
 
                     break;
 
                 default:
                     m.Graphic = graphic;
-                    m.Direction = dir & Direction.Mask;
+                    m.TestSetDirection(dir & Direction.Mask);
                     m.FixHue(hue);
-                    m.Flags = flags;
+                    m.TestSetFlags(flags);
                     m.SetInWorldTile(x, y, z);
 
                     break;
@@ -847,17 +847,22 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.TryGetEntity(OTHER, out EcsEntity eo);
             long writes = world.Ecs.MobileMirrorWrites;
 
+            ushort hue = e.GetComponent<ClassicUO.Ecs.Hue>().Value;
+
+            // T9 S6: Direction has no setter (its Sync was the hook used here); the Hue cache and an explicit Sync stand in
             world.Ecs.BeginFold(m);
-            m.Direction = Direction.West; // Sync: folded
+            m.Hue = 0x0456;
+            world.Ecs.Sync(m); // Sync: folded
             m.NotorietyFlag = NotorietyFlag.Murderer; // PushInputs: folded
             m.IsRunning = true; // PushInputs: folded
-            other.Direction = Direction.West; // another instance: syncs
+            other.Hue = 0x0456;
+            world.Ecs.Sync(other); // another instance: syncs
             world.Ecs.EndFold(m);
 
             world.Ecs.MobileMirrorWrites.Should().Be(writes + 1, "only the bystander's Sync wrote");
-            e.GetComponent<Facing>().Value.Should().Be((byte)Direction.North);
+            e.GetComponent<ClassicUO.Ecs.Hue>().Value.Should().Be(hue);
             Inputs(world, MOB).Should().Be(Inputs(Build(Start.Standing), MOB), "the folded pushes did not run");
-            eo.GetComponent<Facing>().Value.Should().Be((byte)Direction.West);
+            eo.GetComponent<ClassicUO.Ecs.Hue>().Value.Should().Be(0x0456);
 
             m.IsRunning = true; // after the fold: pushes again
             e.GetComponent<MobileInputs>().Flags.Should().NotBe(Inputs(Build(Start.Standing), MOB).Flags, "the running bit is pushed");
@@ -1038,7 +1043,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(player);
             player.Graphic = 0x190;
             player.Hue = 0x83EA;
-            player.Direction = Direction.North;
+            player.TestSetDirection(Direction.North);
             player.NotorietyFlag = NotorietyFlag.Innocent;
             player.SetInWorldTile(1000, 1000, 0);
             player.UpdateRealScreenPositionOnly(0, 0);
@@ -1060,7 +1065,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
             else
             {
-                p.Direction = to;
+                p.TestSetDirection(to);
             }
 
             int x = p.X, y = p.Y;
@@ -1174,7 +1179,8 @@ namespace ClassicUO.UnitTests.Ecs
             );
 
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
-            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0x191, (ushort)1005, (ushort)1006, (sbyte)3, Direction.South));
+            // T9 S6: the detached player has no record, so its direction is not kept (a misconfigured server's case)
+            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0x191, (ushort)1005, (ushort)1006, (sbyte)3, Direction.North));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();

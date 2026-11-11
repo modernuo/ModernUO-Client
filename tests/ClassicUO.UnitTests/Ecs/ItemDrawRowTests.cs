@@ -93,7 +93,7 @@ namespace ClassicUO.UnitTests.Ecs
                 it.X = (ushort)(1400 + rnd.Next(64));
                 it.Y = (ushort)(1600 + rnd.Next(64));
                 it.Z = (sbyte)rnd.Next(-5, 40);
-                it.Flags = (rnd.Next(4) == 0 ? Flags.Movable : Flags.None) | (rnd.Next(5) == 0 ? Flags.Hidden : Flags.None);
+                it.TestSetFlags((rnd.Next(4) == 0 ? Flags.Movable : Flags.None) | (rnd.Next(5) == 0 ? Flags.Hidden : Flags.None));
                 it.IsMulti = kind >= 95;
                 it.TestSetLayer((Layer)rnd.Next(0, 25));
                 world.Ecs.Sync(it);
@@ -110,7 +110,7 @@ namespace ClassicUO.UnitTests.Ecs
                     it.X++;
                     it.Z = (sbyte)rnd.Next(-5, 40);
                     it.TestSetAmount((ushort)rnd.Next(1, 600));
-                    it.Flags ^= Flags.Hidden;
+                    it.TestSetFlags(it.Flags ^ Flags.Hidden);
                     it.IsMulti = !it.IsMulti && rnd.Next(10) == 0;
                     world.Ecs.Sync(it);
                     AssertSameInput(it, tiles);

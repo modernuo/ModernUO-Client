@@ -22,8 +22,6 @@ namespace ClassicUO.Game
         OffsetX,
         OffsetY,
         OffsetZ,
-        Direction,
-        Flags,
         Serial,
         Name,
         Hits,

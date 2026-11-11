@@ -456,8 +456,6 @@ namespace ClassicUO.Game
 
 
                 item.Hue = v.Hue;
-                item.Flags = v.Flags;
-                item.Direction = v.Direction;
 
                 if (corpse)
                 {
@@ -691,7 +689,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
-                    item.Direction = v.Direction;
                 }
 
                 // 4. derived state where the old CheckGraphicChange ran it: before the amount, hue and position writes (a
@@ -923,7 +920,6 @@ namespace ClassicUO.Game
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
-                item.Flags = v.Flags;
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
@@ -934,7 +930,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
-                    item.Direction = v.Direction;
                 }
 
                 // 4. derived state where CheckGraphicChange ran it
@@ -1219,12 +1214,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
-
-                    if (usedLayer)
-                    {
-                        item.Direction = v.Direction;
-                    }
-
                 }
 
                 // 4. derived state where CheckGraphicChange ran it
@@ -1412,6 +1401,8 @@ namespace ClassicUO.Game
             // an earlier placement of this mobile is superseded: this upsert issues its own
             CancelPlacements(mobile);
 
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, mobile))
             {
                 // 3. write: the ECS, then the cache from v in the old order
@@ -1430,7 +1421,7 @@ namespace ClassicUO.Game
 
                 if (created || reset)
                 {
-                    mobile.Direction = v.Direction;
+                    mobile.DirectionCommitted(directionBefore);
                     mobile.X = v.X;
                     mobile.Y = v.Y;
                     mobile.Z = v.Z;
@@ -1448,7 +1439,6 @@ namespace ClassicUO.Game
 
                 mobile.Graphic = v.Graphic;
                 mobile.Hue = v.Hue;
-                mobile.Flags = v.Flags;
 
                 // 4. derived state: the inputs and the clock, from the values written above
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -1547,7 +1537,8 @@ namespace ClassicUO.Game
         /// (0x77/0x78 ignore the packet's; 0x20 moves the player with <see cref="MoveMobile"/> after its other work). The
         /// player's direction change runs its door check inside the operation, as the setter did before T1. A mobile this
         /// World does not hold is a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c> (removed
-        /// under its serial while World.Player stays), which is written as before T1 (nothing of it reaches the ECS).
+        /// under its serial while World.Player stays), which is written as before T1 (nothing of it reaches the ECS; since T9 S6
+        /// its direction and flags are not kept either, as its name and traits: the record was their only copy).
         /// </summary>
         public void SetMobileBody(Mobile mobile, ushort graphic, ushort hue, Flags flags, bool checkBody, bool setDirection, Direction direction)
         {
@@ -1581,6 +1572,8 @@ namespace ClassicUO.Game
 
             // the detached player is not folded: nothing of it reaches the ECS (every commit, Sync and push ignores an
             // instance World does not hold), so its writes are the pre-T1 path's
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, detached ? null : mobile))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
@@ -1595,11 +1588,10 @@ namespace ClassicUO.Game
 
                 if (setDirection)
                 {
-                    mobile.Direction = v.Direction;
+                    mobile.DirectionCommitted(directionBefore);
                 }
 
                 mobile.Hue = v.Hue;
-                mobile.Flags = v.Flags;
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
@@ -1702,8 +1694,9 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// 0x1B (EnterWorld) and 0x21 (DenyWalk): the player's direction from the packet. The record is committed with the new
-        /// direction first, then the setter runs <b>unfolded</b>: the player's direction change runs its door check, which can
-        /// send a packet (plugin send hooks run synchronously), so the setter's Sync publishes as before T1. Then the derived
+        /// direction first, then <c>Entity.DirectionCommitted</c> (the old setter's tail, T9 S6) runs <b>unfolded</b>: the player's
+        /// direction change runs its door check, which can send a packet (plugin send hooks run synchronously), so its Sync
+        /// publishes as before T1. Then the derived
         /// inputs. A mobile this World does not hold is a violation, rejected (no pre-T1 path), except the detached
         /// <c>World.Player</c>, written as before T1.
         /// </summary>
@@ -1732,10 +1725,12 @@ namespace ClassicUO.Game
             v.Flags = mobile.Flags;
             v.IsPlayer = ReferenceEquals(mobile, _world.Player);
 
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, null))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
-                mobile.Direction = v.Direction;
+                mobile.DirectionCommitted(directionBefore);
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
         }
@@ -1819,6 +1814,8 @@ namespace ClassicUO.Game
             bool run = step.Run;
             uint stepTime = Time.Ticks;
 
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, fold ? mobile : null))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
@@ -1826,7 +1823,7 @@ namespace ClassicUO.Game
                 mobile.X = v.X;
                 mobile.Y = v.Y;
                 mobile.Z = v.Z;
-                mobile.Direction = v.Direction;
+                mobile.DirectionCommitted(directionBefore);
                 mobile.IsRunning = run;
                 mobile.OffsetX = 0;
                 mobile.OffsetY = 0;
@@ -2169,7 +2166,6 @@ namespace ClassicUO.Game
                     mobile.SetSAPoison(saPoison);
                 }
 
-                mobile.Flags = v.Flags;
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
         }
@@ -3343,7 +3339,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>PlayerMobile.Walk</c>'s coalesced turn (three unconfirmed requests: the direction alone, no step): as
-        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then the setter unfolded for the door
+        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then DirectionCommitted unfolded for the door
         /// check, whose Sync writes the inputs: the old turn's one push), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
         /// World; anything else is a violation, rejected. False: rejected, nothing changed (Walk then returns false and keeps
         /// its cooldown).
@@ -3373,12 +3369,14 @@ namespace ClassicUO.Game
             v.Flags = player.Flags;
             v.IsPlayer = true;
 
-            // the setter's Sync (unfolded) writes the inputs from the new direction, the one push the old turn made; no
+            // DirectionCommitted's Sync (unfolded) writes the inputs from the new direction, the one push the old turn made; no
             // second inputs commit (unlike SetMobileDirection, whose 0x1B/0x21 callers it keeps as they were)
+            Direction directionBefore = player.Direction;
+
             using (joined ? default : Open(player, null))
             {
                 _world.Ecs.CommitMobile(player, in v);
-                player.Direction = v.Direction;
+                player.DirectionCommitted(directionBefore);
             }
 
             return true;
@@ -3443,7 +3441,6 @@ namespace ClassicUO.Game
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
-                mobile.Flags = v.Flags;
                 mobile.Graphic = graphic;
             }
         }

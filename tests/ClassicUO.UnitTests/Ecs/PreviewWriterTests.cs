@@ -38,11 +38,11 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (female)
             {
-                m.Flags |= Flags.Female;
+                m.TestSetFlags(m.Flags | Flags.Female);
             }
             else
             {
-                m.Flags &= ~Flags.Female;
+                m.TestSetFlags(m.Flags & ~Flags.Female);
             }
 
             m.Graphic = Body(race, female);

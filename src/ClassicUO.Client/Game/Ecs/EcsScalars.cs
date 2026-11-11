@@ -17,9 +17,10 @@ namespace ClassicUO.Game
     /// Record-only: <c>Name</c>, <c>Hits</c>, <c>HitsMax</c> (Entity), <c>Stamina</c>, <c>StaminaMax</c>, <c>Mana</c>,
     /// <c>ManaMax</c> (Mobile), <c>Price</c> (Item); T9 S5 added <c>Amount</c>, <c>Container</c>, <c>Layer</c> and the traits
     /// (Item <c>LightID</c>, <c>IsDamageable</c>, <c>UsedLayer</c>; Mobile <c>Race</c>, <c>SpeedMode</c>, <c>IsFemale</c>,
-    /// <c>IsRenamable</c>, the player's <c>InWarMode</c>), read through <c>Entity.TryRecord</c> (previews too). Kept as
-    /// write-through caches because per-frame readers read them per object (the census's hot readers, measured with
-    /// <see cref="ScalarReads"/>): <c>Flags</c>, <c>Direction</c>, <c>NotorietyFlag</c>, like X, Y, Z, Graphic and Hue.
+    /// <c>IsRenamable</c>, the player's <c>InWarMode</c>), and T9 S6 <c>Flags</c> and <c>Direction</c>, read through
+    /// <c>Entity.TryRecord</c> (previews too). Kept as write-through caches because per-frame readers read them per object
+    /// (the census's hot readers, measured with <see cref="ScalarReads"/>): <c>NotorietyFlag</c>, like X, Y, Z, Graphic and
+    /// Hue.
     /// </para>
     /// </summary>
     internal static class EcsScalars
@@ -47,6 +48,14 @@ namespace ClassicUO.Game
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ushort ManaMax(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.ManaMax : (ushort)0;
+
+        // T9 S6: the flags and the facing (the entity's Direction, with the running bit) every record has from its creation
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte FlagBits(Friflo.Engine.ECS.Entity e) => EcsRead.Get<Flags>(e).Value;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte Facing(Friflo.Engine.ECS.Entity e) => EcsRead.Get<Facing>(e).Value;
 
         // T9 S5: the item fields every item record has from its creation (ItemData), and its parent (WorldMirror.SetParent:
         // ContainedIn for an item parent, EquippedOn for a wearer, neither on the ground; a Container of 0 is stored as on
@@ -102,8 +111,6 @@ namespace ClassicUO.Game
         Mana,
         ManaMax,
         Price,
-        Flags,
-        Direction,
         NotorietyFlag,
         Count
     }

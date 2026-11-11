@@ -107,7 +107,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Mobile m = s.Mobiles[i % n];
                 m.X = (ushort)(m.X + 1);
-                m.Direction = (Direction)(i & 7);
+                m.TestSetDirection((Direction)(i & 7));
                 ecs.Sync(m);
             })));
 
@@ -403,7 +403,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.Graphic = (ushort)((i & 1) == 0 ? 0x191 : 0x190);
                 WorldWriterMobileTests.OldCheckGraphicChange(m);
                 m.FixHue((ushort)(i & 63));
-                m.Flags = (ClassicUO.Game.Data.Flags)(i & 0x40);
+                m.TestSetFlags((ClassicUO.Game.Data.Flags)(i & 0x40));
                 ecs.Sync(m);
             })));
 
@@ -446,7 +446,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Mobile m = s.Mobiles[i % n];
                 m.SetSAPoison((i & 2) != 0);
-                m.Flags = (i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar;
+                m.TestSetFlags((i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar);
                 ecs.Sync(m);
             })));
 

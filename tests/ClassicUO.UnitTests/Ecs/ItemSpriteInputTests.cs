@@ -32,7 +32,7 @@ namespace ClassicUO.UnitTests.Ecs
             it.TestSetAmount(amount);
             it.TestSetLayer(layer);
             it.Hue = hue;
-            it.Flags = flags;
+            it.TestSetFlags(flags);
             it.X = (ushort)(1000 + serial % 7);
             it.Y = (ushort)(2000 + serial % 5);
             it.IsMulti = multi;

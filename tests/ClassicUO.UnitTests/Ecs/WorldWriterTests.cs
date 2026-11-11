@@ -99,8 +99,8 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             item.TestSetAmount(count);
-            item.Flags = p.Flags;
-            item.Direction = p.Direction;
+            item.TestSetFlags(p.Flags);
+            item.TestSetDirection(p.Direction);
             OldItemCheckGraphicChange(item);
 
             beforePlacement?.Invoke(item);
@@ -377,7 +377,7 @@ namespace ClassicUO.UnitTests.Ecs
             after.Id.Should().Be(before.Id, "an existing entity is updated in place");
             world.Writer.InScope.Should().BeFalse();
             world.Ecs.IsFolding.Should().BeFalse();
-            world.Items.Get(ITEM).Direction = Direction.East; // after the operation, the hooks sync again
+            world.Items.Get(ITEM).TestSetDirection(Direction.East); // after the operation, the hooks sync again
             world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord r).Should().BeTrue();
             r.Facing.Should().Be((byte)Direction.East);
         }
@@ -1001,7 +1001,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (it != null)
                 {
-                    it.Direction = Direction.Running | Direction.West;
+                    it.TestSetDirection(Direction.Running | Direction.West);
                 }
             }
 
@@ -1532,7 +1532,7 @@ namespace ClassicUO.UnitTests.Ecs
             item.Graphic = h.Graphic;
             item.Hue = h.Hue;
             item.TestSetAmount(h.Amount);
-            item.Flags = h.Flags;
+            item.TestSetFlags(h.Flags);
             item.TestSetLayer(h.Layer);
             item.X = h.X;
             item.Y = h.Y;
@@ -1652,7 +1652,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (it != null)
                 {
-                    it.Direction = Direction.Running | Direction.West;
+                    it.TestSetDirection(Direction.Running | Direction.West);
                 }
             }
 
@@ -1900,7 +1900,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (it != null)
             {
-                it.Direction = Direction.Running | Direction.West;
+                it.TestSetDirection(Direction.Running | Direction.West);
 
                 if (packLayer)
                 {
@@ -1997,7 +1997,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (usedLayer)
                 {
-                    item.Direction = dir;
+                    item.TestSetDirection(dir);
                 }
 
                 item.TestSetLayer(layer);
@@ -2473,13 +2473,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             it.Graphic = 1;
             it.Hue = 2;
-            it.Flags = ClassicUO.Game.Data.Flags.Hidden;
+            it.Z = 3;
             m.X = 4;
             m.NotorietyFlag = NotorietyFlag.Ally;
 
             FunnelCheck.Count(FunnelField.Graphic).Should().Be(1);
             FunnelCheck.Count(FunnelField.Hue).Should().Be(1);
-            FunnelCheck.Count(FunnelField.Flags).Should().Be(1);
+            FunnelCheck.Count(FunnelField.Z).Should().Be(1);
             FunnelCheck.Count(FunnelField.X).Should().Be(1);
             FunnelCheck.Count(FunnelField.NotorietyFlag).Should().Be(1);
             FunnelCheck.Total.Should().Be(5);

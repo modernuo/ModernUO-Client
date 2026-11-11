@@ -5,12 +5,13 @@ using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using EcsEntity = Friflo.Engine.ECS.Entity;
 using GameEntity = ClassicUO.Game.GameObjects.Entity;
+using Flags = ClassicUO.Game.Data.Flags;
 
 namespace ClassicUO.UnitTests.Ecs
 {
     /// <summary>
     /// T9 S5: Item Amount, Container, Layer and the traits (Item LightID, IsDamageable, UsedLayer; Mobile Race, SpeedMode,
-    /// IsFemale, IsRenamable, the player's InWarMode) live only in the record, and their setters are gone. Fixtures and the
+    /// IsFemale, IsRenamable, the player's InWarMode), and T9 S6 Flags and Direction, live only in the record, and their setters are gone. Fixtures and the
     /// old-path oracles (the pre-T1 client) that wrote them now write the record of the instance: its world record (created
     /// from the getters when the held instance has none yet, as the Sync that followed the old writes did) or its preview
     /// record (a bare detached instance gets one). A stale or destroyed instance, or the detached player, has no record: the
@@ -54,6 +55,41 @@ namespace ClassicUO.UnitTests.Ecs
 
             Mirror(mobile)?.SetMobileBit(mobile.Serial, MobileTraitBits.WarMode, on);
             mobile.World.Ecs.PushInputs(mobile);
+        }
+
+        // T9 S6: Flags and Direction (Facing) are record-only too. The Flags setter only stored the value; the Direction
+        // setter also ran the direction-change hook and the Sync (Entity.DirectionCommitted, what the funnel calls now)
+        public static void TestSetFlags(this GameEntity entity, Flags flags) => WriteCommon(entity, entity.Direction, flags);
+
+        public static void TestSetDirection(this GameEntity entity, Direction direction)
+        {
+            Direction before = entity.Direction;
+
+            if (WriteCommon(entity, direction, entity.Flags))
+            {
+                entity.DirectionCommitted(before);
+            }
+        }
+
+        private static bool WriteCommon(GameEntity entity, Direction direction, Flags flags)
+        {
+            WorldMirror mirror = Mirror(entity);
+
+            if (mirror == null)
+            {
+                return false;
+            }
+
+            if (entity as object is Item item)
+            {
+                mirror.UpsertItem(item.Serial, item.Graphic, item.Hue, item.X, item.Y, item.Z, (byte)direction, (byte)flags, item.Amount, item.Container, (byte)item.Layer, item.IsMulti, handle: item);
+            }
+            else if (entity as object is Mobile mobile)
+            {
+                mirror.UpsertMobile(mobile.Serial, mobile.Graphic, mobile.Hue, mobile.X, mobile.Y, mobile.Z, (byte)direction, (byte)flags, ReferenceEquals(mobile, mobile.World.Player) && mirror == mobile.World.Ecs.Mirror, mobile);
+            }
+
+            return true;
         }
 
         private static void WriteItem(Item item, ushort amount, uint container, Layer layer)

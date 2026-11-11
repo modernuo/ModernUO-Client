@@ -251,7 +251,7 @@ namespace ClassicUO.UnitTests.Ecs
             Pushed(world, SERIAL).Pushes.Should().BeGreaterThan(before);
 
             // flags and graphic reach the ECS through Sync, like the mirror's own components
-            m.Flags = Flags.Hidden | Flags.WarMode;
+            m.TestSetFlags(Flags.Hidden | Flags.WarMode);
             world.Ecs.Sync(m);
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Hidden).And.HaveFlag(AnimStateFlags.WarMode);
             m.Graphic = 0x193;
@@ -260,7 +260,7 @@ namespace ClassicUO.UnitTests.Ecs
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Dead);
 
             // the direction setter syncs
-            m.Direction = Direction.East;
+            m.TestSetDirection(Direction.East);
             Pushed(world, SERIAL).Facing.Should().Be((byte)Direction.East);
 
             // steps: enqueue, then clear

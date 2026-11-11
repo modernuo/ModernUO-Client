@@ -306,22 +306,22 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                     else if (enabled)
                     {
-                        mobile.Flags |= Flags.Poisoned;
+                        mobile.TestSetFlags(mobile.Flags | Flags.Poisoned);
                     }
                     else
                     {
-                        mobile.Flags &= ~Flags.Poisoned;
+                        mobile.TestSetFlags(mobile.Flags & ~Flags.Poisoned);
                     }
                 }
                 else if (type == 2)
                 {
                     if (enabled)
                     {
-                        mobile.Flags |= Flags.YellowBar;
+                        mobile.TestSetFlags(mobile.Flags | Flags.YellowBar);
                     }
                     else
                     {
-                        mobile.Flags &= ~Flags.YellowBar;
+                        mobile.TestSetFlags(mobile.Flags & ~Flags.YellowBar);
                     }
                 }
             }
@@ -562,7 +562,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (m != null && !m.IsDestroyed)
                 {
-                    m.Flags = Flags.Poisoned | Flags.Hidden;
+                    m.TestSetFlags(Flags.Poisoned | Flags.Hidden);
                     m.SetSAPoison(true);
                     w.Ecs.Sync(m);
                 }
@@ -619,9 +619,9 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.Violations.Should().Be(0);
                 // T9: the detached player has no record, so the cold values are not kept (a misconfigured server's case); the
                 // percentage, the hot fields and the inputs are written as before
-                // (T9 S5: the traits too: renamable, race and sex)
+                // (T9 S5: the traits too: renamable, race and sex; T9 S6: and the flags)
                 StatusOf(player).Should().Be(" 0/0 80% None mana 0/0 stamina 0/0 renamable False race 0 sa True");
-                (player.IsFemale, player.Flags).Should().Be((false, Flags.YellowBar));
+                (player.IsFemale, player.Flags).Should().Be((false, Flags.None));
 
                 // any other instance World does not hold is still rejected
                 Mobile stranger = Mobile.Create(world, 0x0000_3777);

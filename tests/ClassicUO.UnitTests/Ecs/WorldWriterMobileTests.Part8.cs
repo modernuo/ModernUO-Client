@@ -178,7 +178,7 @@ namespace ClassicUO.UnitTests.Ecs
                 case IdleStart.Animating: OldAnimate(m, AnimPacket.NewCharacterAnimation); break;
                 // a plain Mobile's InWarMode setter does nothing: its getter reads the WarMode flag (Codex audit of part 8, P3)
                 case IdleStart.WarMode:
-                    m.Flags |= Flags.WarMode;
+                    m.TestSetFlags(m.Flags | Flags.WarMode);
                     world.Ecs.Sync(m);
                     m.InWarMode.Should().BeTrue("the war-mode start is in war mode");
 
@@ -551,7 +551,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW + 5_200;
             // the inputs push writes the clock too (WriteInputs -> WriteClock), and ClockWrites is per World
             long ca = oldWorld.Ecs.ClockWrites, cb = newWorld.Ecs.ClockWrites;
-            Pair(() => a.Direction = Direction.West, () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
+            Pair(() => a.TestSetDirection(Direction.West), () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
             (newWorld.Ecs.ClockWrites - cb).Should().Be(oldWorld.Ecs.ClockWrites - ca, "the turn pushes its inputs (and clock) as the old turn did");
             AssertSameWorld(oldWorld, newWorld);
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
@@ -1208,7 +1208,7 @@ namespace ClassicUO.UnitTests.Ecs
             preview.Clear();
             preview.TestSetRace(RaceType.ELF);
             preview.TestSetIsFemale(true);
-            preview.Flags |= Flags.Female;
+            preview.TestSetFlags(preview.Flags | Flags.Female);
             preview.Graphic = 0x025E;
             preview.Hue = 0x83EA;
 

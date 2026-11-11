@@ -22,7 +22,6 @@ namespace ClassicUO.Game.GameObjects
     internal abstract class Entity : GameObject, IEquatable<Entity>
     {
         private static readonly RenderedText[] _hitsPercText = new RenderedText[101];
-        private Direction _direction;
 
 
         protected Entity(World world, uint serial) : base(world)
@@ -99,11 +98,19 @@ namespace ClassicUO.Game.GameObjects
         private byte _animIndex;
         private bool _executeAnimation = true;
         private long _lastAnimationChangeTime;
-        private Flags _flags;
         public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
         public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
         internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
-        public Flags Flags { get { ScalarReads.Count(ScalarField.Flags); return _flags; } set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
+
+        // T9 S6: Flags and Direction live only in the record (Flags, Facing: every record has both); WorldWriter's operations
+        // commit them. Without one (an item before its first commit, the house placement preview, a destroyed or stale
+        // instance, the detached player): None and North, the values a new object had
+        public Flags Flags
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Flags)EcsScalars.FlagBits(e) : Flags.None;
+        }
+
         public byte HitsPercentage;
 
         // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
@@ -148,24 +155,24 @@ namespace ClassicUO.Game.GameObjects
 
         public Direction Direction
         {
-            get
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Direction)EcsScalars.Facing(e) : Direction.North;
+        }
+
+        /// <summary>
+        /// T9 S6: what the removed Direction setter did after its field write, for <see cref="WorldWriter"/>'s operations to
+        /// call where they wrote it, after committing the record: the direction-change hook (the player's door check) when the
+        /// committed direction differs from <paramref name="before"/>, then the Sync (folded inside a folding operation;
+        /// for an unfolded mobile it publishes the inputs, as the setter's Sync did).
+        /// </summary>
+        internal void DirectionCommitted(Direction before)
+        {
+            if (Direction != before)
             {
-                ScalarReads.Count(ScalarField.Direction);
-
-                return _direction;
+                OnDirectionChanged();
             }
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.Direction);
 
-                if (_direction != value)
-                {
-                    _direction = value;
-                    OnDirectionChanged();
-                }
-
-                World.Ecs.Sync(this);
-            }
+            World.Ecs.Sync(this);
         }
 
         public bool Exists => World.Contains(Serial);

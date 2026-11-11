@@ -47,7 +47,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Mobile m = s.World.GetOrCreateMobile(serial);
             m.Graphic = 0x190;
-            m.Flags = flags;
+            m.TestSetFlags(flags);
             m.NotorietyFlag = noto;
             m.SetInWorldTile((ushort)x, (ushort)y, 0);
             s.World.Ecs.Sync(m);

@@ -1218,8 +1218,9 @@ namespace ClassicUO.Game
             bool onGround = item.Container == WorldMirror.NO_CONTAINER || item.Container == 0;
             ParentKind kind = onGround ? ParentKind.None : WorldMirror.IsWearerSerial(item.Container) ? ParentKind.Equipped : ParentKind.Contained;
 
+            // T9 S6: Direction and Flags read the record (nothing to compare)
             if (r.IsMobile || r.Graphic != item.Graphic || r.Hue != item.Hue || r.X != item.X || r.Y != item.Y || r.Z != item.Z ||
-                r.Facing != (byte)item.Direction || r.Flags != (byte)item.Flags || r.Amount != item.Amount || r.IsMulti != item.IsMulti ||
+                r.Amount != item.Amount || r.IsMulti != item.IsMulti ||
                 r.OnGround != onGround || r.ParentKind != kind || (!onGround && r.Parent != item.Container) ||
                 (kind == ParentKind.Equipped && r.Layer != (byte)item.Layer))
             {
@@ -1290,8 +1291,9 @@ namespace ClassicUO.Game
 
             bool isPlayer = ReferenceEquals(mobile, _world.Player);
 
+            // T9 S6: Direction and Flags read the record (nothing to compare)
             if (!r.IsMobile || r.IsPlayer != isPlayer || r.Graphic != mobile.Graphic || r.Hue != mobile.Hue || r.X != mobile.X ||
-                r.Y != mobile.Y || r.Z != mobile.Z || r.Facing != (byte)mobile.Direction || r.Flags != (byte)mobile.Flags)
+                r.Y != mobile.Y || r.Z != mobile.Z)
             {
                 Report
                 (
