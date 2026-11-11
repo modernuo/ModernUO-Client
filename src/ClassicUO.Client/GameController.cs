@@ -109,6 +109,7 @@ namespace ClassicUO
             _ => null
         };
         private static readonly int _eventLoopMaxWaitEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MAX_WAIT_MS"), out var mw) && mw > 0 ? mw : 0;
+        private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
 #else
         private static readonly bool? _eventLoopEnv = null;
         private const int _eventLoopMaxWaitEnv = 0;
@@ -416,6 +417,15 @@ namespace ClassicUO
         // 0 = uncapped (no frame limiter)
         public void SetRefreshRate(int rate)
         {
+#if CUO_DEVTOOLS
+            // CLEANUP(release): CUO_FPS=<n> caps a driver session (started with -fps 0) so the evloop-1 gates exercise the
+            // event loop's waits
+            if (_fpsEnv > 0)
+            {
+                rate = _fpsEnv;
+            }
+#endif
+
             if (rate <= 0)
             {
                 rate = 0;
