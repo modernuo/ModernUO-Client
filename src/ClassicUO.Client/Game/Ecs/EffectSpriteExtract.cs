@@ -108,7 +108,8 @@ namespace ClassicUO.Game
 
             TileDataLoader tiles = Client.Game?.UO?.FileManager?.TileData;
 
-            if (tiles != null && s.Graphic < tiles.StaticData.Length)
+            // lightning reads no tile flags (no partial hue, translucency or light in LightningEffectView)
+            if (tiles != null && s.Kind != EffectState.KIND_LIGHTNING && s.Graphic < tiles.StaticData.Length)
             {
                 ref StaticTiles data = ref tiles.StaticData[s.Graphic];
                 i.TilePartialHue = data.IsPartialHue;
