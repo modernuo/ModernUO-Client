@@ -407,8 +407,18 @@ namespace ClassicUO.Game
                 }
             }
 
+#if CUO_DEVTOOLS
+            int anchorX = x, anchorY = y;
+#endif
             x -= mirror ? w - fe.CenterX : fe.CenterX;
             y -= h + fe.CenterY;
+
+#if CUO_DEVTOOLS
+            if (Scenes.ClipDump.Active && !isShadow)
+            {
+                Scenes.ClipDump.Layer(_objX, id, group, dir, frameIndex, isMount, isEquip, w, h, fe.CenterX, fe.CenterY, anchorX, anchorY, x, y, mountOffset, depth);
+            }
+#endif
 
             if (!isShadow)
             {
@@ -578,7 +588,11 @@ namespace ClassicUO.Game
             int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
 
             if (cache.EmitValid && cache.EmitSelectGen == cache.SelectGen && cache.Alpha == rs.Alpha && cache.OverrideHue == rs.OverrideHue &&
-                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack))
+                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack)
+#if CUO_DEVTOOLS
+                && !Scenes.ClipDump.Active // clip-1: the dump reads the layers as Layer draws them
+#endif
+                )
             {
                 MobileFrameCache.EmitHits++;
                 // a pending view from an earlier emit since Begin aliases cache.Abs (the same cache replayed twice): move it

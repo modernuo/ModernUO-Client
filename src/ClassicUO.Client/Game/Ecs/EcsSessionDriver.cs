@@ -905,6 +905,12 @@ namespace ClassicUO.Game
                     return false;
                 }
 
+                // clipdump <name> [radius]: the render-order inputs around the player (clip-1, ClipDump)
+                case "clipdump" when args.Length > 0:
+                    ClipDump.Run(world, args[0], args.Length > 1 ? int.Parse(args[1]) : 2);
+
+                    return false;
+
                 // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
                 case "renderer" when args.Length > 0:
                 {
