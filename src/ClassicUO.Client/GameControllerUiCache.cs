@@ -278,7 +278,7 @@ namespace ClassicUO
             {
                 _uiCheckSaved++;
                 System.IO.Directory.CreateDirectory(_uiCacheCheckDir);
-                string name = System.IO.Path.Combine(_uiCacheCheckDir, $"uicheck_{_uiCheckFrame}_{reference}");
+                string name = System.IO.Path.Combine(_uiCacheCheckDir, $"uicheck_{Environment.ProcessId}_{_uiCheckFrame}_{reference}");
 
                 using (var f = System.IO.File.Create(name + "_target.png"))
                 {

@@ -21,6 +21,8 @@ namespace ClassicUO.Game.Scenes
     /// deletes the checkers that compare the ECS paths with the legacy views (CUO_ECS_PARITY's view capture,
     /// CUO_LEGACY_ECS_PARITY), this saves what they compared as text, so a later build can be checked against references
     /// instead of the deleted code (measure/t9-golden/goldencmp.py compares two captures).
+    /// Dev only and one instance per directory: the file names are the capture name (captures are compared by name across builds),
+    /// so two clients sharing CUO_GOLDEN_DIR and a name overwrite each other; give each instance its own directory.
     /// <list type="bullet">
     /// <item>Sprites, per armed frame: the world's dynamic objects in draw order, each with its draws. Gpu: the frame's
     /// dynamic <see cref="SpriteInstance"/>s as submitted, attributed to the object whose draw (or cached item run) appended
