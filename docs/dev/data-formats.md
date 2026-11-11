@@ -153,7 +153,7 @@ Art, texmaps and gump pages are stored as `B5G5R5A1` by default (`--format`). Tr
 ### 3.12 Text
 
 - Fonts: `fonts.mul` (ASCII fonts, 224 glyphs each) to `text/fonts.bin`; `unifont*.mul` (1-bit glyphs) to `text/unifont.bin`, stored as 256-character pages that identical fonts share. A glyph whose data runs past the end of its file is stored as no glyph.
-- Cliloc: every `Cliloc.<lang>` file in the install folder whose name has a 1 to 4 letter or digit extension and whose content is a cliloc table (BWT-compressed, or a raw table that adds up to the file size). `Cliloc.enu` is required. Two files for one language are an error. The shard's `Clilocs.txt`, if present, is stored as an extra record in `text/cliloc.bin`. `--no-cliloc-overrides` leaves it out, `--cliloc-skip ext,ext` skips extensions that are not languages, and `--cliloc-brotli` compresses the language records (they are stored raw by default).
+- Cliloc: every `Cliloc.<lang>` file in the install folder whose name has a 1 to 4 letter or digit extension and whose content is a cliloc table (BWT-compressed, or a raw table that adds up to the file size). `Cliloc.enu` is required. Two files for one language are an error. The shard's `Clilocs.txt`, if present in the install folder, is stored as an extra record in `text/cliloc.bin`; `--cliloc-overrides <file>` folds that file instead (it wins over the folder's, and must exist) for a shard that keeps it outside the install. `--no-cliloc-overrides` leaves both out, `--cliloc-skip ext,ext` skips extensions that are not languages, and `--cliloc-brotli` compresses the language records (they are stored raw by default).
 - Speech: `speech.mul` to `text/speech.bin`.
 - `--raw-text` stores every text record uncompressed. `--text-small <n>` sets the size below which a record is stored uncompressed (default 16,384 bytes).
 - `--no-fonts`, `--no-cliloc` and `--no-speech` skip these stages.
@@ -249,7 +249,7 @@ The `layers` stage is part of a full run but is not listed in the converter's bu
 | `--chunk-bytes <n>` | 1 MiB | Chunk size for chunked pages. |
 | `--compress-regions` / `--raw-regions` | compressed | Map region compression. |
 | `--raw-gumps`, `--gump-small <n>` | | Gump record encoding (3.5). |
-| `--raw-text`, `--text-small <n>`, `--cliloc-brotli`, `--cliloc-skip <exts>`, `--no-cliloc-overrides` | | Text record encoding and cliloc discovery (3.12). |
+| `--raw-text`, `--text-small <n>`, `--cliloc-brotli`, `--cliloc-skip <exts>`, `--no-cliloc-overrides`, `--cliloc-overrides <file>` | | Text record encoding and cliloc discovery (3.12). |
 | `--threads <n>` | half the logical cores | Worker thread cap. |
 | `--pages a-b` | all | Encode, write and verify only atlas pages `a` to `b` (packing is still global). |
 | `--regions <n>` | all | Convert only the first `n` map regions of each facet. |
