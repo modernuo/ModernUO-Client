@@ -9,15 +9,6 @@ namespace ClassicUO.UnitTests
     // Process-wide statics that tests share, made deterministic once for the whole run.
     internal static class TestEnvironment
     {
-        // SeasonManager's static constructor reads (and, if missing, writes) <current directory>/Data/Client/seasons.txt but
-        // does not create the folder: whichever test touched a Land, Static or Multi first would fail with a missing file
-        // if nothing had created Data/Client yet (it exists in the bin folder only as a side effect of other tests).
-        [ModuleInitializer]
-        internal static void CreateClientDataFolder()
-        {
-            Directory.CreateDirectory(Path.Combine(CUOEnviroment.ExecutablePath, "Data", "Client"));
-        }
-
         // Friflo builds a component type's metadata through SchemaType.GetBlittableType, which fills a static Dictionary
         // without a lock. Two paths do that once per process: EcsSchema.Register (the NativeAOT registration, under its own
         // lock; every WorldMirror calls it) and the reflection schema behind the first EntityStore (a static constructor,

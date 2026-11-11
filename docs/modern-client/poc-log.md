@@ -6332,3 +6332,13 @@ A1 (b4ea26855), A2 (7d2dd218e) and A3 (c40d82f33) merged onto 69e56394e with the
 - **Allocations.** bench-000587 (Gpu) and bench-000588 (Legacy), handles/tour/boat/fxends, base vs new: main-thread p50 B/frame equal everywhere (0 except Gpu ls_walk 6144 -> 6024); averages within spike noise, ls_walk lower (Gpu 1802 -> 1584, Legacy 3318 -> 3121); no extra GCs.
 - **Golden.** bench-000589 base vs new: 85 of 88 files identical; the 3 differences are one moving mobile (serial 0x0006482E, body 0xCC, a different position in every capture) that walked into view in the new Legacy view capture and its pixels: the known moving-NPC noise.
 - **Merged tip.** Dev and `-p:CuoDevTools=false` Release builds OK; unit suite 3402 passed, 6 skipped.
+
+## Bug bundle (bug-bundle-1110, 2026-11-10)
+
+Branch `bg/bug-bundle-1110` from `bg/t9-wave-a` (ff5cc065e). Four open P3s from known-issues.md.
+
+- **SeasonManager (ecde786ff).** `CreateDefaultSeasonsFile(string)` now creates the folder before the `StreamWriter`; it is `internal` so a unit test can point it at a temp path (`SeasonManagerFileTests`). The module initializer in `TestEnvironment.cs` that created `Data/Client` is removed (the static constructor does it now).
+- **MiniMapGump (9d78a587d).** Cause: the blank pixel buffers are built in `CreateMap`, run by Update/Restore/ToggleSize; a draw before the first Update hit a null buffer in `CreateMiniMapTexture`. The draw callback now calls `CreateMap` when the buffer is missing and the player exists, else draws the empty frame. Normal path unchanged. No unit test: the gump needs a live `Client.Game` (GPU, gump art).
+- **Flaky allocation tests (6d7b8f5c0).** Both already measured `GC.GetAllocatedBytesForCurrentThread`, but ran their measured path cold. `Corpses_Check_Allocates_Nothing_When_Nothing_Opens` never called `OpenCorpsesInRange` with a null sink before measuring (the helper uses a sink list); now 20 warm calls. `Drain_Does_Not_Allocate_Per_Frame` warmed one drain only; now the same request/drain pattern runs for 3 frames before the 2 measured frames. Assertions still exactly zero.
+- **FirstSightDecoder.RequestAndWait overshoot: already fixed, skipped.** Mechanism (poc-log "Decode waits overshooting", 374634d50, in the base): the timed wait itself is correct, but a Normal-priority thread whose wait ends queues behind more runnable Normal threads than cores; `DecodeQueue.WaitSignal` raises the waiter to AboveNormal while blocked (p50 496 ms to 3.9 ms). Nothing in-process bounds a wait for a process running at BelowNormal (agentnice'd tests); the test already asserts against a hang guard, not wall clock.
+- **Costs.** None. No jobs submitted.
