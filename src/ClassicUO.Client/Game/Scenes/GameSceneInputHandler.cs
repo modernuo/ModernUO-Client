@@ -182,8 +182,9 @@ namespace ClassicUO.Game.Scenes
 
                 Point p = mobile.RealScreenPosition;
 
-                p.X += (int)mobile.Offset.X + 22 + 5;
-                p.Y += (int)(mobile.Offset.Y - mobile.Offset.Z) + 12 * AnchorOffset;
+                Vector3 offset = mobile.Offset;
+                p.X += (int)offset.X + 22 + 5;
+                p.Y += (int)(offset.Y - offset.Z) + 12 * AnchorOffset;
                 p.X -= mobile.FrameInfo.X;
                 p.Y -= mobile.FrameInfo.Y;
 

@@ -261,8 +261,9 @@ namespace ClassicUO.Game.GameObjects
                         out int height
                     );
 
-                    p.X += (int)m.Offset.X + 22;
-                    p.Y += (int)(m.Offset.Y - m.Offset.Z - (height + centerY + 8));
+                    Vector3 offset = m.Offset;
+                    p.X += (int)offset.X + 22;
+                    p.Y += (int)(offset.Y - offset.Z - (height + centerY + 8));
                 }
                 else
                 {
