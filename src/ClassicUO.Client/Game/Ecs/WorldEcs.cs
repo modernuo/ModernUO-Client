@@ -187,6 +187,9 @@ namespace ClassicUO.Game
             int countBefore = Mirror.Count;
             Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach, item);
             RestoreScalars(item, epochBefore, countBefore);
+            // pa-gpusig: the funnel's item commit is where graphic, hue, amount, flags and position change in place (the chunk
+            // the item is on before its placement; joining another tile is a content change of its own)
+            ClassicUO.Game.Scenes.GpuItemGen.Touch(item);
 
             // W5: corpses animate in World.Update (SyncItem does the same)
             if (v.Graphic == 0x2006)
@@ -476,6 +479,8 @@ namespace ClassicUO.Game
                 handle: item
             );
             RestoreScalars(item, epochBefore, countBefore);
+            // pa-gpusig: graphic, hue, amount, flags or position may have changed under the Gpu item cache
+            ClassicUO.Game.Scenes.GpuItemGen.Touch(item);
 
             // W5: corpses animate in World.Update; every item change reaches the mirror here
             if (item.IsCorpse)

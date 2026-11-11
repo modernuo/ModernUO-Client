@@ -369,6 +369,8 @@ namespace ClassicUO.Game.GameObjects
         public override void CheckGraphicChange(byte animIndex = 0)
         {
             RefreshGraphicState();
+            // pa-gpusig: AllowedToDraw outside a WorldWriter operation
+            Scenes.GpuItemGen.Touch(this);
         }
 
         /// <summary>

@@ -232,6 +232,12 @@ namespace ClassicUO.Game.UI.Gumps
             if (entity != null)
             {
                 entity.ObjectHandlesStatus = ObjectHandlesStatus.CLOSED;
+
+                if (entity is Item)
+                {
+                    // pa-gpusig: handle state the Gpu item cache reads, changed outside the walk
+                    Scenes.GpuItemGen.Touch(entity);
+                }
             }
 
             base.CloseWithRightClick();
