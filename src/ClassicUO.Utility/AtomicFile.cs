@@ -110,6 +110,23 @@ namespace ClassicUO.Utility
             WriteAllText(path, existing + text, waitMs);
         }
 
+        /// <summary>
+        /// Read-modify-atomic-write: <paramref name="transform"/> gets the current text (empty when the file is missing) and
+        /// returns the new text, or null to leave the file alone. The read happens here, so a change another instance
+        /// published earlier is seen by the transform (a repair that adds missing entries converges). Two instances inside the
+        /// same read-to-replace window are still last-writer-wins.
+        /// </summary>
+        public static void Update(string path, Func<string, string> transform, int waitMs = DefaultReplaceBudgetMs)
+        {
+            string existing = File.Exists(path) ? ReadAllText(path) : string.Empty;
+            string updated = transform(existing);
+
+            if (updated != null)
+            {
+                WriteAllText(path, updated, waitMs);
+            }
+        }
+
         public static void WriteAllBytes(string path, ReadOnlySpan<byte> bytes, int waitMs = DefaultReplaceBudgetMs)
         {
             using var stream = OpenWrite(path, waitMs);

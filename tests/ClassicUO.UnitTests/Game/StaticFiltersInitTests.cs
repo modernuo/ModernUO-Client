@@ -80,6 +80,34 @@ namespace ClassicUO.UnitTests.Game
         }
 
         [Fact]
+        public void Parallel_repairs_of_an_incomplete_vegetation_file_add_each_entry_once()
+        {
+            var wanted = Enumerable.Range(3000, 40).Select(i => (ushort)i).ToList();
+
+            for (int round = 0; round < 10; round++)
+            {
+                string file = Path.Combine(_dir, "veg" + round + ".txt");
+                Directory.CreateDirectory(_dir);
+                File.WriteAllText(file, "3000\r\n3001\r\n");
+                var start = new ManualResetEventSlim();
+
+                Task[] instances = Enumerable.Range(0, 4).Select(_ => Task.Factory.StartNew(() =>
+                {
+                    start.Wait();
+                    StaticFilters.AppendMissingVegetation(file, wanted);
+                }, TaskCreationOptions.LongRunning)).ToArray();
+
+                start.Set();
+                Task.WaitAll(instances);
+
+                string[] lines = Lines(file);
+
+                lines.Should().OnlyHaveUniqueItems();
+                lines.Should().HaveCount(40);
+            }
+        }
+
+        [Fact]
         public void Instances_started_together_converge_on_complete_files()
         {
             // the original data lists a few graphics in both base and tree vegetation, so compare with one instance's files

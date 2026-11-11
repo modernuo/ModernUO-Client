@@ -438,6 +438,21 @@ namespace ClassicUO.UnitTests.Utility
         }
 
         [Fact]
+        public void Update_hands_the_transform_the_current_text_and_a_null_result_leaves_the_file_alone()
+        {
+            string path = P("list.txt");
+            string seen = null;
+
+            AtomicFile.Update(path, text => { seen = text; return "a\n"; });
+            seen.Should().BeEmpty("a missing file reads as empty");
+
+            AtomicFile.Update(path, text => { seen = text; return null; });
+            seen.Should().Be("a\n");
+            File.ReadAllText(path).Should().Be("a\n");
+            Directory.GetFiles(_dir).Should().ContainSingle();
+        }
+
+        [Fact]
         public void Replacing_a_file_keeps_its_unix_permissions()
         {
             if (OperatingSystem.IsWindows())

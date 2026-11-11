@@ -82,43 +82,57 @@ namespace ClassicUO.Game.Data
             }
         }
 
-        /// <summary>Adds the graphics in <paramref name="wanted"/> that vegetation.txt does not list yet, in one atomic rewrite.</summary>
+        /// <summary>
+        /// Adds the graphics in <paramref name="wanted"/> that vegetation.txt does not list yet. The missing set is computed
+        /// from the text read inside <see cref="AtomicFile.Update"/>, so an instance that finds another one's repair already
+        /// published adds nothing (no duplicate entries).
+        /// </summary>
         internal static void AppendMissingVegetation(string vegetationFile, List<ushort> wanted)
         {
-            var have = new HashSet<ushort>();
-
-            foreach (string raw in AtomicFile.ReadAllText(vegetationFile).Split('\n'))
+            AtomicFile.Update(vegetationFile, existing =>
             {
-                string line = raw.Trim();
-                int comment = line.IndexOfAny(new[] { '#', ';' });
+                var have = new HashSet<ushort>();
 
-                if (comment >= 0)
+                foreach (string raw in existing.Split('\n'))
                 {
-                    line = line.Substring(0, comment).Trim();
+                    string line = raw.Trim();
+                    int comment = line.IndexOfAny(new[] { '#', ';' });
+
+                    if (comment >= 0)
+                    {
+                        line = line.Substring(0, comment).Trim();
+                    }
+
+                    bool hex = line.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+
+                    if (hex ? ushort.TryParse(line.AsSpan(2), System.Globalization.NumberStyles.HexNumber, null, out ushort g) : ushort.TryParse(line, out g))
+                    {
+                        have.Add(g);
+                    }
                 }
 
-                bool hex = line.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+                var missing = new System.Text.StringBuilder();
 
-                if (hex ? ushort.TryParse(line.AsSpan(2), System.Globalization.NumberStyles.HexNumber, null, out ushort g) : ushort.TryParse(line, out g))
+                foreach (ushort g in wanted)
                 {
-                    have.Add(g);
+                    if (have.Add(g))
+                    {
+                        missing.Append(g).Append(Environment.NewLine);
+                    }
                 }
-            }
 
-            var missing = new System.Text.StringBuilder();
-
-            foreach (ushort g in wanted)
-            {
-                if (have.Add(g))
+                if (missing.Length == 0)
                 {
-                    missing.Append(g).Append(Environment.NewLine);
+                    return null;
                 }
-            }
 
-            if (missing.Length > 0)
-            {
-                AtomicFile.AppendAllText(vegetationFile, missing.ToString(), StartupWaitMs);
-            }
+                if (existing.Length > 0 && existing[existing.Length - 1] != '\n' && existing[existing.Length - 1] != '\r')
+                {
+                    existing += Environment.NewLine;
+                }
+
+                return existing + missing;
+            }, StartupWaitMs);
         }
 
         /// <summary>
