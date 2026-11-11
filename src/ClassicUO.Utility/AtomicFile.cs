@@ -150,6 +150,8 @@ namespace ClassicUO.Utility
         /// </summary>
         public static void Replace(string temp, string target, int waitMs = DefaultReplaceBudgetMs)
         {
+            CopyUnixMode(temp, target);
+
             var clock = System.Diagnostics.Stopwatch.StartNew();
 
             for (int attempt = 1; ; attempt++)
@@ -167,6 +169,27 @@ namespace ClassicUO.Utility
                     // leaves ~RF*.TMP litter under contention)
                     Thread.Sleep(Math.Min(ReplaceDelayMs * attempt, 100));
                 }
+            }
+        }
+
+        // the temp is created with the default mode (umask), so a user who tightened the file (0600) would lose that on replace
+        private static void CopyUnixMode(string temp, string target)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            try
+            {
+                if (File.Exists(target))
+                {
+                    File.SetUnixFileMode(temp, File.GetUnixFileMode(target));
+                }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is PlatformNotSupportedException)
+            {
+                // best effort: the target is replaced with the default mode
             }
         }
 

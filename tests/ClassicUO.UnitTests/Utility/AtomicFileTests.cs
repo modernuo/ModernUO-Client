@@ -359,6 +359,24 @@ namespace ClassicUO.UnitTests.Utility
         }
 
         [Fact]
+        public void Replacing_a_file_keeps_its_unix_permissions()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return; // no unix modes
+            }
+
+            string path = P("settings.json");
+            File.WriteAllText(path, "one");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+            AtomicFile.WriteAllText(path, "two");
+
+            File.ReadAllText(path).Should().Be("two");
+            File.GetUnixFileMode(path).Should().Be(UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        [Fact]
         public void OpenRead_shares_with_writers_and_deleters()
         {
             string path = P("shared.txt");
