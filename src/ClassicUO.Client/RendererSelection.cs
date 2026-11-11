@@ -4,7 +4,7 @@ using System;
 
 namespace ClassicUO
 {
-    /// <summary>The world_renderer setting (settings.json, -worldrenderer).</summary>
+    /// <summary>The world_renderer setting (settings.json, -worldrenderer). Legacy is shown to players as "Compatibility".</summary>
     internal enum WorldRendererMode
     {
         /// <summary>Gpu when the machine supports it, else Legacy, decided once at startup.</summary>
@@ -61,7 +61,8 @@ namespace ClassicUO
             {
                 case "auto": return WorldRendererMode.Auto;
                 case "gpu": return WorldRendererMode.Gpu;
-                case "legacy": return WorldRendererMode.Legacy;
+                case "legacy":
+                case "compatibility": return WorldRendererMode.Legacy;
                 default:
                     warning = $"unknown world_renderer \"{value}\" ({source}); using auto";
                     source = "default";
@@ -69,6 +70,14 @@ namespace ClassicUO
                     return WorldRendererMode.Auto;
             }
         }
+
+        /// <summary>The settings.json value the Options menu saves for a mode ("compatibility" is the player-facing name of Legacy).</summary>
+        public static string SettingValue(WorldRendererMode mode) => mode switch
+        {
+            WorldRendererMode.Gpu => "gpu",
+            WorldRendererMode.Legacy => "compatibility",
+            _ => "auto"
+        };
 
         /// <summary>FNA3D_FORCE_DRIVER values that select FNA3D's SDL_GPU driver ("Vulkan", "D3D12" and "Metal" are aliases for it).</summary>
         public static bool IsSdlGpuDriver(string fna3dDriver) =>
