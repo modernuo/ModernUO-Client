@@ -32,7 +32,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>DevBench (pickscan's legacy_ecs_sprites mode) and tests: wins over the env override and the setting.</summary>
         internal static bool? Override;
 
-        private static bool _on, _route, _hasAnims, _drawRow;
+        private static bool _on, _route, _hasAnims;
         private static GameScene _scene;
         private static readonly ItemSpriteExtract _items = new ItemSpriteExtract();
 
@@ -64,7 +64,6 @@ namespace ClassicUO.Game.Scenes
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
-            _drawRow = ItemDrawRows.On;
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
@@ -147,10 +146,10 @@ namespace ClassicUO.Game.Scenes
         /// wasted fetch, never a wrong read. (A tiledata stage was tried and cost more than it saved: bench-000527.)
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i) => Prefetch(list, i, _ahead, _drawRow);
+        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i) => Prefetch(list, i, _ahead);
 
-        /// <summary><see cref="Prefetch(ReadOnlySpan{GameObject}, int)"/> with explicit distances and row state (tests).</summary>
-        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i, (int Obj, int Node, int Row) ahead, bool drawRow)
+        /// <summary><see cref="Prefetch(ReadOnlySpan{GameObject}, int)"/> with explicit distances (tests).</summary>
+        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i, (int Obj, int Node, int Row) ahead)
         {
             (int obj, int node, int row) = ahead;
             int j = i + obj;
@@ -171,15 +170,8 @@ namespace ClassicUO.Game.Scenes
 
             if (row != 0 && (uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
             {
-                if (drawRow)
-                {
-                    // ecs_item_draw_row: the one packed row Gather reads
-                    EcsRead.PrefetchRow<ClassicUO.Ecs.ItemDrawRow>(near.EcsEntity);
-                }
-                else
-                {
-                    EcsRead.PrefetchRow<ClassicUO.Ecs.Graphic, ClassicUO.Ecs.Hue, ClassicUO.Ecs.Position, ClassicUO.Ecs.Flags>(near.EcsEntity);
-                }
+                // the one packed row Gather reads
+                EcsRead.PrefetchRow<ClassicUO.Ecs.ItemDrawRow>(near.EcsEntity);
             }
         }
 
