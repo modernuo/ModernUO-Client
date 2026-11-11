@@ -570,7 +570,13 @@ namespace ClassicUO.Game.UI.Controls
             int x = position.X - X - ParentX;
             int y = position.Y - Y - ParentY;
             OnMouseOver(x, y);
-            MouseOver.Raise(new MouseEventArgs(x, y), this);
+            // the handler is read after OnMouseOver, as Raise did; no listeners means no MouseEventArgs (hover runs every frame)
+            EventHandler<MouseEventArgs> handler = MouseOver;
+
+            if (handler != null)
+            {
+                handler(this, new MouseEventArgs(x, y));
+            }
         }
 
         public void InvokeMouseEnter(Point position)
@@ -578,7 +584,13 @@ namespace ClassicUO.Game.UI.Controls
             int x = position.X - X - ParentX;
             int y = position.Y - Y - ParentY;
             OnMouseEnter(x, y);
-            MouseEnter.Raise(new MouseEventArgs(x, y), this);
+            // the handler is read after OnMouseEnter, as Raise did; no listeners means no MouseEventArgs (hover runs every frame)
+            EventHandler<MouseEventArgs> handler = MouseEnter;
+
+            if (handler != null)
+            {
+                handler(this, new MouseEventArgs(x, y));
+            }
         }
 
         public void InvokeMouseExit(Point position)
@@ -586,7 +598,13 @@ namespace ClassicUO.Game.UI.Controls
             int x = position.X - X - ParentX;
             int y = position.Y - Y - ParentY;
             OnMouseExit(x, y);
-            MouseExit.Raise(new MouseEventArgs(x, y), this);
+            // the handler is read after OnMouseExit, as Raise did; no listeners means no MouseEventArgs (hover runs every frame)
+            EventHandler<MouseEventArgs> handler = MouseExit;
+
+            if (handler != null)
+            {
+                handler(this, new MouseEventArgs(x, y));
+            }
         }
 
         public bool InvokeMouseDoubleClick(Point position, MouseButtonType button)

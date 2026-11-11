@@ -634,8 +634,14 @@ namespace ClassicUO.Game.Managers
                         {
                             if (first.Value == c)
                             {
+                                // Reuses the node (AddFirst(c) allocated a new one). Remove used to leave `el` unlinked, which
+                                // ended this walk after the first Over gump; keep that: with the node relinked it would walk on
+                                // and move Over gumps to the front again and again.
                                 Gumps.Remove(first);
-                                Gumps.AddFirst(c);
+                                Gumps.AddFirst(first);
+                                _needSort = false;
+
+                                return;
                             }
                         }
                     }
