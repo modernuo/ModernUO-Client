@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
-using System;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Text;
 using ClassicUO.Ecs;
-using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game
 {
@@ -19,8 +15,8 @@ namespace ClassicUO.Game
     /// (Item <c>LightID</c>, <c>IsDamageable</c>, <c>UsedLayer</c>; Mobile <c>Race</c>, <c>SpeedMode</c>, <c>IsFemale</c>,
     /// <c>IsRenamable</c>, the player's <c>InWarMode</c>), T9 S6 <c>Flags</c> and <c>Direction</c>, and T9 S9 <c>Graphic</c>
     /// and <c>Hue</c> (items and mobiles), read through <c>Entity.TryRecord</c> (previews too). Kept as write-through caches
-    /// because per-frame readers read them per object (the census's hot readers, measured with <see cref="ScalarReads"/>):
-    /// <c>NotorietyFlag</c>, like X, Y and Z.
+    /// that only <see cref="WorldWriter"/>'s operations write (T9 S10/S11): X, Y and Z (the hot position, owner default), and
+    /// <c>NotorietyFlag</c>.
     /// </para>
     /// </summary>
     internal static class EcsScalars
@@ -107,90 +103,5 @@ namespace ClassicUO.Game
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint Price(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out ItemPrice p) ? p.Value : 0;
-    }
-
-    internal enum ScalarField
-    {
-        Name,
-        Hits,
-        HitsMax,
-        Stamina,
-        StaminaMax,
-        Mana,
-        ManaMax,
-        Price,
-        NotorietyFlag,
-        Count
-    }
-
-    /// <summary>
-    /// T4, dev builds: <c>CUO_SCALAR_READS=1</c> counts the getter reads of the T4 candidate fields and logs reads per frame
-    /// every 5 s (<c>[scalars]</c>), the evidence for which fields stay cached (hot) and which read the ECS (cold).
-    /// </summary>
-    internal static class ScalarReads
-    {
-#if CUO_DEVTOOLS
-        public static readonly bool Enabled = Environment.GetEnvironmentVariable("CUO_SCALAR_READS") == "1";
-        private static readonly long[] _counts = new long[(int)ScalarField.Count];
-        private static readonly long[] _max = new long[(int)ScalarField.Count];
-        private static readonly long[] _frameCounts = new long[(int)ScalarField.Count];
-        private static long _frames, _lastLog;
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Count(ScalarField f)
-        {
-            if (Enabled)
-            {
-                _frameCounts[(int)f]++;
-            }
-        }
-
-        /// <summary>Called once per frame (WorldEcs.Update).</summary>
-        public static void EndFrame()
-        {
-            if (!Enabled)
-            {
-                return;
-            }
-
-            _frames++;
-
-            for (int i = 0; i < _frameCounts.Length; i++)
-            {
-                _counts[i] += _frameCounts[i];
-
-                if (_frameCounts[i] > _max[i])
-                {
-                    _max[i] = _frameCounts[i];
-                }
-
-                _frameCounts[i] = 0;
-            }
-
-            long now = Stopwatch.GetTimestamp();
-
-            if (_lastLog == 0)
-            {
-                _lastLog = now;
-            }
-            else if (now - _lastLog >= 5 * Stopwatch.Frequency)
-            {
-                _lastLog = now;
-                var sb = new StringBuilder($"[scalars] reads/frame over {_frames} frames (avg/max):");
-
-                for (int i = 0; i < _counts.Length; i++)
-                {
-                    sb.Append($" {(ScalarField)i}={(double)_counts[i] / _frames:F1}/{_max[i]}");
-                }
-
-                Log.Info(sb.ToString());
-            }
-        }
-#else
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Count(ScalarField f) { }
-
-        public static void EndFrame() { }
-#endif
     }
 }

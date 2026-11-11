@@ -12,13 +12,10 @@ src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Y|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Z|2
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|_isMulti|1
-src/ClassicUO.Client/Game/GameObjects/Land.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Steps|4
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isDead|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isRunning|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isSA_Poisoned|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_notorietyFlag|1
-src/ClassicUO.Client/Game/GameObjects/Multi.cs|Graphic|1
-src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|IsMulti|1

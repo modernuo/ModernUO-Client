@@ -11,34 +11,28 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Game
 {
     /// <summary>T1: the class-A world-state properties that report their writes to <see cref="FunnelCheck"/>.</summary>
+    /// <summary>
+    /// T1: the world-state members of the world objects that still report their writes to <see cref="FunnelCheck"/>. T9 S11:
+    /// every other class-A field is record-only (get-only, no backing field: ClassAMemberTests pins it); what is left are the
+    /// funnel-written caches (X, Y, Z: the position cache the owner kept, S10; <see cref="Mobile"/>'s notoriety and pushed
+    /// inputs; an item's corpse/boat animation fields and IsMulti), the serial, and the record writes the Mobile's helpers
+    /// make for the operations (its step queue, offset, step time and animation timer).
+    /// </summary>
     internal enum FunnelField : byte
     {
         X,
         Y,
         Z,
         Offset,
-        OffsetX,
-        OffsetY,
-        OffsetZ,
         Serial,
-        Name,
-        Hits,
-        HitsMax,
         AnimIndex,
         ExecuteAnimation,
         LastAnimationChangeTime,
         LastStepTime,
         IsMulti,
-        Price,
-        Stamina,
-        StaminaMax,
-        Mana,
-        ManaMax,
         IsRunning,
         NotorietyFlag,
         IsDead,
-        AnimationFrameCount,
-        AnimationFromServer,
         LastStepSoundTime,
         StepSoundOffset,
         // mutation paths that are not property setters (Codex audit of slice 1, #2)
@@ -60,11 +54,10 @@ namespace ClassicUO.Game
     /// a dev build with the check off it costs one static load and a branch per write.
     /// </para>
     /// <para>
-    /// Besides the 43 setters: <c>Mobile.SetSAPoison</c>, every change of the step queue (<c>EnqueueStep</c>,
-    /// <c>ClearSteps</c>, the step taken in <c>ProcessSteps</c>, <c>PlayerMobile.Walk</c>) and the methods that write the
-    /// private animation timer (<c>SetAnimation</c>, <c>SetIdleAnimation</c>, <c>CalculateRandomIdleTime</c>, the timer reset
-    /// in <c>ProcessAnimation</c>). The counters and the site table are not synchronised: they assume the single
-    /// world-mutation thread (the game loop), like the World they observe.
+    /// Besides the setters: <c>Mobile.SetSAPoison</c>, the step queue writes (<c>AddStep</c>, <c>RemoveFirstStep</c>,
+    /// <c>ReplaceStep</c>, <c>ClearStepQueue</c>), <c>SetOffset</c>, <c>SetLastStepTime</c> and <c>WriteTimer</c> (every
+    /// animation timer write). The counters and the site table are not synchronised: they assume the single world-mutation
+    /// thread (the game loop), like the World they observe.
     /// </para>
     /// </summary>
     internal static class FunnelCheck
