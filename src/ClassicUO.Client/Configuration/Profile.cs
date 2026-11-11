@@ -368,9 +368,18 @@ namespace ClassicUO.Configuration
             Log.Trace("Saving done!");
         }
 
+        [JsonIgnore]
+        private bool _gumpsLoadFailed;
+
         private void SaveGumps(World world, string path)
         {
             string gumpsXmlPath = Path.Combine(path, "gumps.xml");
+
+            if (_gumpsLoadFailed)
+            {
+                AtomicFile.KeepBackup(gumpsXmlPath);
+                _gumpsLoadFailed = false;
+            }
 
             using var atomic = AtomicFile.OpenWrite(gumpsXmlPath);
             using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
@@ -514,7 +523,9 @@ namespace ClassicUO.Configuration
                 }
                 catch (Exception ex)
                 {
+                    // keep the file: the next SaveGumps backs it up before replacing it
                     Log.Error(ex.ToString());
+                    _gumpsLoadFailed = true;
 
                     return gumps;
                 }

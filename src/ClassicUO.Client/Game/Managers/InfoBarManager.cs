@@ -48,9 +48,17 @@ namespace ClassicUO.Game.Managers
             infoBarItems.Clear();
         }
 
-        public void Save()
+        private bool _loadFailed;
+
+        public void Save() => Save(Path.Combine(ProfileManager.ProfilePath, "infobar.xml"));
+
+        internal void Save(string path)
         {
-            string path = Path.Combine(ProfileManager.ProfilePath, "infobar.xml");
+            if (_loadFailed)
+            {
+                AtomicFile.KeepBackup(path);
+                _loadFailed = false;
+            }
 
             using var atomic = AtomicFile.OpenWrite(path);
             using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
@@ -75,14 +83,14 @@ namespace ClassicUO.Game.Managers
             }
         }
 
-        public void Load()
-        {
-            string path = Path.Combine(ProfileManager.ProfilePath, "infobar.xml");
+        public void Load() => Load(Path.Combine(ProfileManager.ProfilePath, "infobar.xml"));
 
+        internal void Load(string path)
+        {
             if (!File.Exists(path))
             {
                 CreateDefault();
-                Save();
+                Save(path);
 
                 return;
             }
@@ -95,7 +103,9 @@ namespace ClassicUO.Game.Managers
             }
             catch (Exception ex)
             {
+                // keep the file: the next Save() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
 
                 return;
             }

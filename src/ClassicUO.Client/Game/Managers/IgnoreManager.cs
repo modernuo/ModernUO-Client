@@ -91,7 +91,11 @@ namespace ClassicUO.Game.Managers
             }
             catch (Exception ex)
             {
+                // keep the file: the next SaveIgnoreList() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
+
+                return;
             }
 
             XmlElement root = doc["ignore"];
@@ -116,9 +120,17 @@ namespace ClassicUO.Game.Managers
         /// <summary>
         /// Save List to XML File
         /// </summary>
+        private bool _loadFailed;
+
         public void SaveIgnoreList()
         {
             string ignoreXmlPath = Path.Combine(ProfileManager.ProfilePath, "ignore_list.xml");
+
+            if (_loadFailed)
+            {
+                AtomicFile.KeepBackup(ignoreXmlPath);
+                _loadFailed = false;
+            }
 
             using var atomic = AtomicFile.OpenWrite(ignoreXmlPath);
             using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)

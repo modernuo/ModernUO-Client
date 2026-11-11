@@ -78,7 +78,9 @@ namespace ClassicUO.Game.Managers
             }
             catch (Exception ex)
             {
+                // keep the file: the next Save() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
 
                 return;
             }
@@ -99,11 +101,19 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        private bool _loadFailed;
+
         public void Save()
         {
             List<Macro> list = GetAllMacros();
 
             string path = Path.Combine(ProfileManager.ProfilePath, "macros.xml");
+
+            if (_loadFailed)
+            {
+                AtomicFile.KeepBackup(path);
+                _loadFailed = false;
+            }
 
             using var atomic = AtomicFile.OpenWrite(path);
             using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)

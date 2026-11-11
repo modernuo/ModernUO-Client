@@ -37,6 +37,27 @@ namespace ClassicUO.Utility
             }
         }
 
+        /// <summary>
+        /// Copies <paramref name="path"/> to <c>path.bak</c> (once: an existing backup is kept) before a save replaces a file
+        /// the client failed to load, so the user's data survives a failed load followed by a save of defaults. Best effort.
+        /// </summary>
+        public static void KeepBackup(string path)
+        {
+            try
+            {
+                string bak = path + ".bak";
+
+                if (File.Exists(path) && !File.Exists(bak))
+                {
+                    File.Copy(path, bak);
+                }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                // nothing more to do; the save goes ahead
+            }
+        }
+
         public static string ReadAllText(string path)
         {
             using var reader = new StreamReader(OpenRead(path), Encoding.UTF8, true);
