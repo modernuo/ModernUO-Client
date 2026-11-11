@@ -63,6 +63,8 @@ namespace ClassicUO.UnitTests.Ecs
             w.RemoveItem(ROCK, true);
             w.RemoveItem(COIN);
             w.DropDestroyedItems();
+            w.ReleasePools();
+            w.ItemPoolCreated.Should().BeFalse("with the switch off the World never creates its pool");
             CommitReady(w);
 
             w.ItemPool.Offered.Should().Be(0);
@@ -242,6 +244,23 @@ namespace ClassicUO.UnitTests.Ecs
 
             text.LiveOwnerEntity.Should().BeNull("the owner was reused for another item");
             damage.ParentReused.Should().BeTrue();
+        }
+
+        [Fact]
+        public void A_Bench_Pick_Target_Key_Rejects_A_Reused_Item()
+        {
+            World w = Build(true);
+            Item rock = AddItem(w, ROCK);
+            var key = new DevBench.PickKey(rock);
+            key.Matches(rock).Should().BeTrue();
+
+            w.RemoveItem(ROCK, true);
+            key.Matches(rock).Should().BeFalse("destroyed");
+            CommitReady(w);
+            AddItem(w, BAG).Should().BeSameAs(rock);
+            key.Matches(rock).Should().BeFalse("reused for another serial (Incarnation and Serial differ)");
+            new DevBench.PickKey(rock).Matches(rock).Should().BeTrue();
+            default(DevBench.PickKey).Matches(null).Should().BeFalse();
         }
 
         // ---- the reset: every field back to a new Item's value ----

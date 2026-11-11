@@ -206,6 +206,7 @@ namespace ClassicUO
         private static Microsoft.Xna.Framework.Point? _mouse;
         private static string _pickWhat;
         private static Game.GameObjects.GameObject _pickObject;
+        private static PickKey _pickObjectKey;
         private static Microsoft.Xna.Framework.Point? _pickTarget;
 
         // flip:N[:frames[:walk]] state: world renderer toggles left, frames between toggles, walking while flipping
@@ -641,6 +642,50 @@ namespace ClassicUO
         }
 
         private static readonly Game.GameObjects.GameObject[] _pickTargets = new Game.GameObjects.GameObject[4];
+        private static readonly PickKey[] _pickTargetKeys = new PickKey[4];
+
+        /// <summary>
+        /// What a kept pick target was when it was chosen: its Incarnation and, for an entity, its serial. item_pool reuses
+        /// Items (and the map recycler land and statics) for other objects; a target whose key no longer matches is not the
+        /// one chosen and is found again (<see cref="AcquirePickTarget"/>) or not used.
+        /// </summary>
+        internal readonly struct PickKey
+        {
+            public readonly uint Incarnation, Serial;
+
+            public PickKey(Game.GameObjects.GameObject obj)
+            {
+                Incarnation = obj?.Incarnation ?? 0;
+                Serial = obj is Game.GameObjects.Entity e ? e.Serial : 0;
+            }
+
+            /// <summary>Whether <paramref name="obj"/> is still the live object this key was taken from.</summary>
+            public bool Matches(Game.GameObjects.GameObject obj) =>
+                obj != null && !obj.IsDestroyed && obj.Incarnation == Incarnation && (obj is not Game.GameObjects.Entity e || e.Serial == Serial);
+        }
+
+        private static Game.GameObjects.GameObject AcquirePickTarget(World world, int index) => index switch
+        {
+            0 => FindStatic(world),
+            1 => world.Map.GetTile(world.Player.X + 3, world.Player.Y + 3),
+            2 => FindGroundItem(world),
+            _ => world.Player
+        };
+
+        // the kept target at index, found again when it changed since it was chosen
+        private static Game.GameObjects.GameObject PickTarget(World world, int index)
+        {
+            Game.GameObjects.GameObject obj = _pickTargets[index];
+
+            if (obj != null && !_pickTargetKeys[index].Matches(obj))
+            {
+                Log.Info($"[bench-pick] {_pickNames[index]} target changed since it was chosen (reused or destroyed): found again");
+                obj = _pickTargets[index] = AcquirePickTarget(world, index);
+                _pickTargetKeys[index] = new PickKey(obj);
+            }
+
+            return obj;
+        }
         private static readonly string[] _pickNames = { "static", "land", "item", "player" };
         private static int _pickIndex;
         private static readonly System.Collections.Generic.Dictionary<string, int> _pickSamples = new System.Collections.Generic.Dictionary<string, int>();
@@ -693,10 +738,11 @@ namespace ClassicUO
                         gs.Camera.Zoom = 1f;
                     }
 
-                    _pickTargets[0] = FindStatic(world);
-                    _pickTargets[1] = world.Map.GetTile(world.Player.X + 3, world.Player.Y + 3);
-                    _pickTargets[2] = FindGroundItem(world);
-                    _pickTargets[3] = world.Player;
+                    for (int i = 0; i < _pickTargets.Length; i++)
+                    {
+                        _pickTargets[i] = AcquirePickTarget(world, i);
+                        _pickTargetKeys[i] = new PickKey(_pickTargets[i]);
+                    }
                     RendererStartup.TrySwitch("legacy", out _);
                     _pickIndex = 0;
                     _step = 3;
@@ -711,7 +757,7 @@ namespace ClassicUO
                         game.TakeScreenshot();
                     }
 
-                    PickAt(gs, _pickTargets[_pickIndex % 4], _pickNames[_pickIndex % 4]);
+                    PickAt(gs, PickTarget(world, _pickIndex % 4), _pickNames[_pickIndex % 4]);
                     _pickSamples.Clear();
                     _step = 4;
                     _stepAt = now + sec * 2;
@@ -1227,6 +1273,7 @@ namespace ClassicUO
         {
             _pickWhat = what;
             _pickObject = obj;
+            _pickObjectKey = new PickKey(obj);
 
             if (gs == null || obj == null)
             {
@@ -1259,7 +1306,11 @@ namespace ClassicUO
 
         private static void LogPick(bool click = false)
         {
-            if (_pickObject != null && _pickTarget.HasValue)
+            if (_pickObject != null && !_pickObjectKey.Matches(_pickObject))
+            {
+                Log.Info($"[bench-ui] pixel pick ({_pickWhat}): the target changed since it was aimed at (reused or destroyed); not picked");
+            }
+            else if (_pickObject != null && _pickTarget.HasValue)
             {
                 var t = _pickTarget.Value;
                 SelectedObject.TranslatedMousePositionByViewport = t;

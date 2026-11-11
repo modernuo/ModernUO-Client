@@ -57,7 +57,6 @@ namespace ClassicUO.Game
             State = new WorldState(this);
             MapRecycler = new Map.MapObjectRecycler(this);
             ChunkPool = new Map.ChunkPool(this);
-            ItemPool = new ItemPool(this);
             Writer = new WorldWriter(this);
         }
 
@@ -172,7 +171,13 @@ namespace ClassicUO.Game
 
         /// <summary>item_pool: the destroyed items World dropped, reused by <see cref="GetOrCreateItem(uint, out bool)"/>. Kept
         /// across <see cref="Clear"/>, released by <see cref="ReleasePools"/>.</summary>
-        internal ItemPool ItemPool { get; }
+        internal ItemPool ItemPool => _itemPool ??= new ItemPool(this);
+
+        // created at the first use with the switch on: with item_pool off the World allocates nothing for it
+        private ItemPool _itemPool;
+
+        /// <summary>Tests: whether this World created its pool.</summary>
+        internal bool ItemPoolCreated => _itemPool != null;
 
         /// <summary>Tests: the switch for this World (null: the <c>item_pool</c> setting, read once at startup).</summary>
         internal bool? ItemPoolOverride;
@@ -204,7 +209,11 @@ namespace ClassicUO.Game
         /// keeps its chunks or map objects alive.</summary>
         public void ReleasePools()
         {
-            ItemPool.Close();
+            if (_itemPool != null || ItemPoolOn)
+            {
+                ItemPool.Close();
+            }
+
             ChunkPool.Close();
             MapRecycler.Close();
             _spareSlots = null;
@@ -1595,7 +1604,7 @@ namespace ClassicUO.Game
             MessageManager.PromptData = default;
             _effectManager.Clear();
             _toRemove.Clear();
-            ItemPool.ClearPending();
+            _itemPool?.ClearPending();
 
             ClearActiveItems();
             _destroyedItems.Clear();
