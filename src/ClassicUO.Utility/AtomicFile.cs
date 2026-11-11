@@ -12,11 +12,11 @@ namespace ClassicUO.Utility
     /// File access that is safe when several client instances share a file (profiles, settings, caches).
     /// Writers go to a temp file next to the target and replace the target in one rename, so a reader never sees a
     /// half-written file and a crash never leaves a truncated one. Readers open with FileShare.ReadWrite | Delete and
-    /// the writer retries its rename for about a second while a reader (Windows) still has the old file open. Two instances saving the same file is last-writer-wins: no locking.
+    /// the writer retries its rename for about three seconds while a reader (Windows) still has the old file open. Two instances saving the same file is last-writer-wins: no locking.
     /// </summary>
     public static class AtomicFile
     {
-        internal const int ReplaceAttempts = 12;
+        internal const int ReplaceAttempts = 30;
         internal const int ReplaceDelayMs = 20;
 
         /// <summary>Reads without blocking (or being blocked by) another instance replacing the file.</summary>
@@ -104,7 +104,7 @@ namespace ClassicUO.Utility
                     // Windows refuses a rename over a file another instance has open, whatever its share flags; readers hold it
                     // only while they read a small file, so it lets go in a moment (ReplaceFile would get through, but it
                     // leaves ~RF*.TMP litter under contention)
-                    Thread.Sleep(ReplaceDelayMs * attempt);
+                    Thread.Sleep(Math.Min(ReplaceDelayMs * attempt, 100));
                 }
             }
         }

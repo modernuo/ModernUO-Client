@@ -31,6 +31,9 @@ namespace ClassicUO.UnitTests.Utility
             }
         }
 
+        // dedicated threads: a pool starved by the other test classes would delay the reader that the writer waits for
+        private static Task Bg(Action a) => Task.Factory.StartNew(a, TaskCreationOptions.LongRunning);
+
         private string P(string name) => Path.Combine(_dir, name);
 
         [Fact]
@@ -81,7 +84,7 @@ namespace ClassicUO.UnitTests.Utility
             var reader = AtomicFile.OpenRead(path);
             var sr = new StreamReader(reader);
             string seen = null;
-            var read = Task.Run(() =>
+            var read = Bg(() =>
             {
                 Thread.Sleep(100);
                 seen = sr.ReadToEnd();
@@ -103,7 +106,7 @@ namespace ClassicUO.UnitTests.Utility
 
             // File.ReadAllText-style open: FileShare.Read, so on Windows the rename fails until it is closed
             var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var release = Task.Run(() =>
+            var release = Bg(() =>
             {
                 Thread.Sleep(150);
                 blocker.Dispose();
@@ -136,7 +139,7 @@ namespace ClassicUO.UnitTests.Utility
             using var stop = new CancellationTokenSource();
             int torn = 0, reads = 0;
 
-            var reader = Task.Run(() =>
+            var reader = Bg(() =>
             {
                 while (!stop.IsCancellationRequested)
                 {
@@ -153,7 +156,7 @@ namespace ClassicUO.UnitTests.Utility
                 }
             });
 
-            var writers = Enumerable.Range(1, 4).Select(w => Task.Run(() =>
+            var writers = Enumerable.Range(1, 4).Select(w => Bg(() =>
             {
                 for (int i = 0; i < 40; i++)
                 {
