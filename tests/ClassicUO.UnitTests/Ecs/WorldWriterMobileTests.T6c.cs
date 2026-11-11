@@ -315,7 +315,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World oldWorld = BuildPlayerSteps(ws, false, out TestPlayer a), newWorld = BuildPlayerSteps(ws, true, out TestPlayer b);
                 oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
-                SlotsSeam(newWorld); // ecs_step_mount_inputs (default on): the system rebuilds the player's slots from the test tiles
+                SlotsSeam(newWorld); // the system rebuilds the player's slots from the test tiles
 
                 for (int f = 0; f < 60 && a.Steps.Count != 0; f++)
                 {

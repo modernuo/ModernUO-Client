@@ -2784,7 +2784,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// 0xBF.26 (the player's movement speed mode): an input since the T6c follow-up (<c>MobileInputs.SpeedMode</c>, the
-        /// step system's mounted pace with <c>ecs_step_mount_inputs</c>). Folded, the inputs committed once, as
+        /// step system's mounted pace). Folded, the inputs committed once, as
         /// <see cref="SetWarMode"/>; rejections as <see cref="SetName"/>.
         /// </summary>
         public void SetSpeedMode(Mobile mobile, CharacterSpeedType mode)

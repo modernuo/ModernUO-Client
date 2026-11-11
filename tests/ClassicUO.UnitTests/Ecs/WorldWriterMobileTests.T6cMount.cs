@@ -9,18 +9,12 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T6c follow-up (ecs_step_mount_inputs): the step system's mounted pace from the ECS (EquipmentSlots.Mounted, rebuilt when
-    // dirty; MobileInputs.SpeedMode and its Flying bit) instead of the Mobile. Legacy ProcessSteps on one World, the system on
-    // the other with the switch off or on and CUO_STEP_MOUNT_CHECK's comparison on, through mounting and dismounting by the
-    // packets' operations (0x2E Equip, 0x1D RemoveWorldItem, 0x25 PlaceInContainer) and 0xBF.26's speed mode.
+    // T6c follow-up: the step system's mounted pace from the ECS (EquipmentSlots.Mounted, rebuilt when dirty;
+    // MobileInputs.SpeedMode and its Flying bit) instead of the Mobile (T9 deleted ecs_step_mount_inputs' off path). Legacy
+    // ProcessSteps on one World, the system on the other with CUO_STEP_MOUNT_CHECK's comparison on, through mounting and
+    // dismounting by the packets' operations (0x2E Equip, 0x1D RemoveWorldItem, 0x25 PlaceInContainer) and 0xBF.26's speed mode.
     public partial class WorldWriterMobileTests
     {
-        [Fact]
-        public void The_StepMountInputs_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().EcsStepMountInputs.Should().BeTrue();
-        }
-
         // an ethereal unicorn: Item.GetGraphicForAnimation maps it without the tiledata, so Mobile.IsMounted works here
         private const uint MOUNT_ITEM = 0x4000_7E01;
         private const ushort ETHEREAL = 0x3E9B, TILLER = 0x3E96;
@@ -59,7 +53,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static void EquipMount(World world, ushort graphic) =>
             world.Writer.Equip(MOUNT_ITEM, graphic, Layer.Mount, MOB, 0, out _, out _).Should().NotBeNull();
 
-        private static World BuildMount(MountScenario sc, bool system, bool ecsMount)
+        private static World BuildMount(MountScenario sc, bool system)
         {
             StepScenario steps = sc == MountScenario.DismountWhileRunning || sc == MountScenario.MountedRunningQueue ? StepScenario.Running : StepScenario.Walking;
             World world = BuildSteps(steps, system);
@@ -76,7 +70,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (system)
             {
-                world.StepMountInputsOverride = ecsMount;
                 world.StepSystem.MountCheckOverride = true;
                 SlotsSeam(world);
             }
@@ -88,23 +81,20 @@ namespace ClassicUO.UnitTests.Ecs
         {
             foreach (MountScenario sc in System.Enum.GetValues<MountScenario>())
             {
-                foreach (bool on in new[] { false, true })
-                {
-                    yield return new object[] { sc, on, 37 };
-                    yield return new object[] { sc, on, 16 };
-                }
+                yield return new object[] { sc, 37 };
+                yield return new object[] { sc, 16 };
             }
         }
 
         [Theory]
         [MemberData(nameof(MountCases))]
-        public void The_Step_System_With_Mount_Inputs_Equals_ProcessSteps(MountScenario sc, bool ecsMount, int frameMs)
+        public void The_Step_System_With_Mount_Inputs_Equals_ProcessSteps(MountScenario sc, int frameMs)
         {
             Mobile.FrameDelayOverride = FRAME_DELAY;
 
             try
             {
-                World oldWorld = BuildMount(sc, false, false), newWorld = BuildMount(sc, true, ecsMount);
+                World oldWorld = BuildMount(sc, false), newWorld = BuildMount(sc, true);
                 oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
                 newWorld.Writer.ThrowOnViolation = true;
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
@@ -165,14 +155,7 @@ namespace ClassicUO.UnitTests.Ecs
                 StepSystem.MountDiffs.Should().Be(diffs0, "CUO_STEP_MOUNT_CHECK: the ECS's mounted pace equals the Mobile's at every decision");
                 StepSystem.MountChecks.Should().BeGreaterThan(checks0);
 
-                if (ecsMount)
-                {
-                    StepSystem.MountEcsReads.Should().BeGreaterThan(reads0);
-                }
-                else
-                {
-                    StepSystem.MountEcsReads.Should().Be(reads0, "the switch is off: the Mobile's");
-                }
+                StepSystem.MountEcsReads.Should().BeGreaterThan(reads0);
 
                 everMounted.Should().Be(sc != MountScenario.Unmounted && sc != MountScenario.Tiller);
 
@@ -190,10 +173,8 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Players_Speed_Mode_Paces_Its_Steps_From_Either_Source(bool ecsMount)
+        [Fact]
+        public void The_Players_Speed_Mode_Paces_Its_Steps_From_The_Ecs()
         {
             Mobile.FrameDelayOverride = FRAME_DELAY;
 
@@ -201,7 +182,6 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World oldWorld = BuildPlayerSteps(WalkerStart.AllAccepted, false, out TestPlayer a);
                 World newWorld = BuildPlayerSteps(WalkerStart.AllAccepted, true, out TestPlayer b);
-                newWorld.StepMountInputsOverride = ecsMount;
                 newWorld.StepSystem.MountCheckOverride = true;
                 SlotsSeam(newWorld);
                 long diffs0 = StepSystem.MountDiffs;
@@ -232,13 +212,10 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        // the source matters: a stale ECS mount (slots say mounted, the Mobile has none) changes the decision only with the
-        // switch on, and the checker reports it either way. One step started 300 ms ago: due at the mounted pace (200 - 16 ms),
-        // not at the walking pace (400 - 16 ms).
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Decision_Reads_The_Mounted_Pace_From_The_Switched_Source(bool ecsMount)
+        // the source matters: a stale ECS mount (slots say mounted, the Mobile has none) changes the decision, and the checker
+        // reports it. One step started 300 ms ago: due at the mounted pace (200 - 16 ms), not at the walking pace (400 - 16 ms).
+        [Fact]
+        public void The_Decision_Reads_The_Mounted_Pace_From_The_Ecs()
         {
             Mobile.FrameDelayOverride = FRAME_DELAY;
 
@@ -246,7 +223,6 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World oldWorld = BuildSteps(StepScenario.OneStep, false), newWorld = BuildSteps(StepScenario.OneStep, true);
                 oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
-                newWorld.StepMountInputsOverride = ecsMount;
                 newWorld.StepSystem.MountCheckOverride = true;
                 SlotsSeam(newWorld);
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
@@ -261,13 +237,13 @@ namespace ClassicUO.UnitTests.Ecs
                 Time.Ticks = a.LastStepTime + 300;
                 long diffs0 = StepSystem.MountDiffs;
                 byte da = 0, db = 0;
-                // not paired: with the switch on the paths part (the completion draws the idle timer)
+                // not paired: the paths part (the completion draws the idle timer)
                 a.ProcessSteps(out da, true);
                 newWorld.StepSystem.TryRun(newWorld, b, Time.Ticks, FRAME_DELAY, out db).Should().BeTrue();
 
                 StepSystem.MountDiffs.Should().Be(diffs0 + 1, "CUO_STEP_MOUNT_CHECK reports the stale slots");
                 a.Steps.Count.Should().Be(1, "the walking pace: not due yet");
-                b.Steps.Count.Should().Be(ecsMount ? 0 : 1, ecsMount ? "the ECS says mounted: due" : "the switch is off: the Mobile's pace");
+                b.Steps.Count.Should().Be(0, "the ECS says mounted: due");
             }
             finally
             {

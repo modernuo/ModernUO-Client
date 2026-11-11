@@ -23,8 +23,8 @@ namespace ClassicUO.Game
         public int X, Y;
         public sbyte Z;
 
-        // IsMounted, the fast-unmount speed modes, IsFlying: the Mobile's, or with ecs_step_mount_inputs the ECS's
-        // (StepSystem.MountedFromEcs)
+        // IsMounted, the fast-unmount speed modes, IsFlying: the ECS's (StepSystem.MountedFromEcs; the Mobile's for the
+        // checker's shadow or without the components)
         public bool Mounted;
         public bool IsPlayer;
     }
@@ -146,8 +146,8 @@ namespace ClassicUO.Game
         private static int _logged;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_STEP_MOUNT_CHECK=1: at every step decision the mounted pace from the ECS (ecs_step_mount_inputs'
-        // path) is compared with the Mobile's, whichever of the two the decision uses
+        // CLEANUP(release): CUO_STEP_MOUNT_CHECK=1: at every step decision the mounted pace from the ECS is compared with the
+        // Mobile's (IsMounted, SpeedMode, IsFlying), which the views still read
         public static readonly bool StepMountCheck = Environment.GetEnvironmentVariable("CUO_STEP_MOUNT_CHECK") == "1";
 #else
         public const bool StepMountCheck = false;
@@ -229,29 +229,16 @@ namespace ClassicUO.Game
             }
         }
 
-        // the mounted pace the decision uses: ecs_step_mount_inputs' (from the ECS; the Mobile's when the components are
-        // missing) or the Mobile's; CUO_STEP_MOUNT_CHECK compares the two
-        private bool MountedInput(World world, Mobile mob, EcsEntity e, in EcsRow row)
+        // the mounted pace the decision uses: from the ECS (the Mobile's when the components are missing; T9 deleted
+        // ecs_step_mount_inputs' off path); CUO_STEP_MOUNT_CHECK compares it with the Mobile's
+        private bool MountedInput(Mobile mob, EcsEntity e, in EcsRow row)
         {
-            bool fromEcs = world.StepMountInputs;
-            bool check = MountCheck;
-
-            if (!fromEcs && !check)
-            {
-                return Mounted(mob);
-            }
-
             bool have = row.Has<MobileInputs>() && row.Has<EquipmentSlots>();
             bool ecs = have && MountedFromEcs(in row.Get<MobileInputs>(), in row.Get<EquipmentSlots>());
 
-            if (check)
+            if (MountCheck)
             {
                 CheckMount(mob, e, have, ecs);
-            }
-
-            if (!fromEcs)
-            {
-                return Mounted(mob);
             }
 
             if (!have)
@@ -297,10 +284,7 @@ namespace ClassicUO.Game
 
             Ran++;
 
-            if (world.StepMountInputs || MountCheck)
-            {
-                FreshenSlots(world, mob, e, in row);
-            }
+            FreshenSlots(world, mob, e, in row);
 
             Run(world, mob, e, ticks, frameDelay, out dir);
 
@@ -351,7 +335,7 @@ namespace ClassicUO.Game
             inp.X = p.X;
             inp.Y = p.Y;
             inp.Z = p.Z;
-            inp.Mounted = MountedInput(world, mob, e, in row);
+            inp.Mounted = MountedInput(mob, e, in row);
             inp.IsPlayer = IsPlayer(world, mob);
 
             StepRules.Decide(in inp, ticks, frameDelay, out StepDecision d);
