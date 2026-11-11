@@ -45,7 +45,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.TestSetFlags(m.Flags & ~Flags.Female);
             }
 
-            m.Graphic = Body(race, female);
+            m.TestSetGraphic(Body(race, female));
         }
 
         private static ushort Body(RaceType race, bool female) => race switch
@@ -59,8 +59,8 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item OldItem(World world, ushort graphic, ushort hue, Layer layer, Mobile wearer)
         {
             Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
-            item.Graphic = graphic;
-            item.Hue = hue;
+            item.TestSetGraphic(graphic);
+            item.TestSetHue(hue);
             item.TestSetLayer(layer);
 
             if (wearer != null)
@@ -107,7 +107,7 @@ namespace ClassicUO.UnitTests.Ecs
             OldBody(oldM, race, female);
             newWorld.Writer.SetPreviewBody(Owner, newM, Body(race, female), race, female);
 
-            oldM.Hue = 0x83EA; // UpdateEquipments' skin
+            oldM.TestSetHue(0x83EA); // UpdateEquipments' skin
             newWorld.Writer.SetPreviewHue(Owner, newM, 0x83EA);
 
             Item oldShirt = OldItem(oldWorld, 0x1518, 0x0384, Layer.Shirt, oldM);
@@ -115,7 +115,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item oldHair = OldItem(oldWorld, 0x203B, 0x044E, Layer.Hair, oldM);
             Item newHair = NewItem(newWorld, 0x203B, 0x044E, Layer.Hair, newM);
 
-            oldShirt.Hue = 0x0021; // a colour pick
+            oldShirt.TestSetHue(0x0021); // a colour pick
             newWorld.Writer.SetPreviewHue(Owner, newShirt, 0x0021);
 
             Fields(newM).Should().Be(Fields(oldM));
@@ -151,10 +151,10 @@ namespace ClassicUO.UnitTests.Ecs
             // UpdateEquipments then writes the real graphic and hue, keeping layer and container
             Item oldHair = OldItem(oldWorld, unchecked((ushort)(0x4000_0000 + (int)Layer.Hair)), 0, Layer.Hair, null);
             Item newHair = NewItem(newWorld, unchecked((ushort)(0x4000_0000 + (int)Layer.Hair)), 0, Layer.Hair, null);
-            oldM.Hue = 0x8402;
+            oldM.TestSetHue(0x8402);
             newWorld.Writer.SetPreviewHue(Owner, newM, 0x8402);
-            oldHair.Graphic = 0x2FBF;
-            oldHair.Hue = 0x0035;
+            oldHair.TestSetGraphic(0x2FBF);
+            oldHair.TestSetHue(0x0035);
             newWorld.Writer.SetPreviewItem(Owner, newHair, 0x2FBF, 0x0035, newHair.Layer, newHair.Container);
 
             Fields(newM).Should().Be(Fields(oldM));
@@ -199,7 +199,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.TryGetPreviewRecord(m, out _).Should().BeFalse();
             world.Ecs.TryGetPreviewRecord(second, out _).Should().BeFalse();
             world.Ecs.Previews.Count.Should().Be(0);
-            (m.Graphic, second.Graphic).Should().Be(((ushort)0x0190, (ushort)0x170F), "the cache stays");
+            (m.Graphic, second.Graphic).Should().Be(((ushort)0, (ushort)0), "T9 S9: the record was the only copy");
         }
 
         [Fact]
@@ -207,7 +207,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = NewWorld();
             Mobile held = world.GetOrCreateMobile(0x0000_1234);
-            held.Graphic = 0x0190;
+            held.TestSetGraphic(0x0190);
 
             Action act = () => world.Writer.SetPreviewBody(Owner, held, 0x025D, RaceType.ELF, true);
             act.Should().Throw<ArgumentException>();

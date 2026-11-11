@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -122,7 +123,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 case 6:
                 {
                     Item item = w.GetOrCreateItem(s.NextItem++);
-                    item.Graphic = kind == 5 ? (ushort)0x2006 : graphic;
+                    item.TestSetGraphic(kind == 5 ? (ushort)0x2006 : graphic);
                     item.Z = z;
                     return item;
                 }
@@ -440,7 +441,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 else if (op < 17)
                 {
                     // a graphic change without a re-insert
-                    live[rng.Next(live.Count)].Graphic = (ushort)rng.Next(Plain, Roof + 1);
+                    live[rng.Next(live.Count)].TestSetGraphic((ushort)rng.Next(Plain, Roof + 1));
                 }
                 else if (op < 19)
                 {
@@ -513,7 +514,7 @@ namespace ClassicUO.UnitTests.Game.Map
             var s = new Side();
             Chunk c = s.Chunks[0];
             Item item = s.World.GetOrCreateItem(0x4000_0001);
-            item.Graphic = Plain;
+            item.TestSetGraphic(Plain);
             Place(c, item, 4, 4);
             Assert.Null(c.Tiles[4, 4]);
             Assert.Same(item, TileWalk.First(c, 4, 4));
@@ -545,7 +546,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 Land land = NewLand(s.World, 0);
                 Place(c, land, 0, 0);
                 Item item = s.World.GetOrCreateItem(0x4000_0002);
-                item.Graphic = Plain;
+                item.TestSetGraphic(Plain);
                 Place(c, item, 0, 0);
                 Mobile mob = s.World.GetOrCreateMobile(0x0002);
                 Place(c, mob, 5, 5); // a tile holding only dynamics
@@ -579,7 +580,9 @@ namespace ClassicUO.UnitTests.Game.Map
             Land land = NewLand(s.World, 0);
             Place(c, land, 2, 2);
             Item a = s.World.GetOrCreateItem(0x4000_0003), b = s.World.GetOrCreateItem(0x4000_0004);
-            a.Graphic = b.Graphic = Plain;
+            a.TestSetGraphic(Plain);
+            b.TestSetGraphic(Plain);
+
             Place(c, a, 2, 2);
             Place(c, b, 2, 2);
             Assert.False(TileOrder.CheckIndex(c, 2, 2).Failed);
@@ -662,7 +665,7 @@ namespace ClassicUO.UnitTests.Game.Map
             Item NewItem(uint serial)
             {
                 Item i = s.World.GetOrCreateItem(serial);
-                i.Graphic = Plain;
+                i.TestSetGraphic(Plain);
                 return i;
             }
 

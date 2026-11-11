@@ -669,12 +669,12 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item OpenBank(World world, PlayerMobile p)
         {
             Item bank = world.GetOrCreateItem(BANK);
-            bank.Graphic = 0xE7C;
+            bank.TestSetGraphic(0xE7C);
             bank.TestSetLayer(Layer.Bank);
             bank.TestSetContainer(p.Serial);
             p.PushToBack(bank);
             Item gold = world.GetOrCreateItem(GOLD);
-            gold.Graphic = 0xEED;
+            gold.TestSetGraphic(0xEED);
             gold.TestSetContainer(BANK);
             bank.PushToBack(gold);
             bank.Opened = true;
@@ -700,7 +700,7 @@ namespace ClassicUO.UnitTests.Ecs
             TestPlayer rogue = TestPlayer.Create(world, ROGUE);
             world.Mobiles.Add(rogue);
             world.Ecs.Sync(rogue);
-            rogue.Graphic = 0x190;
+            rogue.TestSetGraphic(0x190);
             rogue.SetInWorldTile(990, 991, 0);
             int before = p.UpdateStateHash();
             bool step = true, turn = true;
@@ -1079,7 +1079,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             var world = new World();
             m = world.GetOrCreateMobile(0x0000_3300);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
             FunnelCheck.Reset();
 
@@ -1118,7 +1118,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             World world = BuildOne(out _);
             Item corpse = world.GetOrCreateItem(0x4000_7302);
-            corpse.Graphic = 0x2006;
+            corpse.TestSetGraphic(0x2006);
             corpse.SetInWorldTile(1002, 1000, 0);
             FunnelCheck.Reset();
 
@@ -1205,7 +1205,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             World world = WorldWriterMobileTests.BuildWalkingPlayer(out WorldWriterMobileTests.TestPlayer player);
             Item real = world.GetOrCreateItem(0x4000_0000 + (uint)Layer.Hair);
-            real.Graphic = 0x0EED;
+            real.TestSetGraphic(0x0EED);
             real.SetInWorldTile(1002, 1000, 0);
             (ushort, ushort, Layer, uint) realState = (real.Graphic, real.Hue, real.Layer, real.Container);
             (int, int) tables = (world.Mobiles.Count, world.Items.Count);
@@ -1218,20 +1218,20 @@ namespace ClassicUO.UnitTests.Ecs
             preview.TestSetRace(RaceType.ELF);
             preview.TestSetIsFemale(true);
             preview.TestSetFlags(preview.Flags | Flags.Female);
-            preview.Graphic = 0x025E;
-            preview.Hue = 0x83EA;
+            preview.TestSetGraphic(0x025E);
+            preview.TestSetHue(0x83EA);
 
             foreach (Layer layer in new[] { Layer.Shirt, Layer.Pants, Layer.Shoes, Layer.Hair })
             {
                 Item existing = preview.FindItemByLayer(layer);
                 preview.Remove(existing);
                 Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
-                item.Graphic = 0x1518;
-                item.Hue = 0x0021;
+                item.TestSetGraphic(0x1518);
+                item.TestSetHue(0x0021);
                 item.TestSetLayer(layer);
                 item.TestSetContainer(preview);
                 preview.PushToBack(item);
-                item.Hue = 0x0022; // a colour pick
+                item.TestSetHue(0x0022); // a colour pick
             }
 
             preview.FindItemByLayer(Layer.Hair).Should().NotBeSameAs(real);
@@ -1253,7 +1253,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             World world = BuildOne(out Mobile m);
             Item bag = world.GetOrCreateItem(0x4000_7300);
-            bag.Graphic = 0xE75;
+            bag.TestSetGraphic(0xE75);
             bag.SetInWorldTile(1001, 1000, 0);
             world.Writer.Equip(0x4000_7301, 0x1517, Layer.Shirt, m.Serial, 0, out _, out _);
             m.AddStep(new Mobile.Step { X = 1001, Y = 1000 });
@@ -1275,7 +1275,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             World world = BuildOne(out _);
             Item bag = world.GetOrCreateItem(0x4000_7300);
-            bag.Graphic = 0xE75;
+            bag.TestSetGraphic(0xE75);
             bag.SetInWorldTile(1001, 1000, 0);
             Item gem = world.Writer.PlaceInContainer(0x4000_7301, 0x0F26, 1, 400, 2, 0, 0x4000_7300, out _);
             FunnelCheck.Reset();

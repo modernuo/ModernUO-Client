@@ -287,6 +287,10 @@ namespace ClassicUO.Game.Scenes
             // a login that never reached its hold (disconnect): the warm-up collection must not wait for a later scene
             Map.MapWarmup.Cancel("game scene unloaded");
 
+            // T9 S9: the house placement preview's record, when the scene goes while placing
+            _world.Ecs.ReleasePreviews(this);
+
+
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
                 Camera.Bounds.X,
                 Camera.Bounds.Y
@@ -1089,10 +1093,11 @@ namespace ClassicUO.Game.Scenes
             {
                 if (_multi == null)
                 {
+                    // T9 S9: the preview's graphic and hue live in a preview record of its own (owner: this scene), as the
+                    // preview gumps' objects
                     _multi = Item.Create(_world, 0);
-                    _multi.Graphic = _world.TargetManager.MultiTargetInfo.Model;
-                    _multi.Hue = _world.TargetManager.MultiTargetInfo.Hue;
                     _multi.IsMulti = true;
+                    _world.Writer.SetPreviewItem(this, _multi, _world.TargetManager.MultiTargetInfo.Model, _world.TargetManager.MultiTargetInfo.Hue, Layer.Invalid, 0xFFFF_FFFF);
                 }
 
                 if (SelectedObject.Object is GameObject gobj)
@@ -1153,6 +1158,7 @@ namespace ClassicUO.Game.Scenes
                 _world.HouseManager.RemoveMultiTargetHouse();
                 _multi.Destroy();
                 _multi = null;
+                _world.Ecs.ReleasePreviews(this);
             }
 
             if (_isMouseLeftDown && !Client.Game.UO.GameCursor.ItemHold.Enabled)

@@ -122,6 +122,42 @@ namespace ClassicUO.Game.GameObjects
             get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Flags)EcsScalars.FlagBits(e) : Flags.None;
         }
 
+        // T9 S9: Graphic and Hue live only in the record (Graphic, Hue: every record has both); WorldWriter's operations commit
+        // them. Without one (an item before its first commit, a destroyed or stale instance, the detached player): 0, the
+        // value a new object had; a spellbook's spell entry (no record) has the scroll graphic FillSpellbook gave it.
+        // GameObject.Graphic/Hue dispatch here for items and mobiles
+        internal ushort RecordGraphic
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Graphic(e) : RecordlessGraphic();
+        }
+
+        internal const ushort SPELL_ENTRY_GRAPHIC = 0x1F2E;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private ushort RecordlessGraphic() =>
+            this is Item item && !IsDestroyed && World != null && World.State.IsSpellEntry(item, out _) ? SPELL_ENTRY_GRAPHIC : (ushort)0;
+
+
+        internal ushort RecordHue
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hue(e) : (ushort)0;
+        }
+
+        /// <summary>
+        /// T9 S9: what the removed Graphic setter did besides its field write, for <see cref="WorldWriter"/>'s item operations
+        /// to call after committing the record: a placed item whose graphic changed in place notes its cell's content change
+        /// (its tiledata flags are an input of the max-Z decision; the setter skipped mobiles).
+        /// </summary>
+        internal void GraphicCommitted(ushort before)
+        {
+            if (this is not Mobile && TileChunk != null && Graphic != before)
+            {
+                TileChunk.OwnerMap?.NoteContentChanged(TileChunk.X, TileChunk.Y);
+            }
+        }
+
         public byte HitsPercentage;
 
         // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
@@ -195,12 +231,7 @@ namespace ClassicUO.Game.GameObjects
             return e != null && Serial == e.Serial;
         }
 
-        public void FixHue(ushort hue)
-        {
-            Hue = FixedHue(hue);
-        }
-
-        /// <summary>T1: the hue <see cref="FixHue"/> stores for a packet hue (pure; the funnel writes the result itself).</summary>
+        /// <summary>T1: the hue an entity keeps for a packet hue (pure; the funnel writes the result itself).</summary>
         internal static ushort FixedHue(ushort hue)
         {
             ushort fixedColor = (ushort) (hue & 0x3FFF);

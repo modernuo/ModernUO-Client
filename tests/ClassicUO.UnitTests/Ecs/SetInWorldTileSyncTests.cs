@@ -26,7 +26,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(MOBILE);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
 
             // GetOrCreateMobile already mirrored it: drop the entry so SetInWorldTile has to create it
             world.Ecs.Mirror.Remove(MOBILE).Should().BeTrue();
@@ -45,7 +45,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(MOBILE);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1234, 2345, 7);
 
             for (int i = 1; i <= 3; i++)
@@ -70,11 +70,11 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             Item bag = world.GetOrCreateItem(BAG);
-            bag.Graphic = 0xE75;
+            bag.TestSetGraphic(0xE75);
             world.Ecs.Sync(bag);
 
             Item it = world.GetOrCreateItem(ITEM);
-            it.Graphic = 0x1515;
+            it.TestSetGraphic(0x1515);
             it.TestSetContainer(BAG);
             world.Ecs.Sync(it);
             world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord r).Should().BeTrue();

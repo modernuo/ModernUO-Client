@@ -49,7 +49,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item AddItem(Scene s, uint serial, ushort graphic, int x = 1000, int y = 1000)
         {
             Item i = s.World.GetOrCreateItem(serial);
-            i.Graphic = graphic;
+            i.TestSetGraphic(graphic);
             i.LastAnimationChangeTime = long.MaxValue / 2; // a corpse is not due for a frame (that needs the animation data)
             i.SetInWorldTile((ushort)x, (ushort)y, 0);
             s.World.Ecs.Sync(i);
@@ -138,7 +138,7 @@ namespace ClassicUO.UnitTests.Ecs
                     switch (frame)
                     {
                         case 1:
-                            s.World.Items[0x4000_0003].Graphic = 0x0EED; // no longer a corpse: swap-removed
+                            s.World.Items[0x4000_0003].TestSetGraphic(0x0EED); // no longer a corpse: swap-removed
                             break;
 
                         case 2:
@@ -150,7 +150,7 @@ namespace ClassicUO.UnitTests.Ecs
                             break;
 
                         case 4:
-                            s.World.Items[0x4000_0003].Graphic = 0x2006; // a corpse again, queued again
+                            s.World.Items[0x4000_0003].TestSetGraphic(0x2006); // a corpse again, queued again
                             s.World.QueueItemUpdate(s.World.Items[0x4000_0003]);
                             break;
                     }

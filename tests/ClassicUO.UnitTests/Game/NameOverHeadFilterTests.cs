@@ -46,7 +46,7 @@ namespace ClassicUO.UnitTests.Game
         private static Item NewItem(ushort graphic, ushort amount = 1)
         {
             Item item = Item.Create(new World(), 0x4000_0100);
-            item.Graphic = graphic;
+            item.TestSetGraphic(graphic);
             item.TestSetAmount(amount);
 
             return item;

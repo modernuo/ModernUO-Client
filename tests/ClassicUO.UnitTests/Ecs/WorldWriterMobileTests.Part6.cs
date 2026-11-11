@@ -970,7 +970,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = Build(start);
             Item boat = world.GetOrCreateItem(BOAT);
-            boat.Graphic = 0x3E4E;
+            boat.TestSetGraphic(0x3E4E);
             boat.SetInWorldTile(1000, 1000, 0);
             boat.PendingBlock = 7; // parked: shows whether AddToTile ran (these Worlds have no map)
             world.Ecs.Sync(boat);
@@ -1183,7 +1183,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal static Item OldFillSpellbook(World world, uint serial, ushort graphic, uint spells0, uint spells1)
         {
             Item spellbook = world.GetOrCreateItem(serial);
-            spellbook.Graphic = graphic;
+            spellbook.TestSetGraphic(graphic);
             spellbook.Clear();
             world.Ecs.Sync(spellbook);
 
@@ -1198,7 +1198,7 @@ namespace ClassicUO.UnitTests.Ecs
                         ushort cc = (ushort)(j * 32 + i + 1);
                         Item spellItem = Item.Create(world, cc);
                         spellItem.Serial = cc;
-                        spellItem.Graphic = 0x1F2E;
+                        spellItem.TestSetGraphic(0x1F2E);
                         spellItem.TestSetAmount(cc);
                         spellItem.TestSetContainer(spellbook);
                         spellbook.PushToBack(spellItem);
@@ -1246,7 +1246,7 @@ namespace ClassicUO.UnitTests.Ecs
                 foreach (World w in new[] { oldWorld, newWorld })
                 {
                     Item book = w.GetOrCreateItem(BOOK);
-                    book.Graphic = 0x0EFA;
+                    book.TestSetGraphic(0x0EFA);
                     book.SetInWorldTile(1002, 1000, 0);
                 }
             }
@@ -1293,7 +1293,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             var world = new World();
             Mobile m = world.GetOrCreateMobile(0x0000_3300);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
             Item bag = world.GetOrCreateItem(0x4000_7300);
             bag.SetInWorldTile(1001, 1000, 0);

@@ -26,7 +26,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.ThrowOnViolation = true;
 
             Item boat2 = world.GetOrCreateItem(BOAT2);
-            boat2.Graphic = 0x3E4E;
+            boat2.TestSetGraphic(0x3E4E);
             boat2.SetInWorldTile(1010, 1000, 0);
             boat2.PendingBlock = 7;
             world.Ecs.Sync(boat2);
@@ -130,7 +130,7 @@ namespace ClassicUO.UnitTests.Ecs
             yield return (1520, "the bag leaves, the coin joins", (w, b) =>
             {
                 Item coin = w.GetOrCreateItem(DECKCOIN);
-                coin.Graphic = 0xEED;
+                coin.TestSetGraphic(0xEED);
                 coin.SetInWorldTile(1003, 1000, 1);
                 coin.PendingBlock = 7;
                 w.Ecs.Sync(coin);
@@ -343,7 +343,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static void AddBoat(World w, uint serial, ushort x)
         {
             Item b = w.GetOrCreateItem(serial);
-            b.Graphic = 0x3E4E;
+            b.TestSetGraphic(0x3E4E);
             b.SetInWorldTile(x, 1000, 0);
             b.PendingBlock = 7;
             w.Ecs.Sync(b);

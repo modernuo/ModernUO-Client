@@ -31,8 +31,8 @@ namespace ClassicUO.UnitTests.Ecs
             for (int i = 0; i < 40; i++)
             {
                 Item it = world.GetOrCreateItem(ITEM0 + (uint)i);
-                it.Graphic = (ushort)(0x0100 + i);
-                it.Hue = (ushort)(i * 3);
+                it.TestSetGraphic((ushort)(0x0100 + i));
+                it.TestSetHue((ushort)(i * 3));
                 it.X = (ushort)(1400 + i);
                 it.Y = (ushort)(1600 + i);
                 it.TestSetFlags(i % 4 == 0 ? Flags.Movable : Flags.None);
@@ -178,8 +178,8 @@ namespace ClassicUO.UnitTests.Ecs
             for (int i = 0; i < count; i++)
             {
                 Item it = world.GetOrCreateItem(ITEM0 + (uint)i);
-                it.Graphic = (ushort)(0x0100 + i * 7);
-                it.Hue = (ushort)(i * 3);
+                it.TestSetGraphic((ushort)(0x0100 + i * 7));
+                it.TestSetHue((ushort)(i * 3));
                 it.TestSetAmount((ushort)(i % 3 == 0 ? 5 : 1));
                 it.X = (ushort)(1400 + i);
                 it.Y = (ushort)(1600 + i);

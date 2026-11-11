@@ -108,7 +108,77 @@ namespace ClassicUO.UnitTests.Ecs
             return true;
         }
 
+        // T9 S9: Graphic and Hue are record-only for items and mobiles (land, statics and multi components keep their setters).
+        // The Graphic setter also noted a placed item's content change (Entity.GraphicCommitted, what the funnel calls now)
+        public static void TestSetGraphic(this GameObject obj, ushort graphic)
+        {
+            if (obj is TileListObject tile)
+            {
+                tile.Graphic = graphic;
+
+                return;
+            }
+
+            // an effect's graphic is its state's (fixed from its creation in the client); an unregistered one has none
+            if (obj is GameEffect effect)
+            {
+                if (!effect.EcsEntity.IsNull)
+                {
+                    EcsRead.Get<EffectState>(effect.EcsEntity).Graphic = graphic;
+                }
+
+                return;
+            }
+
+            GameEntity entity = obj as GameEntity ?? throw new InvalidOperationException($"{obj.GetType().Name}: no record to write the graphic to");
+            ushort before = entity.Graphic;
+
+
+            if (WriteLook(entity, graphic, entity.Hue))
+            {
+                entity.GraphicCommitted(before);
+            }
+        }
+
+        public static void TestSetHue(this GameObject obj, ushort hue)
+        {
+            if (obj is TileListObject tile)
+            {
+                tile.Hue = hue;
+
+                return;
+            }
+
+            GameEntity entity = obj as GameEntity ?? throw new InvalidOperationException($"{obj.GetType().Name}: no record to write the hue to");
+            WriteLook(entity, entity.Graphic, hue);
+        }
+
+        /// <summary>The removed Entity.FixHue: the packet hue's stored form (Entity.FixedHue) written to the record.</summary>
+        public static void FixHue(this GameEntity entity, ushort hue) => entity.TestSetHue(GameEntity.FixedHue(hue));
+
+        private static bool WriteLook(GameEntity entity, ushort graphic, ushort hue)
+        {
+            WorldMirror mirror = Mirror(entity);
+
+            if (mirror == null)
+            {
+                return false;
+            }
+
+            if (entity as object is Item item)
+            {
+                mirror.UpsertItem(item.Serial, graphic, hue, item.X, item.Y, item.Z, (byte)item.Direction, (byte)item.Flags, item.Amount, item.Container, (byte)item.Layer, item.IsMulti, handle: item);
+            }
+            else if (entity as object is Mobile mobile)
+            {
+                mirror.UpsertMobile(mobile.Serial, graphic, hue, mobile.X, mobile.Y, mobile.Z, (byte)mobile.Direction, (byte)mobile.Flags, ReferenceEquals(mobile, mobile.World.Player) && mirror == mobile.World.Ecs.Mirror, mobile);
+            }
+
+            return true;
+        }
+
         private static void WriteItem(Item item, ushort amount, uint container, Layer layer)
+
         {
             WorldMirror mirror = Mirror(item, create: false);
             mirror?.UpsertItem(item.Serial, item.Graphic, item.Hue, item.X, item.Y, item.Z, (byte)item.Direction, (byte)item.Flags, amount, container, (byte)layer, item.IsMulti, handle: item);

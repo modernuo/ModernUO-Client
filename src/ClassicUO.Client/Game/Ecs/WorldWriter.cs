@@ -417,6 +417,8 @@ namespace ClassicUO.Game
                 Item.CorpseState(ref v.Direction, out usedLayer, out v.Layer);
             }
 
+            ushort graphicBefore = item.Graphic;
+
             // an earlier placement of this item is superseded: this upsert issues its own
             CancelPlacements(item);
 
@@ -442,20 +444,16 @@ namespace ClassicUO.Game
                 {
                     item.IsMulti = true;
                     item.WantUpdateMulti = wantUpdateMulti;
-                    item.Graphic = v.Graphic;
                 }
                 else
                 {
                     item.IsMulti = false;
-                    item.Graphic = v.Graphic;
                 }
 
+                item.GraphicCommitted(graphicBefore);
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
-
-
-                item.Hue = v.Hue;
 
                 if (corpse)
                 {
@@ -674,6 +672,7 @@ namespace ClassicUO.Game
                 Item.CorpseState(ref v.Direction, out usedLayer, out v.Layer);
             }
 
+            ushort graphicBefore = item.Graphic;
             CancelPlacements(item);
 
             using (Open(item, item))
@@ -681,7 +680,7 @@ namespace ClassicUO.Game
                 // 3. write: the ECS (attached: the push at the end, T1 part 9), then the cache from v in the old order
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
-                item.Graphic = v.Graphic;
+                item.GraphicCommitted(graphicBefore);
 
                 if (corpse)
                 {
@@ -695,7 +694,6 @@ namespace ClassicUO.Game
                 // multi's load sees the old position, as before T1; for every other item it reads Graphic only)
                 item.RefreshGraphicState();
 
-                item.Hue = v.Hue;
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
@@ -890,6 +888,8 @@ namespace ClassicUO.Game
                 Item.CorpseState(ref v.Direction, out usedLayer, out v.Layer);
             }
 
+            ushort graphicBefore = item.Graphic;
+
             // a removal cancels its contents' placements too; a returned item keeps its contents (only its own is superseded)
             if (result == HeldItemReturn.Removed)
             {
@@ -918,8 +918,7 @@ namespace ClassicUO.Game
 
                 _world.Ecs.CommitItem(item, in v, attach: result == HeldItemReturn.Paperdoll);
 
-                item.Graphic = v.Graphic;
-                item.Hue = v.Hue;
+                item.GraphicCommitted(graphicBefore);
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
@@ -1048,8 +1047,7 @@ namespace ClassicUO.Game
                 // in the mirror; its old container's gumps are refreshed by the handler (shownContainer)
                 _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
-                item.Graphic = v.Graphic;
-                item.Hue = v.Hue;
+                item.GraphicCommitted(detached.Graphic);
             }
 
             return item;
@@ -1163,6 +1161,7 @@ namespace ClassicUO.Game
             // 2. compute: every read of the previous state is here
             uint oldContainer = item.Container;
             bool multi = item.IsMulti;
+            ushort graphicBefore = item.Graphic;
 
             ItemState detached;
             detached.Serial = serial;
@@ -1201,8 +1200,7 @@ namespace ClassicUO.Game
                 // 3. write: the old order (the graphic before the unlink: a placed item's tile notes the change)
                 _world.Ecs.CommitItem(item, in detached);
 
-                item.Graphic = v.Graphic;
-                item.Hue = v.Hue;
+                item.GraphicCommitted(graphicBefore);
 
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in v, attach: true);
@@ -1410,8 +1408,6 @@ namespace ClassicUO.Game
 
                 if (created)
                 {
-                    mobile.Graphic = bodyGraphic;
-
                     if (body)
                     {
                         _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
@@ -1436,9 +1432,6 @@ namespace ClassicUO.Game
                 {
                     mobile.ApplyStep(in step);
                 }
-
-                mobile.Graphic = v.Graphic;
-                mobile.Hue = v.Hue;
 
                 // 4. derived state: the inputs and the clock, from the values written above
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -1578,8 +1571,6 @@ namespace ClassicUO.Game
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
 
-                mobile.Graphic = v.Graphic;
-
                 if (body)
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
@@ -1590,8 +1581,6 @@ namespace ClassicUO.Game
                 {
                     mobile.DirectionCommitted(directionBefore);
                 }
-
-                mobile.Hue = v.Hue;
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
@@ -1679,8 +1668,6 @@ namespace ClassicUO.Game
             using (Open(mobile, detached ? null : mobile))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
-
-                mobile.Graphic = v.Graphic;
 
                 if (body)
                 {
@@ -2609,8 +2596,11 @@ namespace ClassicUO.Game
                 // T2: the spell set the detached entries below stand for (computed from the packet)
                 _world.Ecs.CommitSpellbook(spellbook, spells0 | ((ulong)spells1 << 32));
 
-                spellbook.Graphic = graphic;
-                _world.Ecs.Sync(spellbook);
+                ushort graphicBefore = spellbook.Graphic;
+                ItemState book = CurrentState(spellbook);
+                book.Graphic = graphic;
+                _world.Ecs.CommitItem(spellbook, in book);
+                spellbook.GraphicCommitted(graphicBefore);
 
                 for (int j = 0; j < 2; j++)
                 {
@@ -2621,9 +2611,9 @@ namespace ClassicUO.Game
                         if ((spells & (1u << i)) != 0)
                         {
                             ushort cc = (ushort)(j * 32 + i + 1);
+                            // T9 S9: no record; its graphic is the spell scroll's (Entity.RecordlessGraphic)
                             Item spellItem = Item.Create(_world, cc);
                             spellItem.Serial = cc;
-                            spellItem.Graphic = 0x1F2E;
                             _spellEntries.Add(spellItem);
                         }
                     }
@@ -2724,6 +2714,33 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitPrice(item, price);
             }
         }
+
+#if CUO_DEVTOOLS
+        /// <summary>
+        /// T9 S9, DevBench only: a local graphic and hue for a held item (the hue checks, the seat check's chair), committed to
+        /// the record (their only copy) with the placed item's content-change note. No packet has this meaning. Folded;
+        /// rejections as <see cref="SetName"/>.
+        /// </summary>
+        public void SetLocalItemLook(Item item, ushort graphic, ushort hue)
+        {
+            if (item == null || !Admitted(nameof(SetLocalItemLook), item.Serial) || !Accepted(item, nameof(SetLocalItemLook)))
+            {
+                return;
+            }
+
+            ItemState v = CurrentState(item);
+            ushort graphicBefore = v.Graphic;
+            v.Graphic = graphic;
+            v.Hue = hue;
+
+            using (Open(item, item))
+            {
+                _world.Ecs.CommitItem(item, in v);
+                item.GraphicCommitted(graphicBefore);
+            }
+        }
+#endif
+
 
         /// <summary>
         /// 0xBF.26 (the player's movement speed mode): an input since the T6c follow-up (<c>MobileInputs.SpeedMode</c>, the
@@ -3437,7 +3454,6 @@ namespace ClassicUO.Game
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
-                mobile.Graphic = graphic;
             }
         }
 
@@ -3471,9 +3487,8 @@ namespace ClassicUO.Game
             using (Open(item, null))
             {
                 _world.Ecs.CommitPreviewItem(owner, item, in v);
-                item.Graphic = graphic;
-                item.Hue = hue;
             }
+
         }
 
         /// <summary>
@@ -3521,9 +3536,8 @@ namespace ClassicUO.Game
                     ClassicUO.Ecs.MobileTraits traits = RecordTraits(mobile);
                     _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
                 }
-
-                entity.Hue = hue;
             }
+
         }
 
         // T9 S5: the traits the preview's record holds (the record is their only copy); none before its first commit

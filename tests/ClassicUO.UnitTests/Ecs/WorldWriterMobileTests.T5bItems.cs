@@ -209,7 +209,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.DropDestroyedItems();
 
             Item second = world.GetOrCreateItem(CORPSE);
-            second.Graphic = 0x2006;
+            second.TestSetGraphic(0x2006);
             second.TestSetAmount(401);
             second.TestSetLayer((Layer)2);
             second.AnimIndex = 99;
@@ -240,7 +240,7 @@ namespace ClassicUO.UnitTests.Ecs
             // the table now holds another object under the serial (the old one was never destroyed)
             world.Items.Remove(CORPSE);
             Item fresh = world.GetOrCreateItem(CORPSE);
-            fresh.Graphic = 0x2006;
+            fresh.TestSetGraphic(0x2006);
             fresh.TestSetAmount(401);
             fresh.TestSetLayer((Layer)2);
             fresh.AnimIndex = 7;

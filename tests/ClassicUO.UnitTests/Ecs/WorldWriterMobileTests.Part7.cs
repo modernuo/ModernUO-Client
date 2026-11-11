@@ -135,10 +135,10 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = Build(start);
             Item corpse = world.GetOrCreateItem(CORPSE);
-            corpse.Graphic = 0x2006;
+            corpse.TestSetGraphic(0x2006);
             corpse.SetInWorldTile(1002, 1000, 0);
             Item loot = world.GetOrCreateItem(CLOOT);
-            loot.Graphic = 0x1F03;
+            loot.TestSetGraphic(0x1F03);
             loot.TestSetContainer(CORPSE);
             loot.TestSetLayer(Layer.Robe);
             corpse.PushToBack(loot);
@@ -1025,12 +1025,12 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             var world = new World();
             Mobile m = world.GetOrCreateMobile(0x0000_3300);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
             Item bag = world.GetOrCreateItem(0x4000_7300);
             bag.SetInWorldTile(1001, 1000, 0);
             Item corpse = world.GetOrCreateItem(0x4000_7302);
-            corpse.Graphic = 0x2006;
+            corpse.TestSetGraphic(0x2006);
             corpse.SetInWorldTile(1002, 1000, 0);
             FunnelCheck.Reset();
 
@@ -1066,10 +1066,10 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             var world = new World();
             Mobile m = world.GetOrCreateMobile(0x0000_3300);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
             Item boat = world.GetOrCreateItem(0x4000_7400);
-            boat.Graphic = 0x3E4E;
+            boat.TestSetGraphic(0x3E4E);
             boat.SetInWorldTile(1001, 1000, 0);
             var house = new House(world, boat.Serial, 1, false);
             house.Components.Add(new Multi(world));

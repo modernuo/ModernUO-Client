@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -71,7 +72,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 case 7:
                 {
                     Item item = w.GetOrCreateItem(s_nextItem++);
-                    item.Graphic = kind == 6 ? (ushort)0x2006 : graphic;
+                    item.TestSetGraphic(kind == 6 ? (ushort)0x2006 : graphic);
                     item.Z = z;
                     return item;
                 }

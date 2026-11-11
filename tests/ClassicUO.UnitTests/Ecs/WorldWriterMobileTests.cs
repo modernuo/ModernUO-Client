@@ -135,7 +135,7 @@ namespace ClassicUO.UnitTests.Ecs
                     return null;
                 }
 
-                mobile.Graphic = (ushort)(graphic + p.GraphicInc);
+                mobile.TestSetGraphic((ushort)(graphic + p.GraphicInc));
                 OldCheckGraphicChange(mobile);
                 mobile.TestSetDirection(p.Direction & Direction.Up);
                 mobile.FixHue(p.Hue);
@@ -177,7 +177,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            mobile.Graphic = (ushort)(graphic & 0x3FFF);
+            mobile.TestSetGraphic((ushort)(graphic & 0x3FFF));
             mobile.FixHue(p.Hue);
             mobile.TestSetFlags(p.Flags);
 
@@ -230,11 +230,11 @@ namespace ClassicUO.UnitTests.Ecs
 
             // a bystander, so the entity ids of a created mobile are not the first
             Mobile other = world.GetOrCreateMobile(OTHER);
-            other.Graphic = 0x191;
+            other.TestSetGraphic(0x191);
             other.SetInWorldTile(990, 990, 0);
 
             Item bag = world.GetOrCreateItem(BAG);
-            bag.Graphic = 0xE75;
+            bag.TestSetGraphic(0xE75);
             bag.SetInWorldTile(1001, 1000, 0);
 
             if (start == Start.None)
@@ -243,8 +243,8 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Mobile m = world.GetOrCreateMobile(MOB);
-            m.Graphic = 0x190;
-            m.Hue = 0x83EA;
+            m.TestSetGraphic(0x190);
+            m.TestSetHue(0x83EA);
             m.TestSetFlags(Flags.None);
             m.TestSetDirection(Direction.North);
             m.NotorietyFlag = NotorietyFlag.Innocent;
@@ -252,7 +252,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             // a worn item, so a body change's equipment-dirty tag shows
             Item worn = world.GetOrCreateItem(ITEM);
-            worn.Graphic = 0x1515;
+            worn.TestSetGraphic(0x1515);
             worn.TestSetContainer(MOB);
             worn.TestSetLayer(Layer.Shirt);
             m.PushToBack(worn);
@@ -440,7 +440,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 case BodyPacket.UpdateCharacter:
                     m.TestSetFlags(flags);
-                    m.Graphic = graphic;
+                    m.TestSetGraphic(graphic);
                     OldCheckGraphicChange(m);
                     m.FixHue(hue);
                     world.Ecs.Sync(m);
@@ -448,7 +448,7 @@ namespace ClassicUO.UnitTests.Ecs
                     break;
 
                 case BodyPacket.UpdateObject:
-                    m.Graphic = graphic;
+                    m.TestSetGraphic(graphic);
                     OldCheckGraphicChange(m);
                     m.FixHue(hue);
                     m.TestSetFlags(flags);
@@ -457,7 +457,7 @@ namespace ClassicUO.UnitTests.Ecs
                     break;
 
                 default:
-                    m.Graphic = graphic;
+                    m.TestSetGraphic(graphic);
                     m.TestSetDirection(dir & Direction.Mask);
                     m.FixHue(hue);
                     m.TestSetFlags(flags);
@@ -542,7 +542,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             // an item (a corpse, as after a death) under the same serial
             Item corpse = world.GetOrCreateItem(DEAD);
-            corpse.Graphic = 0x2006;
+            corpse.TestSetGraphic(0x2006);
             corpse.TestSetAmount(0x190);
             corpse.SetInWorldTile(1000, 1001, 0);
             WorldWriterTests.AttachLists(world);
@@ -623,7 +623,9 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(oldWorld, newWorld, DEAD);
             newWorld.Mobiles.Get(DEAD).NotorietyFlag.Should().Be(NotorietyFlag.Murderer, "the notoriety goes to the mobile");
             newWorld.Items.Get(DEAD).Graphic.Should().Be(0x192, "UpdateGameObject's World.Get found the item first");
-            newWorld.Mobiles.Get(DEAD).Graphic.Should().Be(0x190, "and left the mobile's body alone");
+            // T9 S9: the item's record took the shared serial (the mirror keeps one per serial), so the mobile has no record
+            // and no body of its own (a misconfigured server's case, as its other record fields)
+            newWorld.Mobiles.Get(DEAD).Graphic.Should().Be(0, "the item's record holds the serial");
         }
 
         // ---- placements, nesting, foreign and stale instances
@@ -846,22 +848,24 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.TryGetEntity(OTHER, out EcsEntity eo);
             long writes = world.Ecs.MobileMirrorWrites;
 
-            ushort hue = e.GetComponent<ClassicUO.Ecs.Hue>().Value;
+            ushort x = e.GetComponent<ClassicUO.Ecs.Position>().X;
 
-            // T9 S6: Direction has no setter (its Sync was the hook used here); the Hue cache and an explicit Sync stand in
+
+            // T9 S6/S9: Direction and Hue have no setter (the Direction setter's Sync was the hook used here); the X cache and
+            // an explicit Sync stand in
             world.Ecs.BeginFold(m);
-            m.Hue = 0x0456;
+            m.X = 1234;
             world.Ecs.Sync(m); // Sync: folded
             m.NotorietyFlag = NotorietyFlag.Murderer; // PushInputs: folded
             m.IsRunning = true; // PushInputs: folded
-            other.Hue = 0x0456;
+            other.X = 1234;
             world.Ecs.Sync(other); // another instance: syncs
             world.Ecs.EndFold(m);
 
             world.Ecs.MobileMirrorWrites.Should().Be(writes + 1, "only the bystander's Sync wrote");
-            e.GetComponent<ClassicUO.Ecs.Hue>().Value.Should().Be(hue);
+            e.GetComponent<ClassicUO.Ecs.Position>().X.Should().Be(x);
             Inputs(world, MOB).Should().Be(Inputs(Build(Start.Standing), MOB), "the folded pushes did not run");
-            eo.GetComponent<ClassicUO.Ecs.Hue>().Value.Should().Be(0x0456);
+            eo.GetComponent<ClassicUO.Ecs.Position>().X.Should().Be(1234);
 
             m.IsRunning = true; // after the fold: pushes again
             e.GetComponent<MobileInputs>().Flags.Should().NotBe(Inputs(Build(Start.Standing), MOB).Flags, "the running bit is pushed");
@@ -894,7 +898,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Item pack = world.GetOrCreateItem(PACK);
-            pack.Graphic = 0xE75;
+            pack.TestSetGraphic(0xE75);
             pack.TestSetLayer(Layer.Backpack);
             pack.TestSetContainer(MOB);
             m.PushToBack(pack);
@@ -905,7 +909,7 @@ namespace ClassicUO.UnitTests.Ecs
             pack.PushToBack(loot);
             world.Ecs.Sync(loot);
             Item gem = world.GetOrCreateItem(GEM);
-            gem.Graphic = 0xF10;
+            gem.TestSetGraphic(0xF10);
             gem.TestSetContainer(LOOT);
             loot.PushToBack(gem);
             world.Ecs.Sync(gem);
@@ -1040,8 +1044,8 @@ namespace ClassicUO.UnitTests.Ecs
             typeof(World).GetProperty(nameof(World.Player))!.SetValue(world, player);
             world.Mobiles.Add(player);
             world.Ecs.Sync(player);
-            player.Graphic = 0x190;
-            player.Hue = 0x83EA;
+            player.TestSetGraphic(0x190);
+            player.TestSetHue(0x83EA);
             player.TestSetDirection(Direction.North);
             player.NotorietyFlag = NotorietyFlag.Innocent;
             player.SetInWorldTile(1000, 1000, 0);
@@ -1178,8 +1182,9 @@ namespace ClassicUO.UnitTests.Ecs
             );
 
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
-            // T9 S6: the detached player has no record, so its direction is not kept (a misconfigured server's case)
-            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0x191, (ushort)1005, (ushort)1006, (sbyte)3, Direction.North));
+            // T9 S6: the detached player has no record, so its direction is not kept (a misconfigured server's case); T9 S9:
+            // nor its body
+            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0, (ushort)1005, (ushort)1006, (sbyte)3, Direction.North));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
@@ -1219,7 +1224,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Mobile a = world.GetOrCreateMobile(0x100);
                 a.TestSetIsFemale(true);
                 a.TestSetRace(RaceType.ELF);
-                a.Graphic = (ushort)g;
+                a.TestSetGraphic((ushort)g);
                 OldCheckGraphicChange(a);
                 bool body = Mobile.BodyState((ushort)g, out bool female, out RaceType race);
                 (body ? female : true, body ? race : RaceType.ELF).Should().Be((a.IsFemale, a.Race), $"graphic 0x{g:X}");
@@ -1417,7 +1422,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = 100_000;
             var world = new World();
             Mobile m = world.GetOrCreateMobile(0x0000_3100);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.SetInWorldTile(1000, 1000, 0);
             FunnelCheck.Reset();
 
@@ -1447,7 +1452,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             // 0x1D: the mobile with a queued step, its equipment and a backpack's contents (the removal owns the subtree)
             Item pack = world.GetOrCreateItem(0x4000_7110);
-            pack.Graphic = 0xE75;
+            pack.TestSetGraphic(0xE75);
             pack.TestSetLayer(Layer.Backpack);
             pack.TestSetContainer(n.Serial);
             n.PushToBack(pack);

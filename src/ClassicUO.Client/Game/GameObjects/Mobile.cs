@@ -325,15 +325,10 @@ namespace ClassicUO.Game.GameObjects
                 : (Flags & Flags.Poisoned) != 0;
         public bool IgnoreCharacters => (Flags & Flags.IgnoreMobiles) != 0;
 
+        // T9 S9: Graphic reads the record; IsDead, IsHuman and IsGargoyle read it once
         public bool IsDead
         {
-            get =>
-                Graphic == 0x0192
-                || Graphic == 0x0193
-                || (Graphic >= 0x025F && Graphic <= 0x0260)
-                || Graphic == 0x2B6
-                || Graphic == 0x02B7
-                || _isDead;
+            get => IsGhostBody(Graphic) || _isDead;
             set
             {
                 FunnelCheck.Write(this, FunnelField.IsDead);
@@ -348,23 +343,40 @@ namespace ClassicUO.Game.GameObjects
 
         public virtual bool InWarMode => (Flags & Flags.WarMode) != 0;
 
-        public bool IsHuman =>
-            Graphic >= 0x0190 && Graphic <= 0x0193
-            || Graphic >= 0x00B7 && Graphic <= 0x00BA
-            || Graphic >= 0x025D && Graphic <= 0x0260
-            || Graphic == 0x029A
-            || Graphic == 0x029B
-            || Graphic == 0x02B6
-            || Graphic == 0x02B7
-            || Graphic == 0x03DB
-            || Graphic == 0x03DF
-            || Graphic == 0x03E2
-            || Graphic == 0x02E8
-            || Graphic == 0x02E9
-            || Graphic == 0x04E5;
+        private static bool IsGhostBody(ushort g) =>
+            g == 0x0192
+            || g == 0x0193
+            || (g >= 0x025F && g <= 0x0260)
+            || g == 0x2B6
+            || g == 0x02B7;
 
-        public bool IsGargoyle =>
-            Client.Game.UO.Version >= ClientVersion.CV_7000 && Graphic == 0x029A || Graphic == 0x029B;
+        public bool IsHuman => IsHumanBody(Graphic);
+
+        private static bool IsHumanBody(ushort g) =>
+            g >= 0x0190 && g <= 0x0193
+            || g >= 0x00B7 && g <= 0x00BA
+            || g >= 0x025D && g <= 0x0260
+            || g == 0x029A
+            || g == 0x029B
+            || g == 0x02B6
+            || g == 0x02B7
+            || g == 0x03DB
+            || g == 0x03DF
+            || g == 0x03E2
+            || g == 0x02E8
+            || g == 0x02E9
+            || g == 0x04E5;
+
+        public bool IsGargoyle
+        {
+            get
+            {
+                ushort g = Graphic;
+
+                return Client.Game.UO.Version >= ClientVersion.CV_7000 && g == 0x029A || g == 0x029B;
+            }
+        }
+
 
         public bool IsMounted
         {

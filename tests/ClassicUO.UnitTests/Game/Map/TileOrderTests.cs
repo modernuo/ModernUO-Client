@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -449,7 +450,7 @@ namespace ClassicUO.UnitTests.Game.Map
         public void Boat_Carried_Entities_Alone_On_Landless_Tiles_Follow_The_Boat()
         {
             Item cargo = _world.GetOrCreateItem(0x4000_1000);
-            cargo.Graphic = Plain;
+            cargo.TestSetGraphic(Plain);
             Mobile rider = _world.GetOrCreateMobile(0x2002);
             Add(cargo, 4, 4);
             Add(rider, 5, 4);
@@ -656,7 +657,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 else
                 {
                     // graphic change without a re-insert
-                    objects[rng.Next(objects.Count)].Graphic = (ushort)rng.Next(Plain, TallBackground + 1);
+                    objects[rng.Next(objects.Count)].TestSetGraphic((ushort)rng.Next(Plain, TallBackground + 1));
                 }
 
                 // cells 0 and 1 have land, cell 2 is landless

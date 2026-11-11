@@ -59,7 +59,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item AddItem(Scene s, uint serial, ushort graphic)
         {
             Item i = s.World.GetOrCreateItem(serial);
-            i.Graphic = graphic;
+            i.TestSetGraphic(graphic);
             i.LastAnimationChangeTime = long.MaxValue / 2; // a corpse is not due for a frame (that needs the animation data)
             i.SetInWorldTile(1000, 1000, 0);
             s.World.Ecs.Sync(i);
@@ -143,7 +143,7 @@ namespace ClassicUO.UnitTests.Ecs
                     switch (frame)
                     {
                         case 1:
-                            s.World.Items[0x4000_0003].Graphic = PLAIN;
+                            s.World.Items[0x4000_0003].TestSetGraphic(PLAIN);
 
                             break;
 
@@ -158,7 +158,7 @@ namespace ClassicUO.UnitTests.Ecs
                             break;
 
                         case 4:
-                            s.World.Items[0x4000_0003].Graphic = CORPSE;
+                            s.World.Items[0x4000_0003].TestSetGraphic(CORPSE);
                             s.World.QueueItemUpdate(s.World.Items[0x4000_0003]);
 
                             break;
@@ -227,7 +227,7 @@ namespace ClassicUO.UnitTests.Ecs
                     switch (item.Serial)
                     {
                         case 0x4000_0001:
-                            item.Graphic = PLAIN; // leaves at its own visit
+                            item.TestSetGraphic(PLAIN); // leaves at its own visit
 
                             break;
 
@@ -250,7 +250,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                         case 0x4000_0010:
                             AddItem(sc, 0x4000_0011, CORPSE);
-                            item.Graphic = PLAIN;
+                            item.TestSetGraphic(PLAIN);
 
                             break;
                     }
@@ -299,7 +299,7 @@ namespace ClassicUO.UnitTests.Ecs
                     switch (r.Next(10))
                     {
                         case 0 when !item.IsDestroyed:
-                            item.Graphic = PLAIN;
+                            item.TestSetGraphic(PLAIN);
 
                             break;
 
@@ -352,7 +352,7 @@ namespace ClassicUO.UnitTests.Ecs
                             }
                             else if (!item.IsDestroyed)
                             {
-                                item.Graphic = graphic;
+                                item.TestSetGraphic(graphic);
                                 w.Ecs.Sync(item);
                             }
 
