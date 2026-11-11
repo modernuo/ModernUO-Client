@@ -28,11 +28,34 @@ namespace ClassicUO.UnitTests
         [InlineData("gpu", "legacy", "Legacy", "-worldrenderer")]
         [InlineData("gpu", "AUTO", "Auto", "-worldrenderer")]
         [InlineData("legacy", " ", "Legacy", "settings.json")]
+        [InlineData("compatibility", null, "Legacy", "settings.json")]
+        [InlineData("auto", "Compatibility", "Legacy", "-worldrenderer")]
         public void ParseMode_CommandLineOverridesSetting(string setting, string arg, string expected, string source)
         {
             RendererSelection.ParseMode(setting, arg, out string actualSource, out string warning).ToString().Should().Be(expected);
             actualSource.Should().Be(source);
             warning.Should().BeNull();
+        }
+
+        [Theory]
+        [InlineData("legacy", "Legacy")]
+        [InlineData("Compatibility", "Legacy")]
+        [InlineData("auto", "Auto")]
+        [InlineData("gpu", "Gpu")]
+        public void ParseMode_AcceptsEachSettingValue(string setting, string expected)
+        {
+            RendererSelection.ParseMode(setting, null, out _, out string warning).ToString().Should().Be(expected);
+            warning.Should().BeNull();
+        }
+
+        [Theory]
+        [InlineData("Auto")]
+        [InlineData("Gpu")]
+        [InlineData("Legacy")]
+        public void SettingValue_RoundTripsThroughParseMode(string modeName)
+        {
+            var mode = System.Enum.Parse<WorldRendererMode>(modeName);
+            RendererSelection.ParseMode(RendererSelection.SettingValue(mode), null, out _, out _).Should().Be(mode);
         }
 
         [Fact]

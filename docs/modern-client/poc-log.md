@@ -6445,3 +6445,14 @@ Base `bg/t9-wave-a` ff5cc065e; commits c3a86bcb6, f7518ab3f, 1ab7a6de1, 195e5e14
 - **Hover events.** `InvokeMouseOver/Enter/Exit` allocate `MouseEventArgs` only with listeners; `UIManager.SortControlsByInfo` relinks the node (`AddFirst(first)`) and returns, as the old walk ended after the first Over gump.
 - **Verification.** Dev suite: 3409 passed + 1 fixed test (wrong expectation in the new cache test, re-run green) + 6 skipped = 3416 (baseline 3402/6 skipped + new tests); dev and `-p:CuoDevTools=false` builds OK.
 - **Results (merged as 77d6af5b2).** Allocations bench-000596 (Gpu) / 597 (Legacy), base vs new interleaved (sites x2, handles, tour): main-thread p50 0 B/frame in every scene in both; ls_walk window totals about 6-8 % lower (Gpu ~5.8 -> 5.5 MB and 6.6 -> 6.1 MB per window; Legacy 5.6 -> 5.2 MB, 6.6 -> 6.3 MB), p95 lower (Gpu ~6.0-6.5 -> 4.8-6.0 KB, Legacy ~6.8-7.1 -> 6.2-6.5 KB). One Gpu effects window held a single 1.6 MB frame (a one-time fill, not per frame). Pixel check bench-000598: UI shots (journal, name overheads, gumps) pixel-identical base vs new in both pairs; light/composite differences equal base-vs-base (light level between sessions). Memory: cliloc caches at most ~0.4 MB per client.
+
+## Renderer options (2026-11-10, `bg/renderer-options`)
+
+Base `bg/t9-wave-a` ff5cc065e. Owner decisions: the world renderer override is reachable from the game, the Legacy renderer is kept and renamed for players.
+
+- **Options menu.** General page, under the FPS options: "World renderer (takes effect on next start)" with Automatic (recommended) / GPU / Compatibility. Apply writes `world_renderer` (`auto`, `gpu`, `compatibility`) and saves settings.json only when it changed. No runtime switch outside `CUO_DEVTOOLS`.
+- **Rename.** Player-visible "Legacy" is "Compatibility". `ParseMode` accepts `legacy` and `compatibility` (either case); `-worldrenderer` too. Internal names (`WorldRendererMode.Legacy`, the `legacy` runtime renderer string, `[renderer]` log lines that scripts parse) are unchanged.
+- **Window title.** `[Compatibility renderer]` only with `CUO_DEVTOOLS`.
+- **Error box (forced gpu fails).** "The GPU renderer you selected could not start.", the reason on its own line, then how to recover (Automatic in Options, or `world_renderer` "auto" in settings.json). The log line no longer says "GPU world renderer".
+- **Tests.** `RendererSelectionTests`: each setting value (legacy/compatibility/auto/gpu), `SettingValue` round trip.
+- **Costs.** None.

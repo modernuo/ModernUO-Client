@@ -31,6 +31,7 @@ namespace ClassicUO.Game.UI.Gumps
         private const int SCREEN_ZOOM_STEPS = 20;
 
         private static Texture2D _logoTexture2D;
+        private Combobox _worldRenderer;
         private Combobox _auraType;
         private Combobox _autoOpenCorpseOptions;
         private InputField _autoOpenCorpseRange;
@@ -1623,6 +1624,21 @@ namespace ClassicUO.Game.UI.Gumps
             );
 
             startY += _reduceFPSWhenInactive.Height + 2;
+
+            Label rendererLabel = AddLabel(rightArea, "World renderer (takes effect on next start)", startX, startY);
+            startY += rendererLabel.Height + 2;
+
+            _worldRenderer = AddCombobox
+            (
+                rightArea,
+                new[] { "Automatic (recommended)", "GPU", "Compatibility" },
+                (int)RendererSelection.ParseMode(Settings.GlobalSettings.WorldRendererSetting, null, out _, out _),
+                startX,
+                startY,
+                200
+            );
+
+            startY += _worldRenderer.Height + 2;
 
             startX = 5;
             startY += 20;
@@ -3889,6 +3905,14 @@ namespace ClassicUO.Game.UI.Gumps
                 Client.Game.SetVSync(_vsync.IsChecked);
             }
 
+            string renderer = RendererSelection.SettingValue((WorldRendererMode)_worldRenderer.SelectedIndex);
+
+            if (RendererSelection.ParseMode(Settings.GlobalSettings.WorldRendererSetting, null, out _, out _) != (WorldRendererMode)_worldRenderer.SelectedIndex)
+            {
+                Settings.GlobalSettings.WorldRendererSetting = renderer;
+                Settings.GlobalSettings.Save();
+            }
+
             _currentProfile.HighlightGameObjects = _highlightObjects.IsChecked;
             _currentProfile.ReduceFPSWhenInactive = _reduceFPSWhenInactive.IsChecked;
             _currentProfile.EnablePathfind = _enablePathfind.IsChecked;
@@ -4459,6 +4483,11 @@ namespace ClassicUO.Game.UI.Gumps
 
             _currentProfile?.Save(World, ProfileManager.ProfilePath);
         }
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): driver command "optionsdrop" (the Options screenshot job): opens the World renderer dropdown
+        internal void OpenWorldRendererListForDriver() => _worldRenderer.InvokeMouseUp(new Microsoft.Xna.Framework.Point(_worldRenderer.ScreenCoordinateX + 1, _worldRenderer.ScreenCoordinateY + 1), MouseButtonType.Left);
+#endif
 
         internal void UpdateVideo()
         {

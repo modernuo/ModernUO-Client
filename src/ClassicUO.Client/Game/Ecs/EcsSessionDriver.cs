@@ -846,6 +846,20 @@ namespace ClassicUO.Game
                     return true;
                 }
 
+                // options [page]: opens the Options gump (page 3 = Video, where the World renderer choice is); optionsdrop opens
+                // that choice's dropdown. Both for the renderer-options screenshot job (shot <name> saves <name>_gpu_screen.png)
+                case "options":
+                    GameActions.OpenSettings(world, args.Length > 0 && int.TryParse(args[0], out int optPage) ? optPage : 3);
+                    Log.Info("[ECS] ui options opened");
+
+                    return true;
+
+                case "optionsdrop":
+                    UIManager.GetGump<UI.Gumps.OptionsGump>()?.OpenWorldRendererListForDriver();
+                    Log.Info("[ECS] ui optionsdrop");
+
+                    return true;
+
                 // paperdoll: opens the player's own paperdoll (T3a's shots; a double-click on a mounted self would dismount)
                 case "paperdoll":
                     GameActions.OpenPaperdoll(world, player.Serial);

@@ -151,7 +151,7 @@ Settings come from `settings.json` next to the executable, or from the file name
 | `username`, `password` | `-username`, `-password` | Account; `saveaccount` must be true for the file to keep them |
 | `autologin`, `saveaccount` | `-autologin true`, `-saveaccount false` | Log in at startup; do not store the account |
 | `fps`, `vsync` | `-fps 0`, `-vsync false` | `0` is uncapped |
-| `world_renderer` | `-worldrenderer auto\|gpu\|legacy` | See below |
+| `world_renderer` | `-worldrenderer auto\|gpu\|compatibility` | See below |
 | `profilespath` | `-profilespath <dir>` | Profile folder (never saved to the file) |
 | | `-skiploginscreen`, `-nomessagebox`, `-packetlog` | Flags |
 
@@ -177,7 +177,7 @@ Several clients can run on one machine against one install and one pack.
 
 ### World renderer
 
-`world_renderer` (or `-worldrenderer`, which wins for one run and is not saved) is `auto`, `gpu` or `legacy`. The choice is made once at startup and logged as a `[renderer]` line. `auto` picks the Gpu renderer when SDL_GPU on Vulkan works and the Legacy (FNA batcher) renderer otherwise. `gpu` exits with an error if the Gpu world cannot run.
+`world_renderer` (or `-worldrenderer`, which wins for one run and is not saved) is `auto`, `gpu` or `compatibility` (`legacy` is still accepted). Players set it in Options (Video): Automatic (recommended), GPU or Compatibility; it takes effect on the next start. The choice is made once at startup and logged as a `[renderer]` line. `auto` picks the Gpu renderer when SDL_GPU on Vulkan works and the Compatibility (FNA batcher, code name Legacy) renderer otherwise. `gpu` exits with an error if the Gpu world cannot run. The window title shows `[Compatibility renderer]` in dev builds only.
 
 ## Unit tests
 
@@ -228,7 +228,7 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 
 | Key | Default | Meaning |
 |---|---|---|
-| `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `legacy` |
+| `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `compatibility` (or `legacy`) |
 | `gpu_ecs_sprites` | `true` | Gpu renderer: mobile sprites come from the ECS, not from capturing `MobileView.Draw` |
 | `text_skip_expired` | `true` | Skip text layout for mobiles and corpses whose overhead texts all expired |
 | `gpu_prepare_skip_baked` | `true` | Gpu world prepare skips baked land and statics |
