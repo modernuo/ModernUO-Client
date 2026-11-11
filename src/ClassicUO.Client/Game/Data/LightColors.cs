@@ -337,7 +337,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(path) || force)
             {
-                using (StreamWriter writer = new StreamWriter(File.Create(path)))
+                using (StreamWriter writer = AtomicFile.CreateText(path, out var atomic))
                 {
                     writer.WriteLine("# FORMAT");
 
@@ -350,10 +350,12 @@ namespace ClassicUO.Game.Data
                     {
                         writer.WriteLine($"# {e.Key} {e.Value.RGB:X6} {e.Value.RedCurve} {e.Value.GreenCurve} {e.Value.BlueCurve}");
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
-            TextFileParser lightshadersParser = new TextFileParser(File.ReadAllText(path), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser lightshadersParser = new TextFileParser(AtomicFile.ReadAllText(path), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!lightshadersParser.IsEOF())
             {
@@ -401,7 +403,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(lights))
             {
-                using (StreamWriter writer = new StreamWriter(lights))
+                using (StreamWriter writer = AtomicFile.CreateText(lights, out var atomic))
                 {
                     writer.WriteLine("# FORMAT");
                     writer.WriteLine("# ITEM_ID LIGHT_SHADER_OR_HUE");
@@ -412,10 +414,12 @@ namespace ClassicUO.Game.Data
                     writer.WriteLine("# Example for hue");
                     writer.WriteLine("# 0xE31 H1234");
                     writer.WriteLine("");
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
-            TextFileParser itemlightsparser = new TextFileParser(File.ReadAllText(lights), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser itemlightsparser = new TextFileParser(AtomicFile.ReadAllText(lights), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!itemlightsparser.IsEOF())
             {

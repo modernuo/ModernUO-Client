@@ -39,7 +39,7 @@ AppDomain.CurrentDomain.UnhandledException += (s, e) =>
     if (!Directory.Exists(path))
         Directory.CreateDirectory(path);
 
-    File.WriteAllText(Path.Combine(path, $"{dt:yyyy-MM-dd_hh-mm-ss}_crash.txt"), sb.ToString());
+    File.WriteAllText(Path.Combine(path, $"{dt:yyyy-MM-dd_hh-mm-ss}_{Environment.ProcessId}_crash.txt"), sb.ToString());
 };
 #endif
 

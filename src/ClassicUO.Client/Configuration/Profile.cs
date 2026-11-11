@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration.Json;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
@@ -367,11 +368,26 @@ namespace ClassicUO.Configuration
             Log.Trace("Saving done!");
         }
 
+        [JsonIgnore]
+        private bool _gumpsLoadFailed;
+
         private void SaveGumps(World world, string path)
         {
             string gumpsXmlPath = Path.Combine(path, "gumps.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(gumpsXmlPath, Encoding.UTF8)
+            if (_gumpsLoadFailed)
+            {
+                if (!AtomicFile.KeepBackup(gumpsXmlPath))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _gumpsLoadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(gumpsXmlPath);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -440,6 +456,8 @@ namespace ClassicUO.Configuration
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
 
 
@@ -506,11 +524,13 @@ namespace ClassicUO.Configuration
 
                 try
                 {
-                    doc.Load(gumpsXmlPath);
+                    AtomicFile.LoadXml(doc, gumpsXmlPath);
                 }
                 catch (Exception ex)
                 {
+                    // keep the file: the next SaveGumps backs it up before replacing it
                     Log.Error(ex.ToString());
+                    _gumpsLoadFailed = true;
 
                     return gumps;
                 }

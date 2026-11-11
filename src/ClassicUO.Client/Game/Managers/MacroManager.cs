@@ -74,11 +74,13 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(path);
+                AtomicFile.LoadXml(doc, path);
             }
             catch (Exception ex)
             {
+                // keep the file: the next Save() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
 
                 return;
             }
@@ -99,13 +101,27 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        private bool _loadFailed;
+
         public void Save()
         {
             List<Macro> list = GetAllMacros();
 
             string path = Path.Combine(ProfileManager.ProfilePath, "macros.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(path, Encoding.UTF8)
+            if (_loadFailed)
+            {
+                if (!AtomicFile.KeepBackup(path))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(path);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -122,6 +138,8 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
 

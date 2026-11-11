@@ -22,16 +22,18 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(chair))
             {
-                using (StreamWriter writer = new StreamWriter(chair))
+                using (StreamWriter writer = AtomicFile.CreateText(chair, out var atomic))
                 {
                     foreach (var item in _defaultTable)
                     {
                         writer.WriteLine($"{item.Graphic},{item.Direction1},{item.Direction2},{item.Direction3},{item.Direction4},{item.OffsetY},{item.MirrorOffsetY}");
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
-            TextFileParser chairParse = new TextFileParser(File.ReadAllText(chair), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser chairParse = new TextFileParser(AtomicFile.ReadAllText(chair), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!chairParse.IsEOF())
             {

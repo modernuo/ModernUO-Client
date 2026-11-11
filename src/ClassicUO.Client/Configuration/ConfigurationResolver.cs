@@ -1,10 +1,12 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
+using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
+using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Configuration
@@ -20,7 +22,7 @@ namespace ClassicUO.Configuration
                 return null;
             }
 
-            var text = File.ReadAllText(file);
+            var text = AtomicFile.ReadAllText(file);
 
             text = Regex.Replace
             (
@@ -37,7 +39,8 @@ namespace ClassicUO.Configuration
 
         public static void Save<T>(T obj, string file, JsonTypeInfo<T> ctx) where T : class
         {
-            // this try catch is necessary when multiples cuo instances points to this file.
+            // Written to a temp file and renamed over the target, so concurrent instances (and a reader) never see a partial file.
+            // Two instances saving the same file is last-writer-wins. The catch covers a rename that still fails after retries.
             try
             {
                 var fileInfo = new FileInfo(file);
@@ -48,9 +51,9 @@ namespace ClassicUO.Configuration
                 }
 
                 var json = JsonSerializer.Serialize(obj, ctx);
-                File.WriteAllText(file, json);
+                AtomicFile.WriteAllText(file, json);
             }
-            catch (IOException e)
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
                 Log.Error(e.ToString());
             }
