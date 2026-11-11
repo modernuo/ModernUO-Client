@@ -28,23 +28,131 @@ namespace ClassicUO.Game.Data
         public static readonly List<ushort> CaveTiles = new List<ushort>();
         public static readonly List<ushort> TreeTiles = new List<ushort>();
 
-        public static void Load(TileDataLoader tileData)
+        private static readonly ushort[] _treeTiles =
         {
-            string path = Path.Combine(CUOEnviroment.ExecutablePath, "Data", "Client");
+            0x0C95, 0x0C96, 0x0C99, 0x0C9B, 0x0C9C, 0x0C9D, 0x0C9E, 0x0CA6, 0x0CA8, 0x0CAA, 0x0CAB,
+            0x0CC9, 0x0CCA, 0x0CCB, 0x0CCC, 0x0CCD, 0x0CD0, 0x0CD3, 0x0CD6, 0x0CD8, 0x0CDA, 0x0CDD,
+            0x0CE0, 0x0CE3, 0x0CE6, 0x0CF8, 0x0CFB, 0x0CFE, 0x0D01, 0x0D37, 0x0D38, 0x0D41, 0x0D42,
+            0x0D43, 0x0D44, 0x0D57, 0x0D58, 0x0D59, 0x0D5A, 0x0D5B, 0x0D6E, 0x0D6F, 0x0D70, 0x0D71,
+            0x0D72, 0x0D84, 0x0D85, 0x0D86, 0x0D94, 0x0D98, 0x0D9C, 0x0DA0, 0x0DA4, 0x0DA8, 0x12B6,
+            0x12B7, 0x12B8, 0x12B9, 0x12BA, 0x12BB, 0x12BC, 0x12BD
+        };
 
-            if (!Directory.Exists(path))
+        // passable tree tiles count as vegetation; impassable ones go to tree.txt as "graphic=flag"
+        private static void BuildTreeTiles(Func<ushort, bool> isImpassable, out List<ushort> vegetation, out List<string> treeLines)
+        {
+            vegetation = new List<ushort>();
+            treeLines = new List<string>();
+
+            for (int i = 0; i < _treeTiles.Length; i++)
             {
-                Directory.CreateDirectory(path);
+                ushort graphic = _treeTiles[i];
+                byte flag = 1;
+
+                switch (graphic)
+                {
+                    case 0x0C9E:
+                    case 0x0CA8:
+                    case 0x0CAA:
+                    case 0x0CAB:
+                    case 0x0CC9:
+                    case 0x0CF8:
+                    case 0x0CFB:
+                    case 0x0CFE:
+                    case 0x0D01:
+                    case 0x12B6:
+                    case 0x12B7:
+                    case 0x12B8:
+                    case 0x12B9:
+                    case 0x12BA:
+                    case 0x12BB:
+                        flag = 0;
+
+                        break;
+                }
+
+                if (!isImpassable(graphic))
+                {
+                    vegetation.Add(graphic);
+                }
+                else
+                {
+                    treeLines.Add($"{graphic}={flag}");
+                }
             }
+        }
+
+        /// <summary>
+        /// Adds the graphics in <paramref name="wanted"/> that vegetation.txt does not list yet. The missing set is computed
+        /// from the text read inside <see cref="AtomicFile.Update"/>, so an instance that finds another one's repair already
+        /// published adds nothing (no duplicate entries).
+        /// </summary>
+        internal static void AppendMissingVegetation(string vegetationFile, List<ushort> wanted)
+        {
+            AtomicFile.Update(vegetationFile, existing =>
+            {
+                var have = new HashSet<ushort>();
+
+                foreach (string raw in existing.Split('\n'))
+                {
+                    string line = raw.Trim();
+                    int comment = line.IndexOfAny(new[] { '#', ';' });
+
+                    if (comment >= 0)
+                    {
+                        line = line.Substring(0, comment).Trim();
+                    }
+
+                    bool hex = line.StartsWith("0x", StringComparison.OrdinalIgnoreCase);
+
+                    if (hex ? ushort.TryParse(line.AsSpan(2), System.Globalization.NumberStyles.HexNumber, null, out ushort g) : ushort.TryParse(line, out g))
+                    {
+                        have.Add(g);
+                    }
+                }
+
+                var missing = new System.Text.StringBuilder();
+
+                foreach (ushort g in wanted)
+                {
+                    if (have.Add(g))
+                    {
+                        missing.Append(g).Append(Environment.NewLine);
+                    }
+                }
+
+                if (missing.Length == 0)
+                {
+                    return null;
+                }
+
+                if (existing.Length > 0 && existing[existing.Length - 1] != '\n' && existing[existing.Length - 1] != '\r')
+                {
+                    existing += Environment.NewLine;
+                }
+
+                return existing + missing;
+            }, StartupWaitMs);
+        }
+
+        /// <summary>
+        /// Writes cave.txt, vegetation.txt and tree.txt when missing. Every file is written whole in one atomic step and
+        /// the later files are judged by content, so several instances starting together converge on the same files.
+        /// </summary>
+        // startup, not a frame: another instance doing the same first-run work may hold a file for a moment
+        private const int StartupWaitMs = 3000;
+
+        internal static void EnsureDefaultFiles(string path, Func<ushort, bool> isImpassable)
+        {
+            Directory.CreateDirectory(path);
 
             string cave = Path.Combine(path, "cave.txt");
             string vegetation = Path.Combine(path, "vegetation.txt");
             string trees = Path.Combine(path, "tree.txt");
 
-
             if (!File.Exists(cave))
             {
-                using (StreamWriter writer = new StreamWriter(cave))
+                using (StreamWriter writer = AtomicFile.CreateText(cave, out var atomic, StartupWaitMs))
                 {
                     for (int i = 0x053B; i < 0x0553 + 1; i++)
                     {
@@ -53,12 +161,16 @@ namespace ClassicUO.Game.Data
                             writer.WriteLine(i);
                         }
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
+            BuildTreeTiles(isImpassable, out List<ushort> treeVegetation, out List<string> treeLines);
+
             if (!File.Exists(vegetation))
             {
-                using (StreamWriter writer = new StreamWriter(vegetation))
+                using (StreamWriter writer = AtomicFile.CreateText(vegetation, out var atomic, StartupWaitMs))
                 {
                     ushort[] vegetationTiles =
                     {
@@ -85,72 +197,60 @@ namespace ClassicUO.Game.Data
                     {
                         ushort g = vegetationTiles[i];
 
-                        if (tileData.StaticData[g].IsImpassable)
+                        if (isImpassable(g))
                         {
                             continue;
                         }
 
                         writer.WriteLine(g);
                     }
+
+                    foreach (ushort g in treeVegetation)
+                    {
+                        writer.WriteLine(g);
+                    }
+
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
             if (!File.Exists(trees))
             {
-                using (StreamWriter writer = new StreamWriter(trees))
-                using (StreamWriter writerveg = new StreamWriter(vegetation, true))
+                // vegetation.txt may predate tree.txt (or another instance just made it): add the tree entries it lacks, judged by
+                // content, then write tree.txt last. Every step is idempotent, so two instances starting together converge.
+                AppendMissingVegetation(vegetation, treeVegetation);
+
+                using (StreamWriter writer = AtomicFile.CreateText(trees, out var atomic, StartupWaitMs))
                 {
-                    ushort[] treeTiles =
+                    foreach (string line in treeLines)
                     {
-                        0x0C95, 0x0C96, 0x0C99, 0x0C9B, 0x0C9C, 0x0C9D, 0x0C9E, 0x0CA6, 0x0CA8, 0x0CAA, 0x0CAB,
-                        0x0CC9, 0x0CCA, 0x0CCB, 0x0CCC, 0x0CCD, 0x0CD0, 0x0CD3, 0x0CD6, 0x0CD8, 0x0CDA, 0x0CDD,
-                        0x0CE0, 0x0CE3, 0x0CE6, 0x0CF8, 0x0CFB, 0x0CFE, 0x0D01, 0x0D37, 0x0D38, 0x0D41, 0x0D42,
-                        0x0D43, 0x0D44, 0x0D57, 0x0D58, 0x0D59, 0x0D5A, 0x0D5B, 0x0D6E, 0x0D6F, 0x0D70, 0x0D71,
-                        0x0D72, 0x0D84, 0x0D85, 0x0D86, 0x0D94, 0x0D98, 0x0D9C, 0x0DA0, 0x0DA4, 0x0DA8, 0x12B6,
-                        0x12B7, 0x12B8, 0x12B9, 0x12BA, 0x12BB, 0x12BC, 0x12BD
-                    };
-
-                    for (int i = 0; i < treeTiles.Length; i++)
-                    {
-                        ushort graphic = treeTiles[i];
-                        byte flag = 1;
-
-                        switch (graphic)
-                        {
-                            case 0x0C9E:
-                            case 0x0CA8:
-                            case 0x0CAA:
-                            case 0x0CAB:
-                            case 0x0CC9:
-                            case 0x0CF8:
-                            case 0x0CFB:
-                            case 0x0CFE:
-                            case 0x0D01:
-                            case 0x12B6:
-                            case 0x12B7:
-                            case 0x12B8:
-                            case 0x12B9:
-                            case 0x12BA:
-                            case 0x12BB:
-                                flag = 0;
-
-                                break;
-                        }
-
-                        if (!tileData.StaticData[graphic].IsImpassable)
-                        {
-                            writerveg.WriteLine(graphic);
-                        }
-                        else
-                        {
-                            writer.WriteLine($"{graphic}={flag}");
-                        }
+                        writer.WriteLine(line);
                     }
+
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
+        }
+
+        public static void Load(TileDataLoader tileData)
+        {
+            string path = Path.Combine(CUOEnviroment.ExecutablePath, "Data", "Client");
+
+            if (!Directory.Exists(path))
+            {
+                Directory.CreateDirectory(path);
+            }
+
+            string cave = Path.Combine(path, "cave.txt");
+            string vegetation = Path.Combine(path, "vegetation.txt");
+            string trees = Path.Combine(path, "tree.txt");
 
 
-            TextFileParser caveParser = new TextFileParser(File.ReadAllText(cave), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            EnsureDefaultFiles(path, g => tileData.StaticData[g].IsImpassable);
+
+            TextFileParser caveParser = new TextFileParser(AtomicFile.ReadAllText(cave), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!caveParser.IsEOF())
             {
@@ -167,7 +267,7 @@ namespace ClassicUO.Game.Data
             }
 
 
-            TextFileParser stumpsParser = new TextFileParser(File.ReadAllText(trees), new[] { ' ', '\t', ',', '=' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser stumpsParser = new TextFileParser(AtomicFile.ReadAllText(trees), new[] { ' ', '\t', ',', '=' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!stumpsParser.IsEOF())
             {
@@ -191,7 +291,7 @@ namespace ClassicUO.Game.Data
             }
 
 
-            TextFileParser vegetationParser = new TextFileParser(File.ReadAllText(vegetation), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser vegetationParser = new TextFileParser(AtomicFile.ReadAllText(vegetation), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!vegetationParser.IsEOF())
             {

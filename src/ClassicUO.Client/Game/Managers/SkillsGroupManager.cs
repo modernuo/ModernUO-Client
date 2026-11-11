@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.IO;
@@ -100,7 +101,7 @@ namespace ClassicUO.Game.Managers
             byte* table = stackalloc byte[60];
             int index = 0;
 
-            int count = Client.Game.UO.FileManager.Skills.SkillsCount;
+            int count = SkillsGroupManager.SkillsCount;
 
             for (int i = 0; i < count; i++)
             {
@@ -160,6 +161,9 @@ namespace ClassicUO.Game.Managers
 
         public SkillsGroupManager(World world) => _world = world;
 
+        // zero without a running client (unit tests build the defaults headless)
+        internal static int SkillsCount => Client.Game?.UO?.FileManager?.Skills?.SkillsCount ?? 0;
+
 
         public readonly List<SkillsGroup> Groups = new List<SkillsGroup>();
 
@@ -192,17 +196,17 @@ namespace ClassicUO.Game.Managers
             return true;
         }
 
-        public void Load()
+        public void Load() => Load(Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml"));
+
+        internal void Load(string path)
         {
             Groups.Clear();
-
-            string path = Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml");
 
             if (!File.Exists(path))
             {
                 Log.Trace("No skillsgroups.xml file. Creating a default file.");
 
-                MakeDefault();
+                MakeDefault(true, path);
 
                 return;
             }
@@ -211,48 +215,62 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(path);
+                AtomicFile.LoadXml(doc, path);
+
+                XmlElement root = doc["skillsgroups"];
+
+                if (root != null)
+                {
+                    foreach (XmlElement xml in root.GetElementsByTagName("group"))
+                    {
+                        SkillsGroup g = new SkillsGroup();
+                        g.Name = xml.GetAttribute("name");
+
+                        XmlElement xmlIdsRoot = xml["skillids"];
+
+                        if (xmlIdsRoot != null)
+                        {
+                            foreach (XmlElement xmlIds in xmlIdsRoot.GetElementsByTagName("skill"))
+                            {
+                                g.Add(byte.Parse(xmlIds.GetAttribute("id")));
+                            }
+                        }
+
+                        g.Sort();
+                        Add(g);
+                    }
+                }
             }
             catch (Exception ex)
             {
-                MakeDefault();
-
+                // the user's file stays as it is: defaults live in memory only, and the next Save() keeps a .bak of the file first
                 Log.Error(ex.ToString());
 
-                return;
-            }
-
-            XmlElement root = doc["skillsgroups"];
-
-            if (root != null)
-            {
-                foreach (XmlElement xml in root.GetElementsByTagName("group"))
-                {
-                    SkillsGroup g = new SkillsGroup();
-                    g.Name = xml.GetAttribute("name");
-
-                    XmlElement xmlIdsRoot = xml["skillids"];
-
-                    if (xmlIdsRoot != null)
-                    {
-                        foreach (XmlElement xmlIds in xmlIdsRoot.GetElementsByTagName("skill"))
-                        {
-                            g.Add(byte.Parse(xmlIds.GetAttribute("id")));
-                        }
-                    }
-
-                    g.Sort();
-                    Add(g);
-                }
+                _loadFailed = true;
+                MakeDefault(false, path);
             }
         }
 
 
-        public void Save()
-        {
-            string path = Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml");
+        private bool _loadFailed;
 
-            using (XmlTextWriter xml = new XmlTextWriter(path, Encoding.UTF8)
+        public void Save() => Save(Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml"));
+
+        internal void Save(string path)
+        {
+            if (_loadFailed)
+            {
+                if (!AtomicFile.KeepBackup(path))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(path);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -269,15 +287,21 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
 
 
-        public void MakeDefault()
+        public void MakeDefault() => MakeDefault(true, Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml"));
+
+        internal void MakeDefault(bool save, string path)
         {
             Groups.Clear();
 
-            if (!LoadMULFile(Client.Game.UO.FileManager.GetUOFilePath("skillgrp.mul")))
+            string mul = Client.Game?.UO?.FileManager?.GetUOFilePath("skillgrp.mul");
+
+            if (mul == null || !LoadMULFile(mul))
             {
                 MakeDefaultMiscellaneous();
                 MakeDefaultCombat();
@@ -293,7 +317,10 @@ namespace ClassicUO.Game.Managers
                 g.Sort();
             }
 
-            Save();
+            if (save)
+            {
+                Save(path);
+            }
         }
 
         private void MakeDefaultMiscellaneous()
@@ -313,7 +340,7 @@ namespace ClassicUO.Game.Managers
 
         private void MakeDefaultCombat()
         {
-            int count = Client.Game.UO.FileManager.Skills.SkillsCount;
+            int count = SkillsCount;
 
             SkillsGroup g = new SkillsGroup();
             g.Name = ResGeneral.Combat;
@@ -376,7 +403,7 @@ namespace ClassicUO.Game.Managers
 
         private void MakeDefaultMagic()
         {
-            int count = Client.Game.UO.FileManager.Skills.SkillsCount;
+            int count = SkillsCount;
 
             SkillsGroup g = new SkillsGroup();
             g.Name = ResGeneral.Magic;

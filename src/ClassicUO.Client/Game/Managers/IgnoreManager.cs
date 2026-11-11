@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.UI.Gumps;
@@ -86,11 +87,15 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(ignoreXmlPath);
+                AtomicFile.LoadXml(doc, ignoreXmlPath);
             }
             catch (Exception ex)
             {
+                // keep the file: the next SaveIgnoreList() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
+
+                return;
             }
 
             XmlElement root = doc["ignore"];
@@ -115,11 +120,25 @@ namespace ClassicUO.Game.Managers
         /// <summary>
         /// Save List to XML File
         /// </summary>
+        private bool _loadFailed;
+
         public void SaveIgnoreList()
         {
             string ignoreXmlPath = Path.Combine(ProfileManager.ProfilePath, "ignore_list.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(ignoreXmlPath, Encoding.UTF8)
+            if (_loadFailed)
+            {
+                if (!AtomicFile.KeepBackup(ignoreXmlPath))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(ignoreXmlPath);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -138,6 +157,8 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
     }

@@ -232,7 +232,7 @@ namespace ClassicUO.Game.Managers
             {
                 MakeDefault();
 
-                using var stream2 = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+                using var stream2 = AtomicFile.OpenWrite(path);
                 using var writer = new StreamWriter(stream2);
                 writer.BaseStream.Seek(0, SeekOrigin.Begin);
 
@@ -255,12 +255,14 @@ namespace ClassicUO.Game.Managers
                     );
                 }
 
+                writer.Flush();
+                stream2.Commit();
                 writer.Close();
             }
 
             _data.Clear();
 
-            using var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            using var stream = AtomicFile.OpenRead(path);
             using var reader = new StreamReader(stream);
             reader.BaseStream.Seek(0, SeekOrigin.Begin);
             var containersParser = new TextFileParser(

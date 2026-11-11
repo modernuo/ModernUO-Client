@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using ClassicUO.Configuration;
 using ClassicUO.Game.UI.Controls;
 using static ClassicUO.Game.UI.Gumps.WorldMapGump;
@@ -288,7 +289,16 @@ namespace ClassicUO.Game.UI.Gumps
 
             var newLine = $"{newMarker.X},{newMarker.Y},{newMarker.MapId},{newMarker.Name},{newMarker.MarkerIconName},{newMarker.ColorName},4\r";
 
-            File.AppendAllText(_userMarkersFilePath, newLine);
+            try
+            {
+                AtomicFile.AppendAllText(_userMarkersFilePath, newLine);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"could not save the marker: {e.Message}");
+
+                return;
+            }
 
             _markers.Add(newMarker);
 

@@ -1252,7 +1252,7 @@ namespace ClassicUO
 
             string path = Path.Combine(
                 screenshotsFolder,
-                $"screenshot_{DateTime.Now:yyyy-MM-dd_hh-mm-ss}.png"
+                $"screenshot_{DateTime.Now:yyyy-MM-dd_hh-mm-ss}_{Environment.ProcessId}.png"
             );
 
             Color[] colors = new Color[

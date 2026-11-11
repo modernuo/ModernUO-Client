@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.Resources;
 using ClassicUO.Utility.Logging;
@@ -47,11 +48,25 @@ namespace ClassicUO.Game.Managers
             infoBarItems.Clear();
         }
 
-        public void Save()
-        {
-            string path = Path.Combine(ProfileManager.ProfilePath, "infobar.xml");
+        private bool _loadFailed;
 
-            using (XmlTextWriter xml = new XmlTextWriter(path, Encoding.UTF8)
+        public void Save() => Save(Path.Combine(ProfileManager.ProfilePath, "infobar.xml"));
+
+        internal void Save(string path)
+        {
+            if (_loadFailed)
+            {
+                if (!AtomicFile.KeepBackup(path))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(path);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -68,17 +83,19 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
 
-        public void Load()
-        {
-            string path = Path.Combine(ProfileManager.ProfilePath, "infobar.xml");
+        public void Load() => Load(Path.Combine(ProfileManager.ProfilePath, "infobar.xml"));
 
+        internal void Load(string path)
+        {
             if (!File.Exists(path))
             {
                 CreateDefault();
-                Save();
+                Save(path);
 
                 return;
             }
@@ -87,11 +104,13 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(path);
+                AtomicFile.LoadXml(doc, path);
             }
             catch (Exception ex)
             {
+                // keep the file: the next Save() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
 
                 return;
             }
