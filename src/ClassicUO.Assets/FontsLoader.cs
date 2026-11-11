@@ -173,6 +173,13 @@ namespace ClassicUO.Assets
         // journal lines in a crowded area allocated ~0.7 MB/s here.
         public bool ReusePixelBuffer { get; set; }
 
+        // Set by a caller that needs only the size, line count and links (RenderedText without a hit map): the layout
+        // and the link rectangles are computed as before but no bitmap is drawn and FontInfo.Data is null. Like
+        // ReusePixelBuffer it only takes effect on the creating thread, so another thread still gets its pixels.
+        public bool MeasureOnly { get; set; }
+
+        private bool MeasuringNow => MeasureOnly && Environment.CurrentManagedThreadId == _reuseThreadId;
+
         // Bigger bitmaps (long HTML gump text) get their own array, so the kept buffer stays at most 1 MB.
         private const int MAX_REUSED_PIXELS = 256 * 1024;
         private uint[] _reusedPixels;
@@ -1133,7 +1140,8 @@ namespace ClassicUO.Assets
             }
 
             int blocksize = height * width;
-            uint[] pData = RentPixels(blocksize);
+            bool measure = MeasuringNow;
+            uint[] pData = measure ? null : RentPixels(blocksize);
 
             try
             {
@@ -1197,7 +1205,7 @@ namespace ClassicUO.Assets
                         int dh = fcd.Height;
                         ushort charColor = color;
 
-                        for (int y = 0; y < dh; y++)
+                        for (int y = 0; !measure && y < dh; y++)
                         {
                             int testY = y + lineOffsY + offsY;
 
@@ -2231,7 +2239,8 @@ namespace ClassicUO.Assets
 
             height += _htmlStatus.Margins.Y + _htmlStatus.Margins.Height + 4;
             int blocksize = height * width;
-            uint[] pData = RentPixels(blocksize);
+            bool measure = MeasuringNow;
+            uint[] pData = measure ? null : RentPixels(blocksize);
 
             try
             {
@@ -2411,281 +2420,284 @@ namespace ClassicUO.Assets
                                 }
                             }
 
-                            int scanlineCount = ((dw - 1) >> 3) + 1;
-                            int scanLineOff = 0;
-
-                            for (int y = 0; y < dh; y++, scanLineOff += scanlineCount)
+                            if (!measure)
                             {
-                                int testY = offsY + lineOffsY + y;
+                                int scanlineCount = ((dw - 1) >> 3) + 1;
+                                int scanLineOff = 0;
 
-                                if (testY < 0)
+                                for (int y = 0; y < dh; y++, scanLineOff += scanlineCount)
                                 {
-                                    testY = 0;
-                                }
-
-                                if (testY >= height)
-                                {
-                                    break;
-                                }
-
-                                int italicOffset = 0;
-
-                                if (isItalic)
-                                {
-                                    italicOffset = (int)((dh - y) / ITALIC_FONT_KOEFFICIENT);
-                                }
-
-                                int testX = w + offsX + italicOffset + (isSolid ? 1 : 0);
-
-                                for (int c = 0; c < scanlineCount; c++)
-                                {
-                                    int coff = c << 3;
-
-                                    for (int j = 0; j < 8; j++)
-                                    {
-                                        int x = coff + j;
-
-                                        if (x >= dw)
-                                        {
-                                            break;
-                                        }
-
-                                        int nowX = testX + x;
-
-                                        if (nowX >= width)
-                                        {
-                                            break;
-                                        }
-
-                                        if (nowX < 0)
-                                        {
-                                            // clipped on the left too: a negative OffsetX (a shard's pack) must not index before the buffer
-                                            continue;
-                                        }
-
-                                        byte cl = (byte)(@char.Data[scanLineOff + c] & (1 << (7 - j)));
-                                        int block = testY * width + nowX;
-
-                                        if (cl != 0)
-                                        {
-                                            pData[block] = charcolor;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (isSolid)
-                            {
-                                uint solidColor = blackColor;
-
-                                if (solidColor == charcolor)
-                                {
-                                    solidColor++;
-                                }
-
-                                int minXOk = w + offsX > 0 ? -1 : 0;
-                                int maxXOk = w + offsX + dw < width ? 1 : 0;
-                                maxXOk += dw;
-
-                                for (int cy = 0; cy < dh; cy++)
-                                {
-                                    int testY = offsY + lineOffsY + cy;
-
-                                    if (testY >= height)
-                                    {
-                                        break;
-                                    }
+                                    int testY = offsY + lineOffsY + y;
 
                                     if (testY < 0)
                                     {
                                         testY = 0;
                                     }
 
-                                    int italicOffset = 0;
-
-                                    if (isItalic && cy < dh)
-                                    {
-                                        italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
-                                    }
-
-                                    for (int cx = minXOk; cx < maxXOk; cx++)
-                                    {
-                                        int testX = cx + w + offsX + italicOffset;
-
-                                        if (testX >= width)
-                                        {
-                                            break;
-                                        }
-
-                                        if (testX < 0)
-                                        {
-                                            continue;
-                                        }
-
-                                        int block = testY * width + testX;
-
-                                        if (pData[block] == 0 && pData[block] != solidColor)
-                                        {
-                                            int endX = cx < dw ? 2 : 1;
-
-                                            if (endX == 2 && testX + 1 >= width)
-                                            {
-                                                endX--;
-                                            }
-
-                                            for (int x = 0; x < endX; x++)
-                                            {
-                                                int nowX = testX + x;
-                                                int testBlock = testY * width + nowX;
-
-                                                if (
-                                                    pData[testBlock] != 0
-                                                    && pData[testBlock] != solidColor
-                                                )
-                                                {
-                                                    pData[block] = solidColor;
-
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                for (int cy = 0; cy < dh; cy++)
-                                {
-                                    int testY = offsY + lineOffsY + cy;
-
                                     if (testY >= height)
                                     {
                                         break;
-                                    }
-
-                                    if (testY < 0)
-                                    {
-                                        testY = 0;
                                     }
 
                                     int italicOffset = 0;
 
                                     if (isItalic)
                                     {
-                                        italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        italicOffset = (int)((dh - y) / ITALIC_FONT_KOEFFICIENT);
                                     }
 
-                                    for (int cx = 0; cx < dw; cx++)
+                                    int testX = w + offsX + italicOffset + (isSolid ? 1 : 0);
+
+                                    for (int c = 0; c < scanlineCount; c++)
                                     {
-                                        int testX = cx + w + offsX + italicOffset;
+                                        int coff = c << 3;
 
-                                        if (testX >= width)
+                                        for (int j = 0; j < 8; j++)
                                         {
-                                            break;
-                                        }
+                                            int x = coff + j;
 
-                                        if (testX < 0)
-                                        {
-                                            continue;
-                                        }
+                                            if (x >= dw)
+                                            {
+                                                break;
+                                            }
 
-                                        int block = testY * width + testX;
+                                            int nowX = testX + x;
 
-                                        if (pData[block] == solidColor)
-                                        {
-                                            pData[block] = charcolor;
+                                            if (nowX >= width)
+                                            {
+                                                break;
+                                            }
+
+                                            if (nowX < 0)
+                                            {
+                                                // clipped on the left too: a negative OffsetX (a shard's pack) must not index before the buffer
+                                                continue;
+                                            }
+
+                                            byte cl = (byte)(@char.Data[scanLineOff + c] & (1 << (7 - j)));
+                                            int block = testY * width + nowX;
+
+                                            if (cl != 0)
+                                            {
+                                                pData[block] = charcolor;
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            if (isBlackBorder && !isBlackPixel)
-                            {
-                                int minXOk = w + offsX > 0 ? -1 : 0;
-                                int minYOk = offsY + lineOffsY > 0 ? -1 : 0;
-                                int maxXOk = w + offsX + dw < width ? 1 : 0;
-                                int maxYOk = offsY + lineOffsY + dh < height ? 1 : 0;
-                                maxXOk += dw;
-                                maxYOk += dh;
-
-                                for (int cy = minYOk; cy < maxYOk; cy++)
+                                if (isSolid)
                                 {
-                                    int testY = offsY + lineOffsY + cy;
+                                    uint solidColor = blackColor;
 
-                                    if (testY < 0)
+                                    if (solidColor == charcolor)
                                     {
-                                        testY = 0;
+                                        solidColor++;
                                     }
 
-                                    if (testY >= height)
+                                    int minXOk = w + offsX > 0 ? -1 : 0;
+                                    int maxXOk = w + offsX + dw < width ? 1 : 0;
+                                    maxXOk += dw;
+
+                                    for (int cy = 0; cy < dh; cy++)
                                     {
-                                        break;
-                                    }
+                                        int testY = offsY + lineOffsY + cy;
 
-                                    int italicOffset = 0;
-
-                                    if (isItalic && cy >= 0 && cy < dh)
-                                    {
-                                        italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
-                                    }
-
-                                    for (int cx = minXOk; cx < maxXOk; cx++)
-                                    {
-                                        int testX = cx + w + offsX + italicOffset;
-
-                                        if (testX >= width)
+                                        if (testY >= height)
                                         {
                                             break;
                                         }
 
-                                        if (testX < 0)
+                                        if (testY < 0)
                                         {
-                                            continue;
+                                            testY = 0;
                                         }
 
-                                        int block = testY * width + testX;
+                                        int italicOffset = 0;
 
-                                        if (pData[block] == 0 && pData[block] != blackColor)
+                                        if (isItalic && cy < dh)
                                         {
-                                            int startX = cx > 0 ? -1 : 0;
-                                            int startY = cy > 0 ? -1 : 0;
-                                            int endX = cx < dw - 1 ? 2 : 1;
-                                            int endY = cy < dh - 1 ? 2 : 1;
+                                            italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        }
 
-                                            if (endX == 2 && testX + 1 >= width)
+                                        for (int cx = minXOk; cx < maxXOk; cx++)
+                                        {
+                                            int testX = cx + w + offsX + italicOffset;
+
+                                            if (testX >= width)
                                             {
-                                                endX--;
+                                                break;
                                             }
 
-                                            bool passed = false;
-
-                                            for (int x = startX; x < endX; x++)
+                                            if (testX < 0)
                                             {
-                                                int nowX = testX + x;
+                                                continue;
+                                            }
 
-                                                for (int y = startY; y < endY; y++)
+                                            int block = testY * width + testX;
+
+                                            if (pData[block] == 0 && pData[block] != solidColor)
+                                            {
+                                                int endX = cx < dw ? 2 : 1;
+
+                                                if (endX == 2 && testX + 1 >= width)
                                                 {
-                                                    int testBlock = (testY + y) * width + nowX;
+                                                    endX--;
+                                                }
 
-                                                    if (testBlock < 0)
-                                                    {
-                                                        continue;
-                                                    }
+                                                for (int x = 0; x < endX; x++)
+                                                {
+                                                    int nowX = testX + x;
+                                                    int testBlock = testY * width + nowX;
 
                                                     if (
-                                                        testBlock < blocksize
-                                                        && pData[testBlock] != 0
-                                                        && pData[testBlock] != blackColor
+                                                        pData[testBlock] != 0
+                                                        && pData[testBlock] != solidColor
                                                     )
                                                     {
-                                                        pData[block] = blackColor;
-                                                        passed = true;
+                                                        pData[block] = solidColor;
 
                                                         break;
                                                     }
                                                 }
+                                            }
+                                        }
+                                    }
 
-                                                if (passed)
+                                    for (int cy = 0; cy < dh; cy++)
+                                    {
+                                        int testY = offsY + lineOffsY + cy;
+
+                                        if (testY >= height)
+                                        {
+                                            break;
+                                        }
+
+                                        if (testY < 0)
+                                        {
+                                            testY = 0;
+                                        }
+
+                                        int italicOffset = 0;
+
+                                        if (isItalic)
+                                        {
+                                            italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        }
+
+                                        for (int cx = 0; cx < dw; cx++)
+                                        {
+                                            int testX = cx + w + offsX + italicOffset;
+
+                                            if (testX >= width)
+                                            {
+                                                break;
+                                            }
+
+                                            if (testX < 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            int block = testY * width + testX;
+
+                                            if (pData[block] == solidColor)
+                                            {
+                                                pData[block] = charcolor;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (isBlackBorder && !isBlackPixel)
+                                {
+                                    int minXOk = w + offsX > 0 ? -1 : 0;
+                                    int minYOk = offsY + lineOffsY > 0 ? -1 : 0;
+                                    int maxXOk = w + offsX + dw < width ? 1 : 0;
+                                    int maxYOk = offsY + lineOffsY + dh < height ? 1 : 0;
+                                    maxXOk += dw;
+                                    maxYOk += dh;
+
+                                    for (int cy = minYOk; cy < maxYOk; cy++)
+                                    {
+                                        int testY = offsY + lineOffsY + cy;
+
+                                        if (testY < 0)
+                                        {
+                                            testY = 0;
+                                        }
+
+                                        if (testY >= height)
+                                        {
+                                            break;
+                                        }
+
+                                        int italicOffset = 0;
+
+                                        if (isItalic && cy >= 0 && cy < dh)
+                                        {
+                                            italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        }
+
+                                        for (int cx = minXOk; cx < maxXOk; cx++)
+                                        {
+                                            int testX = cx + w + offsX + italicOffset;
+
+                                            if (testX >= width)
+                                            {
+                                                break;
+                                            }
+
+                                            if (testX < 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            int block = testY * width + testX;
+
+                                            if (pData[block] == 0 && pData[block] != blackColor)
+                                            {
+                                                int startX = cx > 0 ? -1 : 0;
+                                                int startY = cy > 0 ? -1 : 0;
+                                                int endX = cx < dw - 1 ? 2 : 1;
+                                                int endY = cy < dh - 1 ? 2 : 1;
+
+                                                if (endX == 2 && testX + 1 >= width)
                                                 {
-                                                    break;
+                                                    endX--;
+                                                }
+
+                                                bool passed = false;
+
+                                                for (int x = startX; x < endX; x++)
+                                                {
+                                                    int nowX = testX + x;
+
+                                                    for (int y = startY; y < endY; y++)
+                                                    {
+                                                        int testBlock = (testY + y) * width + nowX;
+
+                                                        if (testBlock < 0)
+                                                        {
+                                                            continue;
+                                                        }
+
+                                                        if (
+                                                            testBlock < blocksize
+                                                            && pData[testBlock] != 0
+                                                            && pData[testBlock] != blackColor
+                                                        )
+                                                        {
+                                                            pData[block] = blackColor;
+                                                            passed = true;
+
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    if (passed)
+                                                    {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2746,8 +2758,10 @@ namespace ClassicUO.Assets
                                     continue;
                                 }
 
-                                int block = testY * width + testX;
-                                pData[block] = charcolor;
+                                if (!measure)
+                                {
+                                    pData[testY * width + testX] = charcolor;
+                                }
                             }
                         }
                     }
@@ -2768,7 +2782,7 @@ namespace ClassicUO.Assets
 
                     uint hue = HuesHelper.RgbaToArgb(_htmlStatus.BackgroundColor);
 
-                    for (int y = 0; y < height; y++)
+                    for (int y = 0; !measure && y < height; y++)
                     {
                         int yPos = y * width;
 

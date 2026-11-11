@@ -4,6 +4,7 @@ using ClassicUO.IO;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -32,7 +33,15 @@ namespace ClassicUO.Assets
             public ClilocTable Enu;
             public bool FromPack;
             public string Language;
+
+            // Translate results for empty arguments, bounded; a new state starts empty, so a reload or language change drops them
+            public readonly ConcurrentDictionary<int, string> Plain = new ConcurrentDictionary<int, string>();
+            public readonly ConcurrentDictionary<int, string> Capitalized = new ConcurrentDictionary<int, string>();
         }
+
+        // Entries per cache (plain, capitalized): about 0.2 KB each, so at most ~0.4 MB per client when full; a client
+        // typically fills a few hundred. Past the cap a call is computed without storing.
+        internal const int TranslateCacheLimit = 1024;
 
         private volatile State _state = new State();
         private int _revision;
@@ -557,7 +566,34 @@ namespace ClassicUO.Assets
         }
 
         [return: NotNull]
-        public unsafe string Translate(int clilocNum, string arg = "", bool capitalize = false)
+        public string Translate(int clilocNum, string arg = "", bool capitalize = false)
+        {
+            if (!string.IsNullOrEmpty(arg))
+            {
+                return TranslateUncached(clilocNum, arg, capitalize);
+            }
+
+            // Empty arguments make the result a function of the number alone (and the loaded strings, which the state
+            // owns), so repeated lookups (name overheads, tooltips) reuse one string.
+            var cache = capitalize ? _state.Capitalized : _state.Plain;
+
+            if (cache.TryGetValue(clilocNum, out string cached))
+            {
+                return cached;
+            }
+
+            string result = TranslateUncached(clilocNum, "", capitalize);
+
+            if (cache.Count < TranslateCacheLimit)
+            {
+                cache[clilocNum] = result;
+            }
+
+            return result;
+        }
+
+        [return: NotNull]
+        private unsafe string TranslateUncached(int clilocNum, string arg, bool capitalize)
         {
             string baseCliloc = GetString(clilocNum);
 
