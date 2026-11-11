@@ -20,7 +20,7 @@ namespace ClassicUO.UnitTests.Ecs
     // active-items list in order and the mirror's counters.
     //
     // Not covered here: real tile placement (the test Worlds have no Map: building one needs the UO map files, so tile
-    // insertion order and parking are covered by the client runs, -ecscheck and CUO_ECS_PARITY), and multis (type 2:
+    // insertion order and parking are covered by the client runs, -ecscheck and the golden captures), and multis (type 2:
     // CheckGraphicChange loads the multi from the UO files).
     public class WorldWriterTests
     {

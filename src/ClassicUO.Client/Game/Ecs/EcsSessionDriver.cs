@@ -632,7 +632,6 @@ namespace ClassicUO.Game
                     return true;
 
                 case "parity":
-                    EcsParity.Summary();
                     Scenes.LegacyEcsParity.Summary();
                     Scenes.SpritePickTable.Summary();
 
@@ -1200,7 +1199,6 @@ namespace ClassicUO.Game
                 case "quit":
                     ReleaseMouse();
                     world.Ecs.RunCheck(true);
-                    EcsParity.Summary();
                     Scenes.LegacyEcsParity.Summary();
                     Scenes.SpritePickTable.Summary();
                     Client.Game.Exit();

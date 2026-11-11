@@ -9,7 +9,7 @@ namespace ClassicUO.Game
 {
     /// <summary>
     /// The pure parts of ClassicUO's mobile drawing (Mobile, MobileView, Animations), ported for the ECS sprite extract.
-    /// Each method names the legacy code it reproduces; the parity harness (<see cref="EcsParity"/>) checks them in game.
+    /// Each method names the legacy code it reproduces; the unit tests (DynamicSpriteTests) and the golden captures check them.
     /// </summary>
     internal static class AnimationRules
     {

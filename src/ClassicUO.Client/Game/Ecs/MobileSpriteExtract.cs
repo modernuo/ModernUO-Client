@@ -15,7 +15,7 @@ namespace ClassicUO.Game
     /// Turns a mobile's ECS animation components into Uo.Render <see cref="SpriteInstance"/>s straight from the pack's
     /// animation tables — the same instances GpuWorldRenderer's view capture produces for MobileView.Draw (shadows, mount,
     /// body, equipment in paint order, strips, trim, mirroring, hue mode, depth key), with no atlas and no batcher.
-    /// Screen position and base depth are inputs (W2's ScreenPos); not yet the renderer's source (see EcsParity).
+    /// Screen position and base depth are inputs; the Gpu world renderer and the Legacy sink draw from it.
     /// </summary>
     internal sealed class MobileSpriteExtract
     {
