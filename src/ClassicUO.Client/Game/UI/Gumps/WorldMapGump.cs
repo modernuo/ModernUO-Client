@@ -1711,7 +1711,14 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (!File.Exists(UserMarkersFilePath))
                     {
-                        using (File.Create(UserMarkersFilePath)) { }
+                        try
+                        {
+                            // CreateNew: another instance creating it first must not be truncated
+                            using (new FileStream(UserMarkersFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { }
+                        }
+                        catch (IOException)
+                        {
+                        }
                     }
 
                     _markerIcons.Clear();
@@ -1881,7 +1888,7 @@ namespace ClassicUO.Game.UI.Gumps
                             }
                             else if (mapFile != null && Path.GetExtension(mapFile).ToLower().Equals(".usr"))
                             {
-                                markerFile.Markers = LoadUserMarkers();
+                                markerFile.Markers = LoadUserMarkers() ?? new List<WMapMarker>();
                                 markerFile.IsEditable = true;
                             }
                             else if (mapFile != null) //CSV x,y,mapindex,name of marker,iconname,color,zoom
@@ -1984,11 +1991,13 @@ namespace ClassicUO.Game.UI.Gumps
 
             var markerCsv = $"{World.Player.X},{World.Player.Y},{_map.Index},{markerName},{markerIcon},{markerColor},{markerZoomLevel}";
 
-            using (var fileStream = File.Open(UserMarkersFilePath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.Write))
-            using (var streamWriter = new StreamWriter(fileStream))
+            try
             {
-                streamWriter.BaseStream.Seek(0, SeekOrigin.End);
-                streamWriter.WriteLine(markerCsv);
+                AtomicFile.AppendAllText(UserMarkersFilePath, markerCsv + Environment.NewLine);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"could not save the marker: {e.Message}");
             }
 
             var mapMarker = new WMapMarker
@@ -2025,36 +2034,46 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            userFile.Markers = LoadUserMarkers();
+            // a failed read keeps the markers already on the map
+            userFile.Markers = LoadUserMarkers() ?? userFile.Markers;
         }
 
         /// <summary>
         /// Load User Markers to List of Markers
         /// </summary>
-        /// <returns>List of loaded Markers</returns>
+        /// <returns>List of loaded Markers; null if the file cannot be read (another instance replacing it for too long)</returns>
         internal static List<WMapMarker> LoadUserMarkers()
         {
             List<WMapMarker> tempList = new List<WMapMarker>();
 
-            using (StreamReader reader = new StreamReader(UserMarkersFilePath))
+            try
             {
-                while (!reader.EndOfStream)
+                using (StreamReader reader = new StreamReader(AtomicFile.OpenRead(UserMarkersFilePath)))
                 {
-                    string line = reader.ReadLine();
-
-                    if (string.IsNullOrEmpty(line))
+                    while (!reader.EndOfStream)
                     {
-                        continue;
-                    }
+                        string line = reader.ReadLine();
 
-                    string[] splits = line.Split(',');
+                        if (string.IsNullOrEmpty(line))
+                        {
+                            continue;
+                        }
 
-                    if (splits.Length <= 1)
-                    {
-                        continue;
+                        string[] splits = line.Split(',');
+
+                        if (splits.Length <= 1)
+                        {
+                            continue;
+                        }
+                        tempList.Add(ParseMarker(splits));
                     }
-                    tempList.Add(ParseMarker(splits));
                 }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"could not read the user markers: {e.Message}");
+
+                return null;
             }
 
             return tempList;

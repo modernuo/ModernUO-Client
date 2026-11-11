@@ -84,6 +84,23 @@ namespace ClassicUO.Utility
             stream.Commit();
         }
 
+        /// <summary>
+        /// Appends as read-modify-atomic-write (the file is replaced, never opened for write in place), so readers on
+        /// <see cref="OpenRead"/> and other writers never see or fight over a half-written file. Two instances appending at the
+        /// same moment is last-writer-wins: one line can be lost, the file is never torn. A missing file is created.
+        /// </summary>
+        public static void AppendAllText(string path, string text, int waitMs = DefaultReplaceBudgetMs)
+        {
+            string existing = File.Exists(path) ? ReadAllText(path) : string.Empty;
+
+            if (existing.Length > 0 && existing[existing.Length - 1] != '\n' && existing[existing.Length - 1] != '\r')
+            {
+                existing += Environment.NewLine;
+            }
+
+            WriteAllText(path, existing + text, waitMs);
+        }
+
         public static void WriteAllBytes(string path, ReadOnlySpan<byte> bytes, int waitMs = DefaultReplaceBudgetMs)
         {
             using var stream = OpenWrite(path, waitMs);

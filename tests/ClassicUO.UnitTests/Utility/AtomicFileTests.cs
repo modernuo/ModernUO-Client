@@ -346,6 +346,19 @@ namespace ClassicUO.UnitTests.Utility
         }
 
         [Fact]
+        public void AppendAllText_creates_the_file_and_keeps_lines_apart_without_leaving_a_temp()
+        {
+            string path = P("user_markers.usr");
+
+            AtomicFile.AppendAllText(path, "1,2,0,a,,blue,3\n");
+            File.AppendAllText(path, "4,5,0,b,,blue,3"); // an old appender that left no line end
+            AtomicFile.AppendAllText(path, "6,7,0,c,,blue,3\n");
+
+            File.ReadAllLines(path).Should().Equal("1,2,0,a,,blue,3", "4,5,0,b,,blue,3", "6,7,0,c,,blue,3");
+            Directory.GetFiles(_dir).Should().ContainSingle();
+        }
+
+        [Fact]
         public void OpenRead_shares_with_writers_and_deleters()
         {
             string path = P("shared.txt");
