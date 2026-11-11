@@ -105,11 +105,38 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var world = new World();
             Item item = world.GetOrCreateItem(0x4000_0001);
 
-            ItemPick.Judge(item, 0x0EED, reject, hit);
+            ItemPick.Judge(item, 0x0EED, reject, hit, entryUnsized: false, artWait: false);
 
             ItemPick.Mismatches.Should().Be(mismatches);
             ItemPick.Rejects.Should().Be(reject ? 1 : 0);
         }
+
+        // Codex P2: without ArtWait the full test loads an unsized entry's art (GetArt); an early reject must not skip that
+        [Theory]
+        [InlineData(false, true, true, 1)]
+        [InlineData(false, false, true, 0)]
+        [InlineData(true, true, true, 0)]
+        [InlineData(false, true, false, 0)]
+        public void The_Checker_Flags_An_Early_Reject_Of_An_Unsized_Entry_Without_ArtWait(bool artWait, bool unsized, bool reject, int mismatches)
+        {
+            var world = new World();
+            Item item = world.GetOrCreateItem(0x4000_0002);
+
+            ItemPick.Judge(item, 0x0EED, reject, false, unsized, artWait);
+
+            ItemPick.Mismatches.Should().Be(mismatches);
+            ItemPick.UnsizedRejects.Should().Be(reject && unsized ? 1 : 0);
+        }
 #endif
+
+        [Theory]
+        [InlineData(false, true, false)]
+        [InlineData(false, false, true)]
+        [InlineData(true, true, true)]
+        [InlineData(true, false, true)]
+        public void Without_ArtWait_An_Unsized_Entry_Keeps_The_Full_Test(bool artWait, bool unsized, bool may)
+        {
+            ItemPick.MayRejectEarly(artWait, unsized).Should().Be(may);
+        }
     }
 }

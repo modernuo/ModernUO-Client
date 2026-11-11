@@ -185,8 +185,10 @@ namespace ClassicUO.Game.GameObjects
 #if CUO_DEVTOOLS
                     if (Scenes.ItemPick.Check)
                     {
+                        // the entry's state before the full test sizes it
+                        bool unsized = Scenes.ItemPick.EntryUnsized(graphic);
                         bool hit = PickArt(graphic, itemGraphic, isMulti, ref tile);
-                        Scenes.ItemPick.Judge(this, graphic, reject, hit);
+                        Scenes.ItemPick.Judge(this, graphic, reject, hit, unsized, global::ClassicUO.Game.Map.Map.ArtWait);
 
                         return hit;
                     }
@@ -220,7 +222,8 @@ namespace ClassicUO.Game.GameObjects
                 position.X += 22;
                 position.Y += 22;
 
-                byte direction = (byte)((byte)Layer & 0x7F & 7);
+                Layer corpseLayer = Layer;
+                byte direction = (byte)((byte)corpseLayer & 0x7F & 7);
 
                 // T7b part 2b: the mirror bit from the last draw's records (the Legacy sink, or the Gpu world's extracts). The pick
                 // doesn't store it back: GetAnimDirection is idempotent for the corpse's fixed direction, so the draw that
@@ -262,7 +265,8 @@ namespace ClassicUO.Game.GameObjects
 
                     if (layer == Layer.Invalid)
                     {
-                        graphic = GetGraphicForAnimation();
+                        // GetGraphicForAnimation for a corpse: its body (corpseBody), unless its layer reads as Mount
+                        graphic = corpseLayer == Layer.Mount ? GetGraphicForAnimation() : corpseBody;
                     }
                     else if (ishuman)
                     {

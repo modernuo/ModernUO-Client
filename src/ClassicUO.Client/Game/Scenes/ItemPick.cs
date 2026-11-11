@@ -64,6 +64,13 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+            // Codex P2: without ArtWait an unsized art entry sends the full test to GetArt (the synchronous first-sight
+            // load), which RequestStatic does not replace there: keep the full test for it
+            if (KeepsFullTest(global::ClassicUO.Game.Map.Map.ArtWait, graphic))
+            {
+                return false;
+            }
+
             // the full test's position before the entry is subtracted (ItemView.PickArt)
             Point position = item.RealScreenPosition;
             Vector3 offset = ItemOffsets.Read(item);
@@ -72,6 +79,23 @@ namespace ClassicUO.Game.Scenes
 
             return OutsideArt(s.OrigW, s.OrigH, dx, dy);
         }
+
+        /// <summary>The art entry of <paramref name="graphic"/> has no stored draw offset yet (0, 0).</summary>
+        public static bool EntryUnsized(ushort graphic)
+        {
+            ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
+
+            return (index.Width | index.Height) == 0;
+        }
+
+        // the entry is read only without ArtWait
+        private static bool KeepsFullTest(bool artWait, ushort graphic) => !artWait && !MayRejectEarly(artWait, EntryUnsized(graphic));
+
+        /// <summary>
+        /// Whether a pick may be rejected early with this ArtWait and art entry state: not without ArtWait while the entry is
+        /// unsized (the full test's GetArt loads it then).
+        /// </summary>
+        internal static bool MayRejectEarly(bool artWait, bool entryUnsized) => artWait || !entryUnsized;
 
         /// <summary>
         /// The mouse at (<paramref name="dx"/>, <paramref name="dy"/>) from the item's anchor misses art of
@@ -111,18 +135,19 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        private static long _picks, _rejects, _mismatches, _at;
+        private static long _picks, _rejects, _unsizedRejects, _mismatches, _at;
         private static string _sample;
 
-        /// <summary>Tests: mismatches since start, early rejects since the last summary.</summary>
+        /// <summary>Tests: mismatches since start, early rejects (and those of unsized entries) since the last summary.</summary>
         internal static long Mismatches => _mismatches;
         internal static long Rejects => _rejects;
+        internal static long UnsizedRejects => _unsizedRejects;
 
         /// <summary>Tests: back to the start state.</summary>
         internal static void ResetForTests()
         {
             OverrideForTests = null;
-            _picks = _rejects = _mismatches = _at = 0;
+            _picks = _rejects = _unsizedRejects = _mismatches = _at = 0;
             _sample = null;
         }
 
@@ -130,7 +155,10 @@ namespace ClassicUO.Game.Scenes
         /// CUO_ITEM_PICK_CHECK at every art item pick: <paramref name="reject"/> (the early reject) must not drop a
         /// <paramref name="hit"/> of the full test on the same input. A summary every 5 s.
         /// </summary>
-        public static void Judge(Item item, ushort graphic, bool reject, bool hit)
+        /// <remarks><paramref name="entryUnsized"/>: the art entry had no draw offset before the full test ran. An early
+        /// reject of such an entry is counted; without <paramref name="artWait"/> it is a mismatch (the full test's GetArt
+        /// loads the art there, the early reject would not).</remarks>
+        public static void Judge(Item item, ushort graphic, bool reject, bool hit, bool entryUnsized, bool artWait)
         {
             _picks++;
 
@@ -138,13 +166,18 @@ namespace ClassicUO.Game.Scenes
             {
                 _rejects++;
 
+                if (entryUnsized)
+                {
+                    _unsizedRejects++;
+                }
+
                 if (hit)
                 {
-                    _mismatches++;
-                    string s = $"item 0x{item.Serial:X8} graphic 0x{graphic:X4} at {item.X},{item.Y},{item.Z} screen {item.RealScreenPosition.X},{item.RealScreenPosition.Y} " +
-                               $"mouse {SelectedObject.TranslatedMousePositionByViewport.X},{SelectedObject.TranslatedMousePositionByViewport.Y}: early reject, full test hit";
-                    _sample ??= s;
-                    Log.Warn($"[item-pick-check] mismatch: {s}");
+                    Mismatch(item, graphic, "early reject, full test hit");
+                }
+                else if (!MayRejectEarly(artWait, entryUnsized))
+                {
+                    Mismatch(item, graphic, "early reject of an unsized art entry without ArtWait (the full test loads its art)");
                 }
             }
 
@@ -156,11 +189,21 @@ namespace ClassicUO.Game.Scenes
             }
             else if (now - _at >= Stopwatch.Frequency * 5)
             {
-                Log.Info($"[item-pick-check] switch {(Enabled ? "on" : "off")}: {_picks} picks, {_rejects} early rejects, {_mismatches} mismatches" +
+                Log.Info($"[item-pick-check] switch {(Enabled ? "on" : "off")}: {_picks} picks, {_rejects} early rejects " +
+                         $"({_unsizedRejects} of unsized entries, art wait {artWait}), {_mismatches} mismatches" +
                          (_sample != null ? $"; first mismatch: {_sample}" : ""));
                 _at = now;
-                _picks = _rejects = 0;
+                _picks = _rejects = _unsizedRejects = 0;
             }
+        }
+
+        private static void Mismatch(Item item, ushort graphic, string what)
+        {
+            _mismatches++;
+            string s = $"item 0x{item.Serial:X8} graphic 0x{graphic:X4} at {item.X},{item.Y},{item.Z} screen {item.RealScreenPosition.X},{item.RealScreenPosition.Y} " +
+                       $"mouse {SelectedObject.TranslatedMousePositionByViewport.X},{SelectedObject.TranslatedMousePositionByViewport.Y}: {what}";
+            _sample ??= s;
+            Log.Warn($"[item-pick-check] mismatch: {s}");
         }
 #endif
     }
