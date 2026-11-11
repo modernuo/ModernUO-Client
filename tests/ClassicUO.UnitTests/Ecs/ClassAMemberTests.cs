@@ -34,6 +34,14 @@ namespace ClassicUO.UnitTests.Ecs
             "LastAnimationChangeTime", "LastStepTime", "LastStepSoundTime", "StepSoundOffset"
         };
 
+        // Settable by the type that declares each setter
+        internal static readonly string[] SettableDeclared =
+        {
+            "GameObject.X", "GameObject.Y", "GameObject.Z", "Entity.Serial", "Item.AnimIndex", "Item.ExecuteAnimation",
+            "Item.LastAnimationChangeTime", "Item.LastStepTime", "Item.IsMulti", "Mobile.IsDead", "Mobile.LastStepSoundTime",
+            "Mobile.IsRunning", "Mobile.NotorietyFlag", "Mobile.StepSoundOffset"
+        };
+
         private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
         private static IEnumerable<(Type Type, PropertyInfo Property)> Properties() =>
@@ -43,17 +51,19 @@ namespace ClassicUO.UnitTests.Ecs
         public void Record_Only_Members_Have_No_Setter()
         {
             var settable = Properties()
-                .Where(x => RecordOnly.Contains(x.Property.Name) && x.Property.SetMethod != null)
+                .Where(x => RecordOnly.Contains(x.Property.Name) && (x.Property.SetMethod != null || x.Property.PropertyType.IsByRef))
                 .Select(x => $"{x.Type.Name}.{x.Property.Name}")
                 .ToList();
 
-            settable.Should().BeEmpty("a record-only member is written by WorldWriter's commits only, never through a setter");
+            // a by-ref getter (`ref ushort Hits`) is a setter in disguise: `ref var h = ref mobile.Hits; h++;`
+            settable.Should().BeEmpty("a record-only member is written by WorldWriter's commits only, never through a setter or a ref");
         }
 
         [Fact]
         public void Record_Only_Members_Have_No_Backing_Field()
         {
-            var names = new HashSet<string>(RecordOnly.SelectMany(n => new[] { n, "_" + char.ToLowerInvariant(n[0]) + n.Substring(1) }), StringComparer.Ordinal);
+            // the hand-written field (`_hits`), a field named like the member, and an auto-property's `<Hits>k__BackingField`
+            var names = new HashSet<string>(RecordOnly.SelectMany(n => new[] { n, "_" + char.ToLowerInvariant(n[0]) + n.Substring(1), $"<{n}>k__BackingField" }), StringComparer.Ordinal);
             names.Add("_lightID");
 
             // PlayerMobile's GetTotalAmount local `_amount` is a local, not a field: only instance fields are looked at
@@ -71,12 +81,12 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var classA = new HashSet<string>(RecordOnly.Concat(Settable), StringComparer.Ordinal);
             var withSetter = Properties()
-                .Where(x => classA.Contains(x.Property.Name) && x.Property.SetMethod != null)
-                .Select(x => x.Property.Name)
-                .Distinct()
+                .Where(x => classA.Contains(x.Property.Name) && (x.Property.SetMethod != null || x.Property.PropertyType.IsByRef))
+                .Select(x => $"{x.Type.Name}.{x.Property.Name}")
                 .ToList();
 
-            withSetter.Should().BeEquivalentTo(Settable, "a cache member that lost its setter is record-only: move it to RecordOnly and out of WriteSiteScanner.AFields");
+            // pinned per declaring type: Item's corpse/boat AnimIndex must not let a setter back onto Mobile's record-only one
+            withSetter.Should().BeEquivalentTo(SettableDeclared, "a cache member that lost its setter is record-only: move it to RecordOnly and out of WriteSiteScanner.AFields");
         }
 
         [Fact]
