@@ -353,7 +353,7 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.Equal(ShaderHueTranslator.SHADER_HUED, (int)s.Sprite.Hue.Y);
             Assert.Equal(1f, s.Sprite.Hue.Z);
 
-            // not drawn: not allowed to draw, no animation graphic yet, lightning (its view draws it)
+            // not drawn: not allowed to draw, no animation graphic yet; lightning is a gump record, no art sprite (T9 S8a)
             EffectSpriteInput gone = EffectCase("light");
             gone.Drawable = false;
             Assert.False(extract.Select(in gone, 700, 300, 1f));
@@ -365,10 +365,14 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.False(extract.HasSprite);
             EffectSpriteInput lightning = EffectCase("fixed");
             lightning.Kind = EffectState.KIND_LIGHTNING;
-            Assert.False(extract.Select(in lightning, 700, 300, 1f));
+            Assert.True(extract.Select(in lightning, 700, 300, 1f));
+            Assert.True(extract.HasLightning);
             Assert.False(extract.HasSprite);
+            Assert.False(extract.Light);
+            Assert.Equal(lightning.AnimGraphic, extract.Lightning.Gump);
+            Assert.Equal(1.5f, extract.Lightning.Depth);
 
-            // art the pack lacks: the caller draws the view (its placeholder)
+            // art the pack lacks: nothing is drawn (T9 S8a: the view's placeholder is gone)
             EffectSpriteInput missing = EffectCase("light");
             missing.AnimGraphic = MISSING_ART;
             extract.Select(in missing, 700, 300, 1f);

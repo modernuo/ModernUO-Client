@@ -60,7 +60,13 @@ namespace ClassicUO.Game
 
         public int Checks => _checks;
 
-        public void Sync(Entity entity)
+        public void Sync(Entity entity) => Sync(entity, false);
+
+        /// <summary>
+        /// <see cref="Sync(Entity)"/>; <paramref name="detach"/> (T9 S5, <c>World.RemoveItemFromContainer</c>): an item's
+        /// record is written without a container (the Container's only copy is the record).
+        /// </summary>
+        public void Sync(Entity entity, bool detach)
         {
             if (entity == null || entity.IsDestroyed)
             {
@@ -75,7 +81,7 @@ namespace ClassicUO.Game
                     return;
                 }
 
-                SyncItem(item);
+                SyncItem(item, detach ? WorldMirror.NO_CONTAINER : item.Container);
             }
             else if (entity is Mobile mobile)
             {
@@ -101,6 +107,12 @@ namespace ClassicUO.Game
                     ReferenceEquals(mobile, _world.Player),
                     mobile
                 );
+
+                if (Mirror.LastMobileCreated)
+                {
+                    InitCreatedMobile(mobile, e);
+                }
+
                 RestoreScalars(mobile, epochBefore, countBefore);
 
                 // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
@@ -211,6 +223,12 @@ namespace ClassicUO.Game
             uint epochBefore = Mirror.Epoch;
             int countBefore = Mirror.Count;
             EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
+
+            if (Mirror.LastMobileCreated)
+            {
+                InitCreatedMobile(mobile, e);
+            }
+
             RestoreScalars(mobile, epochBefore, countBefore);
 
             return e;
@@ -261,14 +279,10 @@ namespace ClassicUO.Game
         /// </summary>
         private void RestoreScalars(Entity entity, uint epochBefore, int countBefore)
         {
-            // ecs_small_fields: a record the upsert created (or that replaced the other kind's) starts from the instance's
-            // small fields. While the Item and Mobile keep them as caches they hold the values the funnel last wrote: a mobile
-            // re-held after being detached (the detached player) or a record re-created keeps them, as the GameObject does
-            if (Mirror.Count != countBefore || Mirror.Epoch != epochBefore)
-            {
-                SeedTraits(entity);
-            }
-
+            // T9 S5: a record the upsert created (or that replaced the other kind's) starts without traits: the record is
+            // their only copy (the small-field caches and their seed are gone). A live instance's record is re-created only
+            // after a misconfigured server's shared serial or 0x25 under the player's serial (the detached player); the
+            // values come back with the server's next packet for them, as the cold fields do
             if (ItemAnimTimerEnabled && entity is Item corpse)
             {
                 PushItemTimer(corpse);
@@ -393,24 +407,6 @@ namespace ClassicUO.Game
             }
         }
 
-        /// <summary>Tests: the records <see cref="SeedTraits"/> wrote.</summary>
-        internal long TraitSeeds;
-
-        private void SeedTraits(Entity entity)
-        {
-            bool written = entity switch
-            {
-                Item item => Mirror.SetItemTraits(item.Serial, item.CachedTraits),
-                Mobile mobile => Mirror.SetMobileTraits(mobile.Serial, mobile.CachedTraits),
-                _ => false
-            };
-
-            if (written)
-            {
-                TraitSeeds++;
-            }
-        }
-
         /// <summary>
         /// T1 part 9: the item went to the back of its parent's child list in a re-order that writes no record (the vendor
         /// sort's re-stamp; an operation that also commits the item stamps with <see cref="CommitItem"/>'s attach).
@@ -452,7 +448,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private void SyncItem(Item item)
+        private void SyncItem(Item item, uint container)
         {
             // Only the instance World currently holds for this serial; stale or detached objects are ignored.
             if (!_world.Holds(item))
@@ -474,7 +470,7 @@ namespace ClassicUO.Game
                 (byte)item.Direction,
                 (byte)item.Flags,
                 item.Amount,
-                item.Container,
+                container,
                 (byte)item.Layer,
                 item.IsMulti,
                 handle: item
@@ -519,18 +515,20 @@ namespace ClassicUO.Game
             MobileInputSource src = MobileInputRules.From(mobile, Cv7000);
             MobileInputRules.Compute(in src, ref e.GetComponent<MobileInputs>());
 
-            // every step-queue change and every new entity passes here, so the clock's Stepping flag follows
+            // the inputs read the step queue; the clock follows the record's timer and queue (T9 S8c: kept by their writes;
+            // this also covers a new entity and the handles flag)
             WriteClock(mobile, e);
         }
 
         /// <summary>
-        /// E4: copies the Mobile's due times and update flags into its <see cref="MobileClock"/>. Called from every write
-        /// of those values that happens outside <c>Mobile.Update</c> (SetAnimation, the idle timer, the step queue, the
-        /// handles opening, entity creation) and after each Update the system runs. Ignores mobiles World doesn't hold.
+        /// E4: writes the mobile's <see cref="MobileClock"/> after a change of its handles status (the scene's or the update's
+        /// handles opening; the update loop after each update). T9 S8c: the due times and the Stepping flag come from the
+        /// record's <see cref="AnimationTimer"/> and <see cref="Steps"/>, whose writes already keep them. Ignores mobiles World
+        /// doesn't hold.
         /// </summary>
         public void PushClock(Mobile mobile)
         {
-            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !_world.Holds(mobile))
+            if (mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !_world.Holds(mobile))
             {
                 return;
             }
@@ -543,12 +541,12 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// T1 (funnel part 6), the derived-state step of an animation operation: writes the mobile's <see cref="MobileClock"/>
-        /// from its due times after the operation's writes. Unlike <see cref="PushClock"/> it is not folded (it is the
-        /// operation's own push). Ignores mobiles World does not hold.
+        /// after the operation's writes. Unlike <see cref="PushClock"/> it is not folded (it is the operation's own push).
+        /// Ignores mobiles World does not hold.
         /// </summary>
         internal void CommitMobileClock(Mobile mobile)
         {
-            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !_world.Holds(mobile))
+            if (mobile == null || mobile.IsDestroyed || !_world.Holds(mobile))
             {
                 return;
             }
@@ -565,100 +563,60 @@ namespace ClassicUO.Game
         internal long ClockWrites;
 
         /// <summary>
-        /// E4: the clock is kept once the mobile clock path runs (World.Update sets this at its first update; tests set it
-        /// themselves). Before that there is no component, no write, no lookup and no destroyed queue; turning it on builds
-        /// every clock from the Mobiles (<see cref="ResyncClocks"/>).
+        /// T9 S8c: <paramref name="e"/>'s <see cref="MobileClock"/> from its <see cref="AnimationTimer"/> (the frame and idle
+        /// due times), its <see cref="Steps"/> (Stepping) and <paramref name="mobile"/>'s handles status (HandlesOpening). Every
+        /// mobile record has the three components from its creation; a record without them (another kind's) is left alone.
         /// </summary>
-        public bool ClockEnabled;
-
-        private void WriteClock(Mobile mobile, EcsEntity e)
+        internal static void WriteClock(Mobile mobile, EcsEntity e)
         {
-            if (!ClockEnabled)
+            EcsRow row = EcsRead.Row(e);
+
+            if (row.IsNull || !row.Has<MobileClock>() || !row.Has<AnimationTimer>() || !row.Has<Steps>())
             {
                 return;
-            }
-
-            if (!e.HasComponent<MobileClock>())
-            {
-                // not at creation (CreateEntity takes 11 arguments at most) and only while the system runs
-                e.AddComponent(new MobileClock());
             }
 
             ClockPushes++;
-            ClockWrites++;
-            ref MobileClock c = ref e.GetComponent<MobileClock>();
-            c.AnimDue = mobile.LastAnimationChangeTime;
-            c.IdleDue = mobile.IdleDue;
-            c.Flags = ClockFlagsOf(mobile);
 
-            if (AnimTimerEnabled)
+            if (mobile.World?.Ecs != null)
             {
-                // T5b: the animation timer travels with the clock: every write of its fields outside the system (SetAnimation,
-                // the server's animation packets through AnimateMobile, the legacy Update of a stepping mobile) is followed by
-                // this push, and so is the system's own write-back
-                if (!e.HasComponent<AnimationTimer>())
-                {
-                    e.AddComponent(mobile.FullAnimationTimer);
-                }
-                else
-                {
-                    e.GetComponent<AnimationTimer>() = mobile.FullAnimationTimer;
-                }
+                mobile.World.Ecs.ClockWrites++;
             }
 
-            if (StepsEnabled)
-            {
-                // T6c: the step state travels with the clock too: every queue change (the input push), every step completion
-                // (CompleteStep's commit) and every Update (the loop's push) pass here
-                WriteSteps(mobile, e);
-            }
+            ref readonly AnimationTimer t = ref row.Get<AnimationTimer>();
+            ref MobileClock c = ref row.Get<MobileClock>();
+            c.AnimDue = t.AnimDue;
+            c.IdleDue = t.IdleDue;
+            c.Flags = ClockFlagsOf(row.Get<Steps>().Count, mobile);
         }
 
-        /// <summary>
-        /// T6c: the <see cref="Steps"/> component is kept with the clock (World.Update sets this at its first mobile update;
-        /// turning it on goes through <see cref="ResyncClocks"/>, which writes every queue).
-        /// </summary>
-        public bool StepsEnabled;
-
-        private uint _stepLogAt;
-        private uint _stepMountLogAt;
-
-        public static long StepWrites;
-
-        /// <summary>T6c: copies the Mobile's walk queue, <c>LastStepTime</c> and walk offset into its <see cref="Steps"/>.</summary>
-        internal static void WriteSteps(Mobile mobile, EcsEntity e)
+        internal static MobileClockFlags ClockFlagsOf(int steps, Mobile mobile)
         {
-            if (!e.HasComponent<Steps>())
-            {
-                e.AddComponent(new Steps());
-            }
+            MobileClockFlags f = MobileClockFlags.None;
 
-            StepWrites++;
-            StepSystem.CopyFrom(mobile, ref e.GetComponent<Steps>());
+            if (steps != 0) f |= MobileClockFlags.Stepping;
+            if (mobile.ObjectHandlesStatus == ObjectHandlesStatus.OPEN) f |= MobileClockFlags.HandlesOpening;
+
+            return f;
         }
 
         /// <summary>
-        /// T6c: the step state of a mobile changed outside the clock pushes (a boat carrying it writes its offset or
-        /// position): rewrites its <see cref="Steps"/>. Ignores items, mobiles World does not hold and a disabled system.
+        /// T9 S8c: a mobile record <see cref="Mirror"/> just created for <paramref name="mobile"/> starts with a new mobile's
+        /// timer, queue and clock (WorldMirror); the player's frame timer starts now and its idle delay is drawn (the old
+        /// PlayerMobile constructor's writes: the player's record is created right after it, World.CreatePlayer). A record
+        /// re-created for a live instance (the detached player, a shared serial) starts over as well.
         /// </summary>
-        internal void PushSteps(Entity entity)
+        private void InitCreatedMobile(Mobile mobile, EcsEntity e)
         {
-            if (!StepsEnabled || !ClockEnabled || !(entity is Mobile mobile) || mobile.IsDestroyed || !_world.Holds(mobile))
+            if (mobile is PlayerMobile && !e.IsNull && e.HasComponent<AnimationTimer>())
             {
-                return;
+                ref AnimationTimer t = ref e.GetComponent<AnimationTimer>();
+                t.AnimDue = Time.Ticks;
+                t.IdleDue = Mobile.NextIdleDue();
             }
 
-            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
-            {
-                WriteSteps(mobile, e);
-            }
+            WriteClock(mobile, e);
         }
-
-        /// <summary>
-        /// T5b: the <see cref="AnimationTimer"/> component is kept with the clock (World.Update sets this each frame from
-        /// <c>world_anim_system</c>; turning it on goes through <see cref="ResyncClocks"/>, which writes every timer).
-        /// </summary>
-        public bool AnimTimerEnabled;
 
         /// <summary>
         /// T5b-items: a corpse's <see cref="AnimationTimer"/> is kept with its item record (World.UpdateActiveItems sets this
@@ -686,117 +644,38 @@ namespace ClassicUO.Game
             }
         }
 
-        internal static MobileClockFlags ClockFlagsOf(Mobile mobile)
+        /// <summary>T9 S8c: a mobile's step and animation state, carried from its old record to its new one (the death re-key).</summary>
+        private struct MobileMotion
         {
-            MobileClockFlags f = MobileClockFlags.None;
+            public AnimationTimer Timer;
+            public Steps Steps;
+        }
 
-            if (mobile.Steps.Count != 0) f |= MobileClockFlags.Stepping;
-            if (mobile.ObjectHandlesStatus == ObjectHandlesStatus.OPEN) f |= MobileClockFlags.HandlesOpening;
+        private static bool TryTakeMotion(EcsEntity old, out MobileMotion motion)
+        {
+            motion = default;
+            EcsRow row = EcsRead.Row(old);
 
-            return f;
+            if (row.IsNull || !row.Has<AnimationTimer>() || !row.Has<Steps>())
+            {
+                return false;
+            }
+
+            motion.Timer = row.Get<AnimationTimer>();
+            motion.Steps = row.Get<Steps>();
+
+            return true;
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): E4 checker (CUO_MOBILE_UPDATE_CHECK=1; "stats" only logs the counts)
-        public static readonly bool MobileUpdateCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") == "1";
-        public static readonly bool MobileUpdateStats = MobileUpdateCheck || Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") == "stats";
+        // CLEANUP(release): E4 stats (CUO_MOBILE_UPDATE_CHECK=1 or "stats" logs the counts; T9 S8c deleted its clock
+        // comparison: the clock is written with the timer and the queue it is derived from)
+        public static readonly bool MobileUpdateStats = Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") is "1" or "stats";
 #else
-        public const bool MobileUpdateCheck = false;
         public const bool MobileUpdateStats = false;
 #endif
         public static long ClockFrames, ClockDue, ClockScanned, ClockCollectTicks, ClockUpdateTicks;
-        public static long ClockChecks, ClockDiffs, SkippedChecks, SkippedDiffs;
-        private int _clockLogged;
-
-        /// <summary>
-        /// E4 checker, start of the frame: every live Mobile has a clock entity and its clock equals what the Mobile holds.
-        /// A mismatch is a missed push (a write of the due times or flags that didn't reach the ECS).
-        /// </summary>
-        public void CheckClocks()
-        {
-            foreach (Mobile m in _world.Mobiles.Values)
-            {
-                if (m.IsDestroyed)
-                {
-                    continue;
-                }
-
-                ClockChecks++;
-
-                if (!Mirror.TryGetEntity(m.Serial, out EcsEntity e) || !e.HasComponent<MobileClock>())
-                {
-                    ClockDiffs++;
-                    LogClockDiff($"mobile 0x{m.Serial:X8} has no clock entity");
-
-                    continue;
-                }
-
-                MobileClock c = e.GetComponent<MobileClock>();
-
-                // HandlesOpening may be left set after the scene or the name gump cancelled the OPEN: the next Update clears it
-                // (an extra update, never a missed one), so only the other flags and a missing HandlesOpening count
-                MobileClockFlags want = ClockFlagsOf(m);
-                MobileClockFlags have = c.Flags;
-
-                if ((have & MobileClockFlags.HandlesOpening) != 0 && (want & MobileClockFlags.HandlesOpening) == 0)
-                {
-                    have &= ~MobileClockFlags.HandlesOpening;
-                }
-
-                if (c.AnimDue != m.LastAnimationChangeTime || c.IdleDue != m.IdleDue || have != want)
-                {
-                    ClockDiffs++;
-                    LogClockDiff($"clock of 0x{m.Serial:X8}: ecs anim {c.AnimDue} idle {c.IdleDue} {c.Flags} | mobile anim {m.LastAnimationChangeTime} idle {m.IdleDue} {ClockFlagsOf(m)} (tick {Time.Ticks})");
-                    WriteClock(m, e);
-                }
-            }
-        }
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_MOBILE_UPDATE_CHECK
-        /// <summary>
-        /// E4 checker, after the system's updates: every mobile it skipped is updated the legacy way and must not change.
-        /// (Mobiles the system updated carry this frame's stamp; they ran the legacy Update, so they are equal by construction.)
-        /// </summary>
-        public void CheckSkipped(IEnumerable<Mobile> mobiles, int stamp)
-        {
-            foreach (Mobile m in mobiles)
-            {
-                if (m.IsDestroyed || m.UpdateStamp == stamp)
-                {
-                    continue;
-                }
-
-                SkippedChecks++;
-                int before = m.UpdateStateHash();
-                m.Update();
-
-                if (m.UpdateStateHash() != before)
-                {
-                    SkippedDiffs++;
-                    LogClockDiff($"skipped mobile 0x{m.Serial:X8} g=0x{m.Graphic:X4} changed in a legacy Update (anim {m.LastAnimationChangeTime}, idle {m.IdleDue}, steps {m.Steps.Count}, tick {Time.Ticks})");
-                    PushClock(m);
-                }
-            }
-        }
-#endif
-
-        private void LogClockDiff(string message)
-        {
-            if (_clockLogged++ < MAX_LOGGED_MISMATCHES)
-            {
-                Log.Warn($"[mobile-update-check] {message}");
-            }
-        }
-
-        /// <summary>E4: rewrites every mobile's clock from the Mobile (the setting was just turned on: Update advanced the timers unpushed).</summary>
-        public void ResyncClocks()
-        {
-            foreach (Mobile m in _world.Mobiles.Values)
-            {
-                PushClock(m);
-            }
-        }
+        private uint _stepLogAt;
 
         // Client.Game.UO.Version >= CV_7000 (the rules of IsFlying, IsPoisoned, IsGargoyle); false without a client (tests)
         private static bool Cv7000 => Client.Game?.UO != null && Client.Game.UO.Version >= Utility.ClientVersion.CV_7000;
@@ -866,12 +745,18 @@ namespace ClassicUO.Game
                 Mirror.TryGetExtras(oldSerial, out extras);
             }
 
-            // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) the
-            // traits come from the caches, which WorldWriter keeps paired with the record (ecs_small_fields)
+            // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) no
+            // item record's values go with the mobile. T9 S5: the record was the traits' only copy, so they are lost there,
+            // as the cold fields are (only a misconfigured server shares a serial between an item and a mobile)
             if (foreign || !Mirror.TryGetEntity(oldSerial, true, out _))
             {
-                extras.MobileTraits = mobile.CachedTraits;
+                extras.MobileTraits = default;
             }
+
+            // T9 S8c: the timer and the walk queue go with the mobile too (the record is their only copy); without its mobile
+            // record under the old serial the mobile had none (its getters read a new mobile's), and its new record gets none
+            MobileMotion motion = default;
+            bool carry = !foreign && Mirror.TryGetEntity(oldSerial, true, out EcsEntity oldMobile) && TryTakeMotion(oldMobile, out motion);
 
             // T8 ownership: effects on the old record are gone with it, then follow the mobile to the new record
             bool effects = !foreign && _world.Effects?.Items != null && Mirror.TryGetEntity(oldSerial, out old);
@@ -918,6 +803,19 @@ namespace ClassicUO.Game
             if (keep != 0 && e.HasComponent<AnimationState>())
             {
                 e.GetComponent<AnimationState>().Flags |= keep;
+            }
+
+            // the upsert may have written into a displaced earlier death's record: its timer and queue are not this mobile's
+            if (!carry)
+            {
+                motion.Timer = AnimationTimer.MobileDefault;
+            }
+
+            if (e.HasComponent<AnimationTimer>() && e.HasComponent<Steps>())
+            {
+                e.GetComponent<AnimationTimer>() = motion.Timer;
+                e.GetComponent<Steps>() = motion.Steps;
+                WriteClock(mobile, e);
             }
 
             return e;
@@ -1048,9 +946,6 @@ namespace ClassicUO.Game
             // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
             ScalarReads.EndFrame();
 
-            // ecs_small_fields: CUO_SMALL_FIELDS_CHECK's 5 s summary
-            SmallFields.LogSummary(_world);
-
 #if CUO_DEVTOOLS
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
@@ -1063,26 +958,21 @@ namespace ClassicUO.Game
             {
                 _clockLogAt = Time.Ticks + 5000;
                 long f = Math.Max(1, ClockFrames);
-                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
+                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clock writes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
             }
 
-            if (MobileAnimationAdvanceSystem.AdvanceCheck && Time.Ticks >= _animAdvanceLogAt)
+            if (ItemAnimationAdvanceSystem.AdvanceCheck && Time.Ticks >= _animAdvanceLogAt)
             {
                 _animAdvanceLogAt = Time.Ticks + 5000;
                 Log.Info(MobileAnimationAdvanceSystem.Summary());
                 Log.Info(ItemAnimationAdvanceSystem.Summary());
             }
 
-            if (StepSystem.StepCheck && Time.Ticks >= _stepLogAt)
+            // T9 S8c: the step counters with the clock stats (CUO_STEP_CHECK and CUO_STEP_MOUNT_CHECK are gone)
+            if (MobileUpdateStats && Time.Ticks >= _stepLogAt)
             {
                 _stepLogAt = Time.Ticks + 5000;
                 Log.Info(StepSystem.Summary());
-            }
-
-            if (StepSystem.StepMountCheck && Time.Ticks >= _stepMountLogAt)
-            {
-                _stepMountLogAt = Time.Ticks + 5000;
-                Log.Info(StepSystem.MountSummary());
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
@@ -1236,8 +1126,9 @@ namespace ClassicUO.Game
             bool onGround = item.Container == WorldMirror.NO_CONTAINER || item.Container == 0;
             ParentKind kind = onGround ? ParentKind.None : WorldMirror.IsWearerSerial(item.Container) ? ParentKind.Equipped : ParentKind.Contained;
 
+            // T9 S6: Direction and Flags read the record (nothing to compare)
             if (r.IsMobile || r.Graphic != item.Graphic || r.Hue != item.Hue || r.X != item.X || r.Y != item.Y || r.Z != item.Z ||
-                r.Facing != (byte)item.Direction || r.Flags != (byte)item.Flags || r.Amount != item.Amount || r.IsMulti != item.IsMulti ||
+                r.Amount != item.Amount || r.IsMulti != item.IsMulti ||
                 r.OnGround != onGround || r.ParentKind != kind || (!onGround && r.Parent != item.Container) ||
                 (kind == ParentKind.Equipped && r.Layer != (byte)item.Layer))
             {
@@ -1308,8 +1199,9 @@ namespace ClassicUO.Game
 
             bool isPlayer = ReferenceEquals(mobile, _world.Player);
 
+            // T9 S6: Direction and Flags read the record (nothing to compare)
             if (!r.IsMobile || r.IsPlayer != isPlayer || r.Graphic != mobile.Graphic || r.Hue != mobile.Hue || r.X != mobile.X ||
-                r.Y != mobile.Y || r.Z != mobile.Z || r.Facing != (byte)mobile.Direction || r.Flags != (byte)mobile.Flags)
+                r.Y != mobile.Y || r.Z != mobile.Z)
             {
                 Report
                 (

@@ -14,8 +14,8 @@ namespace ClassicUO.Game
     /// <c>ecs_effect_endpoints</c> and <c>ecs_effect_motion</c>, and their checkers). Each step resolves the endpoints it needs once
     /// (the source's gone test, position and offset from one row; a moving effect's target likewise), runs the base rules
     /// (source gone, <see cref="Animate"/>) in the legacy order, then the kind's motion on the state's fields, and writes the
-    /// results to the object for the views (position through <c>SetInWorldTile</c>, which owns the tile placement). The steps
-    /// are the only writer of the object's motion fields. No random number is drawn.
+    /// position to the object through <c>SetInWorldTile</c>, which owns the tile placement (the offset and angle stay in the
+    /// state, T9 S7). No random number is drawn.
     /// </summary>
     internal static partial class EffectSystem
     {
@@ -75,13 +75,13 @@ namespace ClassicUO.Game
             return r;
         }
 
-        // A live source's offset: a mobile's from its Steps while the step system keeps them (otherwise the Mobile World holds
+        // A live source's offset: a mobile's from its Steps (T9 S8c: every mobile record has them; else the Mobile World holds
         // under the serial), an item's (a boat passenger's) from its ItemOffset (absent = zero).
         private static Vector3 SourceOffset(GameEffect e, ref EffectState s, EcsRow row)
         {
             if ((s.Ends & EffectState.END_SOURCE_MOBILE) != 0)
             {
-                if (e.World.Ecs.StepsEnabled && row.TryGet(out Steps st))
+                if (row.TryGet(out Steps st))
                 {
                     return new Vector3(st.OffsetX, st.OffsetY, st.OffsetZ);
                 }
@@ -163,11 +163,6 @@ namespace ClassicUO.Game
 
             SetMovingFlag(e, ref s);
 
-            if (hasSource)
-            {
-                e.Offset = offset;
-            }
-
             if (moved)
             {
                 e.SetInWorldTile(x, y, z);
@@ -216,9 +211,6 @@ namespace ClassicUO.Game
             s.OffsetX += 8;
             s.OffsetY += 8;
             s.MoveTime = Time.Ticks + 20;
-            e.OffsetX = s.OffsetX;
-            e.OffsetY = s.OffsetY;
-            e.LastMoveTime = s.MoveTime;
 
             ResolveSource(e, ref s, false, out bool gone, out _);
 
@@ -346,21 +338,16 @@ namespace ClassicUO.Game
             s.OffsetY += s0.Y;
             SetMovingFlag(e, ref s);
 
-            float angle = s.Angle, ox = s.OffsetX, oy = s.OffsetY;
             ushort x = s.X, y = s.Y;
             sbyte z = s.Z;
 
             // the object, in UpdateOffset's write order
             e.MarkPositionChanged();
-            e.AngleToTarget = angle;
 
             if (moved)
             {
                 e.SetInWorldTile(x, y, z);
             }
-
-            e.OffsetX = ox;
-            e.OffsetY = oy;
 
             return true;
         }

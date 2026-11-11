@@ -26,7 +26,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (Item it in children)
             {
-                it.Container = serial;
+                it.TestSetContainer(serial);
             }
 
             world.Mobiles[serial] = owner;
@@ -50,8 +50,27 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             ecs.Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
+
+            // T9 S8c: the Mobile's timer and walk queue moved with the instance (its fields, which Sync pushed into the new
+            // record); they live in the record now, so the reference carries them as the fields did
+            EcsEntity oldMobile = default;
+            bool motion = entity is Mobile && ecs.Mirror.TryGetEntity(oldSerial, true, out oldMobile)
+                && oldMobile.HasComponent<AnimationTimer>() && oldMobile.HasComponent<Steps>();
+            AnimationTimer timer = motion ? oldMobile.GetComponent<AnimationTimer>() : AnimationTimer.MobileDefault;
+            Steps steps = motion ? oldMobile.GetComponent<Steps>() : default;
+
             ecs.Mirror.Remove(oldSerial);
             ecs.Sync(entity);
+
+            if (entity is Mobile moved && !entity.IsDestroyed && ecs.Mirror.TryGetEntity(entity.Serial, true, out EcsEntity fresh))
+            {
+                fresh.GetComponent<AnimationTimer>() = timer;
+                fresh.GetComponent<Steps>() = steps;
+                WorldEcs.WriteClock(moved, fresh);
+
+                // the old Sync computed the inputs from the fields, queue included
+                ecs.CommitMobileInputs(moved);
+            }
 
             if (ecs.Mirror.TryGetEntity(entity.Serial, out _) && !entity.IsDestroyed)
             {

@@ -1201,7 +1201,7 @@ namespace ClassicUO.Game.Scenes
                                 item.IsCorpse
                                 || (
                                     !item.IsMulti
-                                    && (!item.IsLocked || item.IsLocked && itemData.IsContainer)
+                                    && (!item.IsLocked || itemData.IsContainer)
                                 )
                             )
                             {

@@ -107,14 +107,13 @@ namespace ClassicUO.UnitTests.Ecs
             MobileClock c = Pushed(world, m.Serial);
             c.AnimDue.Should().Be(m.LastAnimationChangeTime);
             c.IdleDue.Should().Be(m.IdleDue);
-            c.Flags.Should().Be(WorldEcs.ClockFlagsOf(m));
+            c.Flags.Should().Be(WorldEcs.ClockFlagsOf(m.Steps.Count, m));
         }
 
         [Fact]
         public void New_Entity_And_Mobile_Writes_Push_The_Clock()
         {
             var world = new World();
-            world.Ecs.ClockEnabled = true;
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.Graphic = 0x190;
             world.Ecs.Sync(m);
@@ -123,7 +122,7 @@ namespace ClassicUO.UnitTests.Ecs
             MobileClockRules.IsDue(Pushed(world, SERIAL), 1).Should().BeTrue();
 
             // SetAnimation moves the frame timer to the tick and re-rolls the idle timer
-            m.LastAnimationChangeTime = 12345;
+            m.SetAnimDue(12345);
             m.SetAnimation(5);
             ShouldMatchMobile(world, m);
             Pushed(world, SERIAL).AnimDue.Should().Be(Time.Ticks);
@@ -153,7 +152,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void Push_For_An_Object_World_No_Longer_Holds_Is_Ignored()
         {
             var world = new World();
-            world.Ecs.ClockEnabled = true;
             Mobile old = world.GetOrCreateMobile(SERIAL);
             old.Graphic = 0x190;
             world.Ecs.Sync(old);
@@ -164,25 +162,23 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(next);
 
             MobileClock before = Pushed(world, SERIAL);
-            old.LastAnimationChangeTime = before.AnimDue + 777;
+            old.SetAnimDue(before.AnimDue + 777);
             world.Ecs.PushClock(old);
             Pushed(world, SERIAL).AnimDue.Should().Be(before.AnimDue, "the replaced Mobile doesn't write the new one's clock");
         }
 
         [Fact]
-        public void Resync_Rewrites_Clocks_The_Legacy_Loop_Advanced_Unpushed()
+        public void A_Timer_Write_Keeps_The_Clock()
         {
             var world = new World();
-            world.Ecs.ClockEnabled = true;
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.Graphic = 0x190;
             world.Ecs.Sync(m);
 
-            // what ProcessAnimation does at its end, without a push
-            m.LastAnimationChangeTime += 4000;
-            Pushed(world, SERIAL).AnimDue.Should().NotBe(m.LastAnimationChangeTime);
+            // T9 S8c: the timer is the record's; its write keeps the clock (no push, no resync)
+            m.SetAnimDue(m.LastAnimationChangeTime + 4000);
+            Pushed(world, SERIAL).AnimDue.Should().Be(m.LastAnimationChangeTime);
 
-            world.Ecs.ResyncClocks();
             ShouldMatchMobile(world, m);
         }
 
@@ -191,33 +187,33 @@ namespace ClassicUO.UnitTests.Ecs
         {
             // no steps, timers in the future
             var world = new World();
-            world.Ecs.ClockEnabled = true;
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.Graphic = 0x190;
             world.Ecs.Sync(m);
-            m.LastAnimationChangeTime = (long)Time.Ticks + 100000;
+            m.SetAnimDue((long)Time.Ticks + 100000);
             m.SetAnimation(0xFF);
-            m.LastAnimationChangeTime = (long)Time.Ticks + 100000;
+            m.SetAnimDue((long)Time.Ticks + 100000);
             world.Ecs.PushClock(m);
 
             MobileClockRules.IsDue(Pushed(world, SERIAL), Time.Ticks).Should().BeFalse();
         }
         [Fact]
-        public void Disabled_Clock_Writes_Nothing_And_Resync_Builds_It()
+        public void The_Clock_Timer_And_Queue_Exist_From_The_Record_Creation()
         {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.Graphic = 0x190;
             world.Ecs.Sync(m);
             world.Ecs.Mirror.TryGetEntity(SERIAL, out EcsEntity e).Should().BeTrue();
-            e.HasComponent<MobileClock>().Should().BeFalse("off: no component at creation");
+
+            // T9 S8c: no switch and no first update: a mobile record has them from its creation, with a new mobile's timer
+            e.HasComponent<MobileClock>().Should().BeTrue();
+            e.HasComponent<Steps>().Should().BeTrue();
+            MobileAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), AnimationTimer.MobileDefault).Should().BeTrue();
 
             m.SetAnimation(3);
             m.EnqueueStep(101, 100, 0, Direction.East, false);
-            e.HasComponent<MobileClock>().Should().BeFalse("off: pushes write nothing");
 
-            world.Ecs.ClockEnabled = true;
-            world.Ecs.ResyncClocks();
             ShouldMatchMobile(world, m);
             Pushed(world, SERIAL).Flags.Should().HaveFlag(MobileClockFlags.Stepping);
         }
@@ -261,7 +257,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void Due_Mobiles_Run_In_The_Dictionarys_Order_Through_Tag_Moves_And_Slot_Reuse()
         {
             var world = new World();
-            world.Ecs.ClockEnabled = true;
             var rng = new System.Random(12345);
             var oracle = new Dictionary<uint, Mobile>();
 
@@ -324,7 +319,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void Two_Mobiles_Arriving_In_The_Same_Frame_Keep_The_Dictionarys_Order_After_A_Tag_Move()
         {
             var world = new World();
-            world.Ecs.ClockEnabled = true;
 
             foreach (uint s in new uint[] { 10, 11, 12 })
             {

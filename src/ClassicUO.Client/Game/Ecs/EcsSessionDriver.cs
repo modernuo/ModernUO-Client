@@ -663,7 +663,7 @@ namespace ClassicUO.Game
                     return true;
 
                 // small: the player's small fields and counts over every held object, read through the
-                // getters (with CUO_SMALL_FIELDS_CHECK each read is compared with the record)
+                // getters (the record: T9 S5)
                 case "small":
                     int lights = 0, damageable = 0, usedLayer = 0, multis = 0, female = 0, renamable = 0, fast = 0;
                     int[] races = new int[4];
@@ -684,7 +684,7 @@ namespace ClassicUO.Game
                         fast += sm.SpeedMode != CharacterSpeedType.Normal ? 1 : 0;
                     }
 
-                    Log.Info($"[ECS] small player race {player.Race} female {player.IsFemale} renamable {player.IsRenamable} speed {player.SpeedMode} war {player.InWarMode} body 0x{player.Graphic:X4}; items {world.Items.Count} lights {lights} damageable {damageable} usedlayer {usedLayer} multis {multis}; mobiles {world.Mobiles.Count} races {races[0]}/{races[1]}/{races[2]}/{races[3]} female {female} renamable {renamable} speedmode {fast}; {SmallFields.Summary()}");
+                    Log.Info($"[ECS] small player race {player.Race} female {player.IsFemale} renamable {player.IsRenamable} speed {player.SpeedMode} war {player.InWarMode} body 0x{player.Graphic:X4}; items {world.Items.Count} lights {lights} damageable {damageable} usedlayer {usedLayer} multis {multis}; mobiles {world.Mobiles.Count} races {races[0]}/{races[1]}/{races[2]}/{races[3]} female {female} renamable {renamable} speedmode {fast}");
 
                     return false;
 
@@ -1134,7 +1134,7 @@ namespace ClassicUO.Game
                     {
                         if (multi.IsMulti && !multi.IsDestroyed && Math.Abs(multi.X - player.X) <= 24 && Math.Abs(multi.Y - player.Y) <= 24)
                         {
-                            Log.Info($"[ECS] boat: multi 0x{multi.Serial:X8} graphic 0x{multi.Graphic:X4} at {multi.X},{multi.Y},{multi.Z} offset ({multi.Offset.X},{multi.Offset.Y},{multi.Offset.Z})");
+                            Log.Info($"[ECS] boat: multi 0x{multi.Serial:X8} graphic 0x{multi.Graphic:X4} at {multi.X},{multi.Y},{multi.Z} offset {ItemOffsets.Read(multi)}");
                         }
                     }
 

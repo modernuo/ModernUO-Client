@@ -440,26 +440,33 @@ namespace ClassicUO.UnitTests.Renderer
         }
 
         [Fact]
-        public void An_unmapped_seated_sprite_records_its_deformation_and_differs_when_it_changes()
+        public void An_unmapped_scaled_sprite_is_recorded_apart_from_the_unscaled_one()
         {
             GpuWorldRenderer r = Capture(out var fallbacks);
             var pos = new Vector2(10, 20);
             var src = new Rectangle(0, 0, 44, 60);
 
-            r.DrawSitted(null, pos, src, new Vector3(0.3f, 0.5f, 0.2f), Vector3.Zero, false, 0.5f).Should().BeTrue();
-            r.DrawSitted(null, pos, src, new Vector3(0.3f, 0.6f, 0.1f), Vector3.Zero, false, 0.5f).Should().BeTrue();
             r.Draw(null, pos, src, Vector3.Zero, false, false, 0.5f, SpriteCaptureMode.Normal).Should().BeTrue();
             r.Draw(null, pos, src, Vector3.Zero, false, true, 0.5f, SpriteCaptureMode.Normal).Should().BeTrue();
 
-            fallbacks.Should().HaveCount(4);
-            fallbacks[0].Kind.Should().Be(GpuWorldRenderer.FallbackKind.Seated);
-            fallbacks[0].Mod.Should().Be(new Vector3(0.3f, 0.5f, 0.2f));
-            fallbacks[0].Should().NotBe(fallbacks[1], "the same arguments with other section fractions draw other geometry");
-            fallbacks[2].Kind.Should().Be(GpuWorldRenderer.FallbackKind.Normal);
-            fallbacks[2].Mod.Should().Be(Vector3.Zero, "the seated draw's deformation doesn't leak into the next draw");
-            fallbacks[3].Kind.Should().Be(GpuWorldRenderer.FallbackKind.Scaled);
-            fallbacks[2].Should().NotBe(fallbacks[3], "a scaled draw is not the unscaled one");
-            fallbacks[2].Should().NotBe(fallbacks[0]);
+            fallbacks.Should().HaveCount(2);
+            fallbacks[0].Kind.Should().Be(GpuWorldRenderer.FallbackKind.Normal);
+            fallbacks[1].Kind.Should().Be(GpuWorldRenderer.FallbackKind.Scaled);
+            fallbacks[0].Should().NotBe(fallbacks[1], "a scaled draw is not the unscaled one");
+        }
+
+        // T9 S8a: the seated and rotated draws were the deleted mobile and effect views'; the capture (statics, multis) leaves
+        // them to the batcher and records nothing
+        [Fact]
+        public void Seated_and_rotated_draws_are_not_captured()
+        {
+            GpuWorldRenderer r = Capture(out var fallbacks);
+            var pos = new Vector2(10, 20);
+            var src = new Rectangle(0, 0, 44, 60);
+
+            r.DrawSitted(null, pos, src, new Vector3(0.3f, 0.5f, 0.2f), Vector3.Zero, false, 0.5f).Should().BeFalse();
+            r.DrawRotated(null, pos, src, Vector3.Zero, 0.5f, 0.5f).Should().BeFalse();
+            fallbacks.Should().BeEmpty();
         }
     }
 }

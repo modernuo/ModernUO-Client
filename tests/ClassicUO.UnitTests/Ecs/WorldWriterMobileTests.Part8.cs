@@ -20,10 +20,10 @@ namespace ClassicUO.UnitTests.Ecs
     {
         // ---- group 1: the idle animation (Mobile.SetIdleAnimation) and the footstep sound (ProcessFootstepsSound)
 
-        private static readonly System.Reflection.FieldInfo FGroup = TimerField("_animationGroup"), FIdle = TimerField("_lastAnimationIdleDelay");
+        private static readonly TimerAccess FGroup = TimerField("_animationGroup"), FIdle = TimerField("_lastAnimationIdleDelay");
 
         /// <summary>The animation data the idle planner reads, as the tests set it.</summary>
-        internal struct FakeIdleData : Mobile.IIdleAnimationData
+        internal struct FakeIdleData : LegacyMobileUpdate.IIdleAnimationData
         {
             public int Max;
             public AnimationGroupsType Type;
@@ -54,14 +54,14 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (!m.IsMounted && !m.InWarMode && m.ExecuteAnimation)
             {
-                m.AnimIndex = 0;
-                m.AnimationFrameCount = 0;
+                m.SetFrame(0);
+                m.TestSetFrameCount(0);
                 FInterval.SetValue(m, (byte)1);
                 FRepeatMode.SetValue(m, (ushort)1);
                 FRepeatModeCount.SetValue(m, (ushort)1);
                 FForward.SetValue(m, true);
                 FRepeat.SetValue(m, false);
-                m.AnimationFromServer = true;
+                m.TestSetFromServer(true);
 
                 ushort graphic = m.GetGraphicForAnimation();
 
@@ -178,12 +178,12 @@ namespace ClassicUO.UnitTests.Ecs
                 case IdleStart.Animating: OldAnimate(m, AnimPacket.NewCharacterAnimation); break;
                 // a plain Mobile's InWarMode setter does nothing: its getter reads the WarMode flag (Codex audit of part 8, P3)
                 case IdleStart.WarMode:
-                    m.Flags |= Flags.WarMode;
+                    m.TestSetFlags(m.Flags | Flags.WarMode);
                     world.Ecs.Sync(m);
                     m.InWarMode.Should().BeTrue("the war-mode start is in war mode");
 
                     break;
-                case IdleStart.NotExecuting: m.ExecuteAnimation = false; break;
+                case IdleStart.NotExecuting: m.SetExecuteAnimation(false); break;
             }
 
             return world;
@@ -217,7 +217,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Pair(() => OldSetIdle(a, animations), () => NewSetIdle(newWorld, b, animations));
                 AssertSameWorld(oldWorld, newWorld);
                 ((byte)FGroup.GetValue(b), (long)FIdle.GetValue(b), TimerFieldsOf(b)).Should().Be(((byte)FGroup.GetValue(a), (long)FIdle.GetValue(a), TimerFieldsOf(a)), $"idle {i}");
-                (newWorld.Ecs.ClockWrites - cb).Should().Be(oldWorld.Ecs.ClockWrites - ca, "the same clock pushes");
+                // T9 S8c: the reference writes the timer through the record too, so the clock write counts differ by design
             }
 
             Time.Ticks = NOW;
@@ -315,7 +315,7 @@ namespace ClassicUO.UnitTests.Ecs
             stale.PlanIdleAnimation(data, out Mobile.IdlePlan p);
             w.Writer.IdleAnimation(stale, in p);
             w.Writer.StepSound(stale, 1, NOW + 777).Should().BeTrue();
-            ((long)FIdle.GetValue(stale), stale.AnimationFromServer, stale.LastStepSoundTime, stale.StepSoundOffset).Should().Be((p.IdleDue, true, (long)(NOW + 777), 1));
+            ((long)FIdle.GetValue(stale), stale.AnimationFromServer, stale.LastStepSoundTime, stale.StepSoundOffset).Should().Be((0L, false, (long)(NOW + 777), 1), "T9 S8c: the timer writes of a record-less instance are dropped");
             w.Writer.Violations.Should().Be(0);
         }
 
@@ -472,7 +472,7 @@ namespace ClassicUO.UnitTests.Ecs
             World w = BuildIdle(IdleStart.Animating);
             w.Writer.ThrowOnViolation = true;
             Mobile stale = Mobile.Create(w, MOB);
-            stale.AnimationFromServer = true;
+            stale.TestSetFromServer(true);
             w.Writer.EndServerAnimation(stale);
             stale.AnimationFromServer.Should().BeFalse();
             w.Writer.Violations.Should().Be(0);
@@ -502,7 +502,7 @@ namespace ClassicUO.UnitTests.Ecs
                     p.SetAnimation(0xFF);
                 }
 
-                p.LastStepTime = Time.Ticks;
+                p.SetLastStepTime(Time.Ticks);
             }
 
             p.AddStep(new Mobile.Step { X = x, Y = y, Z = z, Direction = (byte)direction, Run = run });
@@ -551,7 +551,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW + 5_200;
             // the inputs push writes the clock too (WriteInputs -> WriteClock), and ClockWrites is per World
             long ca = oldWorld.Ecs.ClockWrites, cb = newWorld.Ecs.ClockWrites;
-            Pair(() => a.Direction = Direction.West, () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
+            Pair(() => a.TestSetDirection(Direction.West), () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
             (newWorld.Ecs.ClockWrites - cb).Should().Be(oldWorld.Ecs.ClockWrites - ca, "the turn pushes its inputs (and clock) as the old turn did");
             AssertSameWorld(oldWorld, newWorld);
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
@@ -574,9 +574,18 @@ namespace ClassicUO.UnitTests.Ecs
             e.Y = y;
             e.Z = z;
             e.UpdateScreenPosition();
-            e.OffsetX = 0;
-            e.OffsetY = 0;
-            e.OffsetZ = 0;
+
+            // T9 S7: an item's offset is its ItemOffset component
+            if (e is Mobile m)
+            {
+                m.SetOffset(0, m.OffsetY, m.OffsetZ);
+                m.SetOffset(m.OffsetX, 0, m.OffsetZ);
+                m.SetOffset(m.OffsetX, m.OffsetY, 0);
+            }
+            else
+            {
+                ItemOffsets.Push(e.World, e, default);
+            }
 
             if (e.IsPlaced)
             {
@@ -661,12 +670,12 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Item bank = world.GetOrCreateItem(BANK);
             bank.Graphic = 0xE7C;
-            bank.Layer = Layer.Bank;
-            bank.Container = p.Serial;
+            bank.TestSetLayer(Layer.Bank);
+            bank.TestSetContainer(p.Serial);
             p.PushToBack(bank);
             Item gold = world.GetOrCreateItem(GOLD);
             gold.Graphic = 0xEED;
-            gold.Container = BANK;
+            gold.TestSetContainer(BANK);
             bank.PushToBack(gold);
             bank.Opened = true;
 
@@ -1206,9 +1215,9 @@ namespace ClassicUO.UnitTests.Ecs
             // the preview mobile (character creation: serial 1, race change: serial 0) and its clothes
             WorldWriterMobileTests.TestPlayer preview = WorldWriterMobileTests.TestPlayer.Create(world, 1);
             preview.Clear();
-            preview.Race = RaceType.ELF;
-            preview.IsFemale = true;
-            preview.Flags |= Flags.Female;
+            preview.TestSetRace(RaceType.ELF);
+            preview.TestSetIsFemale(true);
+            preview.TestSetFlags(preview.Flags | Flags.Female);
             preview.Graphic = 0x025E;
             preview.Hue = 0x83EA;
 
@@ -1219,8 +1228,8 @@ namespace ClassicUO.UnitTests.Ecs
                 Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
                 item.Graphic = 0x1518;
                 item.Hue = 0x0021;
-                item.Layer = layer;
-                item.Container = preview;
+                item.TestSetLayer(layer);
+                item.TestSetContainer(preview);
                 preview.PushToBack(item);
                 item.Hue = 0x0022; // a colour pick
             }

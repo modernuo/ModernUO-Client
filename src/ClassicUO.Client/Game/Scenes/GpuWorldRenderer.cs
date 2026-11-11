@@ -26,13 +26,14 @@ namespace ClassicUO.Game.Scenes
     /// ECS extracts (W3: <see cref="MobileAnimationSystem"/> then <see cref="MobileSpriteExtract"/>, and
     /// <see cref="ItemSpriteExtract"/>), which also reproduce what the views do besides drawing (FrameInfo, the mirror bit,
     /// lights, the aura, picking records). Effects come from <see cref="EffectSpriteExtract"/>. What is left is captured
-    /// from its view's draw calls (<see cref="ISpriteCapture"/>): statics, multi components and shadow-only draws, a mobile
-    /// without a mirror record yet, a pack without animations, and the effects the effect extract leaves to their views.
+    /// from its view's draw calls (<see cref="ISpriteCapture"/>): statics, multi components and shadow-only draws. T9 S8a
+    /// deleted the mobile, item and effect views: a mobile without a mirror record is not drawn, a pack without animation
+    /// tables draws no mobile and no corpse (not supported for play), lightning goes to the batcher, and an effect without a
+    /// state or with art the pack lacks draws nothing.
     /// </summary>
     internal sealed class GpuWorldRenderer : ISpriteCapture, IDisposable
     {
         private const int RANK_ITEM = 6;
-        private const int RANK_MOBILE = 7;
 
         private readonly IntPtr _device;
         private readonly PackSet _basePack;
@@ -42,15 +43,12 @@ namespace ClassicUO.Game.Scenes
         private SpriteInstance[] _dynamic = new SpriteInstance[4096];
         private int _dynamicCount;
         private GameObject _object;
-        private int _objectRank;
         private bool _shadowOnly;
-        private InstanceBlend _blend;
         private bool _wobble;
         private int _offsetX, _offsetY;
         private int _failedFacet = -1;
         private static readonly bool GrowOnDemand = Environment.GetEnvironmentVariable("CUO_GPU_GROW") != "0";
         private Season _landSeason = (Season)0xFF;
-        private bool _ecsSprites;
         private GameScene _scene;
 
         private GpuWorldRenderer(IntPtr device, PackSet pack)
@@ -71,21 +69,20 @@ namespace ClassicUO.Game.Scenes
         internal System.Collections.Generic.List<(GameObject Obj, Rectangle FrameInfo, bool Flipped)> ProbeViews;
 
         /// <summary>E12: a sprite the capture couldn't map (FNA draws it, or the probe drops it), as the view asked for it:
-        /// the whole request, including which draw asked (<see cref="FallbackKind"/>) and a seated draw's deformation.</summary>
+        /// the whole request, including which draw asked (<see cref="FallbackKind"/>).</summary>
         internal readonly record struct FallbackDraw(GameObject Obj, Texture2D Texture, Vector2 Position, Rectangle Source, Vector3 Hue, bool Flip,
-                                                     float Depth, SpriteCaptureMode Mode, float Rotation, InstanceBlend Blend, FallbackKind Kind, Vector3 Mod);
+                                                     float Depth, SpriteCaptureMode Mode, FallbackKind Kind);
 
-        /// <summary>E12: the draw call behind a <see cref="FallbackDraw"/>.</summary>
+        /// <summary>E12: the draw call behind a <see cref="FallbackDraw"/>. (The seated and rotated draws were the mobile and
+        /// effect views'; T9 S8a deleted them, and statics and multis draw neither.)</summary>
         internal enum FallbackKind : byte
         {
             Normal,
-            Scaled,
-            Seated
+            Scaled
         }
 
-        // E12: set around Emit by the scaled and seated draws, so a fallback records which draw asked
+        // E12: set around Emit by the scaled draw, so a fallback records which draw asked
         private FallbackKind _emitKind;
-        private Vector3 _emitMod;
 
         /// <summary>E12: while set (both passes of a check frame), unmapped sprites are recorded in <see cref="Fallbacks"/>.</summary>
         internal bool RecordFallbacks;
@@ -283,14 +280,8 @@ namespace ClassicUO.Game.Scenes
 #endif
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
-            // the extracts draw from the pack's animation tables (bodies, corpses); a pack without them leaves every
-            // mobile and item to its view's capture, as before gpu_ecs_sprites was deleted
-            _ecsSprites = _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
         }
-
-        /// <summary>Mobiles' and items' sprites come from the ECS extracts this frame, not from their views' capture.</summary>
-        public bool EcsSprites => _ecsSprites;
 
         /// <summary>GameScene's draw offset: world pixel = screen position + offset.</summary>
         public void SetOffset(int offsetX, int offsetY)
@@ -393,12 +384,9 @@ namespace ClassicUO.Game.Scenes
             _world.SetWaterWobble(_wobble, 1.1f + MathF.Sin(t) * 0.1f, 1.1f + MathF.Cos(t) * 0.5f * 0.1f);
         }
 
-        /// <summary>Every effect blend is reproduced by the world pass (Normal; Screen as additive; Multiply, ScreenLess,
-        /// NormalHalfTransparent and ShadowBlue with their own translucent pipelines; ScreenRed draws normally, as in
-        /// GameEffectView), so effects are depth-tested against the world. Sprites the capture can't map stay with FNA.</summary>
-        public static bool CanCapture(GameEffect effect) => true;
-
-        /// <summary>GameEffectView.Draw's blend state as the instance blend.</summary>
+        /// <summary>GameEffectView.Draw's blend state as the instance blend. Every effect blend is reproduced by the world pass
+        /// (Normal; Screen as additive; Multiply, ScreenLess, NormalHalfTransparent and ShadowBlue with their own translucent
+        /// pipelines; ScreenRed draws normally, as in GameEffectView), so effects are depth-tested against the world.</summary>
         internal static InstanceBlend BlendOf(GraphicEffectBlendMode blend) => blend switch
         {
             GraphicEffectBlendMode.Multiply => InstanceBlend.Multiply,
@@ -411,9 +399,10 @@ namespace ClassicUO.Game.Scenes
         };
 
         /// <summary>
-        /// T7b part 3: one effect of the effect list. An effect the extract handles is emitted from its state
-        /// (<see cref="EffectSpriteExtract"/>, <see cref="GpuEffectResolve"/>) with the view's light; lightning, effects without
-        /// a state and art the pack lacks have their view captured (<see cref="DrawObject"/>).
+        /// T7b part 3: one effect (the effect list, or the transparent list for a translucent one), emitted from its state
+        /// (<see cref="EffectSpriteExtract"/>, <see cref="GpuEffectResolve"/>) with the deleted view's light. Lightning is
+        /// drawn by the batcher (<see cref="EffectSpriteSink.DrawLightning"/>; not in the probe pass, whose batcher is
+        /// suppressed); an effect without a state or with art the pack lacks draws nothing (T9 S8a).
         /// </summary>
         public bool DrawEffect(UltimaBatcher2D batcher, GameEffect effect, float depth)
         {
@@ -423,32 +412,29 @@ namespace ClassicUO.Game.Scenes
                 GoldenCapture.Mark(effect, _dynamicCount);
             }
 #endif
-            if (EffectSpriteExtract.Handles(effect) && TryEmitEffect(effect, depth, out bool drawn))
-            {
-                return drawn;
-            }
-
-            return DrawObject(batcher, effect, depth);
-        }
-
-        // the extract's instances and light for one effect; false = left to its view (nothing emitted)
-        private bool TryEmitEffect(GameEffect effect, float depth, out bool drawn)
-        {
-            drawn = false;
-
             if (!EffectSpriteInput.Gather(effect, out EffectSpriteInput input))
             {
                 return false;
             }
 
             EffectSpriteExtract extract = EffectSpriteSink.Extract;
-            drawn = extract.Select(in input, effect.RealScreenPosition.X, effect.RealScreenPosition.Y, depth);
+            bool drawn = extract.Select(in input, effect.RealScreenPosition.X, effect.RealScreenPosition.Y, depth);
 
             if (extract.MissingArt)
             {
-                drawn = false;
+                EffectSpriteSink.NoteMissingArt(input.AnimGraphic);
 
                 return false;
+            }
+
+            if (extract.HasLightning)
+            {
+                if (!Probe)
+                {
+                    EffectSpriteSink.DrawLightning(batcher, in extract.Lightning);
+                }
+
+                return drawn;
             }
 
             if (extract.HasSprite)
@@ -462,10 +448,11 @@ namespace ClassicUO.Game.Scenes
                 _scene?.AddLight(input.Source, input.Source, extract.LightX, extract.LightY);
             }
 
-            return true;
+            return drawn;
         }
 
-        /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>
+        /// <summary>One render-list object into the dynamic sprites: mobiles, items and effects from the extracts, statics and
+        /// multi components from their views' capture (sprites the capture can't map stay with the batcher).</summary>
         public bool DrawObject(UltimaBatcher2D batcher, GameObject obj, float depth, bool shadowOnly = false)
         {
             if (Probe)
@@ -479,20 +466,25 @@ namespace ClassicUO.Game.Scenes
             }
 #endif
 
-            if (_ecsSprites && obj is Mobile m && !shadowOnly && TryDrawMobileEcs(batcher, m, depth, out bool ecsDrawn))
-            {
-                return ecsDrawn;
-            }
-
-            if (_ecsSprites && obj is Item it && !shadowOnly && ItemSpriteExtract.Handles(it))
+            // shadow-only draws are statics' (GameSceneGpuWorld's static shadows)
+            if (obj is Item it)
             {
                 return DrawItemEcs(batcher, it, depth);
             }
 
+            if (obj is Mobile m)
+            {
+                return DrawMobileEcs(batcher, m, depth);
+            }
+
+            // a translucent effect fades into the transparent list (GameScene's ProcessAlpha)
+            if (obj is GameEffect effect)
+            {
+                return DrawEffect(batcher, effect, depth);
+            }
+
             _object = obj;
             _shadowOnly = shadowOnly;
-            _objectRank = obj is Mobile ? RANK_MOBILE : RANK_ITEM;
-            _blend = obj is GameEffect effect ? BlendOf(effect.Blend) : InstanceBlend.Normal;
             batcher.Capture = this;
 
             try
@@ -572,21 +564,21 @@ namespace ClassicUO.Game.Scenes
             _dynamicCount += got.Length;
         }
 
-        private bool TryDrawMobileEcs(UltimaBatcher2D batcher, Mobile mobile, float depth, out bool drawn)
+        private bool DrawMobileEcs(UltimaBatcher2D batcher, Mobile mobile, float depth)
         {
-            drawn = false;
-
             if (mobile.IsDestroyed || !mobile.AllowedToDraw)
             {
-                return true;
+                return false;
             }
 
             World world = mobile.World;
             WorldEcs ecs = world.Ecs;
 
-            // E5 (MobileEntityLookup, shared with the Legacy sink)
+            // E5 (MobileEntityLookup, shared with the Legacy sink): no record, not drawn (T9 S8a)
             if (!MobileEntityLookup.TryGet(mobile, out Friflo.Engine.ECS.Entity e))
             {
+                LegacySpriteSink.NoteMobileWithoutRecord(mobile);
+
                 return false;
             }
 
@@ -612,7 +604,6 @@ namespace ClassicUO.Game.Scenes
             mobile.DrawAura(batcher, posX, posY, depth);
             extract.Begin(_pack, _offsetX, _offsetY);
             extract.Emit(e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
-            drawn = true;
 
             // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped
             bool mirror = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
@@ -668,7 +659,7 @@ namespace ClassicUO.Game.Scenes
 
                 int before = _dynamicCount;
                 _emitKind = FallbackKind.Scaled;
-                bool emitted = Emit(texture, position, source, hue, flip, depth, mode, 0f);
+                bool emitted = Emit(texture, position, source, hue, flip, depth, mode);
                 _emitKind = FallbackKind.Normal;
 
                 if (!emitted)
@@ -686,54 +677,23 @@ namespace ClassicUO.Game.Scenes
                 return true;
             }
 
-            return Emit(texture, position, source, hue, flip, depth, mode, 0f);
+            return Emit(texture, position, source, hue, flip, depth, mode);
         }
 
-        public bool DrawSitted(Texture2D texture, Vector2 position, Rectangle source, Vector3 mod, Vector3 hue, bool flip, float depth)
-        {
-            if (_object == null || _shadowOnly)
-            {
-                return _object != null;
-            }
+        // The seated (MobileView) and rotated (GameEffectView) draws were the deleted dynamic views'; the captured statics and
+        // multis make neither. False: the batcher draws it.
+        public bool DrawSitted(Texture2D texture, Vector2 position, Rectangle source, Vector3 mod, Vector3 hue, bool flip, float depth) => false;
 
-            int before = _dynamicCount;
-            _emitKind = FallbackKind.Seated;
-            _emitMod = mod;
-            bool emitted = Emit(texture, position, source, hue, flip, depth, SpriteCaptureMode.Normal, 0f);
-            _emitKind = FallbackKind.Normal;
-            _emitMod = default;
-
-            if (!emitted)
-            {
-                return false;
-            }
-
-            if (_dynamicCount > before)
-            {
-                SitDeform.Split(ref _dynamic, ref _dynamicCount, before, (int)MathF.Round(position.Y) + _offsetY, source.Height, mod, flip);
-            }
-
-            return true;
-        }
-
-        public bool DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth)
-        {
-            if (_object == null || _shadowOnly)
-            {
-                return _object != null;
-            }
-
-            return Emit(texture, position, source, hue, false, depth, SpriteCaptureMode.Normal, rotation);
-        }
+        public bool DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth) => false;
 
         // A sprite the world pass can't draw: false = the batcher draws it (the probe pass drops it instead).
-        private bool Fallback(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, float rotation)
+        private bool Fallback(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode)
         {
             CaptureFallbacks++;
 
             if (RecordFallbacks)
             {
-                Fallbacks.Add(new FallbackDraw(_object, texture, position, source, hue, flip, depth, mode, rotation, _blend, _emitKind, _emitMod));
+                Fallbacks.Add(new FallbackDraw(_object, texture, position, source, hue, flip, depth, mode, _emitKind));
             }
 
             if (Probe)
@@ -746,11 +706,11 @@ namespace ClassicUO.Game.Scenes
             return false;
         }
 
-        private bool Emit(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, float rotation)
+        private bool Emit(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode)
         {
             if (!PackSpriteMap.TryFind(texture, source, out uint packRef, out Point origin))
             {
-                return Fallback(texture, position, source, hue, flip, depth, mode, rotation);
+                return Fallback(texture, position, source, hue, flip, depth, mode);
             }
 
             // alpha > 1 asks IsometricWorld.fx for the circle of transparency
@@ -800,7 +760,7 @@ namespace ClassicUO.Game.Scenes
                     break;
 
                 default:
-                    return Fallback(texture, position, source, hue, flip, depth, mode, rotation);
+                    return Fallback(texture, position, source, hue, flip, depth, mode);
             }
 
             SpriteEntry sp;
@@ -855,13 +815,6 @@ namespace ClassicUO.Game.Scenes
                 x = px + dx + (fullH - dy - h) / 2;
                 y = py + (fullH + dy - h) / 2;
             }
-            else if (rotation != 0f)
-            {
-                // rotate about the untrimmed rect's top-left (Batcher2D origin 0): the trimmed quad's corner moves to R * d
-                float sn = MathF.Sin(rotation), cs = MathF.Cos(rotation);
-                x = px + (int)MathF.Round(cs * dx - sn * dy);
-                y = py + (int)MathF.Round(sn * dx + cs * dy);
-            }
             else
             {
                 x = px + dx;
@@ -879,7 +832,7 @@ namespace ClassicUO.Game.Scenes
             inst.Whf = SpriteInstance.PackWhf(w, h, flags | (flip ? SpriteInstance.FlagMirror : 0));
             inst.Uv = (uint)(sp.X + (ix0 - sp.TrimX)) | ((uint)(sp.Y + (iy0 - sp.TrimY)) << 16);
             inst.PageHue = (uint)page | (hueRow << 16);
-            inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(depth * 100f) - 50, _object.X, _objectRank);
+            inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(depth * 100f) - 50, _object.X, RANK_ITEM);
             inst.Light = 0;
             inst.Corners = palette;
             inst.Mode = hueMode;
@@ -887,16 +840,6 @@ namespace ClassicUO.Game.Scenes
             if (cot)
             {
                 inst.SetLightBits(SpriteInstance.LightCot);
-            }
-
-            if (_blend != InstanceBlend.Normal)
-            {
-                inst.Blend = _blend;
-            }
-
-            if (rotation != 0f)
-            {
-                inst.SetRotation(rotation);
             }
 
             if (alpha < 1f)

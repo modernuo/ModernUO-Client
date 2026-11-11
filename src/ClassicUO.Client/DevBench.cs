@@ -2186,7 +2186,6 @@ namespace ClassicUO
                         {
                             var chair = world.GetOrCreateItem(chairSerial);
                             chair.Graphic = Convert.ToUInt16(arg, 16);
-                            chair.Amount = 1;
                             chair.X = world.Player.X;
                             chair.Y = world.Player.Y;
                             chair.Z = world.Player.Z;

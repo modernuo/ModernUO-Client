@@ -2,6 +2,7 @@ using ClassicUO.Assets;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.UnitTests.Ecs;
 using ClassicUO.Game.Managers;
 using FluentAssertions;
 using Uo.Pack;
@@ -46,7 +47,7 @@ namespace ClassicUO.UnitTests.Game
         {
             Item item = Item.Create(new World(), 0x4000_0100);
             item.Graphic = graphic;
-            item.Amount = amount;
+            item.TestSetAmount(amount);
 
             return item;
         }

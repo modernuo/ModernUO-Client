@@ -7,6 +7,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace ClassicUO.Game.Scenes
@@ -458,7 +459,7 @@ namespace ClassicUO.Game.Scenes
             return (h ^ (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj)) * 1099511628211UL + 0x9E3779B97F4A7C15UL;
         }
 
-        /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).
+        /// <summary>GPU world: items, mobiles and corpses (extracts) and multis (their views) go to the world pass (land and statics are baked).
         /// <paramref name="cached"/>: the scene whose cached ground items join the statics list's capture.</summary>
         public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached = null)
         {
@@ -476,7 +477,7 @@ namespace ClassicUO.Game.Scenes
 
             foreach (var obj in _effects)
             {
-                if (obj.Z <= maxGroundZ && obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect) && gpu.DrawEffect(batcher, effect, obj.CalculateDepthZ()))
+                if (obj.Z <= maxGroundZ && obj is GameEffect effect && gpu.DrawEffect(batcher, effect, obj.CalculateDepthZ()))
                 {
                     result++;
                 }
@@ -485,8 +486,8 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        /// <summary>GPU world: effects (into the world pass when it can reproduce their blend, else FNA over it) and what FNA
-        /// draws over the world pass (object handles).</summary>
+        /// <summary>GPU world: effects (into the world pass; lightning through FNA over it) and what FNA draws over the world
+        /// pass (object handles).</summary>
         public int DrawDeferredRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
         {
             int result = 0;
@@ -501,12 +502,8 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                float depth = obj.CalculateDepthZ();
-                bool drawn = obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect)
-                    ? gpu.DrawEffect(batcher, effect, depth)
-                    : obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
-
-                if (drawn)
+                // the list holds GameEffects only (Add)
+                if (gpu.DrawEffect(batcher, Unsafe.As<GameEffect>(obj), obj.CalculateDepthZ()))
                 {
                     result++;
                 }
@@ -634,7 +631,7 @@ namespace ClassicUO.Game.Scenes
             return done;
         }
 
-        // the Legacy world's effect list: DrawRenderList with effects through EffectSpriteSink (the view while it is off)
+        // the Legacy world's effect list (GameEffects only: Add) through EffectSpriteSink
         private static int DrawEffectRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ)
         {
             int done = 0;
@@ -647,7 +644,7 @@ namespace ClassicUO.Game.Scenes
                     GoldenCapture.MarkLegacy(obj);
                 }
 #endif
-                if (obj.Z <= maxGroundZ && EffectSpriteSink.DrawLegacy(batcher, obj, obj.CalculateDepthZ()))
+                if (obj.Z <= maxGroundZ && EffectSpriteSink.DrawLegacy(batcher, Unsafe.As<GameEffect>(obj), obj.CalculateDepthZ()))
                 {
                     done++;
                 }
