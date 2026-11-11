@@ -76,7 +76,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
             else
             {
-                item.IsDamageable = p.Type == 3;
+                item.TestSetIsDamageable(p.Type == 3);
                 item.IsMulti = false;
                 item.Graphic = graphic;
             }
@@ -84,11 +84,11 @@ namespace ClassicUO.UnitTests.Ecs
             item.X = p.X;
             item.Y = p.Y;
             item.Z = p.Z;
-            item.LightID = (byte)p.Direction;
+            item.TestSetLightID((byte)p.Direction);
 
             if (graphic == 0x2006)
             {
-                item.Layer = (Layer)p.Direction;
+                item.TestSetLayer((Layer)p.Direction);
             }
 
             item.FixHue(p.Hue);
@@ -98,10 +98,10 @@ namespace ClassicUO.UnitTests.Ecs
                 count = 1;
             }
 
-            item.Amount = count;
+            item.TestSetAmount(count);
             item.Flags = p.Flags;
             item.Direction = p.Direction;
-            item.CheckGraphicChange(item.AnimIndex);
+            OldItemCheckGraphicChange(item);
 
             beforePlacement?.Invoke(item);
 
@@ -211,7 +211,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Item it = world.GetOrCreateItem(ITEM);
                 it.Graphic = start == Start.GroundCorpse ? (ushort)0x2006 : (ushort)0x1515;
                 it.Hue = 0x21;
-                it.Amount = 3;
+                it.TestSetAmount(3);
 
                 switch (start)
                 {
@@ -224,10 +224,10 @@ namespace ClassicUO.UnitTests.Ecs
                     case Start.InBag:
                         // a sibling before ITEM, so the child-list order is visible
                         Item sibling = world.GetOrCreateItem(0x4000_7009);
-                        sibling.Container = BAG;
+                        sibling.TestSetContainer(BAG);
                         bag.PushToBack(sibling);
                         world.Ecs.Sync(sibling);
-                        it.Container = BAG;
+                        it.TestSetContainer(BAG);
                         it.X = 40;
                         it.Y = 50;
                         bag.PushToBack(it);
@@ -236,8 +236,8 @@ namespace ClassicUO.UnitTests.Ecs
                         break;
 
                     case Start.Worn:
-                        it.Container = MOB;
-                        it.Layer = Layer.Shirt;
+                        it.TestSetContainer(MOB);
+                        it.TestSetLayer(Layer.Shirt);
                         m.PushToBack(it);
                         world.Ecs.Sync(it);
 
@@ -247,12 +247,12 @@ namespace ClassicUO.UnitTests.Ecs
                 // contents inside ITEM, two levels, so a removal has a subtree to remove
                 Item child = world.GetOrCreateItem(CHILD);
                 child.Graphic = 0xF7A;
-                child.Container = ITEM;
+                child.TestSetContainer(ITEM);
                 it.PushToBack(child);
                 world.Ecs.Sync(child);
                 Item grandchild = world.GetOrCreateItem(GRANDCHILD);
                 grandchild.Graphic = 0xF7B;
-                grandchild.Container = CHILD;
+                grandchild.TestSetContainer(CHILD);
                 child.PushToBack(grandchild);
                 world.Ecs.Sync(grandchild);
             }
@@ -345,7 +345,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             OldUpsert(oldWorld, p, it =>
             {
-                OracleTraits.Sync(oldWorld); // the old path wrote the small fields' caches only
                 seenOld = Snapshot(oldWorld, it);
             });
             NewUpsert(newWorld, p, out _, it =>
@@ -812,7 +811,6 @@ namespace ClassicUO.UnitTests.Ecs
             NewUpsert(newWorld, p, out created);
             created.Should().BeFalse();
 
-            OracleTraits.Sync(oldWorld);
             AssertSameItem(oldWorld.Items.Get(MSERIAL), newWorld.Items.Get(MSERIAL));
             AssertSameWorld(oldWorld, newWorld);
         }
@@ -920,8 +918,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             item = world.GetOrCreateItem(serial);
             item.Graphic = graphic;
-            item.CheckGraphicChange();
-            item.Amount = amount;
+            OldItemCheckGraphicChange(item);
+            item.TestSetAmount(amount);
             item.FixHue(hue);
             item.X = x;
             item.Y = y;
@@ -930,7 +928,7 @@ namespace ClassicUO.UnitTests.Ecs
             if (item.Container != containerSerial)
             {
                 LegacyLists.RemoveItemFromContainer(world, item);
-                item.Container = containerSerial;
+                item.TestSetContainer(containerSerial);
             }
 
             container.PushToBack(item);
@@ -947,7 +945,7 @@ namespace ClassicUO.UnitTests.Ecs
             box.Graphic = 0x2006;
             box.SetInWorldTile(1003, 1000, 0);
             Item inside = world.GetOrCreateItem(0x4000_7021);
-            inside.Container = CORPSEBOX;
+            inside.TestSetContainer(CORPSEBOX);
             box.PushToBack(inside);
             world.Ecs.Sync(inside);
             AttachLists(world);
@@ -1155,7 +1153,6 @@ namespace ClassicUO.UnitTests.Ecs
         private static void AssertSameWorld(World a, World b, bool equipmentIndexOrder = true)
         {
             // the old path writes the small fields' caches only: its records take them before the comparison
-            OracleTraits.Sync(a);
             a.Items.Count.Should().Be(b.Items.Count);
             b.Mobiles.Count.Should().Be(a.Mobiles.Count);
             (b.Mobiles.Get(MOB) == null).Should().Be(a.Mobiles.Get(MOB) == null, "the mobile exists in both or neither");
@@ -1300,8 +1297,8 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Item k = world.GetOrCreateItem(serial);
                 k.Graphic = 0x1515;
-                k.Layer = Layer.Shirt;
-                k.Container = CORPSEBOX;
+                k.TestSetLayer(Layer.Shirt);
+                k.TestSetContainer(CORPSEBOX);
 
                 if (first)
                 {
@@ -1364,7 +1361,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static WorldWriter.Placement PendingIn(World world, uint serial, uint parent)
         {
             Item it = world.Writer.UpsertWorldItem(serial, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
-            it.Container = parent;
+            it.TestSetContainer(parent);
             world.Get(parent).PushToBack(it);
             AttachLists(world);
 
@@ -1444,7 +1441,7 @@ namespace ClassicUO.UnitTests.Ecs
                 twin.Graphic = 0xE75;
                 Item inner = w.GetOrCreateItem(0x4000_7061, out _);
                 inner.Graphic = 0xF7C;
-                inner.Container = MOB;
+                inner.TestSetContainer(MOB);
                 twin.PushToBack(inner);
                 AttachLists(w);
 
@@ -1534,13 +1531,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             item.Graphic = h.Graphic;
             item.Hue = h.Hue;
-            item.Amount = h.Amount;
+            item.TestSetAmount(h.Amount);
             item.Flags = h.Flags;
-            item.Layer = h.Layer;
+            item.TestSetLayer(h.Layer);
             item.X = h.X;
             item.Y = h.Y;
             item.Z = h.Z;
-            item.CheckGraphicChange();
+            OldItemCheckGraphicChange(item);
 
             Entity container = world.Get(h.Container);
 
@@ -1550,7 +1547,7 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     LegacyLists.RemoveItemFromContainer(world, item);
                     container.PushToBack(item);
-                    item.Container = container.Serial;
+                    item.TestSetContainer(container.Serial);
                     world.Ecs.Sync(item);
                 }
                 else
@@ -1609,8 +1606,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item before = world.GetOrCreateItem(WORN_BEFORE);
             before.Graphic = 0x1F7B;
-            before.Layer = Layer.Pants;
-            before.Container = MOB;
+            before.TestSetLayer(Layer.Pants);
+            before.TestSetContainer(MOB);
 
             if (worn)
             {
@@ -1628,8 +1625,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item after = world.GetOrCreateItem(WORN_AFTER);
             after.Graphic = 0x1F7C;
-            after.Layer = Layer.Helmet;
-            after.Container = MOB;
+            after.TestSetLayer(Layer.Helmet);
+            after.TestSetContainer(MOB);
             m.PushToBack(after);
             world.Ecs.Sync(after);
             AttachLists(world);
@@ -1730,7 +1727,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 if (item.Serial == ITEM)
                 {
-                    item.Container = v.Container;
+                    item.TestSetContainer(v.Container);
                 }
             };
 
@@ -1836,10 +1833,10 @@ namespace ClassicUO.UnitTests.Ecs
             shown = item.Container;
 
             item.Graphic = e.Graphic;
-            item.Layer = e.Layer;
-            item.Container = e.Container;
+            item.TestSetLayer(e.Layer);
+            item.TestSetContainer(e.Container);
             item.FixHue(e.Hue);
-            item.Amount = 1;
+            item.TestSetAmount(1);
 
             // the old handler's lookup was the tables' (GetHeld): World.Get (the index) after the Sync above would
             // find this item when it was created under the wearer's mobile serial, and push it into itself
@@ -1907,7 +1904,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (packLayer)
                 {
-                    it.Layer = Layer.Backpack;
+                    it.TestSetLayer(Layer.Backpack);
                     world.Ecs.Sync(it);
                 }
             }
@@ -1978,7 +1975,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Equip(ITEM, 0x1517, Layer.Shirt, MOB, 0x22, out Entity wearer, out uint shown);
             world.Ecs.CommitObserver = null;
 
-            seen.Should().Equal((0xFFFF_FFFFu, (ushort)0x1515, (ushort)3, BAG, (ushort)0x1515), (MOB, (ushort)0x1517, (ushort)1, BAG, (ushort)0x1515));
+            // (T9 S5: the getter is the record, so the final commit sees the detached one's Container)
+            seen.Should().Equal((0xFFFF_FFFFu, (ushort)0x1515, (ushort)3, BAG, (ushort)0x1515), (MOB, (ushort)0x1517, (ushort)1, 0xFFFF_FFFFu, (ushort)0x1515));
             wearer.Should().BeSameAs(world.Mobiles.Get(MOB));
             shown.Should().Be(0xFFFF_FFFFu);
             world.Items.Get(ITEM).Container.Should().Be(MOB);
@@ -1986,6 +1984,28 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         // UpdateObject's equipment part before T1: the clear of the unopened non-backpack children, then each entry
+        // Item.CheckGraphicChange before T9 S5 (its corpse branch went: WorldWriter's item operations compute it), with the
+        // record writes that stand for the old cache writes
+        internal static void OldItemCheckGraphicChange(Item item)
+        {
+            if (!item.IsMulti && item.IsCorpse)
+            {
+                Direction dir = item.Direction;
+                Item.CorpseState(ref dir, out bool usedLayer, out Layer layer);
+                item.AnimIndex = 99;
+                item.TestSetUsedLayer(usedLayer);
+
+                if (usedLayer)
+                {
+                    item.Direction = dir;
+                }
+
+                item.TestSetLayer(layer);
+            }
+
+            item.RefreshGraphicState();
+        }
+
         internal static void OldWear(World world, uint serial, (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[] entries)
         {
             // the tables' lookup, as the old handler's World.Get (before world_entity_index)
@@ -2019,12 +2039,12 @@ namespace ClassicUO.UnitTests.Ecs
                 Item item = world.GetOrCreateItem(e.Serial);
                 item.Graphic = e.Graphic;
                 item.FixHue(e.Hue);
-                item.Amount = 1;
+                item.TestSetAmount(1);
                 LegacyLists.RemoveItemFromContainer(world, item);
-                item.Container = serial;
-                item.Layer = e.Layer;
+                item.TestSetContainer(serial);
+                item.TestSetLayer(e.Layer);
 
-                item.CheckGraphicChange();
+                OldItemCheckGraphicChange(item);
 
                 obj.PushToBack(item);
                 world.Ecs.Sync(item);
@@ -2104,8 +2124,8 @@ namespace ClassicUO.UnitTests.Ecs
                 Mobile m = world.Mobiles.Get(MOB);
                 Item pack = world.GetOrCreateItem(PACK);
                 pack.Graphic = 0x0E75;
-                pack.Layer = Layer.Backpack;
-                pack.Container = MOB;
+                pack.TestSetLayer(Layer.Backpack);
+                pack.TestSetContainer(MOB);
                 m.PushToBack(pack);
                 world.Ecs.Sync(pack);
                 world.Items.Get(WORN_AFTER).Opened = true;
@@ -2315,7 +2335,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             seen.Should().Equal(
                 (0xFFFF_FFFFu, (ushort)0x2006, Layer.Shirt, Direction.Running | Direction.West, MOB, (ushort)0x1515, Layer.Shirt),
-                (MOB, (ushort)0x2006, (Layer)Direction.West, Direction.West, MOB, (ushort)0x2006, Layer.Shirt)); // the graphic is written before the unlink, as before T1
+                (MOB, (ushort)0x2006, (Layer)Direction.West, Direction.West, 0xFFFF_FFFFu, (ushort)0x2006, Layer.Shirt)); // the graphic is written before the unlink, as before T1; the Container is the detached record's (T9 S5)
             Item it = world.Items.Get(ITEM);
             (it.Layer, it.Direction, it.UsedLayer, it.AnimIndex).Should().Be(((Layer)Direction.West, Direction.West, true, (byte)99));
         }
@@ -2453,13 +2473,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             it.Graphic = 1;
             it.Hue = 2;
-            it.Amount = 3;
+            it.Flags = ClassicUO.Game.Data.Flags.Hidden;
             m.X = 4;
             m.NotorietyFlag = NotorietyFlag.Ally;
 
             FunnelCheck.Count(FunnelField.Graphic).Should().Be(1);
             FunnelCheck.Count(FunnelField.Hue).Should().Be(1);
-            FunnelCheck.Count(FunnelField.Amount).Should().Be(1);
+            FunnelCheck.Count(FunnelField.Flags).Should().Be(1);
             FunnelCheck.Count(FunnelField.X).Should().Be(1);
             FunnelCheck.Count(FunnelField.NotorietyFlag).Should().Be(1);
             FunnelCheck.Total.Should().Be(5);
@@ -2594,11 +2614,11 @@ namespace ClassicUO.UnitTests.Ecs
             var world = new World();
             Item bag = world.GetOrCreateItem(0x4000_7101);
             Item it = world.GetOrCreateItem(ITEM);
-            it.Container = bag.Serial;
+            it.TestSetContainer(bag.Serial);
             bag.PushToBack(it);
             world.Ecs.Sync(it);
             Item child = world.GetOrCreateItem(0x4000_7103);
-            child.Container = ITEM;
+            child.TestSetContainer(ITEM);
             it.PushToBack(child);
             world.Ecs.Sync(child);
             WorldWriterTests.AttachLists(world);
@@ -2631,16 +2651,16 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.GetOrCreateMobile(0x0000_3100);
             Item bag = world.GetOrCreateItem(0x4000_7101);
             Item it = world.GetOrCreateItem(ITEM);
-            it.Container = bag.Serial;
+            it.TestSetContainer(bag.Serial);
             bag.PushToBack(it);
             world.Ecs.Sync(it);
             Item child = world.GetOrCreateItem(0x4000_7103);
-            child.Container = ITEM;
+            child.TestSetContainer(ITEM);
             it.PushToBack(child);
             world.Ecs.Sync(child);
             Item worn = world.GetOrCreateItem(0x4000_7104);
-            worn.Container = m.Serial;
-            worn.Layer = Layer.Shirt;
+            worn.TestSetContainer(m.Serial);
+            worn.TestSetLayer(Layer.Shirt);
             m.PushToBack(worn);
             world.Ecs.Sync(worn);
             WorldWriterTests.AttachLists(world);
@@ -2660,10 +2680,10 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Total.Should().Be(0, "the terrain branch");
             Item box = world.GetOrCreateItem(0x4000_7105);
             Item held = world.GetOrCreateItem(0x4000_7106);
-            held.Container = box.Serial;
+            held.TestSetContainer(box.Serial);
             box.PushToBack(held);
             Item inner = world.GetOrCreateItem(0x4000_7107);
-            inner.Container = held.Serial;
+            inner.TestSetContainer(held.Serial);
             held.PushToBack(inner);
             WorldWriterTests.AttachLists(world);
             FunnelCheck.Reset();
@@ -2685,12 +2705,12 @@ namespace ClassicUO.UnitTests.Ecs
             Item bag = world.GetOrCreateItem(0x4000_7101);
             Item worn = world.GetOrCreateItem(0x4000_7104);
             worn.Graphic = 0x1515;
-            worn.Container = m.Serial;
-            worn.Layer = Layer.Shirt;
+            worn.TestSetContainer(m.Serial);
+            worn.TestSetLayer(Layer.Shirt);
             m.PushToBack(worn);
             world.Ecs.Sync(worn);
             Item child = world.GetOrCreateItem(0x4000_7103);
-            child.Container = worn.Serial;
+            child.TestSetContainer(worn.Serial);
             worn.PushToBack(child);
             world.Ecs.Sync(child);
             WorldWriterTests.AttachLists(world);
@@ -2731,7 +2751,7 @@ namespace ClassicUO.UnitTests.Ecs
             preview.X = 1;
             Mobile fake = Mobile.Create(world, 0x0000_3200);
             fake.Graphic = 0x190;
-            fake.IsFemale = true;
+            fake.TestSetIsFemale(true);
 
             // a stale instance whose serial World now holds with another object
             Item stale = Item.Create(world, ITEM);

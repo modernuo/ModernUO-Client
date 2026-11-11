@@ -126,14 +126,13 @@ namespace ClassicUO.UnitTests.Ecs
             Check(world).Should().BeEmpty();
         }
 
-        public enum Divergence { ItemPercentage, MobilePercentage, Notoriety, ItemLayer, WornLayer }
+        // T9 S5: the item and worn layer cases went (the Layer is the record's only, so it cannot diverge from it)
+        public enum Divergence { ItemPercentage, MobilePercentage, Notoriety }
 
         [Theory]
         [InlineData(Divergence.ItemPercentage, "item 0x40007903 v2")]
         [InlineData(Divergence.MobilePercentage, "mobile 0x00003900 v2")]
         [InlineData(Divergence.Notoriety, "mobile 0x00003901 v2")]
-        [InlineData(Divergence.ItemLayer, "item 0x40007901 v2")]
-        [InlineData(Divergence.WornLayer, "item 0x40007905")]
         public void A_Deliberate_Mismatch_Is_Reported(Divergence d, string expected)
         {
             World world = BuildFunnelWorld();
@@ -146,8 +145,6 @@ namespace ClassicUO.UnitTests.Ecs
                 case Divergence.ItemPercentage: world.Items.Get(C).UpdateHits(3); break;
                 case Divergence.MobilePercentage: world.Mobiles.Get(MOB).UpdateHits(61); break;
                 case Divergence.Notoriety: world.Mobiles.Get(VENDOR).NotorietyFlag = NotorietyFlag.Innocent; break;
-                case Divergence.ItemLayer: world.Items.Get(A).Layer = Layer.Talisman; break;
-                case Divergence.WornLayer: world.Items.Get(HELM).Layer = Layer.Earrings; break;
             }
 
             List<string> reported = Check(world);
@@ -261,7 +258,7 @@ namespace ClassicUO.UnitTests.Ecs
             // the old Sync path: another parent's Container without a link (as an orphan): detached
             Item b = world.Items.Get(B);
             world.RemoveItemFromContainer(b);
-            b.Container = CORPSE;
+            b.TestSetContainer(CORPSE);
             world.Ecs.Sync(b);
             world.Ecs.Mirror.TryGetExtras(B, out x).Should().BeTrue();
             x.ChildStamp.Should().Be(0UL);
@@ -269,13 +266,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             // straight from one container to another, and from one wearer to another (no ground state in between): detached
             Item c = world.Items.Get(C);
-            c.Container = CORPSE;
+            c.TestSetContainer(CORPSE);
             world.Ecs.Sync(c);
             world.Ecs.Mirror.TryGetExtras(C, out x).Should().BeTrue();
             x.ChildStamp.Should().Be(0UL);
 
             Item helm = world.Items.Get(HELM);
-            helm.Container = VENDOR;
+            helm.TestSetContainer(VENDOR);
             world.Ecs.Sync(helm);
             world.Ecs.Mirror.TryGetExtras(HELM, out x).Should().BeTrue();
             x.ChildStamp.Should().Be(0UL);

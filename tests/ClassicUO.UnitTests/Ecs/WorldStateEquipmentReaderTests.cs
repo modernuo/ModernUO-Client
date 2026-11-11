@@ -180,7 +180,7 @@ namespace ClassicUO.UnitTests.Ecs
             var preview = new Mobile(world, 1); // (the gump makes a PlayerMobile, which needs the client loaded; the read is Mobile's)
             Item shirt = Item.Create(world, PREVIEW_SHIRT);
             shirt.Graphic = 0x1517;
-            shirt.Layer = Layer.Shirt;
+            shirt.TestSetLayer(Layer.Shirt);
             preview.Preview = new PreviewEquipment();
             preview.Preview.Wear(shirt);
 

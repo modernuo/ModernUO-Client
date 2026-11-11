@@ -56,6 +56,23 @@ namespace ClassicUO.Game.GameObjects
             return EcsEntityHeld && EcsEntitySerial == _serial && EcsEntityEpoch == World.Ecs.Mirror.Epoch && !IsDestroyed || FindScalarEntity(out e);
         }
 
+        /// <summary>
+        /// T9 S5: the record the record-only getters read: <see cref="TryScalarEntity"/>'s world record or, for a detached
+        /// preview object (the character-creation and race-change gumps'), its preview record (<c>WorldEcs.Previews</c>).
+        /// Only the getters use it: the systems and extracts that call <see cref="TryScalarEntity"/> stay world-only.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool TryRecord(out Friflo.Engine.ECS.Entity e) => TryScalarEntity(out e) || FindPreviewRecord(out e);
+
+        // previews are rare: no handle caching (the preview mirror has its own epoch)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool FindPreviewRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            return !IsDestroyed && World?.Ecs != null && World.Ecs.TryGetPreviewRecord(this, out e);
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool FindScalarEntity(out Friflo.Engine.ECS.Entity e)
         {

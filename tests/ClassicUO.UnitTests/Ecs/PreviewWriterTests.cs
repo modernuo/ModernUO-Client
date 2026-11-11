@@ -33,8 +33,8 @@ namespace ClassicUO.UnitTests.Ecs
         // CreateCharAppearanceGump.CreateCharacter's body writes before S4 (the switch's graphic per race and sex)
         private static void OldBody(Mobile m, RaceType race, bool female)
         {
-            m.Race = race;
-            m.IsFemale = female;
+            m.TestSetRace(race);
+            m.TestSetIsFemale(female);
 
             if (female)
             {
@@ -61,11 +61,11 @@ namespace ClassicUO.UnitTests.Ecs
             Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
             item.Graphic = graphic;
             item.Hue = hue;
-            item.Layer = layer;
+            item.TestSetLayer(layer);
 
             if (wearer != null)
             {
-                item.Container = wearer;
+                item.TestSetContainer(wearer);
             }
 
             return item;

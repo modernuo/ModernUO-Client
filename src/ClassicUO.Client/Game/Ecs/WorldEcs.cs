@@ -60,7 +60,13 @@ namespace ClassicUO.Game
 
         public int Checks => _checks;
 
-        public void Sync(Entity entity)
+        public void Sync(Entity entity) => Sync(entity, false);
+
+        /// <summary>
+        /// <see cref="Sync(Entity)"/>; <paramref name="detach"/> (T9 S5, <c>World.RemoveItemFromContainer</c>): an item's
+        /// record is written without a container (the Container's only copy is the record).
+        /// </summary>
+        public void Sync(Entity entity, bool detach)
         {
             if (entity == null || entity.IsDestroyed)
             {
@@ -75,7 +81,7 @@ namespace ClassicUO.Game
                     return;
                 }
 
-                SyncItem(item);
+                SyncItem(item, detach ? WorldMirror.NO_CONTAINER : item.Container);
             }
             else if (entity is Mobile mobile)
             {
@@ -261,14 +267,10 @@ namespace ClassicUO.Game
         /// </summary>
         private void RestoreScalars(Entity entity, uint epochBefore, int countBefore)
         {
-            // ecs_small_fields: a record the upsert created (or that replaced the other kind's) starts from the instance's
-            // small fields. While the Item and Mobile keep them as caches they hold the values the funnel last wrote: a mobile
-            // re-held after being detached (the detached player) or a record re-created keeps them, as the GameObject does
-            if (Mirror.Count != countBefore || Mirror.Epoch != epochBefore)
-            {
-                SeedTraits(entity);
-            }
-
+            // T9 S5: a record the upsert created (or that replaced the other kind's) starts without traits: the record is
+            // their only copy (the small-field caches and their seed are gone). A live instance's record is re-created only
+            // after a misconfigured server's shared serial or 0x25 under the player's serial (the detached player); the
+            // values come back with the server's next packet for them, as the cold fields do
             if (ItemAnimTimerEnabled && entity is Item corpse)
             {
                 PushItemTimer(corpse);
@@ -393,24 +395,6 @@ namespace ClassicUO.Game
             }
         }
 
-        /// <summary>Tests: the records <see cref="SeedTraits"/> wrote.</summary>
-        internal long TraitSeeds;
-
-        private void SeedTraits(Entity entity)
-        {
-            bool written = entity switch
-            {
-                Item item => Mirror.SetItemTraits(item.Serial, item.CachedTraits),
-                Mobile mobile => Mirror.SetMobileTraits(mobile.Serial, mobile.CachedTraits),
-                _ => false
-            };
-
-            if (written)
-            {
-                TraitSeeds++;
-            }
-        }
-
         /// <summary>
         /// T1 part 9: the item went to the back of its parent's child list in a re-order that writes no record (the vendor
         /// sort's re-stamp; an operation that also commits the item stamps with <see cref="CommitItem"/>'s attach).
@@ -452,7 +436,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private void SyncItem(Item item)
+        private void SyncItem(Item item, uint container)
         {
             // Only the instance World currently holds for this serial; stale or detached objects are ignored.
             if (!_world.Holds(item))
@@ -474,7 +458,7 @@ namespace ClassicUO.Game
                 (byte)item.Direction,
                 (byte)item.Flags,
                 item.Amount,
-                item.Container,
+                container,
                 (byte)item.Layer,
                 item.IsMulti,
                 handle: item
@@ -866,11 +850,12 @@ namespace ClassicUO.Game
                 Mirror.TryGetExtras(oldSerial, out extras);
             }
 
-            // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) the
-            // traits come from the caches, which WorldWriter keeps paired with the record (ecs_small_fields)
+            // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) no
+            // item record's values go with the mobile. T9 S5: the record was the traits' only copy, so they are lost there,
+            // as the cold fields are (only a misconfigured server shares a serial between an item and a mobile)
             if (foreign || !Mirror.TryGetEntity(oldSerial, true, out _))
             {
-                extras.MobileTraits = mobile.CachedTraits;
+                extras.MobileTraits = default;
             }
 
             // T8 ownership: effects on the old record are gone with it, then follow the mobile to the new record
@@ -1047,9 +1032,6 @@ namespace ClassicUO.Game
 
             // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
             ScalarReads.EndFrame();
-
-            // ecs_small_fields: CUO_SMALL_FIELDS_CHECK's 5 s summary
-            SmallFields.LogSummary(_world);
 
 #if CUO_DEVTOOLS
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)

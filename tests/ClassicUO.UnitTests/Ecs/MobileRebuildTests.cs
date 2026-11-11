@@ -567,7 +567,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             var owner = new Mobile(world, MOBILE);
-            var mount = new Item(world) { Serial = 0x4000_0001, Graphic = MOUNT, Layer = Layer.Mount };
+            var mount = new Item(world) { Serial = 0x4000_0001, Graphic = MOUNT };
+            mount.TestSetLayer(Layer.Mount);
             owner.Preview = new PreviewEquipment();
             owner.Preview.Wear(mount);
 
@@ -595,13 +596,15 @@ namespace ClassicUO.UnitTests.Ecs
 
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse("no mount item");
 
-            var tiller = new Item(world) { Serial = 0x4000_0001, Graphic = TILLER, Layer = Layer.Mount };
+            var tiller = new Item(world) { Serial = 0x4000_0001, Graphic = TILLER };
+            tiller.TestSetLayer(Layer.Mount);
             m.Preview = new PreviewEquipment();
             m.Preview.Wear(tiller);
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse("a boat's tiller");
 
             var m2 = new Mobile(world, MOBILE + 1);
-            var horse = new Item(world) { Serial = 0x4000_0002, Graphic = MOUNT, Layer = Layer.Mount };
+            var horse = new Item(world) { Serial = 0x4000_0002, Graphic = MOUNT };
+            horse.TestSetLayer(Layer.Mount);
             m2.Preview = new PreviewEquipment();
             m2.Preview.Wear(horse);
             MobileAnimationSystem.IsMounted(m2, _tiles).Should().BeTrue();
@@ -624,7 +627,9 @@ namespace ClassicUO.UnitTests.Ecs
             var world = new World();
             var m = new Mobile(world, MOBILE);
             m.Preview = new PreviewEquipment();
-            m.Preview.Wear(new Item(world) { Serial = 0, Graphic = MOUNT, Layer = Layer.Mount });
+            var zero = new Item(world) { Serial = 0, Graphic = MOUNT };
+            zero.TestSetLayer(Layer.Mount);
+            m.Preview.Wear(zero);
 
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse();
 

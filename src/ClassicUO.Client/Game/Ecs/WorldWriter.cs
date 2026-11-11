@@ -437,10 +437,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.Damageable, type == 3);
                 }
 
-                if (unlink)
-                {
-                    item.Container = v.Container;
-                }
 
                 if (multi)
                 {
@@ -450,7 +446,6 @@ namespace ClassicUO.Game
                 }
                 else
                 {
-                    item.IsDamageable = type == 3;
                     item.IsMulti = false;
                     item.Graphic = v.Graphic;
                 }
@@ -458,15 +453,9 @@ namespace ClassicUO.Game
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
-                item.LightID = (byte)direction;
 
-                if (graphic == 0x2006 || corpse)
-                {
-                    item.Layer = v.Layer;
-                }
 
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
                 item.Flags = v.Flags;
                 item.Direction = v.Direction;
 
@@ -474,7 +463,6 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
                 }
@@ -701,18 +689,15 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
                     item.Direction = v.Direction;
-                    item.Layer = v.Layer;
                 }
 
                 // 4. derived state where the old CheckGraphicChange ran it: before the amount, hue and position writes (a
                 // multi's load sees the old position, as before T1; for every other item it reads Graphic only)
                 item.RefreshGraphicState();
 
-                item.Amount = v.Amount;
                 item.Hue = v.Hue;
                 item.X = v.X;
                 item.Y = v.Y;
@@ -722,7 +707,6 @@ namespace ClassicUO.Game
                 {
                     // the old parent's gump and the tile; the Container is written from v
                     _world.UnlinkFromContainer(item, oldContainer);
-                    item.Container = v.Container;
                 }
             }
 
@@ -939,9 +923,7 @@ namespace ClassicUO.Game
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
                 item.Flags = v.Flags;
-                item.Layer = layer;
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
@@ -950,11 +932,9 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
                     item.Direction = v.Direction;
-                    item.Layer = v.Layer;
                 }
 
                 // 4. derived state where CheckGraphicChange ran it
@@ -965,7 +945,6 @@ namespace ClassicUO.Game
                 {
                     case HeldItemReturn.Paperdoll:
                         _world.UnlinkFromContainer(item, oldContainer);
-                        item.Container = v.Container;
 
                         break;
 
@@ -976,10 +955,6 @@ namespace ClassicUO.Game
                         // serial (GetOrCreateItem above), as World.RemoveItem(serial) required
                         _world.UnlinkFromContainer(item, oldContainer);
 
-                        if (oldContainer != v.Container)
-                        {
-                            item.Container = v.Container;
-                        }
 
                         _world.RemoveDetachedItem(item, true);
 
@@ -988,10 +963,6 @@ namespace ClassicUO.Game
                     default:
                         _world.UnlinkFromContainer(item, oldContainer);
 
-                        if (oldContainer != v.Container)
-                        {
-                            item.Container = v.Container;
-                        }
 
                         item.SetInWorldTile(v.X, v.Y, v.Z);
 
@@ -1083,10 +1054,7 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
                 item.Graphic = v.Graphic;
-                item.Layer = v.Layer;
-                item.Container = v.Container;
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
             }
 
             return item;
@@ -1240,19 +1208,15 @@ namespace ClassicUO.Game
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
 
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
-                item.Container = v.Container;
-                item.Layer = layer;
 
                 if (corpse)
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
 
@@ -1261,7 +1225,6 @@ namespace ClassicUO.Game
                         item.Direction = v.Direction;
                     }
 
-                    item.Layer = v.Layer;
                 }
 
                 // 4. derived state where CheckGraphicChange ran it
@@ -1462,8 +1425,6 @@ namespace ClassicUO.Game
                     {
                         _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
                         _world.Ecs.CommitRace(mobile, race);
-                        mobile.IsFemale = isFemale;
-                        mobile.Race = race;
                     }
                 }
 
@@ -1630,8 +1591,6 @@ namespace ClassicUO.Game
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
                     _world.Ecs.CommitRace(mobile, race);
-                    mobile.IsFemale = isFemale;
-                    mobile.Race = race;
                 }
 
                 if (setDirection)
@@ -1735,8 +1694,6 @@ namespace ClassicUO.Game
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
                     _world.Ecs.CommitRace(mobile, race);
-                    mobile.IsFemale = isFemale;
-                    mobile.Race = race;
                 }
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -2115,12 +2072,10 @@ namespace ClassicUO.Game
             using (Open(mobile, detached ? null : mobile))
             {
                 _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Renamable, renamable); // ecs_small_fields
-                mobile.IsRenamable = renamable;
 
                 if (setFemale)
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, female);
-                    mobile.IsFemale = female;
                     _world.Ecs.CommitMobileInputs(mobile);
                 }
             }
@@ -2175,7 +2130,6 @@ namespace ClassicUO.Game
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitRace(mobile, race); // ecs_small_fields
-                mobile.Race = race;
             }
         }
 
@@ -2677,8 +2631,6 @@ namespace ClassicUO.Game
                             Item spellItem = Item.Create(_world, cc);
                             spellItem.Serial = cc;
                             spellItem.Graphic = 0x1F2E;
-                            spellItem.Amount = cc;
-                            spellItem.Container = spellbook;
                             _spellEntries.Add(spellItem);
                         }
                     }
@@ -2797,7 +2749,6 @@ namespace ClassicUO.Game
             using (Open(mobile, detached ? null : mobile))
             {
                 _world.Ecs.CommitSpeedMode(mobile, mode); // ecs_small_fields
-                mobile.SpeedMode = mode;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
         }
@@ -2825,7 +2776,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.WarMode, warMode);
                 }
 
-                mobile.InWarMode = warMode;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
         }
@@ -2916,8 +2866,6 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitItem(item, in detached);
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
-                item.Container = v.Container;
-                item.Layer = v.Layer;
             }
 
             return item;
@@ -3054,17 +3002,8 @@ namespace ClassicUO.Game
                     }
                 }
 
-                // then the cache, in the old order
+                // then the table, in the old order (the children's Container is the record's: T9 S5)
                 _world.Mobiles.Remove(oldSerial);
-
-                for (int ci = 0; ci < _rekeyChildren.Count; ci++)
-                {
-                    if (_rekeyChildren[ci] is Item child)
-                    {
-                        child.Container = serial;
-                    }
-                }
-
                 _rekeyChildren.Clear();
 
                 _world.Mobiles[serial] = mobile;
@@ -3475,8 +3414,8 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// The character-creation and race-change gumps' preview mobile: its body, race and sex (the gump's sex and race
-        /// buttons). The record in <see cref="WorldEcs.Previews"/> first, then the cache: Race, IsFemale, the Female flag and
-        /// Graphic, as the gumps wrote them before (the hue is <see cref="SetPreviewHue"/>'s). The mobile must be detached
+        /// buttons). The record in <see cref="WorldEcs.Previews"/> first (Race and IsFemale live only there: T9 S5), then the
+        /// cache: the Female flag and Graphic, as the gumps wrote them before (the hue is <see cref="SetPreviewHue"/>'s). The mobile must be detached
         /// (a World object is rejected as <see cref="Violation.NotDetached"/>; nothing changes). <paramref name="owner"/> is the
         /// gump: <see cref="WorldEcs.ReleasePreviews"/> releases the records of what it committed when it closes.
         /// </summary>
@@ -3497,15 +3436,13 @@ namespace ClassicUO.Game
             v.Direction = mobile.Direction;
             v.Flags = female ? mobile.Flags | Flags.Female : mobile.Flags & ~Flags.Female;
             v.IsPlayer = false;
-            ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
+            ClassicUO.Ecs.MobileTraits traits = RecordTraits(mobile);
             traits.Race = (byte)race;
             traits.Bits = female ? traits.Bits | ClassicUO.Ecs.MobileTraitBits.Female : traits.Bits & ~ClassicUO.Ecs.MobileTraitBits.Female;
 
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
-                mobile.Race = race;
-                mobile.IsFemale = female;
                 mobile.Flags = v.Flags;
                 mobile.Graphic = graphic;
             }
@@ -3543,8 +3480,6 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitPreviewItem(owner, item, in v);
                 item.Graphic = graphic;
                 item.Hue = hue;
-                item.Layer = layer;
-                item.Container = container;
             }
         }
 
@@ -3590,13 +3525,17 @@ namespace ClassicUO.Game
                     v.Direction = mobile.Direction;
                     v.Flags = mobile.Flags;
                     v.IsPlayer = false;
-                    ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
+                    ClassicUO.Ecs.MobileTraits traits = RecordTraits(mobile);
                     _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
                 }
 
                 entity.Hue = hue;
             }
         }
+
+        // T9 S5: the traits the preview's record holds (the record is their only copy); none before its first commit
+        private static ClassicUO.Ecs.MobileTraits RecordTraits(Mobile mobile) =>
+            mobile.TryRecord(out EcsEntity e) && ClassicUO.Ecs.EcsRead.TryGet(e, out ClassicUO.Ecs.MobileTraits t) ? t : default;
 
         // a preview is an object of this World that the World does not hold (the gumps build it with new PlayerMobile and
         // Item.Create and never add it); a held object is a caller bug, rejected (no pre-T1 path: the gumps have none)

@@ -26,7 +26,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (Item it in children)
             {
-                it.Container = serial;
+                it.TestSetContainer(serial);
             }
 
             world.Mobiles[serial] = owner;

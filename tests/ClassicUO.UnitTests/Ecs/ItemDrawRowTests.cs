@@ -89,13 +89,13 @@ namespace ClassicUO.UnitTests.Ecs
                 int kind = rnd.Next(100);
                 it.Graphic = kind < 10 ? (ushort)0x0EED : kind < 15 ? (ushort)0x2006 : (ushort)(0x0100 + rnd.Next(0x3F00));
                 it.Hue = (ushort)rnd.Next(0, 0x0BB8);
-                it.Amount = kind < 30 ? (ushort)rnd.Next(2, 500) : (ushort)1;
+                it.TestSetAmount(kind < 30 ? (ushort)rnd.Next(2, 500) : (ushort)1);
                 it.X = (ushort)(1400 + rnd.Next(64));
                 it.Y = (ushort)(1600 + rnd.Next(64));
                 it.Z = (sbyte)rnd.Next(-5, 40);
                 it.Flags = (rnd.Next(4) == 0 ? Flags.Movable : Flags.None) | (rnd.Next(5) == 0 ? Flags.Hidden : Flags.None);
                 it.IsMulti = kind >= 95;
-                it.Layer = (Layer)rnd.Next(0, 25);
+                it.TestSetLayer((Layer)rnd.Next(0, 25));
                 world.Ecs.Sync(it);
                 items[i] = it;
                 AssertSameInput(it, tiles);
@@ -109,7 +109,7 @@ namespace ClassicUO.UnitTests.Ecs
                     it.Hue = (ushort)rnd.Next(0, 0x0BB8);
                     it.X++;
                     it.Z = (sbyte)rnd.Next(-5, 40);
-                    it.Amount = (ushort)rnd.Next(1, 600);
+                    it.TestSetAmount((ushort)rnd.Next(1, 600));
                     it.Flags ^= Flags.Hidden;
                     it.IsMulti = !it.IsMulti && rnd.Next(10) == 0;
                     world.Ecs.Sync(it);

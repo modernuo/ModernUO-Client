@@ -189,11 +189,7 @@ namespace ClassicUO.Game.GameObjects
         public bool IsFlying =>
             Client.Game?.UO != null && Client.Game.UO.Version >= ClientVersion.CV_7000 && (Flags & Flags.Poisoned) != 0;
 
-        public virtual bool InWarMode
-        {
-            get => (Flags & Flags.WarMode) != 0;
-            set { }
-        }
+        public virtual bool InWarMode => (Flags & Flags.WarMode) != 0;
 
         public bool IsHuman =>
             Graphic >= 0x0190 && Graphic <= 0x0193
@@ -237,32 +233,20 @@ namespace ClassicUO.Game.GameObjects
         protected virtual bool IsWalking => LastStepTime > Time.Ticks - Constants.WALKING_DELAY;
 
         private byte _animationFrameCount;
-        private bool _animationFromServer, _isRenamable;
+        private bool _animationFromServer;
         private long _lastStepSoundTime;
         public byte AnimationFrameCount { get => _animationFrameCount; set { FunnelCheck.Write(this, FunnelField.AnimationFrameCount); _animationFrameCount = value; } }
         public bool AnimationFromServer { get => _animationFromServer; set { FunnelCheck.Write(this, FunnelField.AnimationFromServer); _animationFromServer = value; } }
-        // the record's MobileTraits (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
-        public bool IsRenamable
-        {
-            get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.IsRenamable, ClassicUO.Ecs.MobileTraitBits.Renamable, _isRenamable) : _isRenamable;
-            set { FunnelCheck.Write(this, FunnelField.IsRenamable); _isRenamable = value; }
-        }
+        // T9 S5: the traits (IsRenamable, IsFemale, Race, SpeedMode, the player's InWarMode) live only in the record (the world
+        // mirror's or a preview's: Entity.TryRecord); WorldWriter's operations commit them. Without one: the defaults
+        public bool IsRenamable => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.MobileBit(e, ClassicUO.Ecs.MobileTraitBits.Renamable);
         public long LastStepSoundTime { get => _lastStepSoundTime; set { FunnelCheck.Write(this, FunnelField.LastStepSoundTime); _lastStepSoundTime = value; } }
 
         // W5: these are inputs of the mobile's animation and override hue; every write is pushed to the ECS (MobileInputs)
-        private bool _isFemale, _isRunning;
+        private bool _isRunning;
         private NotorietyFlag _notorietyFlag;
 
-        public bool IsFemale
-        {
-            get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.IsFemale, ClassicUO.Ecs.MobileTraitBits.Female, _isFemale) : _isFemale;
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.IsFemale);
-                _isFemale = value;
-                PushInputs();
-            }
-        }
+        public bool IsFemale => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.MobileBit(e, ClassicUO.Ecs.MobileTraitBits.Female);
 
         public bool IsRunning
         {
@@ -299,37 +283,13 @@ namespace ClassicUO.Game.GameObjects
             World?.Ecs.PushInputs(this);
         }
 
-        private RaceType _race;
-        private CharacterSpeedType _speedMode = CharacterSpeedType.Normal;
         private int _stepSoundOffset;
-        public RaceType Race
-        {
-            get => SmallFields.Routed(World) ? SmallFields.Race(this) : _race;
-            set { FunnelCheck.Write(this, FunnelField.Race); _race = value; }
-        }
 
-        public CharacterSpeedType SpeedMode
-        {
-            get => SmallFields.Routed(World) ? SmallFields.SpeedMode(this) : _speedMode;
-            set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; }
-        }
+        public RaceType Race => TryRecord(out Friflo.Engine.ECS.Entity e) ? (RaceType)EcsScalars.Race(e) : 0;
 
-        // ecs_small_fields: the cache behind the getters (the checker's other side, and the seed of a record created later)
-        internal RaceType CachedRace => _race;
+        public CharacterSpeedType SpeedMode =>
+            TryRecord(out Friflo.Engine.ECS.Entity e) ? (CharacterSpeedType)EcsScalars.SpeedMode(e) : CharacterSpeedType.Normal;
 
-        internal CharacterSpeedType CachedSpeedMode => _speedMode;
-
-        /// <summary>The player's own war mode (PlayerMobile); any other mobile's is its WarMode flag, not a field.</summary>
-        internal virtual bool CachedWarMode => false;
-
-        internal ClassicUO.Ecs.MobileTraits CachedTraits => new ClassicUO.Ecs.MobileTraits
-        {
-            Race = (byte)_race,
-            SpeedMode = (byte)_speedMode,
-            Bits = (_isFemale ? ClassicUO.Ecs.MobileTraitBits.Female : 0)
-                | (_isRenamable ? ClassicUO.Ecs.MobileTraitBits.Renamable : 0)
-                | (CachedWarMode ? ClassicUO.Ecs.MobileTraitBits.WarMode : 0)
-        };
         public ushort Stamina
         {
             get
@@ -1398,15 +1358,6 @@ namespace ClassicUO.Game.GameObjects
             }
 
             FixTextCoordinatesInScreen();
-        }
-
-        public override void CheckGraphicChange(byte animIndex = 0)
-        {
-            if (BodyState(Graphic, out bool isFemale, out RaceType race))
-            {
-                IsFemale = isFemale;
-                Race = race;
-            }
         }
 
         /// <summary>

@@ -15,9 +15,11 @@ namespace ClassicUO.Game
     /// no cache behind them. An entity without a held record (detached, destroyed, a stale instance) reads the defaults.
     /// <para>
     /// Record-only: <c>Name</c>, <c>Hits</c>, <c>HitsMax</c> (Entity), <c>Stamina</c>, <c>StaminaMax</c>, <c>Mana</c>,
-    /// <c>ManaMax</c> (Mobile), <c>Price</c> (Item). Kept as write-through caches because per-frame readers read them per
-    /// object (the census's hot readers, measured with <see cref="ScalarReads"/>): <c>Flags</c>, <c>Direction</c>,
-    /// <c>NotorietyFlag</c>, <c>Amount</c>, <c>Container</c>, <c>Layer</c>, like X, Y, Z, Graphic and Hue.
+    /// <c>ManaMax</c> (Mobile), <c>Price</c> (Item); T9 S5 added <c>Amount</c>, <c>Container</c>, <c>Layer</c> and the traits
+    /// (Item <c>LightID</c>, <c>IsDamageable</c>, <c>UsedLayer</c>; Mobile <c>Race</c>, <c>SpeedMode</c>, <c>IsFemale</c>,
+    /// <c>IsRenamable</c>, the player's <c>InWarMode</c>), read through <c>Entity.TryRecord</c> (previews too). Kept as
+    /// write-through caches because per-frame readers read them per object (the census's hot readers, measured with
+    /// <see cref="ScalarReads"/>): <c>Flags</c>, <c>Direction</c>, <c>NotorietyFlag</c>, like X, Y, Z, Graphic and Hue.
     /// </para>
     /// </summary>
     internal static class EcsScalars
@@ -46,6 +48,46 @@ namespace ClassicUO.Game
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ushort ManaMax(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.ManaMax : (ushort)0;
 
+        // T9 S5: the item fields every item record has from its creation (ItemData), and its parent (WorldMirror.SetParent:
+        // ContainedIn for an item parent, EquippedOn for a wearer, neither on the ground; a Container of 0 is stored as on
+        // the ground and reads back as 0xFFFFFFFF, which every reader treats the same: SerialHelper.IsValid is false for both)
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ushort Amount(Friflo.Engine.ECS.Entity e) => EcsRead.Get<ItemData>(e).Amount;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte Layer(Friflo.Engine.ECS.Entity e) => EcsRead.Get<ItemData>(e).Layer;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static uint Container(Friflo.Engine.ECS.Entity e)
+        {
+            EcsRow row = EcsRead.Row(e);
+
+            if (row.TryGet(out ContainedIn inside))
+            {
+                return inside.Parent;
+            }
+
+            return row.TryGet(out EquippedOn worn) ? worn.Parent : WorldMirror.NO_CONTAINER;
+        }
+
+        // the traits (ecs_small_fields): absent until the first non-default write
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte LightId(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out ItemTraits t) ? t.LightId : (byte)0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool ItemBit(Friflo.Engine.ECS.Entity e, ItemTraitBits bit) => EcsRead.TryGet(e, out ItemTraits t) && (t.Bits & bit) != 0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte Race(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out MobileTraits t) ? t.Race : (byte)0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte SpeedMode(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out MobileTraits t) ? t.SpeedMode : (byte)0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool MobileBit(Friflo.Engine.ECS.Entity e, MobileTraitBits bit) => EcsRead.TryGet(e, out MobileTraits t) && (t.Bits & bit) != 0;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint Price(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out ItemPrice p) ? p.Value : 0;
     }
@@ -63,9 +105,6 @@ namespace ClassicUO.Game
         Flags,
         Direction,
         NotorietyFlag,
-        Amount,
-        Container,
-        Layer,
         Count
     }
 

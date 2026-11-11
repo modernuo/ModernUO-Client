@@ -181,7 +181,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Item it = world.GetOrCreateItem(ITEM0 + (uint)i);
                 it.Graphic = (ushort)(0x0100 + i * 7);
                 it.Hue = (ushort)(i * 3);
-                it.Amount = (ushort)(i % 3 == 0 ? 5 : 1);
+                it.TestSetAmount((ushort)(i % 3 == 0 ? 5 : 1));
                 it.X = (ushort)(1400 + i);
                 it.Y = (ushort)(1600 + i);
                 it.Z = (sbyte)(i % 20);

@@ -81,10 +81,10 @@ namespace ClassicUO.UnitTests.Ecs
             World world = BuildCorpse(Start.Standing);
             world.Ecs.ItemAnimTimerEnabled = true;
             Item corpse = world.Items.Get(CORPSE);
-            corpse.Amount = body;
-            corpse.Layer = (Layer)layer;
+            corpse.TestSetAmount(body);
+            corpse.TestSetLayer((Layer)layer);
             world.Ecs.CommitItemBit(corpse, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields: the fixture's record
-            corpse.UsedLayer = usedLayer;
+            corpse.TestSetUsedLayer(usedLayer);
             corpse.AnimIndex = start; // 99 is what CheckGraphicChange sets (the first step lands on the last frame)
             corpse.LastAnimationChangeTime = 0;
             world.Ecs.Sync(corpse);
@@ -210,8 +210,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item second = world.GetOrCreateItem(CORPSE);
             second.Graphic = 0x2006;
-            second.Amount = 401;
-            second.Layer = (Layer)2;
+            second.TestSetAmount(401);
+            second.TestSetLayer((Layer)2);
             second.AnimIndex = 99;
             second.LastAnimationChangeTime = 0;
             second.SetInWorldTile(1002, 1000, 0);
@@ -241,8 +241,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Items.Remove(CORPSE);
             Item fresh = world.GetOrCreateItem(CORPSE);
             fresh.Graphic = 0x2006;
-            fresh.Amount = 401;
-            fresh.Layer = (Layer)2;
+            fresh.TestSetAmount(401);
+            fresh.TestSetLayer((Layer)2);
             fresh.AnimIndex = 7;
             fresh.LastAnimationChangeTime = 0;
             fresh.SetInWorldTile(1002, 1000, 0);

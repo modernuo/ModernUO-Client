@@ -29,8 +29,8 @@ namespace ClassicUO.UnitTests.Ecs
             // without a record: a detached instance (as the house placement preview), which TryScalarEntity rejects
             Item it = sync ? world.GetOrCreateItem(serial) : Item.Create(world, serial);
             it.Graphic = graphic;
-            it.Amount = amount;
-            it.Layer = layer;
+            it.TestSetAmount(amount);
+            it.TestSetLayer(layer);
             it.Hue = hue;
             it.Flags = flags;
             it.X = (ushort)(1000 + serial % 7);

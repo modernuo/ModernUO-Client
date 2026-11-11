@@ -109,12 +109,12 @@ namespace ClassicUO.UnitTests.Ecs
         {
             switch (m.Graphic)
             {
-                case 0x0190: case 0x0192: m.IsFemale = false; m.Race = RaceType.HUMAN; break;
-                case 0x0191: case 0x0193: m.IsFemale = true; m.Race = RaceType.HUMAN; break;
-                case 0x025D: m.IsFemale = false; m.Race = RaceType.ELF; break;
-                case 0x025E: m.IsFemale = true; m.Race = RaceType.ELF; break;
-                case 0x029A: m.IsFemale = false; m.Race = RaceType.GARGOYLE; break;
-                case 0x029B: m.IsFemale = true; m.Race = RaceType.GARGOYLE; break;
+                case 0x0190: case 0x0192: m.TestSetIsFemale(false); m.TestSetRace(RaceType.HUMAN); break;
+                case 0x0191: case 0x0193: m.TestSetIsFemale(true); m.TestSetRace(RaceType.HUMAN); break;
+                case 0x025D: m.TestSetIsFemale(false); m.TestSetRace(RaceType.ELF); break;
+                case 0x025E: m.TestSetIsFemale(true); m.TestSetRace(RaceType.ELF); break;
+                case 0x029A: m.TestSetIsFemale(false); m.TestSetRace(RaceType.GARGOYLE); break;
+                case 0x029B: m.TestSetIsFemale(true); m.TestSetRace(RaceType.GARGOYLE); break;
             }
         }
 
@@ -254,8 +254,8 @@ namespace ClassicUO.UnitTests.Ecs
             // a worn item, so a body change's equipment-dirty tag shows
             Item worn = world.GetOrCreateItem(ITEM);
             worn.Graphic = 0x1515;
-            worn.Container = MOB;
-            worn.Layer = Layer.Shirt;
+            worn.TestSetContainer(MOB);
+            worn.TestSetLayer(Layer.Shirt);
             m.PushToBack(worn);
             world.Ecs.Sync(worn);
 
@@ -392,7 +392,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             Pair(() => OldUpsertMobile(oldWorld, p, m =>
             {
-                OracleTraits.Sync(oldWorld); // the old path wrote the small fields' caches only
                 seenOld = Snapshot(m);
             }), () => NewUpsertMobile(newWorld, p, m => seenNew = Snapshot(m)));
 
@@ -545,7 +544,7 @@ namespace ClassicUO.UnitTests.Ecs
             // an item (a corpse, as after a death) under the same serial
             Item corpse = world.GetOrCreateItem(DEAD);
             corpse.Graphic = 0x2006;
-            corpse.Amount = 0x190;
+            corpse.TestSetAmount(0x190);
             corpse.SetInWorldTile(1000, 1001, 0);
             WorldWriterTests.AttachLists(world);
 
@@ -892,18 +891,18 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item pack = world.GetOrCreateItem(PACK);
             pack.Graphic = 0xE75;
-            pack.Layer = Layer.Backpack;
-            pack.Container = MOB;
+            pack.TestSetLayer(Layer.Backpack);
+            pack.TestSetContainer(MOB);
             m.PushToBack(pack);
             world.Ecs.Sync(pack);
 
             Item loot = world.Writer.UpsertWorldItem(LOOT, 0xE76, 0, 1, 1000, 1000, 0, 0, 0, 0, 0, out _, out lootPlacement);
-            loot.Container = PACK;
+            loot.TestSetContainer(PACK);
             pack.PushToBack(loot);
             world.Ecs.Sync(loot);
             Item gem = world.GetOrCreateItem(GEM);
             gem.Graphic = 0xF10;
-            gem.Container = LOOT;
+            gem.TestSetContainer(LOOT);
             loot.PushToBack(gem);
             world.Ecs.Sync(gem);
             WorldWriterTests.AttachLists(world);
@@ -1206,18 +1205,19 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void BodyState_Equals_The_Old_CheckGraphicChange()
         {
-            // the oracle and the fixture write only the caches, and both read the record the same way
+            // the oracle writes the record; T9 S5 deleted Mobile.CheckGraphicChange (no caller wrote a body outside the
+            // funnel), so BodyState (what the funnel's body operations commit) is compared with it
             var world = new World();
 
             for (int g = 0; g <= 0x500; g++)
             {
-                Mobile a = world.GetOrCreateMobile(0x100), b = world.GetOrCreateMobile(0x101);
-                a.IsFemale = b.IsFemale = true;
-                a.Race = b.Race = RaceType.ELF;
-                a.Graphic = b.Graphic = (ushort)g;
+                Mobile a = world.GetOrCreateMobile(0x100);
+                a.TestSetIsFemale(true);
+                a.TestSetRace(RaceType.ELF);
+                a.Graphic = (ushort)g;
                 OldCheckGraphicChange(a);
-                b.CheckGraphicChange();
-                (b.IsFemale, b.Race).Should().Be((a.IsFemale, a.Race), $"graphic 0x{g:X}");
+                bool body = Mobile.BodyState((ushort)g, out bool female, out RaceType race);
+                (body ? female : true, body ? race : RaceType.ELF).Should().Be((a.IsFemale, a.Race), $"graphic 0x{g:X}");
             }
         }
 
@@ -1259,7 +1259,6 @@ namespace ClassicUO.UnitTests.Ecs
         private static void AssertSameWorld(World a, World b, uint mob = MOB)
         {
             // the old path writes the small fields' caches only: its records take them before the comparison
-            OracleTraits.Sync(a);
             b.Items.Count.Should().Be(a.Items.Count);
             b.Mobiles.Count.Should().Be(a.Mobiles.Count);
             b.ActiveItems.Select(i => i.Serial).Should().Equal(a.ActiveItems.Select(i => i.Serial));
@@ -1443,11 +1442,11 @@ namespace ClassicUO.UnitTests.Ecs
             // 0x1D: the mobile with a queued step, its equipment and a backpack's contents (the removal owns the subtree)
             Item pack = world.GetOrCreateItem(0x4000_7110);
             pack.Graphic = 0xE75;
-            pack.Layer = Layer.Backpack;
-            pack.Container = n.Serial;
+            pack.TestSetLayer(Layer.Backpack);
+            pack.TestSetContainer(n.Serial);
             n.PushToBack(pack);
             Item loot = world.GetOrCreateItem(0x4000_7111);
-            loot.Container = pack.Serial;
+            loot.TestSetContainer(pack.Serial);
             pack.PushToBack(loot);
             WorldWriterTests.AttachLists(world);
             world.Writer.UpsertMobile(n, n.Serial, 0x191, 0, 1003, 1003, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p3);

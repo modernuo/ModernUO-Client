@@ -532,9 +532,6 @@ namespace ClassicUO.Game
         /// <summary>T6c: Mobile.Update runs it instead of ProcessSteps while <see cref="WorldEcs.StepsEnabled"/>.</summary>
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
 
-        /// <summary>Tests: CUO_SMALL_FIELDS_CHECK for this World (null: the environment).</summary>
-        internal bool? SmallFieldsCheckOverride;
-
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 
@@ -1091,12 +1088,8 @@ namespace ClassicUO.Game
 
             // if entity is running the "dying" animation we have to reset container too.
             // SerialHelper.IsValid(containerSerial) is not ideal in this case
-            if (containerSerial != 0xFFFF_FFFF)
-            {
-                obj.Container = 0xFFFF_FFFF;
-            }
-
-            Ecs.Sync(obj);
+            // (T9 S5: the record is the Container's only copy: the Sync writes it without one)
+            Ecs.Sync(obj, detach: containerSerial != 0xFFFF_FFFF);
         }
 
         /// <summary>

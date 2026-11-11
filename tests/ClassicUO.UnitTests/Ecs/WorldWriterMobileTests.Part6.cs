@@ -230,11 +230,11 @@ namespace ClassicUO.UnitTests.Ecs
                     return;
                 }
 
-                mobile.IsRenamable = s.Renamable;
+                mobile.TestSetIsRenamable(s.Renamable);
 
                 if (s.Type > 0)
                 {
-                    mobile.IsFemale = s.Female;
+                    mobile.TestSetIsFemale(s.Female);
 
                     if (mobile == world.Player)
                     {
@@ -245,7 +245,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                         if (s.Type >= 5)
                         {
-                            world.Player.Race = (RaceType)(s.Race == 0 ? 1 : s.Race);
+                            world.Player.TestSetRace((RaceType)(s.Race == 0 ? 1 : s.Race));
                         }
                     }
                 }
@@ -619,8 +619,9 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.Violations.Should().Be(0);
                 // T9: the detached player has no record, so the cold values are not kept (a misconfigured server's case); the
                 // percentage, the hot fields and the inputs are written as before
-                StatusOf(player).Should().Be(" 0/0 80% None mana 0/0 stamina 0/0 renamable True race ELF sa True");
-                (player.IsFemale, player.Flags).Should().Be((true, Flags.YellowBar));
+                // (T9 S5: the traits too: renamable, race and sex)
+                StatusOf(player).Should().Be(" 0/0 80% None mana 0/0 stamina 0/0 renamable False race 0 sa True");
+                (player.IsFemale, player.Flags).Should().Be((false, Flags.YellowBar));
 
                 // any other instance World does not hold is still rejected
                 Mobile stranger = Mobile.Create(world, 0x0000_3777);
@@ -1193,8 +1194,8 @@ namespace ClassicUO.UnitTests.Ecs
                         Item spellItem = Item.Create(world, cc);
                         spellItem.Serial = cc;
                         spellItem.Graphic = 0x1F2E;
-                        spellItem.Amount = cc;
-                        spellItem.Container = spellbook;
+                        spellItem.TestSetAmount(cc);
+                        spellItem.TestSetContainer(spellbook);
                         spellbook.PushToBack(spellItem);
                     }
                 }

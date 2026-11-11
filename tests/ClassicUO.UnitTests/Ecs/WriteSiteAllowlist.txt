@@ -1,7 +1,6 @@
 # Direct writes to world-state (A) fields allowed per file, counted by WriteSiteBudgetTests (regex scanner, see
 # docs/modern-client/ecs-state-census.md, "Scanner limits"). Format: <file>|<field>|<count>. The count may only go down;
 # regenerate with CUO_WRITE_BUDGET_REGEN=1 dotnet test --filter WriteSiteBudgetTests after removing writes.
-src/ClassicUO.Client/DevBench.cs|Amount|1
 src/ClassicUO.Client/DevBench.cs|Graphic|5
 src/ClassicUO.Client/DevBench.cs|Hue|1
 src/ClassicUO.Client/DevBench.cs|X|1
@@ -23,21 +22,15 @@ src/ClassicUO.Client/Game/GameObjects/GameObject.cs|X|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Y|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Z|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|_graphic|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|AnimIndex|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|Direction|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|Layer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|_isMulti|1
 src/ClassicUO.Client/Game/GameObjects/Land.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimIndex|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFrameCount|4
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFromServer|3
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsFemale|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastAnimationChangeTime|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepTime|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Race|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Steps|4
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationGroup|3
@@ -47,7 +40,6 @@ src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationRepeatModeCount|4
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationRepeateMode|4
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isAnimationForwardDirection|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isDead|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isFemale|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isRunning|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isSA_Poisoned|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_lastAnimationIdleDelay|2
@@ -56,10 +48,7 @@ src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Offset|5
 src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|X|1
 src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Y|1
 src/ClassicUO.Client/Game/GameObjects/Multi.cs|Graphic|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|_inWarMode|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
-src/ClassicUO.Client/Game/Managers/CorpseManager.cs|Layer|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Graphic|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Hue|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|IsMulti|1
-src/ClassicUO.Client/Game/World.cs|Container|1

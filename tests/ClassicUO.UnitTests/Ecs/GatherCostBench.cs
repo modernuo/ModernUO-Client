@@ -47,7 +47,7 @@ namespace ClassicUO.UnitTests.Ecs
                 int kind = rnd.Next(100);
                 it.Graphic = kind < 5 ? (ushort)0x0EED : (ushort)(0x0100 + rnd.Next(0x3F00));
                 it.Hue = kind % 3 == 0 ? (ushort)rnd.Next(1, 0x0BB8) : (ushort)0;
-                it.Amount = kind < 20 ? (ushort)rnd.Next(2, 500) : (ushort)1;
+                it.TestSetAmount(kind < 20 ? (ushort)rnd.Next(2, 500) : (ushort)1);
                 it.X = (ushort)(1400 + rnd.Next(64));
                 it.Y = (ushort)(1600 + rnd.Next(64));
                 it.Z = (sbyte)rnd.Next(-5, 40);

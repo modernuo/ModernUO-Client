@@ -156,8 +156,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item orphan = world.GetOrCreateItem(MOUNT);
             orphan.Graphic = 0x3EA0;
-            orphan.Layer = Layer.Mount;
-            orphan.Container = SERIAL;
+            orphan.TestSetLayer(Layer.Mount);
+            orphan.TestSetContainer(SERIAL);
             world.Ecs.Sync(orphan);
 
             Mobile rider = world.GetOrCreateMobile(SERIAL);
@@ -230,7 +230,7 @@ namespace ClassicUO.UnitTests.Ecs
             Pushed(world, SERIAL).Flags.Should().Be(AnimStateFlags.Human);
 
             world.Ecs.CommitMobileBit(m, MobileTraitBits.Female, true);
-            m.IsFemale = true;
+            m.TestSetIsFemale(true);
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Female);
 
             m.IsDead = true;
@@ -286,7 +286,7 @@ namespace ClassicUO.UnitTests.Ecs
             old.Graphic = 0x190;
             world.Ecs.Sync(old);
             world.Ecs.CommitMobileBit(old, MobileTraitBits.Female, true);
-            old.IsFemale = true;
+            old.TestSetIsFemale(true);
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Female);
 
             // the serial leaves and comes back as a new object (out of range and back, or reused); destroying needs the client,
@@ -299,7 +299,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(next);
             Pushed(world, SERIAL).Flags.Should().NotHaveFlag(AnimStateFlags.Female, "a new entity starts from the new mobile's state");
 
-            old.IsFemale = true;
+            old.TestSetIsFemale(true);
             old.IsRunning = true;
             old.NotorietyFlag = NotorietyFlag.Invulnerable;
             MobileInputs after = Pushed(world, SERIAL);
