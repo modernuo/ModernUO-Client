@@ -66,40 +66,29 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
+            if (!EffectSystem.StepMoving(this))
             {
-                if (!EffectSystem.StepMoving(this))
-                {
-                    // destroyed by its source before it moved: the legacy update still runs UpdateOffset on the destroyed
-                    // object, whose state is gone, so it runs here on the object's fields (the motion step's cache) as before
-                    UpdateOffset();
-                }
-
-                return;
+                // destroyed by its source before it moved: the legacy update still ran UpdateOffset on the destroyed object,
+                // whose state is gone, so it runs here on the object's fields (the motion step's cache) as before
+                UpdateOffset();
             }
-
-            base.Update();
-            UpdateOffset();
         }
 
 
+        // the legacy path on a destroyed effect: Destroy dropped the source and target objects, so the effect's own position
+        // and target coordinates are the path's ends (it may still arrive and explode)
         internal void UpdateOffset()
         {
-            if (TargetGone())
-            {
-                (TargetX, TargetY, TargetZ) = GetTarget();
-            }
-
             int playerX = World.Player.X;
             int playerY = World.Player.Y;
             int playerZ = World.Player.Z;
 
-            (int sX, int sY, int sZ) = GetSource();
+            (int sX, int sY, int sZ) = ObjectSource();
             int offsetSourceX = sX - playerX;
             int offsetSourceY = sY - playerY;
             int offsetSourceZ = sZ - playerZ;
 
-            (int tX, int tY, int tZ) = GetTarget();
+            (int tX, int tY, int tZ) = ObjectTarget();
             int offsetTargetX = tX - playerX;
             int offsetTargetY = tY - playerY;
             int offsetTargetZ = tZ - playerZ;

@@ -351,9 +351,8 @@ namespace ClassicUO.Game.Scenes
             batcher.ResetWorldOffset();
 
             // Draw excluded statics + animations + effects. T7b (legacy_ecs_sprites): mobiles and items through the sink, at
-            // the same list position (LegacySpriteSink); T7b part 3 (ecs_effect_sprites): effects through EffectSpriteSink
+            // the same list position (LegacySpriteSink); T7b part 3: effects through EffectSpriteSink
             LegacySpriteSink.BeginFrame();
-            EffectSpriteSink.BeginFrame();
 #if CUO_DEVTOOLS
             GoldenCapture.BeginLegacy(batcher);
 #endif

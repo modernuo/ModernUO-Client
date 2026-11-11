@@ -24,7 +24,10 @@ namespace ClassicUO.UnitTests.Ecs
             "ecs_item_offset",
             "ecs_boat_steps",
             "ecs_small_fields",
-            "ecs_active_items_source"
+            "ecs_active_items_source",
+            "ecs_effect_motion",
+            "ecs_effect_endpoints",
+            "ecs_effect_sprites"
         };
 
         [Fact]

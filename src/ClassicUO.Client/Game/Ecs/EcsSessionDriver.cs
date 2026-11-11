@@ -1189,13 +1189,6 @@ namespace ClassicUO.Game
 
                     return false;
 
-                // effectsprites on|off|default: ecs_effect_sprites for this session (EffectSpriteSink.Override)
-                case "effectsprites" when args.Length > 0:
-                    EffectSpriteSink.Override = args[0] switch { "on" => true, "off" => false, _ => null };
-                    Log.Info($"[ECS] driver: ecs_effect_sprites override {args[0]}");
-
-                    return false;
-
                 // ecssprites on|off: gpu_ecs_sprites (mobiles drawn from the ECS extract or captured from their views)
                 case "ecssprites" when args.Length > 0:
                     Settings.GlobalSettings.GpuEcsSprites = args[0] == "on";

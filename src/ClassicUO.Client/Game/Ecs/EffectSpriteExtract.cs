@@ -132,7 +132,7 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T7b part 3 (setting <c>ecs_effect_sprites</c>): the renderer-neutral select of an effect's sprite, from
+    /// T7b part 3: the renderer-neutral select of an effect's sprite, from
     /// <see cref="EffectSpriteInput"/> and the pack's art table, reproducing GameEffectView.Draw (fixed, moving and explosion
     /// effects: the rotated art draw of the animation graphic, the effect hue, the source's depth, the blend mode, the light
     /// at the source) and DragEffect.Draw. Lightning stays on its view (a gump drawn additively: the FNA overlay). Side effects

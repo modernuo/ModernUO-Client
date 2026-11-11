@@ -19,8 +19,8 @@ namespace ClassicUO.UnitTests.Ecs
     // T7b part 3: the effect extract. Golden: GameEffectView.Draw and DragEffect.Draw transcribed (hue choice, offsets, source
     // depth, View.DrawStaticRotated / View.DrawStatic geometry, light), with the Legacy batcher call over the fake atlas and the
     // Gpu instance through a verbatim copy of GpuWorldRenderer.Emit (art: the source rect is the whole untrimmed sprite). The
-    // select's records must resolve to the same call / instance. In the client, CUO_EFFECT_SPRITE_CHECK compares the real
-    // views with the extract every frame.
+    // select's records must resolve to the same call / instance (the reference since T9 deleted ecs_effect_sprites' off path
+    // and CUO_EFFECT_SPRITE_CHECK, which compared the real views with the extract every frame).
     public partial class DynamicSpriteTests
     {
         private const ushort FX = 0x36D4, FX_LIGHT = 0x3709, FX_DRAG = 0x0F51;
@@ -398,18 +398,6 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void Effect_Sprites_Switch()
-        {
-            Assert.False(EffectSpriteSink.Resolve(null, null, false));
-            Assert.True(EffectSpriteSink.Resolve(null, null, true));
-            Assert.True(EffectSpriteSink.Resolve(null, true, false));
-            Assert.False(EffectSpriteSink.Resolve(null, false, true));
-            Assert.True(EffectSpriteSink.Resolve(true, false, false));
-            Assert.False(EffectSpriteSink.Resolve(false, true, true));
-            Assert.True(new ClassicUO.Configuration.Settings().EcsEffectSprites);
-        }
-
-        [Fact]
         public void Effect_Calls_Differing_Only_In_Rotation_Are_Not_Same()
         {
             var a = new LegacyDraw { Texture = FakeTextures[0], Position = new Vector2(3, 4), Source = new Rectangle(1, 2, 44, 60), Hue = Vector3.One, Depth = 5f, Rotated = true, Rotation = 0.5f };
@@ -421,34 +409,6 @@ namespace ClassicUO.UnitTests.Ecs
             b.Rotated = false;
             Assert.False(a.Same(in b));
         }
-
-#if CUO_DEVTOOLS
-        [Fact]
-        public void Effect_Check_Instance_Comparison_Sees_Every_Field()
-        {
-            var a = new SpriteInstance { X = 1, Y = 2, Whf = 3, Uv = 4, PageHue = 5, Depth = 6, Light = 7, Corners = 8 };
-            Assert.True(EffectSpriteCheck.SameInstance(in a, in a));
-
-            for (int f = 0; f < 8; f++)
-            {
-                SpriteInstance b = a;
-
-                switch (f)
-                {
-                    case 0: b.X++; break;
-                    case 1: b.Y++; break;
-                    case 2: b.Whf++; break;
-                    case 3: b.Uv++; break;
-                    case 4: b.PageHue++; break;
-                    case 5: b.Depth++; break;
-                    case 6: b.Light++; break;
-                    case 7: b.Corners++; break;
-                }
-
-                Assert.False(EffectSpriteCheck.SameInstance(in a, in b), $"field {f}");
-            }
-        }
-#endif
 
         // GpuWorldRenderer.Emit for the view's art draw (verbatim, the art case: the source is the whole untrimmed sprite, so
         // its rect starts at the untrimmed origin), with the view's position and depth; the capture's blend is BlendOf(blend)
