@@ -206,5 +206,44 @@ namespace ClassicUO.UnitTests.Game.Scenes
             g.Stats.PresentedUnsettled.Should().Be(2);
             g.Stats.PresentedUnsettledSteady.Should().Be(0);
         }
+
+        [Fact]
+        public void SkippedTime_DoesNotCountTowardsTheHoldTimeout()
+        {
+            var g = Settled();
+
+            Frame(g, 100, 5000, 0, false).Should().BeTrue();
+            g.Episode.Should().Be(WorldDiscontinuity.Teleport);
+
+            // minimized for 10 s: the clock runs, but the draw (and so the streaming) did not
+            g.SkipTime(10_000);
+            Frame(g, 10_100 + 16, 5000, 0, false).Should().BeTrue("the hold has not used up its timeout yet");
+            g.Episode.Should().Be(WorldDiscontinuity.Teleport);
+            g.Stats.Timeouts.Should().Be(0);
+
+            Frame(g, 10_100 + 16 + g.TimeoutMs, 5000, 0, false).Should().BeFalse("the timeout counts frames that streamed");
+            g.Stats.Timeouts.Should().Be(1);
+        }
+
+        [Fact]
+        public void SkippedTime_Outside_An_Episode_Changes_Nothing()
+        {
+            var g = Settled();
+
+            g.SkipTime(10_000);
+            Frame(g, 20_000, 5000, 0, false).Should().BeTrue();
+            Frame(g, 20_000 + g.TimeoutMs, 5000, 0, false).Should().BeFalse();
+            g.Stats.Timeouts.Should().Be(1);
+        }
+
+        [Fact]
+        public void NoSkippedTime_Keeps_The_Timeout_Unchanged()
+        {
+            var g = Settled();
+
+            Frame(g, 100, 5000, 0, false).Should().BeTrue();
+            Frame(g, 100 + g.TimeoutMs, 5000, 0, false).Should().BeFalse();
+            g.Stats.Timeouts.Should().Be(1);
+        }
     }
 }

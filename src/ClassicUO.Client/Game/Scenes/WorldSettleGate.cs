@@ -230,6 +230,18 @@ namespace ClassicUO.Game.Scenes
             EpisodeEnded?.Invoke(kind, ms, _episodeHeld, _episodePresentedUnsettled, timedOut);
         }
 
+        /// <summary>
+        /// Draw was skipped for <paramref name="ms"/> (a minimized window, skip_draw_when_minimized): nothing streamed, so the
+        /// running episode's timeout does not count it. No effect outside an episode.
+        /// </summary>
+        public void SkipTime(double ms)
+        {
+            if (_episode != WorldDiscontinuity.None && ms > 0)
+            {
+                _episodeStart += ms;
+            }
+        }
+
         /// <summary>End of the GPU world frame: whether everything the view needs was drawable (no chunk pending, no page
         /// missing).</summary>
         public void End(bool visibleReady)
