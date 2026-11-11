@@ -21,7 +21,8 @@ namespace ClassicUO.Game.GameObjects
         {
             if (World.AuraManager.IsEnabled)
             {
-                DrawAuraAt(batcher, posX + (int)Offset.X + 22, posY - 3 + (int)(Offset.Y - Offset.Z) + 22, depth);
+                Vector3 offset = Offset;
+                DrawAuraAt(batcher, posX + (int)offset.X + 22, posY - 3 + (int)(offset.Y - offset.Z) + 22, depth);
             }
         }
 
@@ -111,8 +112,9 @@ namespace ClassicUO.Game.GameObjects
         {
             Point position = RealScreenPosition;
             position.Y -= 3;
-            position.X += (int)Offset.X + 22;
-            position.Y += (int)(Offset.Y - Offset.Z) + 22;
+            Vector3 offset = Offset;
+            position.X += (int)offset.X + 22;
+            position.Y += (int)(offset.Y - offset.Z) + 22;
 
             // T7b part 2b: the last draw's frame rectangle and mirror bit from the extract's records when it drew this mobile
             // (the Legacy sink, or the Gpu world's extracts), else the ones the draw left on the mobile

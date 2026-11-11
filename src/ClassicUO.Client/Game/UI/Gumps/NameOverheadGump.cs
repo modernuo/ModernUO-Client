@@ -529,11 +529,12 @@ namespace ClassicUO.Game.UI.Gumps
                     out int height
                 );
 
-                _lockedPosition.X = (int)(m.RealScreenPosition.X + m.Offset.X + 22 + 5);
+                Vector3 offset = m.Offset;
+                _lockedPosition.X = (int)(m.RealScreenPosition.X + offset.X + 22 + 5);
 
                 _lockedPosition.Y = (int)(
                     m.RealScreenPosition.Y
-                    + (m.Offset.Y - m.Offset.Z)
+                    + (offset.Y - offset.Z)
                     - (height + centerY + 8 + 10)
                     + (
                         m.IsGargoyle && m.IsFlying
@@ -629,10 +630,11 @@ namespace ClassicUO.Game.UI.Gumps
                         out int height
                     );
 
-                    x = (int)(m.RealScreenPosition.X + m.Offset.X + 22 + 5);
+                    Vector3 offset = m.Offset;
+                    x = (int)(m.RealScreenPosition.X + offset.X + 22 + 5);
                     y = (int)(
                         m.RealScreenPosition.Y
-                        + (m.Offset.Y - m.Offset.Z)
+                        + (offset.Y - offset.Z)
                         - (height + centerY + 8 + 10)
                         + (
                             m.IsGargoyle && m.IsFlying

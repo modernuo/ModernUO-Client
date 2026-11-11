@@ -1322,8 +1322,9 @@ namespace ClassicUO.Game.Scenes
             int winGameHeight = Camera.Bounds.Height;
             int winGameCenterX = winGamePosX + (winGameWidth >> 1);
             int winGameCenterY = winGamePosY + (winGameHeight >> 1) + (_world.Player.Z << 2);
-            winGameCenterX -= (int)_world.Player.Offset.X;
-            winGameCenterY -= (int)(_world.Player.Offset.Y - _world.Player.Offset.Z);
+            Vector3 playerOffset = _world.Player.Offset;
+            winGameCenterX -= (int)playerOffset.X;
+            winGameCenterY -= (int)(playerOffset.Y - playerOffset.Z);
 
             int tileOffX = _world.Player.X;
             int tileOffY = _world.Player.Y;

@@ -678,17 +678,18 @@ namespace ClassicUO.Game.Scenes
                 _world.NameOverHeadManager.SetMenuVisible(ctrlShiftHeld);
             }
 
+            Vector3 playerOffset = _world.Player.Offset;
             _rectanglePlayer.X = (int)(
                 _world.Player.RealScreenPosition.X
                 - _world.Player.FrameInfo.X
                 + 22
-                + _world.Player.Offset.X
+                + playerOffset.X
             );
             _rectanglePlayer.Y = (int)(
                 _world.Player.RealScreenPosition.Y
                 - _world.Player.FrameInfo.Y
                 + 22
-                + (_world.Player.Offset.Y - _world.Player.Offset.Z)
+                + (playerOffset.Y - playerOffset.Z)
             );
             _rectanglePlayer.Width = _world.Player.FrameInfo.Width;
             _rectanglePlayer.Height = _world.Player.FrameInfo.Height;
