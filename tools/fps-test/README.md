@@ -4,7 +4,7 @@
 
 ## Run it
 
-1. Make sure ModernUO is running on 127.0.0.1:2593 and the test account is not logged in anywhere else. The account needs GameMaster access or above for the large-scene spot (kbatman and kbatman2–4 are Owner), and the scene must exist on the shard (`[TestScene status`; see [large-scale.md](../../docs/modern-client/testing/large-scale.md)).
+1. Make sure ModernUO is running on 127.0.0.1:2593 and the test account is not logged in anywhere else. The account needs GameMaster access or above for the large-scene spot (kbatman and kbatman2–4 are Owner), and the scene's objects must exist on the shard (they persist on Felucca around 5156 2150; see [large-scale.md](../../docs/modern-client/testing/large-scale.md)).
 2. Turn the display on and close or minimise anything heavy.
 3. From a normal PowerShell window:
 
@@ -28,10 +28,10 @@ The results are written to `C:\Repositories\cuo-fps-test\results-<timestamp>.md`
   3. Zoomed out (zoom 2.5) at Britain, at 1920x1080
   4. A short walk near Britain (pathfinding back and forth), at 1920x1080
   5. Zoomed out at Britain in a maximised window (3840x2054 on a 4K display at 150%)
-  6. The large-scale test scene (Felucca 5156 2150, zoom 1, 1,984 mobiles and 19,476 ground items in range), back at 1920x1080. Before it the plan says `[TestScene go` (ModernUO moves the character there from any facet and remembers where it was), after it `[TestScene return`, so the character ends where it was before the spot (Britain, on its own facet). Added 2026-10-25 as the last spot, so spots 1–5 and their order are unchanged and stay comparable with the 10-24 and 10-25 runs.
+  6. The large-scale test scene (Felucca 5156 2150, zoom 1, 1,984 mobiles and 19,476 ground items in range), back at 1920x1080. Before it the plan says `[go 5156 2150`, after it `[go 1495 1629`, so the character ends at Britain (the running ModernUO build has no `[TestScene` command). Added 2026-10-25 as the last spot, so spots 1–5 and their order are unchanged and stay comparable with the 10-24 and 10-25 runs.
 - Records FPS, frame avg/p50/p95/p99, Update, world prepare, world draw, Draw total, Present, allocations per frame and GC for each spot. It also records CPU, GPU, driver, display mode, power plan and the build commit.
-- Always closes the client, also on error or Ctrl+C. If the run fails between `[TestScene go` and `[TestScene return`, it says so: log in with that account and say `[TestScene return`.
-- Warns under Warnings when the large-scene spot had fewer than 1,900 mobiles in range (the scene is missing, or `[TestScene go` failed for lack of access).
+- Always closes the client, also on error or Ctrl+C. If the run fails between `[go 5156 2150` and `[go 1495 1629`, it says so: log in with that account and say `[go 1495 1629`.
+- Warns under Warnings when the large-scene spot had fewer than 1,900 mobiles in range (the scene is missing, or `[go 5156 2150` failed for lack of access).
 
 ## Options
 

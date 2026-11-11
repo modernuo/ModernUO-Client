@@ -7,8 +7,8 @@
     plan: Britain, Britain bank, zoomed out and a short walk at 1920x1080, then zoomed out in a maximised window,
     then the large-scale test scene (about 2,000 mobiles and 19,500 items, Felucca 5156 2150) at 1920x1080, each spot
     under the Legacy and then the Gpu world renderer. The scene spot needs a GameMaster+ account: it says
-    [TestScene go before and [TestScene return after, so the character ends where (and on the facet where) it
-    started. FrameStats is on, FPS uncapped, VSync off, inactive throttling off and the window stays on top. Do not
+    [go 5156 2150 before and [go 1495 1629 after (the running ModernUO build has no [TestScene command; the scene's
+    objects persist on Felucca), so the character ends at Britain. FrameStats is on, FPS uncapped, VSync off, inactive throttling off and the window stays on top. Do not
     touch the mouse or keyboard while it runs.
 
     Writes results-<timestamp>.md to -ResultsDir and prints the same tables. The client is closed and the temp
@@ -57,8 +57,8 @@ $spots = @(
     @{ Key = 'zoomout'; Label = 'Zoomed out'; Entry = '1495 1629:2.5' },
     @{ Key = 'walk'; Label = 'Walk'; Entry = 'walk:1' },
     @{ Key = 'zoomout_large'; Label = 'Zoomed out, large window'; Entry = '1495 1629:2.5'; Large = $true },
-    # the large-scale test scene (docs/modern-client/testing/large-scale.md), built by ModernUO's [TestScene create;
-    # [TestScene go remembers where the character was (any facet) and [TestScene return puts it back
+    # the large-scale test scene (docs/modern-client/testing/large-scale.md); its objects persist on Felucca, reached with
+    # [go 5156 2150 and left with [go 1495 1629 (the running ModernUO build has no [TestScene command)
     @{ Key = 'scene'; Label = 'Large scene'; Entry = '5156 2150:1'; Scene = $true }
 )
 $modes = @('legacy', 'gpu')
@@ -85,7 +85,7 @@ foreach ($s in $spots) {
     }
 
     if ($s.Scene) {
-        $planEntries.Add('say:[TestScene go')
+        $planEntries.Add('say:[go 5156 2150')
         $extraSeconds += 4
     }
 
@@ -97,7 +97,7 @@ foreach ($s in $spots) {
     }
 
     if ($s.Scene) {
-        $planEntries.Add('say:[TestScene return')
+        $planEntries.Add('say:[go 1495 1629')
         $extraSeconds += 4
     }
 }
@@ -273,8 +273,8 @@ try {
             elseif ($line -match '\[bench\] (\w+):.* done at ') {
                 Write-Host '    done'
             }
-            elseif ($line -match '\[bench\] said \[TestScene (go|return)') {
-                $inScene = $Matches[1] -eq 'go'
+            elseif ($line -match '\[bench\] said \[go (\d+) ') {
+                $inScene = $Matches[1] -eq '5156'
             }
             elseif ($line -match '\[bench\] plan done') {
                 $planDone = $true
@@ -365,7 +365,7 @@ if ($failure) {
     Write-Host "FAILED: $failure" -ForegroundColor Red
     Write-Host "Client log (password masked): $failLog"
     if ($inScene) {
-        Write-Host "The character is still in the large test scene. Log in with $Username and say [TestScene return to go back." -ForegroundColor Yellow
+        Write-Host "The character is still in the large test scene. Log in with $Username and say [go 1495 1629 to go back." -ForegroundColor Yellow
     }
     $lines | Select-Object -Last 15 | ForEach-Object { Write-Host "  $(Hide-Secret $_)" }
     $password = $null
@@ -482,7 +482,7 @@ foreach ($s in $spots) {
     if ($s.Scene) {
         foreach ($r in @($rl, $rg)) {
             if ($null -ne $r.Mobiles -and $r.Mobiles -lt 1900) {
-                $warnings.Add("$($s.Label), $($modeName[$r.Mode]): only $($r.Mobiles) mobiles and $($r.Items) items in range; the test scene is missing (ModernUO [TestScene create) or [TestScene go failed (needs GameMaster).")
+                $warnings.Add("$($s.Label), $($modeName[$r.Mode]): only $($r.Mobiles) mobiles and $($r.Items) items in range; the test scene is missing on the server or [go 5156 2150 failed (needs GameMaster).")
             }
         }
     }
