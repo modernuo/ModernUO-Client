@@ -64,7 +64,7 @@ namespace ClassicUO.Game.Scenes
         private uint _timeToPlaceMultiInHouseCustomization;
         private readonly UseItemQueue _useItemQueue;
         private bool _useObjectHandles;
-        // the player's race for NameOverHeadManager.IsAllowed, read once per render-list pass (an ECS lookup per item with ecs_small_fields)
+        // the player's race for NameOverHeadManager.IsAllowed, read once per render-list pass (an ECS lookup per item)
         private bool _handlesPlayerIsGargoyle;
         private AnimatedStaticsManager _animatedStaticsManager;
 

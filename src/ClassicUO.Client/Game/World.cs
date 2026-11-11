@@ -539,100 +539,8 @@ namespace ClassicUO.Game
         /// <summary>T6c: Mobile.Update runs it instead of ProcessSteps while <see cref="WorldEcs.StepsEnabled"/>.</summary>
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
 
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_STEP_MOUNT_INPUTS=1|0)
-        private static readonly bool? _envStepMountInputs = System.Environment.GetEnvironmentVariable("CUO_ECS_STEP_MOUNT_INPUTS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envStepMountInputs = null;
-#endif
-
-        private static class StepMountInputsSwitch
-        {
-            public static readonly bool On = _envStepMountInputs ?? Settings.GlobalSettings.EcsStepMountInputs;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? StepMountInputsOverride;
-
-        /// <summary>T6c follow-up (<c>ecs_step_mount_inputs</c>): the step system takes the mounted pace from the ECS.</summary>
-        internal bool StepMountInputs => StepMountInputsOverride ?? StepMountInputsSwitch.On;
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_ITEM_OFFSET=1|0)
-        private static readonly bool? _envItemOffset = System.Environment.GetEnvironmentVariable("CUO_ECS_ITEM_OFFSET") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envItemOffset = null;
-#endif
-
-        private static class ItemOffsetSwitch
-        {
-            public static readonly bool On = _envItemOffset ?? Settings.GlobalSettings.EcsItemOffset;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? ItemOffsetOverride;
-
-        /// <summary><c>ecs_item_offset</c>: an item's boat offset is the ECS <c>ItemOffset</c> component (<see cref="ItemOffsets"/>).</summary>
-        internal bool ItemOffsetOn => ItemOffsetOverride ?? ItemOffsetSwitch.On;
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_BOAT_STEPS=1|0)
-        private static readonly bool? _envBoatSteps = System.Environment.GetEnvironmentVariable("CUO_ECS_BOAT_STEPS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envBoatSteps = null;
-#endif
-
-        private static class BoatStepsSwitch
-        {
-            public static readonly bool On = _envBoatSteps ?? Settings.GlobalSettings.EcsBoatSteps;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? BoatStepsOverride;
-
-        /// <summary><c>ecs_boat_steps</c>: a boat's motion state is the ECS <c>BoatSteps</c> component (<see cref="BoatStepSystem"/>).</summary>
-        internal bool BoatStepsOn => BoatStepsOverride ?? BoatStepsSwitch.On;
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_SMALL_FIELDS=1|0)
-        private static readonly bool? _envSmallFields = System.Environment.GetEnvironmentVariable("CUO_ECS_SMALL_FIELDS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envSmallFields = null;
-#endif
-
-        private static class SmallFieldsSwitch
-        {
-            public static readonly bool On = _envSmallFields ?? Settings.GlobalSettings.EcsSmallFields;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? SmallFieldsOverride;
-
         /// <summary>Tests: CUO_SMALL_FIELDS_CHECK for this World (null: the environment).</summary>
         internal bool? SmallFieldsCheckOverride;
-
-        /// <summary><c>ecs_small_fields</c>: the small cold fields are read from the ECS record (<see cref="SmallFields"/>).</summary>
-        internal bool SmallFieldsOn => SmallFieldsOverride ?? SmallFieldsSwitch.On;
 
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
@@ -779,10 +687,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // W5: items whose Update does something this frame (Item.NeedsFrameUpdate). T9: with ecs_active_items_source the source
-        // is _activeStore (ActiveItemEntry entities) and this list is only CUO_ACTIVE_ITEMS_SOURCE_CHECK's shadow; off, the
-        // roles swap. Read and change membership through the members below, never one of the two directly.
-        private readonly ActiveItemList _activeItems = new ActiveItemList();
+        // W5: items whose Update does something this frame (Item.NeedsFrameUpdate). T9: the ActiveItemEntry entities
+        // (ActiveItemStore) are the list. Read and change membership through the members below.
         private ActiveItemStore _activeStore;
         // items destroyed since the last update; World.Update drops them from Items as the full loop did
         private readonly List<Item> _destroyedItems = new List<Item>();
@@ -791,16 +697,16 @@ namespace ClassicUO.Game
         private ActiveItemStore ActiveStore => _activeStore ??= new ActiveItemStore(Ecs.Mirror.Store);
 
         /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
-        public int ActiveItemCount => ActiveItemsSourceOn ? ActiveStore.Count : _activeItems.Count;
+        public int ActiveItemCount => ActiveStore.Count;
 
         /// <summary>The per-frame update list in visiting order (tests; readers index it with <see cref="ActiveItemAt"/>).</summary>
-        internal IReadOnlyList<Item> ActiveItems => ActiveItemsSourceOn ? ActiveStore : _activeItems.Items;
+        internal IReadOnlyList<Item> ActiveItems => ActiveStore;
 
         /// <summary>The item in visiting position <paramref name="index"/> (0 to <see cref="ActiveItemCount"/> - 1).</summary>
-        internal Item ActiveItemAt(int index) => ActiveItemsSourceOn ? ActiveStore[index] : _activeItems[index];
+        internal Item ActiveItemAt(int index) => ActiveStore[index];
 
         /// <summary>Whether <paramref name="item"/> is in the per-frame update list (O(1)).</summary>
-        internal bool IsItemListed(Item item) => ActiveItemsSourceOn ? item.ActiveEntryId != 0 : item.InUpdateList;
+        internal bool IsItemListed(Item item) => item.ActiveEntryId != 0;
 
         /// <summary>T9: the item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity (null when it has none; tests and the checker).</summary>
         internal Friflo.Engine.ECS.Entity ActiveItemEntryOf(Item item) => ActiveStore.EntryOf(item);
@@ -815,36 +721,14 @@ namespace ClassicUO.Game
         /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
         public void QueueItemUpdate(Item item)
         {
-            if (ActiveItemsSourceOn)
-            {
-                ActiveStore.Add(item, true);
-            }
-            else
-            {
-                _activeItems.Add(item, true);
-            }
-
-            if (ActiveItemsSourceCheckOn)
-            {
-                ShadowAdd(item);
-            }
+            ActiveStore.Add(item);
         }
 
         // World.Clear: the list must not keep destroyed items alive; the next update rebuilds it from a scan
         private void ClearActiveItems()
         {
-            bool source = ActiveItemsSourceOn;
-
-            if (_activeItems.Count != 0)
-            {
-                _activeItems.Clear(!source);
-            }
-
             // whatever its count: the item table may still name items whose entries were deleted outside the store
-            if (_activeStore != null)
-            {
-                _activeStore.Clear(source);
-            }
+            _activeStore?.Clear();
         }
 
         internal void OnItemDestroyed(Item item)
@@ -893,48 +777,21 @@ namespace ClassicUO.Game
                 }
             }
 
-            bool source = ActiveItemsSourceOn, sourceCheck = ActiveItemsSourceCheckOn;
+            // T9: the visiting order is the ECS's, rebuilt from the ActiveItemEntry slots
+            RebuildActiveOrder();
+            ActiveItemStore store = _activeStore;
 
-            if (source || sourceCheck)
+            for (int i = 0; i < store.Count; i++)
             {
-                // T9: the visiting order is the ECS's, rebuilt from the ActiveItemEntry slots
-                RebuildActiveOrder();
-            }
-
-            if (sourceCheck)
-            {
-                CheckActiveItemsSource("before the visit");
-            }
-
-            for (int i = 0; i < (source ? _activeStore.Count : _activeItems.Count); i++)
-            {
-                Item item = source ? _activeStore[i] : _activeItems[i];
+                Item item = store[i];
 
                 UpdateActiveItem(item);
 
                 if (!item.NeedsFrameUpdate || !HeldItem(item))
                 {
-                    if (source)
-                    {
-                        _activeStore.SwapRemoveAt(i, true);
-                    }
-                    else
-                    {
-                        _activeItems.SwapRemoveAt(i, true);
-                    }
-
-                    if (sourceCheck)
-                    {
-                        ShadowRemoveAt(i, item);
-                    }
-
+                    store.SwapRemoveAt(i);
                     i--;
                 }
-            }
-
-            if (sourceCheck)
-            {
-                CheckActiveItemsSource("after the visit");
             }
 
             if (do_delete)

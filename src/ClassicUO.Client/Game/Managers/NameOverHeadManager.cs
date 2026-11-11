@@ -45,7 +45,7 @@ namespace ClassicUO.Game.Managers
         }
 
         /// <summary>The render-list walk calls this per object while name overheads are on, so the player's race (an ECS
-        /// lookup with <c>ecs_small_fields</c>) is read once per frame by the caller: <see cref="GameObject.PlayerIsGargoyle"/>.</summary>
+        /// lookup) is read once per frame by the caller: <see cref="GameObject.PlayerIsGargoyle"/>.</summary>
         public bool IsAllowed(Entity entity, bool playerIsGargoyle) => IsAllowed(entity, TypeAllowed, playerIsGargoyle);
 
         internal static bool IsAllowed(Entity entity, NameOverheadTypeAllowed allowed, bool playerIsGargoyle)

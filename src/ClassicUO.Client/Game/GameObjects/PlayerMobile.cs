@@ -23,7 +23,7 @@ namespace ClassicUO.Game.GameObjects
 
         private bool _inWarMode;
 
-        // ecs_small_fields: the record's MobileTraits WarMode bit with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
+        // the record's MobileTraits WarMode bit (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
         public override bool InWarMode
         {
             get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.InWarMode, ClassicUO.Ecs.MobileTraitBits.WarMode, _inWarMode) : _inWarMode;

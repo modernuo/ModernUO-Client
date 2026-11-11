@@ -11,10 +11,11 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T9 (ecs_active_items_source): the per-frame item update list with the ECS as its source (ActiveItemEntry entities and their
-    // slots). The same scripted and random operations run on worlds with the switch off and on: membership, the list order and
-    // the order the active item stage visits must be identical after every operation, including removals and additions made
-    // while the stage visits. CUO_ACTIVE_ITEMS_SOURCE_CHECK (on in most worlds here) must stay silent.
+    // T9: the per-frame item update list with the ECS as its source (ActiveItemEntry entities and their slots). T9 deleted
+    // ecs_active_items_source' off path (World's list) and CUO_ACTIVE_ITEMS_SOURCE_CHECK, which compared the two; the tests
+    // that compared the switch states now write out the expected orders (equal to the list's, which they were compared with)
+    // or compare a world with CUO_ACTIVE_ITEMS_CHECK (the tags against the order) on and off, and that checker must stay
+    // silent.
     public class ActiveItemsSourceTests
     {
         private const uint PLAYER = 0x0000_0100;
@@ -29,7 +30,7 @@ namespace ClassicUO.UnitTests.Ecs
             public Random VisitRandom;
         }
 
-        private static Scene Build(bool source, bool check = true)
+        private static Scene Build(bool check = true)
         {
             World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer _, PLAYER);
 
@@ -44,10 +45,7 @@ namespace ClassicUO.UnitTests.Ecs
             var scene = new Scene { World = world };
             world.RangeSize.X = 1000;
             world.RangeSize.Y = 1000;
-            world.ActiveItemsSourceOverride = source;
-            world.ActiveItemsSourceCheckOverride = check;
-            world.ActiveItemsCheckOverride = true;
-            world.ActiveSourceObserver = scene.Mismatches.Add;
+            world.ActiveItemsCheckOverride = check;
             world.ActiveItemsObserver = scene.Mismatches.Add;
             world.ActiveVisitObserver = item =>
             {
@@ -94,35 +92,35 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Setting_Is_On_By_Default()
+        public void The_Ecs_Holds_One_Entry_Per_Listed_Item()
         {
-            new ClassicUO.Configuration.Settings().EcsActiveItemsSource.Should().BeTrue();
-        }
+            Scene s = Build();
+            Item a = AddItem(s, 0x4000_0001, CORPSE);
+            AddItem(s, 0x4000_0002, CORPSE);
+            AddItem(s, 0x4000_0003, CORPSE);
+            s.World.QueueItemUpdate(a); // listed: no second entry
 
-        [Fact]
-        public void The_Ecs_Holds_One_Entry_Per_Listed_Item_Only_With_The_Switch_Or_The_Checker()
-        {
-            foreach ((bool source, bool check, int entries) in new[] { (false, false, 0), (false, true, 3), (true, false, 3), (true, true, 3) })
-            {
-                Scene s = Build(source, check);
-                Item a = AddItem(s, 0x4000_0001, CORPSE);
-                AddItem(s, 0x4000_0002, CORPSE);
-                AddItem(s, 0x4000_0003, CORPSE);
-                s.World.QueueItemUpdate(a); // listed: no second entry
-
-                Entries(s.World).Should().Be(entries, $"source {source} check {check}");
-                s.World.ActiveItemCount.Should().Be(3);
-                (a.ActiveEntryId == 0).Should().Be(entries == 0);
-                a.InUpdateList.Should().Be(!source || check, "the list's flag is set when the list is the source or the shadow");
-            }
+            Entries(s.World).Should().Be(3);
+            Tagged(s.World).Should().Be(3);
+            s.World.ActiveItemCount.Should().Be(3);
+            a.ActiveEntryId.Should().NotBe(0);
         }
 
         // the scripted scenario of ActiveItemsSystemTests (queue twice, a queued item that needs nothing, a corpse turned into a
-        // plain item, destroyed while listed, re-queued, a refreshed record), on worlds with the switch off and on
+        // plain item, destroyed while listed, re-queued, a refreshed record), with the list's orders written out
         [Fact]
         public void Membership_And_Order_Match_The_List_In_The_Scripted_Scenario()
         {
-            Scene[] scenes = { Build(false), Build(true), Build(true, check: false), Build(false, check: false) };
+            Scene[] scenes = { Build(), Build(check: false) };
+            uint[][] expected =
+            {
+                new uint[] { 1, 3, 4, 5 },
+                new uint[] { 1, 5, 4 },
+                new uint[] { 1, 5, 4 },
+                new uint[] { 4, 5 },
+                new uint[] { 4, 5, 3 },
+                new uint[] { 4, 5, 3 }
+            };
 
             foreach (Scene s in scenes)
             {
@@ -136,7 +134,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Same(scenes, "after the adds");
-            Active(scenes[1].World).Should().Equal(0x4000_0001u, 0x4000_0003u, 0x4000_0004u, 0x4000_0005u, 0x4000_0002u);
+            Active(scenes[0].World).Should().Equal(0x4000_0001u, 0x4000_0003u, 0x4000_0004u, 0x4000_0005u, 0x4000_0002u);
 
             for (int frame = 0; frame < 6; frame++)
             {
@@ -170,12 +168,12 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 Same(scenes, $"frame {frame}");
+                Active(scenes[0].World).Should().Equal(expected[frame].Select(e => 0x4000_0000 + e), $"frame {frame}");
             }
 
-            scenes[0].World.ActiveSourceChecks.Should().BeGreaterThan(0);
-            scenes[1].World.ActiveSourceChecks.Should().BeGreaterThan(0);
-            scenes[2].World.ActiveSourceChecks.Should().Be(0);
-            Entries(scenes[1].World).Should().Be(scenes[1].World.ActiveItemCount);
+            scenes[0].World.ActiveItemsChecks.Should().BeGreaterThan(0);
+            scenes[1].World.ActiveItemsChecks.Should().Be(0);
+            Entries(scenes[0].World).Should().Be(scenes[0].World.ActiveItemCount);
         }
 
         // the swap-remove order: an item destroyed between frames keeps its slot until the visit removes it, which moves the
@@ -189,26 +187,23 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(new[] { 0, 1, 2, 3, 4 }, new uint[0])]
         public void Removals_Keep_The_Swap_Remove_Order(int[] destroyed, uint[] expected)
         {
-            foreach (bool source in new[] { false, true })
+            Scene s = Build();
+            var items = new List<Item>();
+
+            for (uint i = 0; i < 5; i++)
             {
-                Scene s = Build(source);
-                var items = new List<Item>();
-
-                for (uint i = 0; i < 5; i++)
-                {
-                    items.Add(AddItem(s, 0x4000_0000 + i, CORPSE));
-                }
-
-                foreach (int d in destroyed)
-                {
-                    items[d].Destroy();
-                }
-
-                s.World.Update();
-
-                Active(s.World).Should().Equal(expected.Select(e => 0x4000_0000 + e), $"source {source}");
-                s.Mismatches.Should().BeEmpty();
+                items.Add(AddItem(s, 0x4000_0000 + i, CORPSE));
             }
+
+            foreach (int d in destroyed)
+            {
+                items[d].Destroy();
+            }
+
+            s.World.Update();
+
+            Active(s.World).Should().Equal(expected.Select(e => 0x4000_0000 + e));
+            s.Mismatches.Should().BeEmpty();
         }
 
         // removals and additions while the stage visits: the visited item leaves, a later item is destroyed (it leaves when
@@ -216,7 +211,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Changes_During_The_Visit_Keep_The_Order()
         {
-            Scene[] scenes = { Build(false), Build(true), Build(true, check: false) };
+            Scene[] scenes = { Build(), Build(check: false) };
 
             foreach (Scene s in scenes)
             {
@@ -288,7 +283,7 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(8)]
         public void Random_Operations_Keep_Membership_And_Order(int seed)
         {
-            Scene[] scenes = { Build(false), Build(true), Build(true, check: false) };
+            Scene[] scenes = { Build(), Build(check: false) };
             var rnd = new Random(seed);
             const int SERIALS = 40;
 
@@ -421,49 +416,43 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (Scene s in scenes)
             {
-                Entries(s.World).Should().Be(s.World.ActiveItemsSourceOn || s.World.ActiveItemsSourceCheckOn ? s.World.ActiveItemCount : 0);
+                Entries(s.World).Should().Be(s.World.ActiveItemCount);
             }
 
-            scenes[1].World.ActiveSourceChecks.Should().BeGreaterThan(0);
+            scenes[0].World.ActiveItemsChecks.Should().BeGreaterThan(0);
         }
 
         [Fact]
         public void World_Clear_Deletes_The_Entries()
         {
-            foreach (bool source in new[] { false, true })
-            {
-                Scene s = Build(source);
-                Item a = AddItem(s, 0x4000_0001, CORPSE);
-                AddItem(s, 0x4000_0002, CORPSE);
-                s.World.Clear();
+            Scene s = Build();
+            Item a = AddItem(s, 0x4000_0001, CORPSE);
+            AddItem(s, 0x4000_0002, CORPSE);
+            s.World.Clear();
 
-                Entries(s.World).Should().Be(0);
-                a.ActiveEntryId.Should().Be(0);
-                a.InUpdateList.Should().BeFalse();
-                s.World.ActiveItemCount.Should().Be(0);
-                Tagged(s.World).Should().Be(0);
-            }
+            Entries(s.World).Should().Be(0);
+            a.ActiveEntryId.Should().Be(0);
+            s.World.ActiveItemCount.Should().Be(0);
+            Tagged(s.World).Should().Be(0);
         }
 
         // Codex audit P2: an entry must not keep its item reachable once it is gone. Friflo's DeleteEntity moves the last
         // entity's components into the freed slot and leaves the vacated tail uncleared, so an object reference in
         // ActiveItemEntry stayed in the component array: here c is moved into a's slot when a leaves, then leaves itself, and
-        // World.Clear deletes the rest. Every destroyed item must be collectable, with the switch and the checker on and off.
+        // World.Clear deletes the rest. Every destroyed item must be collectable, with the checker on and off.
         [Theory]
-        [InlineData(false, false)]
-        [InlineData(false, true)]
-        [InlineData(true, false)]
-        [InlineData(true, true)]
-        public void Removed_Items_Are_Not_Kept_Reachable_By_Their_Entries(bool source, bool check)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Removed_Items_Are_Not_Kept_Reachable_By_Their_Entries(bool check)
         {
-            Scene s = Build(source, check);
+            Scene s = Build(check);
             WeakReference[] removed = AddAndRemoveViaSwap(s);
             Collect();
-            removed.Select(w => w.IsAlive).Should().Equal(new[] { false, false }, $"source {source} check {check}: a and c removed by the visit");
+            removed.Select(w => w.IsAlive).Should().Equal(new[] { false, false }, $"check {check}: a and c removed by the visit");
 
             WeakReference[] cleared = AddAndClear(s);
             Collect();
-            cleared.Select(w => w.IsAlive).Should().Equal(new[] { false, false, false, false }, $"source {source} check {check}: removed by World.Clear");
+            cleared.Select(w => w.IsAlive).Should().Equal(new[] { false, false, false, false }, $"check {check}: removed by World.Clear");
             s.Mismatches.Should().BeEmpty();
             GC.KeepAlive(s.World);
         }
@@ -508,20 +497,18 @@ namespace ClassicUO.UnitTests.Ecs
 
         // the last slot's removal (no entry moves), and a table grown past its first size, with every item removed by the visit
         [Theory]
-        [InlineData(false, false)]
-        [InlineData(false, true)]
-        [InlineData(true, false)]
-        [InlineData(true, true)]
-        public void Last_Slot_Removals_And_A_Grown_Table_Keep_No_Item_Reachable(bool source, bool check)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Last_Slot_Removals_And_A_Grown_Table_Keep_No_Item_Reachable(bool check)
         {
-            Scene s = Build(source, check);
+            Scene s = Build(check);
             WeakReference last = RemoveLastSlot(s);
             Collect();
-            last.IsAlive.Should().BeFalse($"source {source} check {check}: the last slot's item");
+            last.IsAlive.Should().BeFalse($"check {check}: the last slot's item");
 
             WeakReference[] grown = GrowAndRemoveAll(s);
             Collect();
-            grown.Count(w => w.IsAlive).Should().Be(0, $"source {source} check {check}: the grown table's items");
+            grown.Count(w => w.IsAlive).Should().Be(0, $"check {check}: the grown table's items");
             s.Mismatches.Should().BeEmpty();
             GC.KeepAlive(s.World);
         }
@@ -566,7 +553,7 @@ namespace ClassicUO.UnitTests.Ecs
             return refs.ToArray();
         }
 
-        // Codex re-review P2: an entry deleted outside the store (only the checker's corruption test does that). The rebuild
+        // Codex re-review P2: an entry deleted outside the store (only the corruption tests do that). The rebuild
         // frees its handle and unlists its item; the other entries leave, so the count is 0; World.Clear still clears the
         // store, and the item is collectable.
         [Theory]
@@ -574,7 +561,7 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(true)]
         public void An_Entry_Deleted_Outside_The_Store_Leaves_No_Handle_Or_Membership(bool check)
         {
-            Scene s = Build(true, check);
+            Scene s = Build(check);
             WeakReference orphan = DeleteOutsideThenEmpty(s);
             s.World.ActiveItemCount.Should().Be(0);
 
@@ -608,7 +595,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void World_Clear_Resets_The_Store_With_A_Zero_Count()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             Item a = AddItem(s, 0x4000_0001, CORPSE);
             s.World.RemoveItem(a.Serial);
             s.World.Update();
@@ -624,7 +611,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Destroyed_Item_Keeps_Its_Slot_Until_The_Visit()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             Item a = AddItem(s, 0x4000_0001, CORPSE);
             AddItem(s, 0x4000_0002, CORPSE);
             a.Destroy();
@@ -643,7 +630,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Visit_Order_Is_Rebuilt_From_The_Entry_Slots()
         {
-            Scene s = Build(true, check: false);
+            Scene s = Build(check: false);
             Item a = AddItem(s, 0x4000_0001, CORPSE);
             Item b = AddItem(s, 0x4000_0002, CORPSE);
             s.World.ActiveItemEntryOf(a).GetComponent<ActiveItemEntry>().Slot = 1;
@@ -655,77 +642,44 @@ namespace ClassicUO.UnitTests.Ecs
             Active(s.World).Should().Equal(0x4000_0002u, 0x4000_0001u);
         }
 
-        // checker mutants: an entry deleted behind the store's back, a broken slot, and a shadow that missed an add are reported
-        [Fact]
-        public void The_Checker_Reports_A_Lost_Entry_A_Broken_Slot_And_A_Diverged_Shadow()
+        // a broken slot is reported (with or without CUO_ACTIVE_ITEMS_CHECK) and every entry is still visited
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Broken_Slot_Is_Reported(bool check)
         {
-            Scene s = Build(true);
-            Item a = AddItem(s, 0x4000_0001, CORPSE);
+            Scene s = Build(check);
+            AddItem(s, 0x4000_0001, CORPSE);
             Item b = AddItem(s, 0x4000_0002, CORPSE);
             s.World.ActiveItemEntryOf(b).GetComponent<ActiveItemEntry>().Slot = 0;
             s.World.Update();
             s.Mismatches.Should().Contain(m => m.Contains("slots broken"));
-
-            s = Build(true);
-            a = AddItem(s, 0x4000_0001, CORPSE);
-            AddItem(s, 0x4000_0002, CORPSE);
-            s.World.ActiveItemEntryOf(a).DeleteEntity();
-            s.World.Update();
-            s.Mismatches.Should().NotBeEmpty("an entry deleted outside the store");
-
-            foreach (bool source in new[] { false, true })
-            {
-                s = Build(source);
-                AddItem(s, 0x4000_0001, CORPSE);
-                s.World.Update(); // the first update's scan would queue the missed item into both
-                s.World.ActiveItemsSourceCheckOverride = false;
-                AddItem(s, 0x4000_0002, CORPSE); // the shadow misses it
-                s.World.ActiveItemsSourceCheckOverride = true;
-                s.World.Update();
-                s.Mismatches.Should().Contain(m => m.Contains("list holds"), $"source {source}");
-            }
+            s.Visits.Should().BeEquivalentTo(new uint[] { 0x4000_0001, 0x4000_0002 });
         }
 
         [Fact]
         public void The_Rebuild_Allocates_Nothing()
         {
-            Scene s = Build(true, check: false);
+            Scene s = Build(check: false);
+            var store = new ActiveItemStore(s.World.Ecs.Mirror.Store);
 
             for (uint i = 0; i < 50; i++)
             {
-                AddItem(s, 0x4000_0000 + i, CORPSE);
+                Item item = s.World.GetOrCreateItem(0x4000_0000 + i);
+                store.Add(item);
             }
 
-            s.World.ActiveVisitObserver = null;
-            s.World.Update();
-            s.World.Update();
+            store.Rebuild(out _).Should().BeTrue();
+            store.Rebuild(out _);
             long before = GC.GetAllocatedBytesForCurrentThread();
 
             for (int i = 0; i < 100; i++)
             {
-                s.World.Update();
+                store.Rebuild(out _);
             }
 
-            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-
-            Scene off = Build(false, check: false);
-
-            for (uint i = 0; i < 50; i++)
-            {
-                AddItem(off, 0x4000_0000 + i, CORPSE);
-            }
-
-            off.World.ActiveVisitObserver = null;
-            off.World.Update();
-            off.World.Update();
-            before = GC.GetAllocatedBytesForCurrentThread();
-
-            for (int i = 0; i < 100; i++)
-            {
-                off.World.Update();
-            }
-
-            allocated.Should().BeLessOrEqualTo(GC.GetAllocatedBytesForCurrentThread() - before, "the switch adds no allocation to World.Update");
+            (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0, "the rebuild scatters into a reused array");
+            store.Count.Should().Be(50);
         }
     }
 }

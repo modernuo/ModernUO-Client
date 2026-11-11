@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
-using System.Runtime.CompilerServices;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
@@ -10,11 +9,12 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// <c>ecs_item_offset</c>: an item's boat offset (the boat's own, and that of the items on its deck) as the ECS
-    /// <see cref="ClassicUO.Ecs.ItemOffset"/> component. <see cref="Push"/> is called by WorldWriter's boat operations with
-    /// the values they write to the GameObject; <see cref="Read"/> serves the per-frame readers (the item extract's Gather,
-    /// the item pick). A mobile passenger's offset is in its Steps component (T6c); a boat's multi components are not world
-    /// objects and keep theirs on the Multi. CUO_ITEM_OFFSET_CHECK=1 compares the component with the Item at every read.
+    /// An item's boat offset (the boat's own, and that of the items on its deck) as the ECS
+    /// <see cref="ClassicUO.Ecs.ItemOffset"/> component (T9 deleted <c>ecs_item_offset</c>'s off path). <see cref="Push"/> is
+    /// called by WorldWriter's boat operations with the values they write to the GameObject; <see cref="Read"/> serves the
+    /// per-frame readers (the item extract's Gather, the item pick). A mobile passenger's offset is in its Steps component
+    /// (T6c); a boat's multi components are not world objects and keep theirs on the Multi. CUO_ITEM_OFFSET_CHECK=1 compares
+    /// the component with the Item's Offset (still written by the same operations and read by the views) at every read.
     /// </summary>
     internal static class ItemOffsets
     {
@@ -44,11 +44,11 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// The boat operations' ECS write: <paramref name="offset"/> into the item's component (added when the offset is not
-        /// zero and the item has none yet). Nothing with the switch off, for a mobile (its Steps), or an item without a record.
+        /// zero and the item has none yet). Nothing for a mobile (its Steps) or an item without a record.
         /// </summary>
         internal static void Push(World world, Entity entity, Vector3 offset)
         {
-            if (!world.ItemOffsetOn || entity is not Item item || !item.TryScalarEntity(out EcsEntity e))
+            if (entity is not Item item || !item.TryScalarEntity(out EcsEntity e))
             {
                 return;
             }
@@ -69,26 +69,15 @@ namespace ClassicUO.Game
             }
         }
 
-        /// <summary>
-        /// The item's offset from its component (zero without one) while <c>ecs_item_offset</c> is on, else (and for an item
-        /// without a record: the house placement preview) the Item's.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static Vector3 Read(Item item)
-        {
-            if (!item.World.ItemOffsetOn)
-            {
-                return item.Offset;
-            }
-
-            return ReadEcs(item);
-        }
-
         // Codex audit P2 (accepted, owner's shared-serial rule of 2026-11-07): a record replaced by a mobile under the same
         // serial and then re-created starts without ItemOffset, so an item still riding a boat reads zero until the next
         // boat write. Only a misconfigured server sends an item and a mobile under one serial; the record is not reseeded
         // from the object, as the cold scalars are not.
-        private static Vector3 ReadEcs(Item item)
+        /// <summary>
+        /// The item's offset from its component (zero without one); for an item without a record (the house placement
+        /// preview) the Item's.
+        /// </summary>
+        internal static Vector3 Read(Item item)
         {
             Vector3 v;
 
@@ -112,7 +101,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// <see cref="Read"/> with the switch on, for a reader that already holds the item's record row (the item extract's
+        /// <see cref="Read"/> for a reader that already holds the item's record row (the item extract's
         /// Gather): the component from <paramref name="row"/> instead of a second TryScalarEntity and node lookup.
         /// <paramref name="record"/>: false = no record (the placement preview), read the Item's.
         /// </summary>
@@ -157,11 +146,11 @@ namespace ClassicUO.Game
         }
 
         /// <summary>The counters, for the periodic log line.</summary>
-        internal static string Summary(World world) =>
-            $"[item-offset-check] ecs_item_offset {(world.ItemOffsetOn ? "on" : "off")}: writes {Writes} (adds {Adds}), ecs reads {Reads}, fallbacks to the Item {Fallbacks}; checked {Checks}, different {Diffs}";
+        internal static string Summary() =>
+            $"[item-offset-check] writes {Writes} (adds {Adds}), ecs reads {Reads}, fallbacks to the Item {Fallbacks}; checked {Checks}, different {Diffs}";
 
         /// <summary>Every 5 s while the checker is on: <see cref="Summary"/> (BoatMovingManager.Update, once per frame).</summary>
-        internal static void LogSummary(World world)
+        internal static void LogSummary()
         {
             if (!Check || Time.Ticks < _logAt)
             {
@@ -169,7 +158,7 @@ namespace ClassicUO.Game
             }
 
             _logAt = Time.Ticks + 5000;
-            Log.Info(Summary(world));
+            Log.Info(Summary());
         }
     }
 }

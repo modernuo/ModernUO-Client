@@ -221,14 +221,15 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Mobile_Setters_And_Step_Queue_Push_Their_Inputs()
         {
-            // the setters' own pushes write the GameObject only (no funnel commit): ecs_small_fields reads the fields
-            var world = new World { SmallFieldsOverride = false };
+            // the setters write the caches only: IsFemale's record bit is committed first, as WorldWriter's operations do
+            var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.Graphic = 0x190;
             world.Ecs.Sync(m);
             ShouldMatchFresh(world, m);
             Pushed(world, SERIAL).Flags.Should().Be(AnimStateFlags.Human);
 
+            world.Ecs.CommitMobileBit(m, MobileTraitBits.Female, true);
             m.IsFemale = true;
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Female);
 
@@ -279,12 +280,13 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Replaced_Mobile_Does_Not_Push_Into_Its_Successors_Entity()
         {
-            // the setters' own pushes write the GameObject only (no funnel commit): ecs_small_fields reads the fields
-            var world = new World { SmallFieldsOverride = false };
+            // the setters write the caches only: IsFemale's record bit is committed first, as WorldWriter's operations do
+            var world = new World();
             Mobile old = world.GetOrCreateMobile(SERIAL);
             old.Graphic = 0x190;
-            old.IsFemale = true;
             world.Ecs.Sync(old);
+            world.Ecs.CommitMobileBit(old, MobileTraitBits.Female, true);
+            old.IsFemale = true;
             Pushed(world, SERIAL).Flags.Should().HaveFlag(AnimStateFlags.Female);
 
             // the serial leaves and comes back as a new object (out of range and back, or reused); destroying needs the client,

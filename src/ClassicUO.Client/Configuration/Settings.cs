@@ -143,39 +143,6 @@ namespace ClassicUO.Configuration
         // with the components at every read. Off = the components. Default on since legacy-flip (bench-000564).
         [JsonPropertyName("ecs_item_draw_row")] public bool EcsItemDrawRow { get; set; } = true;
 
-        // T6c follow-up: the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
-        // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
-        // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup
-        // (CUO_ECS_STEP_MOUNT_INPUTS=1|0 overrides it in developer builds). CUO_STEP_MOUNT_CHECK=1 compares the two at every
-        // step decision. Off = from the Mobile. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = true;
-
-        // An item's sub-tile draw offset while a boat carries it (the boat and the items on its deck) is ECS-owned: the boat
-        // operations of WorldWriter write the ItemOffset component with the GameObject's Offset, and the item extract's
-        // Gather and the item pick read the component. Read once at startup (CUO_ECS_ITEM_OFFSET=1|0 overrides it in
-        // developer builds). CUO_ITEM_OFFSET_CHECK=1 compares the component with the Item's Offset at every read. Off = the
-        // component is not written and the readers read the Item. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_item_offset")] public bool EcsItemOffset { get; set; } = true;
-
-        // A boat's motion state (its queued smooth-movement steps, the step clock, the objects 0xF6 listed on its deck) is the
-        // ECS BoatSteps component on the boat's record instead of BoatMovingManager's dictionaries: WorldWriter's boat
-        // operations fill it from 0xF6, and BoatStepSystem advances the boats each frame through the same boat operations.
-        // Read once at startup (CUO_ECS_BOAT_STEPS=1|0 overrides it in developer builds). CUO_BOAT_CHECK=1 keeps the old
-        // dictionaries in shadow and compares their decisions, queues and passengers with the component's every frame.
-        // Off = BoatMovingManager's dictionaries. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_boat_steps")] public bool EcsBoatSteps { get; set; } = true;
-
-        // Wave 1C: the small cold fields (Item LightID, IsDamageable, UsedLayer; Mobile Race, SpeedMode, IsFemale, IsRenamable;
-        // the player's InWarMode) are read from the ECS record (ItemTraits, MobileTraits), which WorldWriter's operations write
-        // whatever the switch. Read once at startup (CUO_ECS_SMALL_FIELDS=1|0 overrides it in developer builds).
-        // CUO_SMALL_FIELDS_CHECK=1 compares the record with the GameObject's field at every read. Off = the GameObject's
-        // fields. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_small_fields")] public bool EcsSmallFields { get; set; } = true;
-
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.
@@ -189,14 +156,6 @@ namespace ClassicUO.Configuration
         // 2026-11-08 (owner, after the quiet-machine timing quiet-1108: Gpu neutral, Legacy world_prepare +4-6 % at ls_z1 accepted);
         // the off path, the shadow list and CUO_TILE_ORDER_CHECK stay for one phase.
         [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; } = true;
-
-        // T9 (ecs-transition-plan.md §T5d): the ECS is the source of the per-frame item update list: one ActiveItemEntry entity per
-        // listed item holds the item and its visiting slot (append, swap-remove), and the active item stage visits the order
-        // rebuilt from those entities each frame. Off: World's ActiveItemList holds membership and order. CUO_ACTIVE_ITEMS_SOURCE_CHECK=1
-        // keeps the list as a shadow and compares membership and order every frame. Read once at startup
-        // (CUO_ECS_ACTIVE_ITEMS_SOURCE=1|0 overrides it in developer builds). Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_active_items_source")] public bool EcsActiveItemsSource { get; set; } = true;
 
         // T9 (ecs-transition-plan.md §T9): World.Get answers from the mirror's serial index (each record keeps the Item or Mobile
         // it was last written for), not from World.Items/World.Mobiles, which stay maintained. CUO_ENTITY_INDEX_CHECK=1 runs both
