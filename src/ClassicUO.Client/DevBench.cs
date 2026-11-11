@@ -1653,8 +1653,8 @@ namespace ClassicUO
 
                         if (body.ActionCount > 0 && (int)body.Type != (int)Assets.AnimationGroupsType.Equipment && anims.TryGetDirection((ushort)_bodyNext, 0, 4, out _))
                         {
-                            world.Player.Graphic = (ushort)_bodyNext;
-                            world.Ecs.Sync(world.Player); // a local body swap: the ECS mirror follows, as for a server body change
+                            // a local body swap, as a server body change (the record is the graphic's only copy)
+                            world.Writer.SetMobileGraphic(world.Player, (ushort)_bodyNext, checkBody: false);
                             _bodiesShown++;
 
                             break;
@@ -1718,8 +1718,7 @@ namespace ClassicUO
 
                     if (_bodyRestore != 0)
                     {
-                        world.Player.Graphic = _bodyRestore;
-                        world.Ecs.Sync(world.Player);
+                        world.Writer.SetMobileGraphic(world.Player, _bodyRestore, checkBody: false);
                         _bodyRestore = 0;
                         Log.Info($"[bench] bodies: {_bodiesShown} bodies shown, up to body {_bodyNext}");
                     }
@@ -1981,13 +1980,11 @@ namespace ClassicUO
                             if (arg == "on" && !world.Player.IsDead)
                             {
                                 _ghostRestore = world.Player.Graphic;
-                                world.Player.Graphic = 0x0192;
-                                world.Ecs.Sync(world.Player);
+                                world.Writer.SetMobileGraphic(world.Player, 0x0192, checkBody: false);
                             }
                             else if (arg == "off" && _ghostRestore != 0)
                             {
-                                world.Player.Graphic = _ghostRestore;
-                                world.Ecs.Sync(world.Player);
+                                world.Writer.SetMobileGraphic(world.Player, _ghostRestore, checkBody: false);
                             }
                         }
                         else
@@ -2024,7 +2021,7 @@ namespace ClassicUO
 
                             for (int i = 0; i < hues.Length && i < items.Count; i++)
                             {
-                                items[i].Hue = Convert.ToUInt16(hues[i], 16);
+                                world.Writer.SetLocalItemLook(items[i], items[i].Graphic, Convert.ToUInt16(hues[i], 16));
                                 Log.Info($"[bench] item 0x{items[i].Graphic:X4} at {items[i].X},{items[i].Y},{items[i].Z} hue 0x{items[i].Hue:X4}");
                             }
 
@@ -2185,11 +2182,12 @@ namespace ClassicUO
                         else
                         {
                             var chair = world.GetOrCreateItem(chairSerial);
-                            chair.Graphic = Convert.ToUInt16(arg, 16);
                             chair.X = world.Player.X;
                             chair.Y = world.Player.Y;
                             chair.Z = world.Player.Z;
+                            world.Writer.SetLocalItemLook(chair, Convert.ToUInt16(arg, 16), chair.Hue);
                             chair.CheckGraphicChange();
+
                             chair.SetInWorldTile(chair.X, chair.Y, chair.Z);
                             world.Ecs.Sync(chair);
                         }

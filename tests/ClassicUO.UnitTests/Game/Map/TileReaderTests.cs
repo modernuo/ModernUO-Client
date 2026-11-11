@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -60,7 +61,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private Item NewItem(ushort graphic, sbyte z)
         {
             Item item = _world.GetOrCreateItem(_nextSerial++);
-            item.Graphic = graphic;
+            item.TestSetGraphic(graphic);
             item.Z = z;
             return item;
         }
@@ -394,7 +395,7 @@ namespace ClassicUO.UnitTests.Game.Map
             World world = ClassicUO.UnitTests.Ecs.WorldWriterMobileTests.BuildPlayer(out _);
             typeof(World).GetProperty(nameof(World.Map))!.SetValue(world, new ClassicUO.Game.Map.Map(world, 0, 1));
             // the GM body: CalculateNewZ takes the dead-or-GM step state without the race test (Client.Game is not set up here)
-            world.Player.Graphic = 0x03DB;
+            world.Player.TestSetGraphic(0x03DB);
             var pathfinder = new Pathfinder(world);
 
             // far from the player at 1000,1000: no chunk is loaded, so both lists stay empty and every walk is refused (a straight

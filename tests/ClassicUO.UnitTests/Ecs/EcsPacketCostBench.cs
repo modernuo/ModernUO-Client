@@ -39,7 +39,7 @@ namespace ClassicUO.UnitTests.Ecs
             for (int i = 0; i < n; i++)
             {
                 Mobile m = s.World.GetOrCreateMobile(MOB0 + (uint)i);
-                m.Graphic = 0x190;
+                m.TestSetGraphic(0x190);
                 m.X = (ushort)(1000 + i % 100);
                 m.Y = (ushort)(1000 + i / 100);
                 s.World.Ecs.Sync(m);
@@ -48,7 +48,7 @@ namespace ClassicUO.UnitTests.Ecs
                 for (int k = 0; k < WORN; k++)
                 {
                     Item it = s.World.GetOrCreateItem(ITEM0 + (uint)(i * WORN + k));
-                    it.Graphic = (ushort)(0x1515 + k);
+                    it.TestSetGraphic((ushort)(0x1515 + k));
                     it.TestSetLayer(layers[k]);
                     it.TestSetContainer(m.Serial);
                     m.PushToBack(it);
@@ -58,7 +58,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             s.Backpack = s.World.GetOrCreateItem(ITEM0 + (uint)(n * WORN));
-            s.Backpack.Graphic = 0xE75;
+            s.Backpack.TestSetGraphic(0xE75);
             s.World.Ecs.Sync(s.Backpack);
 
             return s;
@@ -127,7 +127,7 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("mobile graphic change + Sync (marks equipment dirty)", Measure(packets, i =>
             {
                 Mobile m = s.Mobiles[i % n];
-                m.Graphic = (ushort)((i & 1) == 0 ? 0x191 : 0x190);
+                m.TestSetGraphic((ushort)((i & 1) == 0 ? 0x191 : 0x190));
                 ecs.Sync(m);
             })));
 
@@ -137,7 +137,7 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("worn item Sync, hue change (equipment dirty)", Measure(packets, i =>
             {
                 Item it = s.Worn[i % itemCount];
-                it.Hue = (ushort)(i & 0x3FF);
+                it.TestSetHue((ushort)(i & 0x3FF));
                 ecs.Sync(it);
             })));
 
@@ -158,7 +158,7 @@ namespace ClassicUO.UnitTests.Ecs
                 if ((i & 1) == 0)
                 {
                     Item it = s.World.GetOrCreateItem(spare);
-                    it.Graphic = 0xEED;
+                    it.TestSetGraphic(0xEED);
                     it.X = 1100;
                     it.Y = 1100;
                     ecs.Sync(it);
@@ -316,7 +316,7 @@ namespace ClassicUO.UnitTests.Ecs
                 if ((i & 1) == 0)
                 {
                     Item it = s.World.GetOrCreateItem(ser);
-                    it.Graphic = 0xF7A;
+                    it.TestSetGraphic(0xF7A);
                     it.TestSetContainer(s.Backpack.Serial);
                     ecs.Sync(it);
                 }
@@ -342,7 +342,7 @@ namespace ClassicUO.UnitTests.Ecs
                 else
                 {
                     Mobile m = s.World.GetOrCreateMobile(old.Serial);
-                    m.Graphic = 0x190;
+                    m.TestSetGraphic(0x190);
                     ecs.Sync(m);
                     s.Mobiles[(i >> 1) % n] = m;
                 }
@@ -400,7 +400,7 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("T1 old path: 0x78 player body (graphic, sex, hue, flags + Sync)", Measure(packets, i =>
             {
                 Mobile m = s.Mobiles[i % n];
-                m.Graphic = (ushort)((i & 1) == 0 ? 0x191 : 0x190);
+                m.TestSetGraphic((ushort)((i & 1) == 0 ? 0x191 : 0x190));
                 WorldWriterMobileTests.OldCheckGraphicChange(m);
                 m.FixHue((ushort)(i & 63));
                 m.TestSetFlags((ClassicUO.Game.Data.Flags)(i & 0x40));

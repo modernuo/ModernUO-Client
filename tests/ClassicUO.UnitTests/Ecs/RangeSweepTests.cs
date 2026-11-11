@@ -45,7 +45,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Mobile AddMobile(Scene s, uint serial, int x, int y, NotorietyFlag noto = NotorietyFlag.Innocent, Flags flags = Flags.None)
         {
             Mobile m = s.World.GetOrCreateMobile(serial);
-            m.Graphic = 0x190;
+            m.TestSetGraphic(0x190);
             m.TestSetFlags(flags);
             m.NotorietyFlag = noto;
             m.SetInWorldTile((ushort)x, (ushort)y, 0);
@@ -71,7 +71,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item AddGround(Scene s, uint serial, int x, int y, bool multi = false, int bonus = 0)
         {
             Item i = s.World.GetOrCreateItem(serial);
-            i.Graphic = 0xEED;
+            i.TestSetGraphic(0xEED);
             i.SetInWorldTile((ushort)x, (ushort)y, 0);
 
             if (multi)
@@ -258,7 +258,7 @@ namespace ClassicUO.UnitTests.Ecs
             // a contained and a worn item: never swept, even at far positions
             Item bag = AddGround(s, 0x4000_0010, 1005, 1000);
             Item inside = s.World.GetOrCreateItem(0x4000_0011);
-            inside.Graphic = 0xEED;
+            inside.TestSetGraphic(0xEED);
             inside.TestSetContainer(bag.Serial);
             bag.PushToBack(inside);
             inside.X = 1000 + 90;
@@ -318,7 +318,7 @@ namespace ClassicUO.UnitTests.Ecs
             AddMobile(s, 0x1001, 1005, 1000);
 
             Item far = s.World.GetOrCreateItem(0x4000_0022);
-            far.Graphic = 0xEED;
+            far.TestSetGraphic(0xEED);
             far.TestSetContainer(0x1001 | 0x8000_0000);
             far.TestSetLayer(Layer.Shirt);
             far.X = 1000 + 60;
@@ -327,7 +327,7 @@ namespace ClassicUO.UnitTests.Ecs
             s.Items[far.Serial] = far;
 
             Item near = s.World.GetOrCreateItem(0x4000_0023);
-            near.Graphic = 0xEED;
+            near.TestSetGraphic(0xEED);
             near.TestSetContainer(0x1001 | 0x8000_0000);
             near.TestSetLayer(Layer.Pants);
             near.X = 1000 + 3;

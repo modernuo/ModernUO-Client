@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -60,7 +61,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private Item NewItem(ushort graphic, sbyte z)
         {
             Item item = _world.GetOrCreateItem(_nextSerial++);
-            item.Graphic = graphic;
+            item.TestSetGraphic(graphic);
             item.Z = z;
             return item;
         }
@@ -539,7 +540,7 @@ namespace ClassicUO.UnitTests.Game.Map
             Place(chunk, NewLand(dead, 0), 1, 1);
             Place(chunk, dm, 1, 1);
             Item corpse = dead.GetOrCreateItem(0x4000_9000);
-            corpse.Graphic = 0x2006;
+            corpse.TestSetGraphic(0x2006);
             Place(chunk, corpse, 1, 1);
             dead.Mobiles.Remove(dm.Serial);
             dm.Serial = 0x8000_3001;
@@ -630,7 +631,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 else
                 {
                     // graphic change without a re-insert
-                    objects[rng.Next(objects.Count)].Graphic = (ushort)rng.Next(Plain, TallBackground + 1);
+                    objects[rng.Next(objects.Count)].TestSetGraphic((ushort)rng.Next(Plain, TallBackground + 1));
                 }
 
                 foreach (Chunk c in chunks)

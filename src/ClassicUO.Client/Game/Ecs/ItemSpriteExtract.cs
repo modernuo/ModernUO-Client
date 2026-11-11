@@ -639,8 +639,11 @@ namespace ClassicUO.Game
                     return;
                 }
 
-                graphic = equip.ItemData.AnimID;
-                partial = equip.ItemData.IsPartialHue;
+                // T9 S9: ItemData reads the record's graphic: once
+                ref StaticTiles equipData = ref equip.ItemData;
+                graphic = equipData.AnimID;
+                partial = equipData.IsPartialHue;
+
 
                 // as the view: the conversion table is looked up by the item's animation id twice
                 if (anims.EquipConversions.TryGetValue(graphic, out var map) && map.TryGetValue(graphic, out EquipConvData data))

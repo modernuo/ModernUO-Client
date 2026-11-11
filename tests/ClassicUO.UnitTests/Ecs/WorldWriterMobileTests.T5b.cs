@@ -197,7 +197,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
                 case T5bStart.Gargoyle:
-                    m.Graphic = 0x029B;
+                    m.TestSetGraphic(0x029B);
                     world.Ecs.Sync(m);
                     world.Ecs.PushInputs(m);
 

@@ -154,11 +154,12 @@ namespace ClassicUO.Game
                 }
             }
 
-            SelectCached(world, m, ref s, ref eq);
+            // T9 S9: the graphic from the row already read (Mobile.Graphic would look the record up again)
+            SelectCached(world, m, data.Get<ClassicUO.Ecs.Graphic>().Value, ref s, ref eq);
         }
 
         // W5: Select, or the last frame's result when the sampled inputs are the same (MobileFrameCache)
-        private static void SelectCached(World world, Mobile m, ref AnimationState s, ref EquipmentSlots eq)
+        private static void SelectCached(World world, Mobile m, ushort graphic, ref AnimationState s, ref EquipmentSlots eq)
         {
             MobileFrameCache cache = m.FrameCache ??= new MobileFrameCache();
             MobileFrameCache.SelectKey key = default;
@@ -169,7 +170,8 @@ namespace ClassicUO.Game
                 key.Flags = s.Flags;
                 key.NextFrameTime = s.NextFrameTime;
                 key.Body = s.Body;
-                key.Graphic = m.Graphic;
+                key.Graphic = graphic;
+
                 key.ServerGroup = s.ServerGroup;
                 key.Facing = s.Facing;
                 key.Frame = s.Frame;

@@ -1,3 +1,4 @@
+using ClassicUO.UnitTests.Ecs;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -28,7 +29,7 @@ namespace ClassicUO.UnitTests.Game
         {
             var world = new World();
             Item item = world.GetOrCreateItem(0x40000001);
-            item.Graphic = 0x0EED;
+            item.TestSetGraphic(0x0EED);
             Assert.False(item.NeedsFrameUpdate);
 
             item.ObjectHandlesStatus = ObjectHandlesStatus.OPEN;
@@ -38,7 +39,7 @@ namespace ClassicUO.UnitTests.Game
             item.ObjectHandlesStatus = ObjectHandlesStatus.CLOSED;
             Assert.False(item.NeedsFrameUpdate);
 
-            item.Graphic = 0x2006;
+            item.TestSetGraphic(0x2006);
             Assert.True(item.NeedsFrameUpdate);
         }
 

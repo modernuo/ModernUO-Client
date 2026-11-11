@@ -45,7 +45,7 @@ namespace ClassicUO.UnitTests.Ecs
             typeof(World).GetProperty(nameof(World.Player))!.SetValue(world, p);
             world.Mobiles.Add(p);
             world.Ecs.Sync(p);
-            p.Graphic = 0x190;
+            p.TestSetGraphic(0x190);
             p.SetInWorldTile(900, 900, 0);
 
             Mobile m = world.Mobiles.Get(MOB);

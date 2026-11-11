@@ -244,7 +244,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item Wear(Layer layer, ushort graphic)
             {
                 Item it = Item.Create(world, 0x4000_0000 + (uint)layer);
-                it.Graphic = graphic;
+                it.TestSetGraphic(graphic);
                 it.TestSetLayer(layer);
                 preview.Preview.Wear(it);
                 worn[layer] = it;

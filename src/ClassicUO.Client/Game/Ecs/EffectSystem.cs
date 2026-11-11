@@ -56,6 +56,14 @@ namespace ClassicUO.Game
             return new Microsoft.Xna.Framework.Vector3(s.OffsetX, s.OffsetY, s.OffsetZ);
         }
 
+        /// <summary>T9 S9: the effect's graphic and hue from its state (0 before it registers and once destroyed, as the
+        /// destroyed object's were).</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public static ushort GraphicOf(GameEffect e) => e.EcsEntity.IsNull ? (ushort)0 : EcsRead.Get<EffectState>(e.EcsEntity).Graphic;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public static ushort HueOf(GameEffect e) => e.EcsEntity.IsNull ? (ushort)0 : EcsRead.Get<EffectState>(e.EcsEntity).Hue;
+
         public static byte KindOf(GameEffect e) => e switch
         {
             MovingEffect => EffectState.KIND_MOVING,
@@ -70,8 +78,8 @@ namespace ClassicUO.Game
         {
             EffectState s = default;
             s.Kind = KindOf(e);
-            s.Graphic = e.Graphic;
-            s.Hue = e.Hue;
+            s.Graphic = e.CreatedGraphic;
+            s.Hue = e.CreatedHue;
             s.Blend = (byte)e.Blend;
             s.AnimGraphic = NO_FRAME;
             s.Interval = e.IntervalInMs;

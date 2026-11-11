@@ -103,19 +103,19 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint s in new[] { MOB, OTHER })
             {
                 Mobile m = world.GetOrCreateMobile(s);
-                m.Graphic = 0x190;
+                m.TestSetGraphic(0x190);
                 m.SetInWorldTile(1000, 1000, 0);
                 world.Ecs.Sync(m);
             }
 
             Item bag = world.GetOrCreateItem(BAG);
-            bag.Graphic = 0xE75;
+            bag.TestSetGraphic(0xE75);
             bag.SetInWorldTile(1001, 1000, 0);
             world.Ecs.Sync(bag);
             world.Writer.PlaceInContainer(INBAG, 0x1F03, 1, 40, 50, 0, BAG, out _);
 
             Item ground = world.GetOrCreateItem(GROUND);
-            ground.Graphic = 0x1F7B;
+            ground.TestSetGraphic(0x1F7B);
             ground.SetInWorldTile(1002, 1003, 5);
             world.Ecs.Sync(ground);
 
@@ -127,7 +127,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceInContainer(OPENITEM, 0x0EED, 5, 10, 10, 0, OPEN, out _);
 
             Item orphan = world.GetOrCreateItem(ORPHAN);
-            orphan.Graphic = 0x1408;
+            orphan.TestSetGraphic(0x1408);
             orphan.TestSetLayer(Layer.Helmet);
             orphan.TestSetContainer(MOB);
             world.Ecs.Sync(orphan);
