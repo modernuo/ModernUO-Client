@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration.Json;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
@@ -371,7 +372,7 @@ namespace ClassicUO.Configuration
         {
             string gumpsXmlPath = Path.Combine(path, "gumps.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(gumpsXmlPath, Encoding.UTF8)
+            using (XmlTextWriter xml = new XmlTextWriter(AtomicFile.OpenWrite(gumpsXmlPath), Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -506,7 +507,7 @@ namespace ClassicUO.Configuration
 
                 try
                 {
-                    doc.Load(gumpsXmlPath);
+                    AtomicFile.LoadXml(doc, gumpsXmlPath);
                 }
                 catch (Exception ex)
                 {

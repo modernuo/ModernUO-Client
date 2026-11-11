@@ -22,7 +22,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(chair))
             {
-                using (StreamWriter writer = new StreamWriter(chair))
+                using (StreamWriter writer = AtomicFile.CreateText(chair))
                 {
                     foreach (var item in _defaultTable)
                     {
@@ -31,7 +31,7 @@ namespace ClassicUO.Game.Data
                 }
             }
 
-            TextFileParser chairParse = new TextFileParser(File.ReadAllText(chair), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser chairParse = new TextFileParser(AtomicFile.ReadAllText(chair), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!chairParse.IsEOF())
             {

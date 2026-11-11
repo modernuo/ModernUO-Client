@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.IO;
@@ -211,7 +212,7 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(path);
+                AtomicFile.LoadXml(doc, path);
             }
             catch (Exception ex)
             {
@@ -252,7 +253,7 @@ namespace ClassicUO.Game.Managers
         {
             string path = Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(path, Encoding.UTF8)
+            using (XmlTextWriter xml = new XmlTextWriter(AtomicFile.OpenWrite(path), Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',

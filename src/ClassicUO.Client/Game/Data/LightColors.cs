@@ -337,7 +337,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(path) || force)
             {
-                using (StreamWriter writer = new StreamWriter(File.Create(path)))
+                using (StreamWriter writer = AtomicFile.CreateText(path))
                 {
                     writer.WriteLine("# FORMAT");
 
@@ -353,7 +353,7 @@ namespace ClassicUO.Game.Data
                 }
             }
 
-            TextFileParser lightshadersParser = new TextFileParser(File.ReadAllText(path), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser lightshadersParser = new TextFileParser(AtomicFile.ReadAllText(path), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!lightshadersParser.IsEOF())
             {
@@ -401,7 +401,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(lights))
             {
-                using (StreamWriter writer = new StreamWriter(lights))
+                using (StreamWriter writer = AtomicFile.CreateText(lights))
                 {
                     writer.WriteLine("# FORMAT");
                     writer.WriteLine("# ITEM_ID LIGHT_SHADER_OR_HUE");
@@ -415,7 +415,7 @@ namespace ClassicUO.Game.Data
                 }
             }
 
-            TextFileParser itemlightsparser = new TextFileParser(File.ReadAllText(lights), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser itemlightsparser = new TextFileParser(AtomicFile.ReadAllText(lights), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!itemlightsparser.IsEOF())
             {

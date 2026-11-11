@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.UI.Gumps;
@@ -86,7 +87,7 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(ignoreXmlPath);
+                AtomicFile.LoadXml(doc, ignoreXmlPath);
             }
             catch (Exception ex)
             {
@@ -119,7 +120,7 @@ namespace ClassicUO.Game.Managers
         {
             string ignoreXmlPath = Path.Combine(ProfileManager.ProfilePath, "ignore_list.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(ignoreXmlPath, Encoding.UTF8)
+            using (XmlTextWriter xml = new XmlTextWriter(AtomicFile.OpenWrite(ignoreXmlPath), Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',

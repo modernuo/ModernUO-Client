@@ -1423,7 +1423,7 @@ namespace ClassicUO.Game.UI.Gumps
                         };
 
                         Directory.CreateDirectory(_mapsCachePath);
-                        using var stream2 = File.Create(fileMapPath);
+                        using var stream2 = AtomicFile.OpenWrite(fileMapPath);
                         img.Save(stream2, imageEncoder);
                     }
                     catch (Exception ex)
@@ -1495,7 +1495,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             try
             {
-                using var stream = File.OpenRead(path);
+                using var stream = AtomicFile.OpenRead(path);
 
                 return SixLabors.ImageSharp.Image.Load<Rgba32>(_mapDecodeOptions, stream);
             }

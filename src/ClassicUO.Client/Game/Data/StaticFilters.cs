@@ -44,7 +44,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(cave))
             {
-                using (StreamWriter writer = new StreamWriter(cave))
+                using (StreamWriter writer = AtomicFile.CreateText(cave))
                 {
                     for (int i = 0x053B; i < 0x0553 + 1; i++)
                     {
@@ -58,7 +58,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(vegetation))
             {
-                using (StreamWriter writer = new StreamWriter(vegetation))
+                using (StreamWriter writer = AtomicFile.CreateText(vegetation))
                 {
                     ushort[] vegetationTiles =
                     {
@@ -97,7 +97,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(trees))
             {
-                using (StreamWriter writer = new StreamWriter(trees))
+                using (StreamWriter writer = AtomicFile.CreateText(trees))
                 using (StreamWriter writerveg = new StreamWriter(vegetation, true))
                 {
                     ushort[] treeTiles =
@@ -150,7 +150,7 @@ namespace ClassicUO.Game.Data
             }
 
 
-            TextFileParser caveParser = new TextFileParser(File.ReadAllText(cave), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser caveParser = new TextFileParser(AtomicFile.ReadAllText(cave), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!caveParser.IsEOF())
             {
@@ -167,7 +167,7 @@ namespace ClassicUO.Game.Data
             }
 
 
-            TextFileParser stumpsParser = new TextFileParser(File.ReadAllText(trees), new[] { ' ', '\t', ',', '=' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser stumpsParser = new TextFileParser(AtomicFile.ReadAllText(trees), new[] { ' ', '\t', ',', '=' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!stumpsParser.IsEOF())
             {
@@ -191,7 +191,7 @@ namespace ClassicUO.Game.Data
             }
 
 
-            TextFileParser vegetationParser = new TextFileParser(File.ReadAllText(vegetation), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
+            TextFileParser vegetationParser = new TextFileParser(AtomicFile.ReadAllText(vegetation), new[] { ' ', '\t', ',' }, new[] { '#', ';' }, new[] { '"', '"' });
 
             while (!vegetationParser.IsEOF())
             {

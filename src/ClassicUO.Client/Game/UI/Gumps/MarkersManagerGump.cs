@@ -297,7 +297,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             if (_isMarkerListModified)
             {
-                using (StreamWriter writer = new StreamWriter(_userMarkersFilePath, false))
+                using (StreamWriter writer = AtomicFile.CreateText(_userMarkersFilePath))
                 {
                     foreach (var marker in _markers)
                     {
