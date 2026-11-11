@@ -673,10 +673,16 @@ namespace ClassicUO.Game.Scenes
             {
                 // e was looked up above (mirrored, with AnimationState) and the mobile is not destroyed: Update(world, mobile)'s checks.
                 // E5: the update works on the entity's own state, which the extract then reads without more lookups.
-                // TakeDirty comes first: removing the tag moves the entity, which would invalidate the refs.
-                bool dirty = MobileAnimationSystem.TakeDirty(e);
-                // one record read for both components (as ItemSpriteInput.ReadRecord)
+                // One record read serves the tag and both components (as ItemSpriteInput.ReadRecord); taking the tag moves the
+                // entity, which invalidates the row and every ref taken from it, so it is read again after a take.
                 ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
+                bool dirty = MobileAnimationSystem.TakeDirty(e, in data);
+
+                if (dirty)
+                {
+                    data = ClassicUO.Ecs.EcsRead.Row(e);
+                }
+
                 ref ClassicUO.Ecs.AnimationState state = ref data.Get<ClassicUO.Ecs.AnimationState>();
                 ref ClassicUO.Ecs.MobileRenderState render = ref data.Get<ClassicUO.Ecs.MobileRenderState>();
                 ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);
