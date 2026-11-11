@@ -1423,7 +1423,7 @@ namespace ClassicUO.Game.UI.Gumps
                         };
 
                         Directory.CreateDirectory(_mapsCachePath);
-                        using var stream2 = AtomicFile.OpenWrite(fileMapPath);
+                        using var stream2 = AtomicFile.OpenWrite(fileMapPath, 3000);
                         img.Save(stream2, imageEncoder);
                         stream2.Commit();
                     }

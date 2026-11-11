@@ -5,6 +5,8 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Xml;
+using ClassicUO.Utility.Logging;
+using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Utility
 {
@@ -12,11 +14,13 @@ namespace ClassicUO.Utility
     /// File access that is safe when several client instances share a file (profiles, settings, caches).
     /// Writers go to a temp file next to the target and replace the target in one rename, so a reader never sees a
     /// half-written file and a crash never leaves a truncated one. Readers open with FileShare.ReadWrite | Delete and
-    /// the writer retries its rename for about three seconds while a reader (Windows) still has the old file open. Two instances saving the same file is last-writer-wins: no locking.
+    /// the writer retries its rename for a short budget (200 ms by default) while a reader (Windows) still has the old file open. Two instances saving the same file is last-writer-wins: no locking.
     /// </summary>
     public static class AtomicFile
     {
-        internal const int ReplaceAttempts = 30;
+        // most saves run on the game thread: a contested rename may stall it this long, then the save is dropped (logged by
+        // the caller) and the next save retries. Background writers (map cache) pass a longer wait.
+        public const int DefaultReplaceBudgetMs = 200;
         internal const int ReplaceDelayMs = 20;
 
         /// <summary>Reads without blocking (or being blocked by) another instance replacing the file.</summary>
@@ -71,17 +75,19 @@ namespace ClassicUO.Utility
             doc.Load(stream);
         }
 
-        public static void WriteAllText(string path, string text)
+        public static void WriteAllText(string path, string text, int waitMs = DefaultReplaceBudgetMs)
         {
-            using var stream = OpenWrite(path);
+            using var stream = OpenWrite(path, waitMs);
+            stream.ThrowOnFailure = true;
             var bytes = new UTF8Encoding(false).GetBytes(text);
             stream.Write(bytes, 0, bytes.Length);
             stream.Commit();
         }
 
-        public static void WriteAllBytes(string path, ReadOnlySpan<byte> bytes)
+        public static void WriteAllBytes(string path, ReadOnlySpan<byte> bytes, int waitMs = DefaultReplaceBudgetMs)
         {
-            using var stream = OpenWrite(path);
+            using var stream = OpenWrite(path, waitMs);
+            stream.ThrowOnFailure = true;
             stream.Write(bytes);
             stream.Commit();
         }
@@ -90,9 +96,9 @@ namespace ClassicUO.Utility
         /// A UTF-8 (no BOM) text writer onto a temp file. Disposing it replaces the target only if
         /// <paramref name="stream"/>.Commit() was called after the last write (see <see cref="OpenWrite"/>).
         /// </summary>
-        public static StreamWriter CreateText(string path, out AtomicStream stream)
+        public static StreamWriter CreateText(string path, out AtomicStream stream, int waitMs = DefaultReplaceBudgetMs)
         {
-            stream = OpenWrite(path);
+            stream = OpenWrite(path, waitMs);
 
             return new StreamWriter(stream, new UTF8Encoding(false));
         }
@@ -103,7 +109,7 @@ namespace ClassicUO.Utility
         /// Creates the directory. Pass it to XmlTextWriter or StreamWriter, call Commit() after the last write, and let
         /// the writer dispose it.
         /// </summary>
-        public static AtomicStream OpenWrite(string path)
+        public static AtomicStream OpenWrite(string path, int waitMs = DefaultReplaceBudgetMs)
         {
             string full = Path.GetFullPath(path);
             string dir = Path.GetDirectoryName(full);
@@ -113,16 +119,22 @@ namespace ClassicUO.Utility
                 Directory.CreateDirectory(dir);
             }
 
-            return new AtomicStream(full, TempName(full));
+            return new AtomicStream(full, TempName(full), waitMs);
         }
 
         /// <summary>Instance-unique temp name beside the target (same volume, so the rename is atomic).</summary>
         internal static string TempName(string full)
             => full + "." + Environment.ProcessId + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
 
-        /// <summary>Moves <paramref name="temp"/> over <paramref name="target"/>, retrying while a reader holds the target.</summary>
-        internal static void Replace(string temp, string target)
+        /// <summary>
+        /// Moves <paramref name="temp"/> over <paramref name="target"/>. Only a sharing violation is retried (a reader of
+        /// the old file, Windows), for at most <paramref name="waitMs"/> in total; a read-only target, a missing directory
+        /// or any error off Windows is permanent and fails at once.
+        /// </summary>
+        public static void Replace(string temp, string target, int waitMs = DefaultReplaceBudgetMs)
         {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
             for (int attempt = 1; ; attempt++)
             {
                 try
@@ -131,7 +143,7 @@ namespace ClassicUO.Utility
 
                     return;
                 }
-                catch (Exception e) when ((e is IOException || e is UnauthorizedAccessException) && attempt < ReplaceAttempts)
+                catch (Exception e) when (IsTransient(e, target) && clock.ElapsedMilliseconds + ReplaceDelayMs <= waitMs)
                 {
                     // Windows refuses a rename over a file another instance has open, whatever its share flags; readers hold it
                     // only while they read a small file, so it lets go in a moment (ReplaceFile would get through, but it
@@ -141,6 +153,29 @@ namespace ClassicUO.Utility
             }
         }
 
+        private static bool IsTransient(Exception e, string target)
+        {
+            if (!OperatingSystem.IsWindows() || e is DirectoryNotFoundException || e is FileNotFoundException)
+            {
+                return false;
+            }
+
+            if (e is UnauthorizedAccessException)
+            {
+                // a delete-pending target also reports access denied, but a read-only one never opens up
+                try
+                {
+                    return File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReadOnly) == 0;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return e is IOException;
+        }
+
         public sealed class AtomicStream : FileStream
         {
             private readonly string _target;
@@ -148,12 +183,18 @@ namespace ClassicUO.Utility
             private bool _done;
             private bool _commit;
 
-            internal AtomicStream(string target, string temp)
+            private readonly int _waitMs;
+
+            internal AtomicStream(string target, string temp, int waitMs)
                 : base(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.None)
             {
                 _target = target;
                 _temp = temp;
+                _waitMs = waitMs;
             }
+
+            /// <summary>When the replace fails, Dispose throws instead of logging and giving up (set by WriteAllText/WriteAllBytes).</summary>
+            internal bool ThrowOnFailure { get; set; }
 
             /// <summary>Marks the data complete: disposing now publishes it. Call after the last write (and after flushing any writer wrapped around it), never from a catch.</summary>
             public void Commit()
@@ -180,16 +221,24 @@ namespace ClassicUO.Utility
 
                     if (_commit)
                     {
-                        Replace(_temp, _target);
+                        Replace(_temp, _target, _waitMs);
 
                         return;
                     }
                 }
-                catch
+                catch (Exception e)
                 {
                     DeleteTemp();
 
-                    throw;
+                    if (ThrowOnFailure)
+                    {
+                        throw;
+                    }
+
+                    // a save that cannot replace its target (reader holding it, read-only file) is dropped; the next save retries
+                    Log.Error($"could not save {_target}: {e.Message}");
+
+                    return;
                 }
 
                 DeleteTemp();

@@ -139,7 +139,7 @@ namespace ClassicUO.UnitTests.Utility
             string seen = null;
             var read = Bg(() =>
             {
-                Thread.Sleep(100);
+                Thread.Sleep(60);
                 seen = sr.ReadToEnd();
                 sr.Dispose();
             });
@@ -161,7 +161,7 @@ namespace ClassicUO.UnitTests.Utility
             var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             var release = Bg(() =>
             {
-                Thread.Sleep(150);
+                Thread.Sleep(60);
                 blocker.Dispose();
             });
 
@@ -182,6 +182,84 @@ namespace ClassicUO.UnitTests.Utility
 
             act.Should().Throw<Exception>().Which.Should().Match<Exception>(e => e is IOException || e is UnauthorizedAccessException);
             Directory.GetFiles(_dir).Should().BeEmpty();
+        }
+
+        [Fact]
+        public void A_contested_replace_gives_up_within_the_small_game_thread_budget()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return; // only Windows refuses a rename over an open file
+            }
+
+            string path = P("profile.json");
+            AtomicFile.WriteAllText(path, "one");
+
+            using var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            Action act = () => AtomicFile.WriteAllText(path, "two");
+
+            act.Should().Throw<Exception>();
+            clock.ElapsedMilliseconds.Should().BeLessThan(1000);
+            Directory.GetFiles(_dir).Should().ContainSingle("the temp is removed");
+        }
+
+        [Fact]
+        public void A_read_only_target_fails_at_once_instead_of_retrying()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return; // elsewhere a rename over a read-only file succeeds
+            }
+
+            string path = P("settings.json");
+            AtomicFile.WriteAllText(path, "one");
+            File.SetAttributes(path, FileAttributes.ReadOnly);
+
+            try
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                Action act = () => AtomicFile.WriteAllText(path, "two");
+
+                act.Should().Throw<Exception>();
+                clock.ElapsedMilliseconds.Should().BeLessThan(AtomicFile.DefaultReplaceBudgetMs);
+                File.ReadAllText(path).Should().Be("one");
+                Directory.GetFiles(_dir).Should().ContainSingle();
+            }
+            finally
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+            }
+        }
+
+        [Fact]
+        public void A_missing_directory_is_a_permanent_error()
+        {
+            string temp = P("t.tmp");
+            File.WriteAllText(temp, "x");
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            Action act = () => AtomicFile.Replace(temp, P("nodir/x.json"));
+
+            act.Should().Throw<Exception>();
+            clock.ElapsedMilliseconds.Should().BeLessThan(AtomicFile.DefaultReplaceBudgetMs);
+        }
+
+        [Fact]
+        public void A_stream_whose_replace_fails_logs_and_gives_up_without_throwing()
+        {
+            string path = P("target");
+            Directory.CreateDirectory(path);
+
+            using (var stream = AtomicFile.OpenWrite(path))
+            {
+                stream.Write(new byte[] { 1 });
+                stream.Commit();
+            }
+
+            Directory.Exists(path).Should().BeTrue();
+            Directory.GetFiles(_dir).Should().BeEmpty("the temp is removed");
         }
 
         [Fact]
@@ -213,7 +291,7 @@ namespace ClassicUO.UnitTests.Utility
             {
                 for (int i = 0; i < 40; i++)
                 {
-                    AtomicFile.WriteAllText(path, new string((char)('a' + w), 30000));
+                    AtomicFile.WriteAllText(path, new string((char)('a' + w), 30000), 10000);
                 }
             })).ToArray();
 
