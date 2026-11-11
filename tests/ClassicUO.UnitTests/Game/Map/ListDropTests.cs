@@ -146,7 +146,7 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             var list = new List<GameObject>();
 
-            for (GameObject o = chunk.GetHeadObject(x, y); o != null; o = o.TNext)
+            for (TileListObject o = chunk.GetHeadObject(x, y); o != null; o = o.TNext)
             {
                 list.Add(o);
                 Assert.True(list.Count < 100_000);
@@ -188,7 +188,7 @@ namespace ClassicUO.UnitTests.Game.Map
             var list = new List<GameObject>();
             ulong mergeCells = TileWalk.MergeCells(chunk);
 
-            for (GameObject o = TileWalk.Open(chunk, cell, mergeCells, out TileWalk w, out bool m); o != null; o = m ? w.Next() : o.TNext)
+            for (GameObject o = TileWalk.Open(chunk, cell, mergeCells, out TileWalk w, out bool m, out TileListObject node); o != null; o = m ? w.Next() : node = node.TNext)
             {
                 list.Add(o);
                 Assert.True(list.Count < 100_000);
@@ -270,7 +270,7 @@ namespace ClassicUO.UnitTests.Game.Map
                         Assert.Equal(expected, OpenedList(chunk, cell));
 
                         TileOrder.IndexCheck check = TileOrder.CheckIndex(chunk, x, y);
-                        Assert.False(check.Failed, $"order {check.OrderMismatches}, bad {check.BadEntries}, count {check.CountMismatch}, list dynamics {check.ListDynamics}");
+                        Assert.False(check.Failed, $"order {check.OrderMismatches}, bad {check.BadEntries}, count {check.CountMismatch}");
                         Assert.False(TileOrder.CheckTile(chunk, x, y).Failed);
 
                         // the readers from the head and from every object
@@ -310,7 +310,7 @@ namespace ClassicUO.UnitTests.Game.Map
                         {
                             var seen = new List<GameObject>();
 
-                            for (GameObject o = TileWalk.Start(first, chunk, false, out TileWalk w, out bool m); o != null; o = m ? w.Next() : o.TNext)
+                            for (GameObject o = TileWalk.Start(first, chunk, false, out TileWalk w, out bool m, out TileListObject list); o != null; o = m ? w.Next() : list = list?.TNext)
                             {
                                 seen.Add(o);
                             }
@@ -318,13 +318,12 @@ namespace ClassicUO.UnitTests.Game.Map
                             Assert.Equal(expected, seen);
                         }
 
-                        // the render walk's one-object calls (stopAt = obj.TNext, single): exactly that object
+                        // the render walk's one-object calls (single): exactly that object
                         foreach (GameObject obj in expected)
                         {
-                            GameObject stopAt = obj.TNext;
                             int n = 0;
 
-                            for (GameObject o = TileWalk.Start(obj, chunk, true, out TileWalk w, out bool m); o != stopAt; o = m ? w.Next() : o.TNext)
+                            for (GameObject o = TileWalk.Start(obj, chunk, true, out TileWalk w, out bool m, out TileListObject list); o != null; o = m ? w.Next() : list = list?.TNext)
                             {
                                 Assert.Same(obj, o);
                                 n++;
@@ -517,8 +516,6 @@ namespace ClassicUO.UnitTests.Game.Map
             item.Graphic = Plain;
             Place(c, item, 4, 4);
             Assert.Null(c.Tiles[4, 4]);
-            Assert.Null(item.TNext);
-            Assert.Null(item.TPrevious);
             Assert.Same(item, TileWalk.First(c, 4, 4));
             Assert.Same(c, item.TileChunk);
             Assert.True(item.IsPlaced);
@@ -575,7 +572,7 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
-        public void The_Checker_Flags_A_Dynamic_In_The_List_A_Misordered_Index_And_A_Lost_Entry()
+        public void The_Checker_Flags_A_Misordered_Index_And_A_Lost_Entry()
         {
             var s = new Side();
             Chunk c = s.Chunks[0];
@@ -588,21 +585,11 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.False(TileOrder.CheckIndex(c, 2, 2).Failed);
             Assert.True(TileOrder.IsReachable(a));
 
-            // a dynamic linked into the list behind the index's back
-            land.TNext = a;
-            a.TPrevious = land;
-            TileOrder.IndexCheck r = TileOrder.CheckIndex(c, 2, 2);
-            Assert.Equal(1, r.ListDynamics);
-            Assert.True(r.Failed);
-            land.TNext = null;
-            a.TPrevious = null;
-            Assert.False(TileOrder.CheckIndex(c, 2, 2).Failed);
-
             // the index's entries swapped: out of key order, and the merged walk descends
             DynamicTileIndex.Entry[] raw = c.Dynamic.RawCell(2 << 3 | 2, out int n);
             Assert.Equal(2, n);
             (raw[0], raw[1]) = (raw[1], raw[0]);
-            r = TileOrder.CheckIndex(c, 2, 2);
+            TileOrder.IndexCheck r = TileOrder.CheckIndex(c, 2, 2);
             Assert.True(r.BadEntries > 0);
             Assert.True(r.OrderMismatches > 0);
             (raw[0], raw[1]) = (raw[1], raw[0]);
@@ -714,7 +701,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 GameObject first = TileWalk.First(c, x, 0);
                 bool merged = false;
 
-                for (GameObject o = TileWalk.Start(first, c, false, out TileWalk w, out merged); o != null; o = merged ? w.Next() : o.TNext)
+                for (GameObject o = TileWalk.Start(first, c, false, out TileWalk w, out merged, out TileListObject list); o != null; o = merged ? w.Next() : list = list?.TNext)
                 {
                     seen.Add(o);
                     Assert.True(seen.Count < 100_000);

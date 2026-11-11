@@ -136,11 +136,11 @@ namespace ClassicUO.Game.Map
         }
 
         /// <summary>The head of a tile list from any node, by TPrevious, with Floyd cycle detection; null on a cycle.</summary>
-        public static GameObject FindHead(GameObject anchor, out bool cycle) => FindHead(anchor, out cycle, out _);
+        public static TileListObject FindHead(TileListObject anchor, out bool cycle) => FindHead(anchor, out cycle, out _);
 
-        /// <summary><see cref="FindHead(GameObject, out bool)"/>, also counting TPrevious links whose target does not point back
+        /// <summary><see cref="FindHead(TileListObject, out bool)"/>, also counting TPrevious links whose target does not point back
         /// (p.TNext != the node it was reached from).</summary>
-        public static GameObject FindHead(GameObject anchor, out bool cycle, out int brokenBack)
+        public static TileListObject FindHead(TileListObject anchor, out bool cycle, out int brokenBack)
         {
             cycle = false;
             brokenBack = 0;
@@ -150,7 +150,7 @@ namespace ClassicUO.Game.Map
                 return null;
             }
 
-            GameObject slow = anchor, fast = anchor;
+            TileListObject slow = anchor, fast = anchor;
 
             while (slow.TPrevious != null)
             {
@@ -180,8 +180,8 @@ namespace ClassicUO.Game.Map
         public static TileCheck CheckTile(Chunk chunk, int x, int y)
         {
             var r = new TileCheck { FirstDescent = -1 };
-            GameObject anchor = chunk.Tiles[x, y];
-            GameObject head = FindHead(anchor, out bool cycle, out int brokenBack);
+            TileListObject anchor = chunk.Tiles[x, y];
+            TileListObject head = FindHead(anchor, out bool cycle, out int brokenBack);
             r.BrokenLinks = brokenBack;
 
             if (cycle)
@@ -195,10 +195,10 @@ namespace ClassicUO.Game.Map
             byte cell = (byte)((x << 3) | y);
             int tileX = chunk.X * 8 + x, tileY = chunk.Y * 8 + y;
             bool anchorSeen = false;
-            GameObject fast = head;
+            TileListObject fast = head;
             TileOrderKey prev = default;
 
-            for (GameObject o = head; o != null; o = o.TNext)
+            for (TileListObject o = head; o != null; o = o.TNext)
             {
                 TileOrderKey k = Key(o);
 
@@ -220,8 +220,7 @@ namespace ClassicUO.Game.Map
                     r.Foreign++;
                 }
 
-                // effects place themselves at their own positions (moving effects); everything else lives at its X/Y
-                if (o is not GameEffect && (o.X != tileX || o.Y != tileY))
+                if (o.X != tileX || o.Y != tileY)
                 {
                     r.Misplaced++;
                 }
@@ -255,10 +254,10 @@ namespace ClassicUO.Game.Map
             {
                 return chunk.Dynamic != null && chunk.Dynamic.Contains(obj, obj.TileCell);
             }
-            GameObject head = FindHead(chunk.Tiles[obj.TileCell >> 3, obj.TileCell & 7], out bool cycle);
-            GameObject fast = head;
+            TileListObject head = FindHead(chunk.Tiles[obj.TileCell >> 3, obj.TileCell & 7], out bool cycle);
+            TileListObject fast = head;
 
-            for (GameObject o = head; o != null && !cycle; o = o.TNext)
+            for (TileListObject o = head; o != null && !cycle; o = o.TNext)
             {
                 if (ReferenceEquals(o, obj))
                 {
@@ -384,7 +383,7 @@ namespace ClassicUO.Game.Map
                 Log.Info(
                     $"[tile-order] index: tiles {_indexTiles}, entries {_indexEntries}, merged objects {_indexMerged}, mismatched tiles {_indexBadTiles} " +
                     $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); double submissions {_doubleSubmissions}; " +
-                    $"list dynamics {_indexListDynamics}, pooled arrays {DynamicTileIndex.EntryPool.Pooled}"
+                    $"pooled arrays {DynamicTileIndex.EntryPool.Pooled}"
                 );
             }
 
@@ -415,7 +414,7 @@ namespace ClassicUO.Game.Map
             }
         }
 
-        private static long _indexTiles, _indexEntries, _indexMerged, _indexBadTiles, _indexOrder, _indexBadEntries, _indexCount, _indexListDynamics;
+        private static long _indexTiles, _indexEntries, _indexMerged, _indexBadTiles, _indexOrder, _indexBadEntries, _indexCount;
 
         /// <summary>The result of one cell's index check (<see cref="CheckIndex"/>).</summary>
         public struct IndexCheck
@@ -430,10 +429,8 @@ namespace ClassicUO.Game.Map
             /// <summary>The merged walk did not visit exactly the list's objects plus the entries.</summary>
             public bool CountMismatch;
             public int FirstMismatch;
-            /// <summary>T6b part 3: dynamic objects linked into the tile list (it must hold none).</summary>
-            public int ListDynamics;
 
-            public readonly bool Failed => OrderMismatches != 0 || BadEntries != 0 || CountMismatch || ListDynamics != 0;
+            public readonly bool Failed => OrderMismatches != 0 || BadEntries != 0 || CountMismatch;
         }
 
         /// <summary>T6b: cell (x, y) of <paramref name="chunk"/>: every entry is the object's own (key, cell) in key order, the
@@ -467,7 +464,7 @@ namespace ClassicUO.Game.Map
                 }
             }
 
-            GameObject head = FindHead(chunk.Tiles[x, y], out bool cycle);
+            TileListObject head = FindHead(chunk.Tiles[x, y], out bool cycle);
 
             if (cycle)
             {
@@ -476,14 +473,9 @@ namespace ClassicUO.Game.Map
 
             int listObjects = 0;
 
-            for (GameObject o = head; o != null; o = o.TNext)
+            for (TileListObject o = head; o != null; o = o.TNext)
             {
                 listObjects++;
-
-                if (DynamicTileIndex.Holds(o))
-                {
-                    r.ListDynamics++;
-                }
             }
 
             const int limit = 1 << 20;
@@ -523,7 +515,6 @@ namespace ClassicUO.Game.Map
             _indexMerged += r.Merged;
             _indexOrder += r.OrderMismatches;
             _indexBadEntries += r.BadEntries;
-            _indexListDynamics += r.ListDynamics;
 
             if (r.CountMismatch)
             {
@@ -546,10 +537,10 @@ namespace ClassicUO.Game.Map
             sb.Append("[tile-order] index mismatch at tile ").Append(chunk.X * 8 + x).Append(',').Append(chunk.Y * 8 + y).Append(": entries ")
               .Append(r.Entries).Append(", merged out of order ").Append(r.OrderMismatches).Append(" (first at ").Append(r.FirstMismatch)
               .Append("), bad entries ").Append(r.BadEntries).Append(", count mismatch ").Append(r.CountMismatch)
-              .Append(", list dynamics ").Append(r.ListDynamics).Append(" | list:");
+              .Append(" | list:");
             int i = 0;
 
-            for (GameObject o = chunk.Tiles[x, y] == null ? null : FindHead(chunk.Tiles[x, y], out _); o != null && i < 16; o = o.TNext, i++)
+            for (TileListObject o = chunk.Tiles[x, y] == null ? null : FindHead(chunk.Tiles[x, y], out _); o != null && i < 16; o = o.TNext, i++)
             {
                 sb.Append(" #").Append(i).Append(' ').Append(Describe(o));
             }
@@ -566,7 +557,7 @@ namespace ClassicUO.Game.Map
 
         private static void CountRanks(Chunk chunk, int x, int y)
         {
-            for (GameObject o = FindHead(chunk.Tiles[x, y], out _); o != null; o = o.TNext)
+            for (TileListObject o = FindHead(chunk.Tiles[x, y], out _); o != null; o = o.TNext)
             {
                 int rank = Rank(o);
                 _ranks[rank]++;
@@ -620,7 +611,7 @@ namespace ClassicUO.Game.Map
                 int i = 0;
                 GameObject prev = null;
 
-                for (GameObject o = FindHead(chunk.Tiles[x, y], out _); o != null && i < from + 16; o = o.TNext, i++)
+                for (TileListObject o = FindHead(chunk.Tiles[x, y], out _); o != null && i < from + 16; o = o.TNext, i++)
                 {
                     if (i >= from)
                     {

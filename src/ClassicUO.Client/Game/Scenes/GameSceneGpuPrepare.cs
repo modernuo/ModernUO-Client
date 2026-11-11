@@ -370,9 +370,9 @@ namespace ClassicUO.Game.Scenes
                     ulong bit = 1UL << (x << 3 | y);
                     chunk.GpuMobileStart[x << 3 | y] = mobileCount;
 
-                    for (GameObject obj = TileWalk.Open(chunk, x << 3 | y, mergeCells, out TileWalk tileWalk, out bool mergedWalk);
+                    for (GameObject obj = TileWalk.Open(chunk, x << 3 | y, mergeCells, out TileWalk tileWalk, out bool mergedWalk, out TileListObject list);
                          obj != null;
-                         obj = mergedWalk ? tileWalk.Next() : obj.TNext)
+                         obj = mergedWalk ? tileWalk.Next() : list = list.TNext)
                     {
                         if (!IsGpuBaked(obj))
                         {
@@ -518,7 +518,7 @@ namespace ClassicUO.Game.Scenes
         // A screen-edge tile's settled baked objects (GpuBandMask): the walk would cull some of them (the whole tile beside
         // the culling rectangle, or an object anchored below it) and CollectGpuHidden would then hide those it finds on
         // screen. The others it would leave to the GPU unchanged.
-        private void GpuHideCulledBaked(GameObject head)
+        private void GpuHideCulledBaked(TileListObject head)
         {
             int sx = (head.X - head.Y) * 22 - _offset.X - 22;
 
@@ -529,7 +529,7 @@ namespace ClassicUO.Game.Scenes
 
             bool tileCulled = sx < _minPixel.X || sx > _maxPixel.X;
 
-            for (GameObject obj = head; obj != null; obj = obj.TNext)
+            for (TileListObject obj = head; obj != null; obj = obj.TNext)
             {
                 if (!IsGpuBaked(obj))
                 {
@@ -588,7 +588,7 @@ namespace ClassicUO.Game.Scenes
             {
                 for (int y = 0; y < 8; y++)
                 {
-                    for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                    for (TileListObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
                     {
                         if (IsGpuBaked(obj))
                         {
@@ -623,7 +623,7 @@ namespace ClassicUO.Game.Scenes
                             continue;
                         }
 
-                        GameObject head = chunk.GetHeadObject(x, y);
+                        TileListObject head = chunk.GetHeadObject(x, y);
 
                         if (head == null)
                         {
@@ -634,7 +634,7 @@ namespace ClassicUO.Game.Scenes
                         int sx = (head.X - head.Y) * 22 - _offset.X - 22;
                         bool tileCulled = sx < _minPixel.X || sx > _maxPixel.X;
 
-                        for (GameObject obj = head; obj != null; obj = obj.TNext)
+                        for (TileListObject obj = head; obj != null; obj = obj.TNext)
                         {
                             if (!IsGpuBaked(obj) || NeedsGpuWalk(obj))
                             {

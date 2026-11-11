@@ -413,7 +413,7 @@ namespace ClassicUO.Game.Scenes
             {
                 for (int x = -1; x <= 2; ++x)
                 {
-                    GameObject tile = _world.Map.GetTile(mob.X + x, mob.Y + y);
+                    TileListObject tile = _world.Map.GetTile(mob.X + x, mob.Y + y);
 
                     found = false;
 
@@ -796,7 +796,7 @@ namespace ClassicUO.Game.Scenes
             Chunk chunk,
             bool skipBaked = false,
             bool forcePosition = false,
-            GameObject stopAt = null,
+            bool single = false,
             bool mergeTile = false
         )
         {
@@ -812,15 +812,14 @@ namespace ClassicUO.Game.Scenes
             bool prepCheck = PrepCheck.On;
 
             // T6b: a whole tile's walk with dynamics on the tile (mergeTile: the caller's bit of TileWalk.MergeCells) reads the
-            // list's land, statics and multis merged by key with the tile's DynamicTileIndex array; every other walk follows
-            // TNext from obj. The one-object walks (the callers pass
-            // stopAt = obj.TNext, which is null for a tile's last object) never merge.
+            // list's land, statics and multis merged by key with the tile's DynamicTileIndex array; every other whole-tile walk
+            // reads the list from its head. A single-object walk (single: the Gpu prepare's item cache serves a tile's items
+            // and walks its mobiles, effects and walked-alone items one by one, GameSceneGpuItemCache) never merges and ends
+            // after obj.
             bool merged = mergeTile;
-            obj = TileWalk.StartTile(obj, chunk, merged, out TileWalk tileWalk);
+            obj = TileWalk.StartTile(obj, chunk, merged, single, out TileWalk tileWalk, out TileListObject list);
 
-            // stopAt: the walk ends there, not at the tile's end (the Gpu prepare's item cache serves a tile's items and
-            // walks its mobiles one by one: stopAt = mobile.TNext, GameSceneGpuItemCache)
-            for (; obj != stopAt; obj = merged ? tileWalk.Next() : obj.TNext)
+            for (; obj != null; obj = merged ? tileWalk.Next() : list = list?.TNext)
             {
                 // CUO_TILE_ORDER_CHECK: an object already drawn this frame (the Gpu item cache stamps the ones it serves) walked again
                 if (TileOrder.Check && obj.DrawnFrame == _drawFrame && !(skipBaked && IsGpuBaked(obj)))

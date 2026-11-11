@@ -444,13 +444,13 @@ namespace ClassicUO.Game.Scenes
             int testX = obj.X + 1;
             int testY = obj.Y + 1;
 
-            GameObject tile = _world.Map.GetTile(testX, testY);
+            TileListObject tile = _world.Map.GetTile(testX, testY);
 
             if (tile != null)
             {
                 sbyte z5 = (sbyte)(obj.Z + 5);
 
-                for (GameObject o = tile; o != null; o = o.TNext)
+                for (TileListObject o = tile; o != null; o = o.TNext)
                 {
                     if (
                         (!(o is Static s) || s.ItemData.IsTransparent)
@@ -766,7 +766,7 @@ namespace ClassicUO.Game.Scenes
                                     if (!mobile.IsDestroyed)
                                     {
                                         nTiles++;
-                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext);
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, true);
                                     }
                                 }
 
@@ -791,7 +791,7 @@ namespace ClassicUO.Game.Scenes
                                 chunk,
                                 !full,
                                 _gpuSkipEnabled,
-                                null,
+                                false,
                                 (mergeCells & bit) != 0
                             );
                         }
@@ -911,7 +911,7 @@ namespace ClassicUO.Game.Scenes
                     {
                         for (int y = 0; y < 8; y++)
                         {
-                            for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                            for (TileListObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
                             {
                                 n += obj.Z;
                             }

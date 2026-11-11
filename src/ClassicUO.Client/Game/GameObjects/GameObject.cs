@@ -103,8 +103,6 @@ namespace ClassicUO.Game.GameObjects
         public float OffsetY { get => _offset.Y; set { FunnelCheck.Write(this, FunnelField.OffsetY); _offset.Y = value; } }
         public float OffsetZ { get => _offset.Z; set { FunnelCheck.Write(this, FunnelField.OffsetZ); _offset.Z = value; } }
         public short PriorityZ;
-        public GameObject TNext;
-        public GameObject TPrevious;
         /// <summary>The chunk whose tile list holds this object (Chunk.AddGameObject); null once removed (RemoveFromTile).</summary>
         public Chunk TileChunk;
         /// <summary>The cell (x &lt;&lt; 3 | y) of <see cref="TileChunk"/> whose tile list holds this object; meaningful only while
@@ -202,33 +200,28 @@ namespace ClassicUO.Game.GameObjects
 
         public void RemoveFromTile()
         {
+            TileListObject node = this as TileListObject;
+
             if (TileChunk != null)
             {
                 // the Gpu prepare's tile masks and item cache (GameSceneGpuItemCache) follow the tile lists
                 TileChunk.OnTileContentChanged(this);
-                // Chunk.Tiles[cell] must not keep pointing at an object that left (it is how the walk finds the list)
-                TileChunk.ReleaseAnchor(this);
-                // T6b part 3: the index alone holds the dynamics; their TNext/TPrevious stay null, so the unlink below and
-                // ReleaseAnchor, which never sees them as the anchor, are no-ops
-                if (TileChunk.Dynamic != null && DynamicTileIndex.Holds(this))
+
+                if (node != null)
                 {
-                    TileChunk.Dynamic.Remove(this, TileCell);
+                    // Chunk.Tiles[cell] must not keep pointing at an object that left (it is how the walk finds the list)
+                    TileChunk.ReleaseAnchor(node);
                 }
+                else
+                {
+                    // T6b part 3: the index alone holds the dynamics (items, mobiles, effects), which have no list links
+                    TileChunk.Dynamic?.Remove(this, TileCell);
+                }
+
                 TileChunk = null;
             }
 
-            if (TPrevious != null)
-            {
-                TPrevious.TNext = TNext;
-            }
-
-            if (TNext != null)
-            {
-                TNext.TPrevious = TPrevious;
-            }
-
-            TNext = null;
-            TPrevious = null;
+            node?.Unlink();
             PendingBlock = -1;
         }
 
@@ -557,7 +550,6 @@ namespace ClassicUO.Game.GameObjects
             Hue = 0;
             Offset = Vector3.Zero;
             PriorityZ = 0;
-            TNext = TPrevious = null;
             TileChunk = null;
             TileCell = 0;
             TileSeq = 0;

@@ -776,7 +776,7 @@ namespace ClassicUO.Game.Map
             return false;
         }
 
-        public GameObject GetTile(int x, int y, bool load = true)
+        public TileListObject GetTile(int x, int y, bool load = true)
         {
             return GetChunk(x, y, load)?.GetHeadObject(x % 8, y % 8);
         }
