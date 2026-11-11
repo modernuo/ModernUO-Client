@@ -229,7 +229,6 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `legacy` |
-| `gpu_ecs_sprites` | `true` | Gpu renderer: mobile sprites come from the ECS, not from capturing `MobileView.Draw` |
 | `text_skip_expired` | `true` | Skip text layout for mobiles and corpses whose overhead texts all expired |
 | `gpu_prepare_skip_baked` | `true` | Gpu world prepare skips baked land and statics |
 | `gpu_prepare_item_cache`, `gpu_prepare_item_cache_mixed`, `gpu_prepare_item_cache_effects` | `true` | Cache settled ground-item sprites per chunk (and mixed tiles, and tiles with effects) |
@@ -244,7 +243,6 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_LAYER_CACHE_CHECK=1\|N` | Dev. Compare cached `LayerDecision` entries with a fresh decision on every hit (`N`: every Nth hit); logs `[layers] cache checks` every 5 s |
 | `CUO_MOBILE_UPDATE_CHECK=1\|stats` | Dev. Check the mobile clock and the skipped mobiles against `Mobile.Update` every frame; `stats` only counts and times |
 | `CUO_FUNNEL_CHECK=1` | Dev. Report writes to class A fields made outside the `WorldWriter` funnel |
-| `CUO_ECS_PARITY=N` | Compare ECS mobile sprites with the captured ones every N frames |
 | `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1\|every`, `CUO_GPU_SKIP_CHECK` | Check the Gpu world prepare shortcuts against the full work |
 | `CUO_W5_CHECK=1`, `CUO_MOBILE_CACHE_CHECK=1`, `CUO_MOBILE_INPUT_CHECK=1` | Check the active item list, the mobile frame cache and the pushed inputs |
 | `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI target with a replay every N frames |
