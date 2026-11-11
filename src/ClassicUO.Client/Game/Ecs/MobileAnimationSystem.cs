@@ -734,6 +734,7 @@ namespace ClassicUO.Game
                 {
                     if (tiles[gfx[li]].IsLight && eq.LightCount < EquipmentSlots.MAX_LIGHT_ONLY)
                     {
+                        eq.LightBefore[eq.LightCount] = eq.Count;
                         eq.LightItems[eq.LightCount++] = serial[li];
                     }
 

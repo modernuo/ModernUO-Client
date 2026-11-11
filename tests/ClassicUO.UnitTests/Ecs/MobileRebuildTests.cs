@@ -286,6 +286,25 @@ namespace ClassicUO.UnitTests.Ecs
             kept.Should().BeEquivalentTo(new uint[] { 0x4000_0001, 0x4000_0002, 0x4000_0003, 0x4000_0004, 0x4000_0005, 0x4000_0006 });
         }
 
+        // a light-only item records how many drawn slots precede it, so the extract can light in the view's layer order
+        [Fact]
+        public void A_Light_Only_Item_Records_The_Drawn_Slots_Before_It()
+        {
+            WorldMirror mirror = NewMirror(out Entity mobile);
+            Wear(mirror, 0x4000_0001, Layer.Shirt, SHIRT);
+            Wear(mirror, 0x4000_0002, Layer.Waist, LAMP);
+            Wear(mirror, 0x4000_0003, Layer.Legs, PANTS);
+            Wear(mirror, 0x4000_0004, Layer.Earrings, LAMP);
+
+            EquipmentSlots eq = Run(mirror, mobile);
+
+            eq.Count.Should().Be(2);
+            eq.LightCount.Should().Be(2);
+
+            eq.LightBefore[1].Should().BeLessThanOrEqualTo((byte)eq.Count);
+            eq.LightBefore[0].Should().BeLessThanOrEqualTo(eq.LightBefore[1], "lights are recorded in paint order");
+        }
+
         // a non-human body lights every light item (any layer), however many
         [Fact]
         public void Every_Light_On_A_Non_Human_Body_Is_Kept()

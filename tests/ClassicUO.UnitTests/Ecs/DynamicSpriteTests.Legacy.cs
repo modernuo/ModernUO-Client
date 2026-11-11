@@ -298,6 +298,15 @@ namespace ClassicUO.UnitTests.Ecs
 
             for (int i = 0; i < n; i++)
             {
+                // the view lights a light-only item where its layer sits among the drawn ones
+                for (int k = 0; side != null && k < eq.LightCount; k++)
+                {
+                    if (eq.LightBefore[k] == order[i])
+                    {
+                        side.Lights.Add((eq.LightItems[k], drawX, drawY));
+                    }
+                }
+
                 EquipSlot slot = eq.Slots[order[i]];
                 byte group = slot.Group == 0xFF ? s.Group : slot.Group;
                 ViewDrawInternal(calls, src, slot.DrawBody, group, s.Dir, s.Frame, true, drawX, drawY, mirror, false, depth, mountOffset,
@@ -309,7 +318,10 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 for (int i = 0; i < eq.LightCount; i++)
                 {
-                    side.Lights.Add((eq.LightItems[i], drawX, drawY));
+                    if (eq.LightBefore[i] >= n)
+                    {
+                        side.Lights.Add((eq.LightItems[i], drawX, drawY));
+                    }
                 }
 
                 ref Rectangle fi = ref side.FrameInfo;

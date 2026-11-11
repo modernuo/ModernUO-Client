@@ -237,10 +237,12 @@ namespace ClassicUO.Game
             {
                 EmitEquipment(in s, in eq, n, drawX, drawY, mirror, alpha, depth, mountOffset, over, charSitting);
             }
-
-            for (int i = 0; i < eq.LightCount; i++)
+            else
             {
-                AddLight(eq.LightItems[i], drawX, drawY);
+                for (int i = 0; i < eq.LightCount; i++)
+                {
+                    AddLight(eq.LightItems[i], drawX, drawY);
+                }
             }
 
             // MobileView.Draw's final FrameInfo transform
@@ -261,6 +263,16 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < n; i++)
             {
+                // a light-only item lights where its layer sits among the drawn ones (the view's order matters when the scene's
+                // light limit cuts the list)
+                for (int k = 0; k < eq.LightCount; k++)
+                {
+                    if (eq.LightBefore[k] == order[i])
+                    {
+                        AddLight(eq.LightItems[k], drawX, drawY);
+                    }
+                }
+
                 ref readonly EquipSlot slot = ref eq.Slots[order[i]];
                 byte group = slot.Group == 0xFF ? s.Group : slot.Group;
 
@@ -287,6 +299,14 @@ namespace ClassicUO.Game
                     charSitting,
                     (slot.Bits & EquipSlotBits.Light) != 0 ? slot.Item : 0
                 );
+            }
+
+            for (int k = 0; k < eq.LightCount; k++)
+            {
+                if (eq.LightBefore[k] >= n)
+                {
+                    AddLight(eq.LightItems[k], drawX, drawY);
+                }
             }
         }
 

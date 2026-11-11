@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -159,7 +161,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static MobileRenderState Opaque => new MobileRenderState { Alpha = 255 };
 
-        public static TheoryData<string> MobileCases => new TheoryData<string> { "plain", "hued", "flipped", "mounted", "sitting", "equipped", "translucent" };
+        public static TheoryData<string> MobileCases => new TheoryData<string> { "plain", "hued", "flipped", "mounted", "sitting", "equipped", "lights-mixed", "translucent" };
 
         private static EcsEntity MobileCase(WorldMirror mirror, string name)
         {
@@ -206,6 +208,21 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
 
+                case "lights-mixed":
+                    // two drawn slots (the second a light) with light-only items before the first, between and after the slots
+                    eq.Count = 2;
+                    eq.Slots[0] = new EquipSlot { Item = 0x40000010, DrawBody = ROBE, Hue = 0, Layer = 22, Group = 0xFF };
+                    eq.Slots[1] = new EquipSlot { Item = 0x40000011, DrawBody = LANTERN, Hue = 0, Layer = 2, Group = 0xFF, Bits = EquipSlotBits.Light };
+                    eq.LightCount = 3;
+                    eq.LightItems[0] = 0x40000020;
+                    eq.LightBefore[0] = 0;
+                    eq.LightItems[1] = 0x40000021;
+                    eq.LightBefore[1] = 1;
+                    eq.LightItems[2] = 0x40000022;
+                    eq.LightBefore[2] = 2;
+
+                    break;
+
                 case "translucent":
                     rs.Alpha = 120;
                     rs.OverrideHue = 0x038E;
@@ -214,6 +231,50 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             return Mobile(mirror, 0x100, hue, s, rs, eq);
+        }
+
+        // the view lights a light-only item where its layer sits in the paint order, which matters when the scene's 100 light
+        // limit cuts the list: ahead of the first slot, between, and after the last (here the facing keeps the slots' order)
+        [Fact]
+        public void Mobile_Lights_Come_In_The_Layer_Order_Of_Drawn_And_Light_Only_Items()
+        {
+            (AnimationsLoader anims, GpuSpriteTables tables) = AnimFixture(5);
+            var mirror = new WorldMirror();
+            EcsEntity e = MobileCase(mirror, "lights-mixed");
+            var extract = new MobileSpriteExtract(anims);
+
+            Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
+            EquipmentSlots eq = e.GetComponent<EquipmentSlots>();
+            int n = AnimationRules.PaintOrder(in eq, e.GetComponent<AnimationState>().Facing, order);
+            Assert.Equal(2, n);
+
+            // 0x40000020 before slot 0, 0x40000021 before slot 1, then slot 1's own light is submitted with its draw, then 0x40000022
+            var want = new List<uint>();
+
+            for (int i = 0; i < n; i++)
+            {
+                for (int k = 0; k < 3; k++)
+                {
+                    if (eq.LightBefore[k] == order[i])
+                    {
+                        want.Add(eq.LightItems[k]);
+                    }
+                }
+
+                if ((eq.Slots[order[i]].Bits & EquipSlotBits.Light) != 0)
+                {
+                    want.Add(eq.Slots[order[i]].Item);
+                }
+            }
+
+            want.Add(0x40000022);
+
+            extract.Begin(in tables, 0, 0);
+            extract.Emit(e, 600, 400, 812.25f);
+            Assert.Equal(want, extract.Lights.ToArray().Select(l => l.Item).ToList());
+            Assert.Equal(4, want.Count);
+            Assert.Equal(0x40000020u, want[0]);
+            Assert.Equal(0x40000022u, want[^1]);
         }
 
         [Theory]

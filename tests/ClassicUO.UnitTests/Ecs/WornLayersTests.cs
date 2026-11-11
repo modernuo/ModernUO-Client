@@ -266,7 +266,7 @@ namespace ClassicUO.UnitTests.Ecs
             mirror.UpsertMobile(0x0000_1001, 0x190, 0, 0, 0, 0, 0, 0, false).Tags.Has<PlayerTag>().Should().BeFalse();
             mirror.WornLayersBytes.Should().Be(2 * 160, "4 B serials and 1 B counts per layer, an 8 B version, aligned");
             System.Runtime.CompilerServices.Unsafe.SizeOf<WornLayers>().Should().Be(160);
-            System.Runtime.CompilerServices.Unsafe.SizeOf<EquipmentSlots>().Should().Be(792, "WornLayers inside (T3a), 25 light-only serials");
+            System.Runtime.CompilerServices.Unsafe.SizeOf<EquipmentSlots>().Should().Be(816, "WornLayers inside (T3a), 25 light-only serials and their positions");
         }
 
         // the lowest-stamp attached item on the layer and the number of them, from the mirror's equipment index
