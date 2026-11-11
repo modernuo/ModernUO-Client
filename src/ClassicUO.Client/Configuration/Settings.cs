@@ -173,6 +173,12 @@ namespace ClassicUO.Configuration
         // walk, in developer builds). Default off; off = the walk in every pass.
         [JsonPropertyName("text_tail_cache")] public bool TextTailCache { get; set; }
 
+        // clip-1: the world walk skips only an object over its max Z instead of ending the tile's walk there (the tile list is
+        // in PriorityZ order, not PriorityZ + height, so the old rule dropped lower objects after a tall one). Read at every
+        // cut (CUO_WALK_MAXZ=1|0 overrides it and CUO_WALK_MAXZ_CHECK=1 compares the drawn set with the old walk's, in
+        // developer builds; WalkMaxZ). Default off.
+        [JsonPropertyName("walk_maxz_continue")] public bool WalkMaxZContinue { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

@@ -911,6 +911,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // walkmaxz on|off: walk_maxz_continue (clip-1, WalkMaxZ; CUO_WALK_MAXZ overrides it)
+                case "walkmaxz" when args.Length > 0:
+                    Settings.GlobalSettings.WalkMaxZContinue = args[0] == "on";
+                    Log.Info($"[ECS] driver: walk_maxz_continue {Settings.GlobalSettings.WalkMaxZContinue} (effective {WalkMaxZ.On})");
+
+                    return false;
+
                 // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
                 case "renderer" when args.Length > 0:
                 {
