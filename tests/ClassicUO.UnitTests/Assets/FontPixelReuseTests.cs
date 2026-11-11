@@ -122,6 +122,81 @@ namespace ClassicUO.UnitTests.Assets
             }
         }
 
+        // FontsLoader.MeasureOnly (RenderedText without a hit map): the same size, lines and links as the drawn bitmap, no pixels.
+        [Fact]
+        public void Measure_Only_Gives_The_Same_Layout_Without_Pixels()
+        {
+            var tmp = Path.Combine(Path.GetTempPath(), "cuo-fontmeasure-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmp);
+
+            try
+            {
+                var fonts = LoadFonts(tmp);
+
+                foreach (ushort flags in new ushort[] { 0, 0x0001, 0x0002, 0x0008, 0x0010, 0x0001 | 0x0008 | 0x0010, 0x0040 })
+                {
+                    foreach (string text in new[] { "A", "AA A", "A\nAA\nA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAA", "A A A A A A A A A A A A A A A" })
+                    {
+                        foreach (int width in new[] { 0, 30, 200 })
+                        {
+                            foreach (bool html in new[] { false, true })
+                            {
+                                if (html)
+                                {
+                                    fonts.SetUseHTML(true, 0xFFFFFFFF, true);
+                                }
+
+                                var drawnU = fonts.GenerateUnicode(0, text, 0xFFFF, 0, width, TEXT_ALIGN_TYPE.TS_LEFT, flags, false, 0);
+                                var drawnA = fonts.GenerateASCII(0, text, 0, width, TEXT_ALIGN_TYPE.TS_LEFT, flags, false, 0);
+
+                                fonts.MeasureOnly = true;
+
+                                try
+                                {
+                                    var u = fonts.GenerateUnicode(0, text, 0xFFFF, 0, width, TEXT_ALIGN_TYPE.TS_LEFT, flags, false, 0);
+                                    var a = fonts.GenerateASCII(0, text, 0, width, TEXT_ALIGN_TYPE.TS_LEFT, flags, false, 0);
+                                    string what = $"'{text}' flags {flags} width {width} html {html}";
+
+                                    SameLayout(drawnU, u, "unicode " + what);
+                                    SameLayout(drawnA, a, "ascii " + what);
+                                }
+                                finally
+                                {
+                                    fonts.MeasureOnly = false;
+
+                                    if (html)
+                                    {
+                                        fonts.SetUseHTML(false);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                fonts.GenerateUnicode(0, "AA", 0xFFFF, 0, 0, TEXT_ALIGN_TYPE.TS_LEFT, 0, false, 0).Data.Should().NotBeNull("the flag is off again");
+                fonts.ClearResources();
+            }
+            finally
+            {
+                Directory.Delete(tmp, true);
+            }
+        }
+
+        private static void SameLayout(FontsLoader.FontInfo drawn, FontsLoader.FontInfo measured, string what)
+        {
+            measured.Width.Should().Be(drawn.Width, what);
+            measured.Height.Should().Be(drawn.Height, what);
+            measured.LineCount.Should().Be(drawn.LineCount, what);
+            measured.HtmlBackgroundColor.Should().Be(drawn.HtmlBackgroundColor, what);
+            (measured.Links?.Length ?? 0).Should().Be(drawn.Links?.Length ?? 0, what);
+
+            if (drawn.Data != null)
+            {
+                measured.Data.Should().BeNull(what);
+            }
+        }
+
         private static void Same(FontsLoader.FontInfo fresh, FontsLoader.FontInfo reused, string what)
         {
             reused.Width.Should().Be(fresh.Width, what);
