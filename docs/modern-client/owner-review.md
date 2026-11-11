@@ -4,20 +4,7 @@ Open owner decisions, decisions already made, and queued work. History (what mer
 
 ## 1. Needs you
 
-Each line: the question, then the recommendation on record.
-
-- **FPS test:** run `tools/fps-test/run-fps-test.ps1 -Username kbatman` with no agent clients running and send the `results-<timestamp>.md` path. The published build is cd670ceb9 (2026-10-26); it predates all of T4 to T9, so a new build is needed first. Nothing else is waiting on it.
-- **Renderer wording:** the renderer-selection error box ("The GPU world renderer could not start (<reason>). ClassicUO will close.") and the title `ClassicUO [Legacy renderer] - 1.1.0.0`. Agent suggestion: say how to recover ("Set world_renderer to \"auto\"..."), put the reason on its own line, show "[Legacy renderer]" only in dev builds or rename it ("Compatibility renderer"), and avoid "GPU world renderer" (Legacy also uses the GPU). Nothing changed yet.
-- **Body-profile review** (`poc/body-profile`, bodies.md, poc-log "Body import choices"): (1) body 95 (turkey) counts as a remodel, its anim.mul slot holds an older grey creature, so `t2a`/`lbr` turkeys draw that creature; keep or exclude 95. (2) Which AnimationSequence list the OSI client uses for converted bodies: `sequences` none (default) or target (changes 123 more bodies beyond 9/26/28 and hides own MUL frames in 614 groups; confirm in game with daemon 9 `[Animate 12 7 3 true false 0`, or choose "fill only empty groups"). (3) `forceOldAnimations` scope (every remodel today). Nuance defaults proposed: additions always use newest art unless "stand-ins" is chosen; "none" turns off all Bodyconv columns; LBR preset = column-1 remodels only; UOP bodies (mobtypes 0x10000) always on.
-- **ECS wave 1E (HouseManager as a `House` component):** optional, low value. Recommendation: skip.
-- **Clean branch review:** `poc/modern-client-clean` (code-only history, built and tree-checked at each wave; last sync 4975a8c74 = 69e56394e). Review it, then decide whether it replaces `poc/modern-client` and where it is pushed. Nothing is force-pushed.
-- **Fold `Clilocs.txt` into the pack?** Today a loose text file read on top of the pack. Recommendation: yes; the converter folds it in and a loose file still overrides, so shards can ship it without rebuilding the pack.
-- **4K / zoomed-out pool caps:** the chunk pool is capped at 300 chunks (with matching land and static pools); bigger views load more. Raise the caps with view size? Unchanged until a 4K measurement shows it matters.
-- **Warm-up collection on relog:** the login warm-up's two collections run once per process. Recommendation: keep once per process; the pools are topped up on relog (a no-op when full).
-- **U+FFE0 in unifont3-12** crashed the old client (glyph points past the end of the file); it now draws no glyph. Recommendation: accept (a crash fix; the legacy-exact policy covers behaviour, not crashes).
-- **Empty tiledata entries occlude roofs and lights** (known-issues.md): proposed fix is to skip components without drawable art in both decisions, after a parity check on Legacy and Gpu with modern and padded legacy packs. Say go or defer.
-- **Optional, SDL3 HIDAPI:** the fork-built SDL3.dll has no libusb HIDAPI support (the old upstream DLL had it); matters only for unusual controllers. Say if you want it built in.
-- **Plugins at connect time:** sends from plugin threads during the login/game-server handshake are now held and sent just after it. If you run ClassicAssist or Razor scripts that act at the moment of connecting, one run with them would confirm nothing changed.
+- **FPS test:** you run `tools/fps-test/run-fps-test.ps1 -Username kbatman` with no agent clients running and send the `results-<timestamp>.md` path. The published build (cd670ceb9, 2026-10-26) predates T4-T9; a fresh build is published once the current merges land.
 
 ## 2. Decisions made
 
@@ -52,16 +39,28 @@ Process and platform
 - 2026-11-08: main thread priority raised only around the frame limiter's sleep and Present, and lowered while minimized (process BELOW_NORMAL, restored on restore; Linux thread-level or skipped; macOS QoS). Agent worktrees get submodules through `tools/worktree-externals.sh`. Gradual ECS dual-path cost accepted as "re-measure after T9"; T9 and known fixes run concurrently with one full timing pass at the end.
 - 2026-11-08: allocation checks run on every ECS/perf branch now; CPU/FPS timing stays parked until the owner says the machine is quiet.
 
+Answered 2026-11-10
+- Renderer: auto-detection stays; the override (Automatic / GPU / Compatibility) is in Options and settings.json; the renderer tag shows in the title only in dev builds; the user-facing name "Legacy" becomes "Compatibility" (the renderer stays).
+- Bodies: `sequences` defaults to `target`; `forceOldAnimations` reverts only the LBR (Bodyconv column 1) remodels: 9, 10, 26, 28, 76; additions are not reverted. Body 95 (turkey) stays as it is: an addition with its own model (anim3), not affected by `forceOldAnimations`.
+- `Clilocs.txt`: folded into the pack (already since text-in-pack), a loose file still overrides; `--cliloc-overrides <file>` for a file outside the install.
+- Accepted: 4K pool caps unchanged until a 4K measurement; warm-up collection once per process; U+FFE0 draws no glyph.
+- Empty tiledata entries: skip components without art in the roof and light decisions (parity-checked).
+- ECS wave 1E (HouseManager component): skipped. Multis (houses, boats) get their own later project: performance, fixes, smooth movement.
+- SDL3 HIDAPI: deferred to a later project.
+- Clean branch: you review it after all milestones.
+- Plugins: their own later project; tentatively drop the existing CUO plugin API for the plugin v2 work (ClassicUO PR #1895, `kamronbatman:feat/cuo_plugin_v2`) or something better. The connect-time send question folds into it.
+- Next work approved: the P3 bug bundle, the text/UI allocation batch, the multi-instance audit, Item pooling on range entry (after T9 wave B).
+
 ## 3. Queued work (not started)
 
+- Item pooling: pool `Item` objects entering range (~4.3 MB per 15 s of ls_walk), after T9 wave B.
+- Multis project: houses and boats handling, performance, smooth movement.
+- Plugins project: plugin v2 (see Decisions).
 - GitHub Actions for Linux/macOS: build, test, native libraries (cuo_mp3, SDL/FNA forks), release artifacts (`cuo-poc-state/handoffs/ci-release-artifacts.md`).
-- Multi-instance audit: profiles/settings races, logs, screenshot names, caches, pack opened read-only with shared access, memory/GPU at 4 clients.
 - Minimized behaviour: process priority lowered while minimized, FAudio mixing paused (needs timing under load).
 - Server update range vs large viewports: edge-ghosting repro, ModernUO create/remove audit, client cleanup, range-based streaming (perf-opportunities.md); gump tooltips for objects the client never saw (repro first).
 - T9 remainder: `TNext`/`TPrevious` off dynamics slice (16 B per dynamic, ~0.5 MB at 30k, after wave B), gpu_ecs_sprites parity fixes (Codex audit: 2 P2) then capture-path deletion, world index slice 5 (delete off paths, checker, `ItemTable.Values` walk, bookkeeping dictionaries), regenerate ecs-state-census.md section 2.5.
-- Flip `ecs_item_draw_row` then `legacy_ecs_sprites` (decided 2026-11-10); branches `bg/legacy-sprites-fix` (b7ed4f80d) and `-2` (9016e016c) unmerged.
 - Final timing pass after T9 with settled switches (parked scripts in `cuo-poc-state/measure/*/job-*-PARKED.sh`; several need their AOT builds rebuilt); then .NET 11 on its own branch.
-- Plugin API: read API over the OPL store (by serial/revision with a change event); marshal plugin movement entry points (`RequestMove`, `WalkTo`) onto the game thread (today main-thread only).
 - Friflo: clear vacated component tails that hold references (`EntityName` strings linger after delete); fork or upstream, not a per-component workaround.
 - Serial scheme flexibility (survey in `cuo-poc-state/surveys/`): shape the code so a shard could change its serial ranges mechanically.
 - ModernUO-style double-mapped network pipe (high risk, own project; perf-opportunities.md).
