@@ -367,8 +367,6 @@ namespace ClassicUO.Game.Scenes
             Point viewMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
             _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);
             gpu.BeginFrame();
-            // T7b part 3: read before the E12 probe pass, so the probe and the reference capture the same effect path
-            EffectSpriteSink.BeginFrame();
             gpu.SetLandSeason(_world.Season);
             GpuUpdateStaticSeason(gpu);
             FrameStats.AddSince(FramePhase.PrepSetup, stamp);

@@ -21,7 +21,8 @@ namespace ClassicUO.UnitTests.Ecs
             "world_step_system",
             "ecs_effects",
             "ecs_effect_motion",
-            "ecs_effect_endpoints"
+            "ecs_effect_endpoints",
+            "ecs_effect_sprites"
         };
 
         [Fact]
