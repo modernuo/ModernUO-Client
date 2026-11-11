@@ -105,6 +105,25 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 | One dictionary lookup too many per corpse per frame (`world.Items.Get`) | ItemAnimationAdvanceSystem.TryRun ~125 | - | goes with T9 tables |
 | `DynamicTileIndex.Holds` three type tests per placement (kind byte); `(Maintain \|\| ListDropped)` conditions | Chunk.cs:379, TileOrder.cs:302/384 | trivial | goes with T9 (A3 deleted the off path: verify ListDropped is gone) |
 
+## From the CrossUO scout (2026-11-11)
+
+Ideas from reading CrossUO (AGPL-3.0: techniques only, no code taken). Notes with CrossUO file references: cuo-poc-state surveys/crossuo-scout-2026-11-11.md. Each lands behind a switch with a checker and a paired measurement, like any other item. Order = expected value.
+
+| What | Where (ours) | Estimate | Status |
+|---|---|---|---|
+| Time-based, capped eviction of idle animation directions (and art/gump sprites): sweep every few seconds, free entries idle for N s, at most a few per sweep so no hitch; Legacy anim atlas needs page-level reclaim (shared 4096^2 pages) | `Animations`, Legacy atlas, art/gump caches | bounds the Legacy anim atlas (64 MiB pages, unbounded today); memory per instance for 3-4 clients | open |
+| Unfocused/minimized cost: check how low `ReduceFPSWhenInactive` goes, skip prepare/draw entirely when minimized (keep packets and update), default for multi-instance | GameController.cs ~575-599, Profile.cs:261 | CPU/GPU of background clients (CrossUO: ~4-5 fps inactive, no draw minimized) | open, check current behaviour first |
+| World text: lay out positions and overlap only when an owner moved, a line was added or the zoom changed; replay cached positions otherwise; skip owners not drawn last frame | `TextRenderer.ProcessWorldText`, `GameScene.UpdateTextServerEntities` | ProcessWorldText ~4 % (Legacy large scene) | open |
+| Picking: walk the draw list top-down and stop at the first hit; skip when the mouse is outside the game window or already over a gump/text; cheap bounds test before the pixel test | `Item.CheckMouseSelection`, `SpritePickTable` | CheckMouseSelection ~2.5 % | open, check what ours already skips |
+| Tile chain early exits: stop the chain at the first object right of the window and when an object's Z passes the draw limit (break, not continue) | `GameScene.AddTileToRenderList` | part of the 20-35 % hot spot | open, check first (may already break) |
+| Per-mobile prepass: compute frame info / offset / screen rect once per frame and reuse for culling, picking and text placement | `Mobile.get_Offset`, `MobileSpriteExtract` | get_Offset ~2.4 % | open |
+| Legacy depth-tested world pass: per-quad depth from tile order so batches never flush for draw order | UltimaBatcher2D, `GameScene` sort | could cut sort/flush work; alpha edges and translucent order are the risk | design experiment |
+| Legacy texture array for land texmaps and small art (one bound texture for many sprites) | UltimaBatcher2D, art upload | fewer texture switches; driver ~10 % (`DrawIndexedPrimitives`) | design experiment |
+| FrameStats: print max frame time next to avg per window | FrameStats | spike visibility (walk hitches) | open, small |
+| Pack tables as shared read-only mappings (no heap copies) so instances share the OS page cache | PackAssets | memory across instances | open, check |
+| Startup: only boot-critical tables block (tiledata, hues, indexes); the rest loads lazily or in the background | PackAssets startup | startup time | open |
+| Periodic sweeps bounded per frame (range removal, cache clears, GC-like passes) | World/managers | walk hitch candidates | open, audit |
+
 ## Done (commit ids)
 
 - Update path: W5 active items (`world_update_active_items`; 0.28-0.33 to 0.015-0.02 ms at 25k items), `gpu_mobile_frame_cache` (0.71 to 0.35 ms at 1,611 mobiles), `text_skip_expired` (0.18 to 0.04 ms), HP percentage in setters, `WMapManager` per-frame early-out, camera generation instead of per-frame screen positions, E11 single mirror sync per placement (98654f96f).
