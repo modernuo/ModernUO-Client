@@ -10,7 +10,7 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // T7b part 3: the effect extract's input comes from EffectState (with the scene and the source object), not from the
     // effect's fields. Scripted effects (moving with an angle, fixed on a mobile, an explosion, ground effects, lightning) run
-    // with the state published after each update, with endpoints, and with the motion step (the state
+    // with the state published after each update (legacy motion) and with endpoints and the motion step (the state
     // owns the motion); after every frame each live effect's gathered input must be what GameEffectView.Draw reads from the
     // object.
     [Collection("ChunkStaticTileDataCollection")] // Time.Ticks is process-wide
@@ -19,7 +19,7 @@ namespace ClassicUO.UnitTests.Ecs
         private const uint PLAYER = 0x0000_0100, TARGET = 0x0000_0200, CASTER = 0x0000_0300;
         private const uint T0 = 2_000_000;
 
-        private static World Build(bool endpoints, bool motion)
+        private static World Build(bool endpoints)
         {
             World w = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             w.RangeSize.X = 1000;
@@ -27,8 +27,6 @@ namespace ClassicUO.UnitTests.Ecs
             w.EffectsCheckOverride = false;
             w.EffectEndpointsOverride = endpoints;
             w.EffectEndpointsCheckOverride = false;
-            w.EffectMotionOverride = motion;
-            w.EffectMotionCheckOverride = false;
 
             return w;
         }
@@ -60,12 +58,11 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Theory]
-        [InlineData(false, false)]
-        [InlineData(true, false)]
-        [InlineData(true, true)]
-        public void Gather_Reads_What_The_View_Reads_From_The_Object(bool endpoints, bool motion)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Gather_Reads_What_The_View_Reads_From_The_Object(bool endpoints)
         {
-            World w = Build(endpoints, motion);
+            World w = Build(endpoints);
             Time.Ticks = T0; // after the world: BuildPlayer moves the clock
             Time.Delta = 0.025f;
             AddMobile(w, CASTER, 1003, 1003);
@@ -131,7 +128,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Once_Destroyed_The_View_Draws()
         {
-            World on = Build(false, false);
+            World on = Build(false);
             Time.Ticks = T0;
             Create(on, GraphicEffectType.FixedXYZ, 0, 0, 0x376A, 1005, 1006, 0, 0, duration: 3000);
             on.Effects.Update();
@@ -144,7 +141,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Extract_Handles_Every_Kind_But_Lightning()
         {
-            World w = Build(false, false);
+            World w = Build(false);
             Time.Ticks = T0;
             AddMobile(w, TARGET, 1010, 1004);
             Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36E4, 1001, 1001, 0, 0, duration: 0);

@@ -642,7 +642,7 @@ namespace ClassicUO.Ecs
     /// stays when its record is removed (the object kept its coordinates when it was destroyed).
     /// </para>
     /// <para>
-    /// With <c>ecs_effect_motion</c> the kinds' motion is computed here too (<c>EffectSystem</c>'s motion step): position,
+    /// With <c>ecs_effect_endpoints</c> the kinds' motion is computed here too (<c>EffectSystem</c>'s motion step): position,
     /// offset (<see cref="OffsetZ"/> included), angle, the moving effect's target and the drag effect's next move time
     /// (<see cref="MoveTime"/>); the object's fields are written from these values for the views.
     /// </para>

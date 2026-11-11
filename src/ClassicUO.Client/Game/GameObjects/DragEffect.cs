@@ -11,7 +11,7 @@ namespace ClassicUO.Game.GameObjects
 {
     internal class DragEffect : GameEffect
     {
-        /// <summary>The next offset step's time (with ecs_effect_motion a cache of the state's MoveTime).</summary>
+        /// <summary>The next offset step's time (with ecs_effect_endpoints a cache of the state's MoveTime).</summary>
         internal uint LastMoveTime;
 
         public DragEffect
@@ -62,7 +62,7 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
+            if (UsesEndpoints && !EcsEntity.IsNull)
             {
                 EffectSystem.StepDrag(this);
 

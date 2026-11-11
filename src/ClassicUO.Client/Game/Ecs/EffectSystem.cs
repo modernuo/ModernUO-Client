@@ -16,10 +16,10 @@ namespace ClassicUO.Game
     /// <c>EffectManager</c> gets an entity with an <see cref="EffectState"/> (no serial, not in the mirror's serial index). The
     /// state owns the animation and lifetime (frame, next change time, duration), which <see cref="Animate"/> and
     /// <see cref="AnimateLightning"/> advance with the legacy rules (the object's <c>AnimIndex</c>, <c>AnimationGraphic</c> and
-    /// <c>NextChangeFrameTime</c> become write-through caches for the views); position, offset, angle and target are published
-    /// to it after each update. The visiting order is <c>EffectManager.Update</c>'s list order and no random number is drawn.
-    /// The motion rules of the kinds (moving's path, fixed's source following, drag's offset) stay on the objects: they read
-    /// source and target objects, which the ECS does not own yet. Tile placement is the object's own
+    /// <c>NextChangeFrameTime</c> become write-through caches for the views). With <c>ecs_effect_endpoints</c> the kinds' motion
+    /// is the motion step over the state too (EffectSystem.Motion.cs); without it the objects run the legacy motion and
+    /// position, offset, angle and target are published to the state after each update. The visiting order is
+    /// <c>EffectManager.Update</c>'s list order and no random number is drawn. Tile placement is the object's own
     /// (<c>SetInWorldTile</c>); the objects are kept in <see cref="DynamicTileIndex"/>.
     /// </summary>
     internal static partial class EffectSystem
@@ -37,22 +37,10 @@ namespace ClassicUO.Game
         };
 
         public static readonly bool GlobalEndpointCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_ENDPOINT_CHECK") == "1";
-
-        // CLEANUP(release): the gate's override of ecs_effect_motion (CUO_ECS_EFFECT_MOTION=1|0) and its checker
-        public static readonly bool GlobalMotion = Environment.GetEnvironmentVariable("CUO_ECS_EFFECT_MOTION") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? true
-        };
-
-        public static readonly bool GlobalMotionCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_MOTION_CHECK") == "1";
 #else
         public const bool GlobalCheck = false;
         public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? true;
         public const bool GlobalEndpointCheck = false;
-        public static readonly bool GlobalMotion = Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? true;
-        public const bool GlobalMotionCheck = false;
 #endif
 
         /// <summary>Checker counts (all worlds): frames compared, effects compared, mismatches.</summary>
@@ -91,8 +79,6 @@ namespace ClassicUO.Game
             if (e.World.EffectEndpointsOn)
             {
                 BindEndpoints(e, ref s);
-                e.UsesMotion = e.World.EffectMotionOn;
-                e.MotionCheck = e.UsesMotion && e.World.EffectMotionCheckOn;
             }
 
             if (e is DragEffect drag)
@@ -271,11 +257,10 @@ namespace ClassicUO.Game
             e.EndpointCheck = e.World.EffectEndpointsCheckOn;
         }
 
-        /// <summary>After Register created the entity: without the checkers the effect no longer holds its endpoint objects (the
-        /// motion checker's legacy replay reads them too).</summary>
+        /// <summary>After Register created the entity: without the checker the effect no longer holds its endpoint objects.</summary>
         private static void DropObjects(GameEffect e)
         {
-            if (e.UsesEndpoints && !e.EndpointCheck && !e.MotionCheck)
+            if (e.UsesEndpoints && !e.EndpointCheck)
             {
                 e.Source = null;
                 e.Target = null;
@@ -333,97 +318,6 @@ namespace ClassicUO.Game
             return true;
         }
 
-        /// <summary>The source's position: its record's while it lives, the last resolved one once it is gone, the effect's own
-        /// for a ground point.</summary>
-        public static (ushort x, ushort y, sbyte z) SourceOf(GameEffect e)
-        {
-            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            (ushort x, ushort y, sbyte z) r;
-
-            if ((s.Ends & EffectState.END_SOURCE) == 0)
-            {
-                r = (e.X, e.Y, e.Z);
-            }
-            else
-            {
-                if (Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity))
-                {
-                    ref readonly Position p = ref EcsRead.Get<Position>(s.SourceEntity);
-                    s.SourceX = p.X;
-                    s.SourceY = p.Y;
-                    s.SourceZ = p.Z;
-                }
-
-                r = (s.SourceX, s.SourceY, s.SourceZ);
-            }
-
-            if (e.EndpointCheck)
-            {
-                CompareEndpoint(e, "source", r, e.LegacySource());
-            }
-
-            return r;
-        }
-
-        /// <summary>The target's position: as <see cref="SourceOf"/>; a ground target is the effect's target coordinates.</summary>
-        public static (ushort x, ushort y, sbyte z) TargetOf(GameEffect e)
-        {
-            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            (ushort x, ushort y, sbyte z) r;
-
-            if ((s.Ends & EffectState.END_TARGET) == 0)
-            {
-                r = (e.TargetX, e.TargetY, e.TargetZ);
-            }
-            else
-            {
-                if (Live(ref s, EffectState.END_TARGET, EffectState.END_TARGET_GONE, s.TargetEntity))
-                {
-                    ref readonly Position p = ref EcsRead.Get<Position>(s.TargetEntity);
-                    s.TargetX = p.X;
-                    s.TargetY = p.Y;
-                    s.TargetZ = p.Z;
-                }
-
-                r = (s.TargetX, s.TargetY, s.TargetZ);
-            }
-
-            if (e.EndpointCheck)
-            {
-                CompareEndpoint(e, "target", r, e.LegacyTarget());
-            }
-
-            return r;
-        }
-
-        /// <summary>The source is an object whose record is gone (the legacy <c>Source.IsDestroyed</c>).</summary>
-        public static bool SourceGone(GameEffect e)
-        {
-            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            bool gone = (s.Ends & EffectState.END_SOURCE) != 0 && !Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity);
-
-            if (e.EndpointCheck)
-            {
-                CompareFlag(e, "source destroyed", gone, e.Source != null && e.Source.IsDestroyed);
-            }
-
-            return gone;
-        }
-
-        /// <summary>The target is an object whose record is gone (the legacy <c>Target.IsDestroyed</c>).</summary>
-        public static bool TargetGone(GameEffect e)
-        {
-            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            bool gone = (s.Ends & EffectState.END_TARGET) != 0 && !Live(ref s, EffectState.END_TARGET, EffectState.END_TARGET_GONE, s.TargetEntity);
-
-            if (e.EndpointCheck)
-            {
-                CompareFlag(e, "target destroyed", gone, e.Target != null && e.Target.IsDestroyed);
-            }
-
-            return gone;
-        }
-
         /// <summary>The target is an object, live or gone (the legacy <c>Target != null</c>).</summary>
         public static bool HasTarget(GameEffect e)
         {
@@ -432,44 +326,6 @@ namespace ClassicUO.Game
             if (e.EndpointCheck)
             {
                 CompareFlag(e, "has target", has, e.Target != null);
-            }
-
-            return has;
-        }
-
-        /// <summary>
-        /// The source object's offset (FixedEffect follows it). A mobile's comes from its <see cref="Steps"/> while the step
-        /// system keeps them; an item's (a boat passenger's) offset is not ECS state yet, so it is read from the object World
-        /// holds under the serial. False for a ground source.
-        /// </summary>
-        public static bool SourceOffsetOf(GameEffect e, out Microsoft.Xna.Framework.Vector3 offset)
-        {
-            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
-            bool has = (s.Ends & EffectState.END_SOURCE) != 0;
-            offset = default;
-
-            if (has)
-            {
-                if ((s.Ends & EffectState.END_SOURCE_MOBILE) != 0 && e.World.Ecs.StepsEnabled &&
-                    Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity) &&
-                    EcsRead.TryGet(s.SourceEntity, out Steps st))
-                {
-                    offset = new Microsoft.Xna.Framework.Vector3(st.OffsetX, st.OffsetY, st.OffsetZ);
-                }
-                else
-                {
-                    offset = SourceObjectOf(e)?.Offset ?? default;
-                }
-            }
-
-            if (e.EndpointCheck)
-            {
-                CompareFlag(e, "source offset", has, e.Source != null);
-
-                if (e.Source != null && !e.Source.IsDestroyed && offset != e.Source.Offset)
-                {
-                    EndpointMismatch($"effect 0x{e.Graphic:X4} source offset ECS {offset} | object {e.Source.Offset}");
-                }
             }
 
             return has;

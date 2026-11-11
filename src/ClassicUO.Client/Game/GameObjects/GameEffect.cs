@@ -75,20 +75,14 @@ namespace ClassicUO.Game.GameObjects
         /// is destroyed).</summary>
         internal Friflo.Engine.ECS.Entity EcsEntity;
 
-        /// <summary>T8 ownership (ecs_effect_endpoints): source and target are the state's references, read from the ECS; the
-        /// object references below are kept only for the off path and the checker (CUO_EFFECT_ENDPOINT_CHECK).</summary>
+        /// <summary>T8 ownership (ecs_effect_endpoints, decided when the effect registers): source and target are the state's
+        /// references, read from the ECS, and the kind's motion is <see cref="EffectSystem"/>'s motion step over the state;
+        /// position, offset, angle and target here are written from it for the views. The object references below are kept
+        /// only for the off path and the checker (CUO_EFFECT_ENDPOINT_CHECK).</summary>
         internal bool UsesEndpoints;
 
         /// <summary>CUO_EFFECT_ENDPOINT_CHECK when the effect registered: the objects are kept and every read is compared.</summary>
         internal bool EndpointCheck;
-
-        /// <summary>T8 ownership phase 2 (ecs_effect_motion, decided when the effect registers): the kind's motion is
-        /// <see cref="EffectSystem"/>'s motion step over the state; position, offset, angle and target here are written from
-        /// it for the views.</summary>
-        internal bool UsesMotion;
-
-        /// <summary>CUO_EFFECT_MOTION_CHECK when the effect registered: the legacy motion is replayed beside every step.</summary>
-        internal bool MotionCheck;
 
         internal EffectManager Manager => _manager;
 
@@ -105,12 +99,13 @@ namespace ClassicUO.Game.GameObjects
         internal GameObject SourceObject => UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.SourceObjectOf(this) : Source;
 
 
+        /// <summary>The base update of the kinds' legacy motion (ecs_effect_endpoints off): the source test and the frame step.</summary>
         public override void Update()
         {
             base.Update();
 
 
-            if (UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.SourceGone(this) : Source != null && Source.IsDestroyed)
+            if (Source != null && Source.IsDestroyed)
             {
                 Destroy();
 
@@ -125,11 +120,8 @@ namespace ClassicUO.Game.GameObjects
             EffectSystem.Animate(this);
         }
 
-        protected (ushort x, ushort y, sbyte z) GetSource()
-        {
-            return UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.SourceOf(this) : LegacySource();
-        }
-
+        /// <summary>The source object's position, the effect's own for a ground point (the legacy motion, the endpoint checker,
+        /// and a moving effect's update after its source ended it).</summary>
         internal (ushort x, ushort y, sbyte z) LegacySource()
         {
             return Source == null ? (X, Y, Z) : (Source.X, Source.Y, Source.Z);
@@ -138,11 +130,6 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>FixedEffect: the source's offset, when the source is an object (else the effect keeps its own).</summary>
         protected bool TryGetSourceOffset(out Microsoft.Xna.Framework.Vector3 offset)
         {
-            if (UsesEndpoints && !EcsEntity.IsNull)
-            {
-                return EffectSystem.SourceOffsetOf(this, out offset);
-            }
-
             offset = Source?.Offset ?? default;
 
             return Source != null;
@@ -151,14 +138,14 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>MovingEffect: the target object was destroyed (its last coordinates stay the target).</summary>
         protected bool TargetGone()
         {
-            return UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.TargetGone(this) : Target != null && Target.IsDestroyed;
+            return Target != null && Target.IsDestroyed;
         }
 
         protected void CreateExplosionEffect()
         {
             if (CanCreateExplosionEffect)
             {
-                (var targetX, var targetY, var targetZ) = GetTarget();
+                (var targetX, var targetY, var targetZ) = LegacyTarget();
                 CreateExplosionAt(targetX, targetY, targetZ);
             }
         }
@@ -176,7 +163,7 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>T8: copies position, offset, angle, target and source/target serials to <paramref name="s"/>.</summary>
         internal void Publish(ref EffectState s)
         {
-            (ushort tx, ushort ty, sbyte tz) = GetTarget();
+            (ushort tx, ushort ty, sbyte tz) = LegacyTarget();
             s.X = X;
             s.Y = Y;
             s.Z = Z;
@@ -216,11 +203,8 @@ namespace ClassicUO.Game.GameObjects
             SetInWorldTile(x, y,z);
         }
 
-        protected (ushort x, ushort y, sbyte z) GetTarget()
-        {
-            return UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.TargetOf(this) : LegacyTarget();
-        }
-
+        /// <summary>The target object's position, the effect's target coordinates for a ground point (see
+        /// <see cref="LegacySource"/>).</summary>
         internal (ushort x, ushort y, sbyte z) LegacyTarget()
         {
             return Target == null ? (TargetX, TargetY, TargetZ) : (Target.X, Target.Y, Target.Z);

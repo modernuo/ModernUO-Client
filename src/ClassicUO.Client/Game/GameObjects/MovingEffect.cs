@@ -66,7 +66,7 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
+            if (UsesEndpoints && !EcsEntity.IsNull)
             {
                 if (!EffectSystem.StepMoving(this))
                 {
@@ -87,19 +87,19 @@ namespace ClassicUO.Game.GameObjects
         {
             if (TargetGone())
             {
-                (TargetX, TargetY, TargetZ) = GetTarget();
+                (TargetX, TargetY, TargetZ) = LegacyTarget();
             }
 
             int playerX = World.Player.X;
             int playerY = World.Player.Y;
             int playerZ = World.Player.Z;
 
-            (int sX, int sY, int sZ) = GetSource();
+            (int sX, int sY, int sZ) = LegacySource();
             int offsetSourceX = sX - playerX;
             int offsetSourceY = sY - playerY;
             int offsetSourceZ = sZ - playerZ;
 
-            (int tX, int tY, int tZ) = GetTarget();
+            (int tX, int tY, int tZ) = LegacyTarget();
             int offsetTargetX = tX - playerX;
             int offsetTargetY = tY - playerY;
             int offsetTargetZ = tZ - playerZ;

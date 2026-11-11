@@ -213,15 +213,6 @@ namespace ClassicUO.Configuration
         // checker stay for one phase.
         [JsonPropertyName("ecs_effect_endpoints")] public bool EcsEffectEndpoints { get; set; } = true;
 
-        // T8 ownership phase 2 (ecs-transition-plan.md): with ecs_effect_endpoints on, the kinds' motion (a moving
-        // effect's path and explosion, a fixed effect following its source and the source's offset, the drag offset, lightning
-        // following its source) is computed by EffectSystem from EffectState, each endpoint resolved once per update; the
-        // effect's fields become a write-through cache for the views. CUO_EFFECT_MOTION_CHECK=1 replays the legacy per-object
-        // motion beside every step and compares. Read once at startup (CUO_ECS_EFFECT_MOTION=1|0 overrides it in developer
-        // builds). Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_effect_motion")] public bool EcsEffectMotion { get; set; } = true;
-
         // T7b part 3 (ecs-transition-plan.md): both world renderers draw graphic effects (fixed, moving,
         // explosion, drag) from the renderer-neutral effect extract over EffectState (EffectSpriteExtract) at the effect's
         // render-list position, instead of GameEffectView.Draw; lightning stays on its view. Its own switch, not

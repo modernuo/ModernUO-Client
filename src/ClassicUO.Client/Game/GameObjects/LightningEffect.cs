@@ -26,7 +26,7 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
+            if (UsesEndpoints && !EcsEntity.IsNull)
             {
                 EffectSystem.StepLightning(this);
 
@@ -37,7 +37,7 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (EffectSystem.AnimateLightning(this))
                 {
-                    (var x, var y, var z) = GetSource();
+                    (var x, var y, var z) = LegacySource();
 
                     if (X != x || Y != y || Z != z)
                     {

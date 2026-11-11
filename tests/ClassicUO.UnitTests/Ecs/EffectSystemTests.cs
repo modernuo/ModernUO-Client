@@ -12,10 +12,10 @@ using Xunit;
 namespace ClassicUO.UnitTests.Ecs
 {
     // T8: graphic effects as ECS entities (EffectSystem: the entity owns frame and lifetime). The same scripted effects run in
-    // a world with the state published from the objects (_new, with the checker CUO_EFFECT_CHECK), one with endpoints by record
-    // (_own) and two with the motion step (_mot with every checker, _bare without), compared after every frame. Since T9
-    // deleted ecs_effects' off path, _new's frame steps are also compared with a copy of the legacy rules kept here
-    // (LegacyFrame, formerly the checker's shadow).
+    // a world with the legacy motion on the objects and the state published from them (_new, ecs_effect_endpoints off, with
+    // the checker CUO_EFFECT_CHECK) and in three worlds with endpoints by record and the motion step (_own and _mot with the
+    // checkers, _bare without), compared after every frame. Since T9 deleted ecs_effects' off path, _new's frame steps are
+    // also compared with a copy of the legacy rules kept here (LegacyFrame, formerly the checker's shadow).
     [Collection("ChunkStaticTileDataCollection")] // Time.Ticks / Time.Delta and EffectSystem's counters are process-wide
     public sealed class EffectSystemTests : IDisposable
     {
@@ -25,7 +25,7 @@ namespace ClassicUO.UnitTests.Ecs
         private readonly World _new, _own, _mot, _bare;
         private readonly List<string> _mismatches = new List<string>();
         private readonly Action<string> _savedObserver;
-        private readonly long _comparedBefore, _endpointReadsBefore, _motionComparedBefore, _motionStepsBefore;
+        private readonly long _comparedBefore, _endpointReadsBefore;
 
         public EffectSystemTests()
         {
@@ -42,32 +42,24 @@ namespace ClassicUO.UnitTests.Ecs
             _new.EffectsCheckOverride = true;
             _new.EffectEndpointsOverride = false;
 
-            // T8 ownership: the third world references sources and targets by record (ecs_effect_endpoints) with the checker
+            // T8 ownership: the other worlds reference sources and targets by record (ecs_effect_endpoints) and run the motion
+            // step: with the checkers (_own), with the checkers and item offsets from the ECS (_mot), and without any checker
+            // (_bare: the effects hold no objects; item offsets from the objects)
             _own.EffectsCheckOverride = true;
             _own.EffectEndpointsOverride = true;
             _own.EffectEndpointsCheckOverride = true;
-            _own.EffectMotionOverride = false;
-
-            // T8 ownership phase 2: the motion step (ecs_effect_motion) with every checker and item offsets from the ECS, and
-            // without any checker (the effects hold no objects; item offsets from the objects)
             _mot.EffectsCheckOverride = true;
             _mot.EffectEndpointsOverride = true;
             _mot.EffectEndpointsCheckOverride = true;
-            _mot.EffectMotionOverride = true;
-            _mot.EffectMotionCheckOverride = true;
             _mot.ItemOffsetOverride = true;
             _bare.EffectsCheckOverride = false;
             _bare.EffectEndpointsOverride = true;
             _bare.EffectEndpointsCheckOverride = false;
-            _bare.EffectMotionOverride = true;
-            _bare.EffectMotionCheckOverride = false;
             _bare.ItemOffsetOverride = false;
             _savedObserver = EffectSystem.Observer;
             EffectSystem.Observer = _mismatches.Add;
             _comparedBefore = EffectSystem.Compared;
             _endpointReadsBefore = EffectSystem.EndpointReads;
-            _motionComparedBefore = EffectSystem.MotionCompared;
-            _motionStepsBefore = EffectSystem.MotionSteps;
             Time.Ticks = T0;
             Time.Delta = 0.025f;
         }
@@ -167,6 +159,7 @@ namespace ClassicUO.UnitTests.Ecs
                     CountEntities(w).Should().Be(Snap(w).Count(c => c == '\n'), $"entities equal the live effects after frame {i}");
                 }
 
+                StateEqualsObjects(_own, i);
                 StateEqualsObjects(_mot, i);
                 StateEqualsObjects(_bare, i);
             }
@@ -179,8 +172,6 @@ namespace ClassicUO.UnitTests.Ecs
             _mismatches.Should().BeEmpty();
             (EffectSystem.Compared - _comparedBefore).Should().BeGreaterThan(0, "the checker ran");
             _legacyCompared.Should().BeGreaterThan(0, "frame steps were compared with the legacy rules");
-            (EffectSystem.MotionSteps - _motionStepsBefore).Should().BeGreaterThan(0, "the motion step ran");
-            (EffectSystem.MotionCompared - _motionComparedBefore).Should().BeGreaterThan(0, "the motion checker compared");
         }
 
         // the motion worlds: every live effect uses the motion step, and its state is what its object shows (the object is
@@ -189,7 +180,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             for (GameEffect f = (GameEffect)w.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
-                f.UsesMotion.Should().BeTrue();
+                f.UsesEndpoints.Should().BeTrue();
                 ref readonly EffectState s = ref f.EcsEntity.GetComponent<EffectState>();
                 (s.X, s.Y, s.Z).Should().Be((f.X, f.Y, f.Z), $"position after frame {frame}");
                 new Microsoft.Xna.Framework.Vector3(s.OffsetX, s.OffsetY, s.OffsetZ).Should().Be(f.Offset, $"offset after frame {frame}");
@@ -847,8 +838,7 @@ namespace ClassicUO.UnitTests.Ecs
             _mismatches.Should().Contain(m => m.Contains("source offset"));
             _mismatches.Clear();
 
-            // the motion step reads the same: the mobile's Steps, and the item's ItemOffset component (ecs_item_offset); the
-            // motion checker's legacy replay reads the objects and reports both
+            // with item offsets from the ECS: the item's ItemOffset component (ecs_item_offset); the checker reports both
             _mot.Ecs.Mirror.TryGetEntity(CASTER, out rec).Should().BeTrue();
             rec.GetComponent<ClassicUO.Ecs.Steps>().OffsetX = 77;
             _mot.Ecs.Mirror.TryGetEntity(ITEM, out var itemRec).Should().BeTrue();
@@ -858,8 +848,7 @@ namespace ClassicUO.UnitTests.Ecs
             fixedOnMobile.OffsetX.Should().Be(77);
             ((GameEffect)fixedOnMobile.Next).OffsetY.Should().Be(-5);
             _mot.Items.Get(ITEM).OffsetY.Should().NotBe(-5);
-            _mismatches.Count(m => m.Contains("offset ECS (77,")).Should().Be(1, "the motion checker reports the mobile's");
-            _mismatches.Count(m => m.Contains(",-5,")).Should().Be(1, "and the item's");
+            _mismatches.Count(m => m.Contains("source offset ECS")).Should().Be(2, "the checker reports the mobile's and the item's");
             _mismatches.Clear();
         }
 
@@ -939,7 +928,7 @@ namespace ClassicUO.UnitTests.Ecs
             new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeTrue();
         }
 
-        // ---- T8 ownership phase 2 (ecs_effect_motion): every scenario above also runs in _mot and _bare
+        // ---- T8 ownership phase 2: the motion step (every scenario above runs it in _own, _mot and _bare)
 
         [Fact]
         public void A_Moving_Effect_Follows_The_Player_Moving_Under_It()
@@ -1051,48 +1040,13 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Motion_Checker_Replays_The_Legacy_Motion_And_Flags_A_State_The_Object_Does_Not_Show()
-        {
-            AddMobile(_mot, TARGET, 1012, 1008);
-            Create(_mot, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0);
-            Create(_mot, GraphicEffectType.DragEffect, 0, 0, 0xEED, 1002, 1002, 1004, 1006, speed: 1, duration: 300);
-            long compared = EffectSystem.MotionCompared;
-            _mot.Effects.Update();
-            _mismatches.Should().BeEmpty();
-            EffectSystem.MotionCompared.Should().Be(compared + 2);
-
-            // a state that drifted from its object (written around the step): the step moves the state, the replay the object
-            var moving = (GameEffect)_mot.Effects.Items;
-            State(moving).OffsetX += 3;
-            Time.Ticks += 25;
-            _mot.Effects.Update();
-            _mismatches.Should().ContainSingle(m => m.Contains("offset ECS")).Which.Should().Contain("0x36D4");
-            _mismatches.Clear();
-
-            // the drag effect's next move time
-            var drag = (DragEffect)moving.Next;
-            drag.LastMoveTime = 0;
-            State(drag).MoveTime = Time.Ticks + 1000;
-            _mot.Effects.Update();
-            _mismatches.Should().Contain(m => m.Contains("0x0EED offset ECS"));
-            _mismatches.Clear();
-
-            // a target the record and the object disagree on
-            _mot.Mobiles.Get(TARGET).X = 1016;
-            _mot.Effects.Update();
-            _mismatches.Should().Contain(m => m.Contains("target ECS (1012,1008,0) | legacy (1016,1008,0)"));
-            _mismatches.Clear();
-        }
-
-        [Fact]
         public void Without_The_Checkers_The_Motion_Step_Holds_No_Objects_And_Reads_The_Player_From_The_ECS()
         {
             AddMobile(_bare, CASTER, 1003, 1003);
             AddMobile(_bare, TARGET, 1012, 1008);
             Create(_bare, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
             var fx = (GameEffect)_bare.Effects.Items;
-            fx.UsesMotion.Should().BeTrue();
-            fx.MotionCheck.Should().BeFalse();
+            fx.UsesEndpoints.Should().BeTrue();
             fx.Source.Should().BeNull();
             fx.Target.Should().BeNull();
 
@@ -1111,28 +1065,6 @@ namespace ClassicUO.UnitTests.Ecs
                 _new.Effects.Update();
                 Snap(_bare).Should().Be(Snap(_new), $"the record still holds the player at 1000,1000 (frame {i})");
             }
-        }
-
-        [Fact]
-        public void The_Motion_Switch_Needs_The_Endpoints()
-        {
-            _new.EffectMotionOverride = true; // endpoints off
-            _new.EffectMotionOn.Should().BeFalse();
-            Create(_new, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
-            ((GameEffect)_new.Effects.Items).UsesMotion.Should().BeFalse();
-
-            _own.EffectMotionOn.Should().BeFalse();
-            _mot.EffectMotionOn.Should().BeTrue();
-            Create(_own, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
-            ((GameEffect)_own.Effects.Items).UsesMotion.Should().BeFalse("ecs_effect_motion is off in the endpoint world");
-
-            // the motion checker alone keeps the objects its legacy replay reads
-            _mot.EffectEndpointsCheckOverride = false;
-            AddMobile(_mot, CASTER, 1003, 1003);
-            Create(_mot, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
-            var fx = (GameEffect)_mot.Effects.Items;
-            (fx.UsesMotion, fx.MotionCheck, fx.EndpointCheck).Should().Be((true, true, false));
-            fx.Source.Should().BeSameAs(_mot.Mobiles.Get(CASTER));
         }
 
         [Fact]
@@ -1195,12 +1127,6 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Run(40, step: 10); // 10 ms frames: Time.Ticks lands on the move time
-        }
-
-        [Fact]
-        public void The_Motion_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().EcsEffectMotion.Should().BeTrue();
         }
     }
 }

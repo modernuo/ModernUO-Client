@@ -57,7 +57,7 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
+            if (UsesEndpoints && !EcsEntity.IsNull)
             {
                 EffectSystem.StepFixed(this);
 
@@ -68,7 +68,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (!IsDestroyed)
             {
-                (var x, var y, var z) = GetSource();
+                (var x, var y, var z) = LegacySource();
 
                 if (TryGetSourceOffset(out var offset))
                 {
