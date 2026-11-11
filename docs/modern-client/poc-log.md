@@ -6479,4 +6479,4 @@ Base `poc/modern-client` 44096b17f. The switch (default on since legacy-flip) an
 - **CLAUDE.md.** The switch-plus-checker example `ecs_item_draw_row`/`CUO_ITEM_DRAW_ROW_CHECK` is replaced with `legacy_ecs_sprites`/`CUO_LEGACY_ECS_PARITY` (devdocs commit).
 - **Gate scripts.** `rowcheck.sh` now fails on any `item-draw-row-check` line; the gate body sets no `CUO_ITEM_DRAW_ROW_CHECK`.
 - **Costs.** None expected: one branch less in a per-item read; no new allocations.
-- **Results:** pending.
+- **Results (merged as ea5dd9966).** bench-000610 Gpu and 611 Legacy gates `T9B3 PASS` (no `item-draw-row-check` line); allocations 612 (Gpu) / 613 (Legacy): main-thread p50 equal or lower; Legacy loses a steady 48 B/frame in corpses, ls_idle and ls_walk (base 48, new 0); golden 614 `JOB PASS`. Codex: no findings.
