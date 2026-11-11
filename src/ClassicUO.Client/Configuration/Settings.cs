@@ -138,6 +138,11 @@ namespace ClassicUO.Configuration
         // Default off.
         [JsonPropertyName("pick_skip_off_world")] public bool PickSkipOffWorld { get; set; }
 
+        // pa-itemprep: the world fill's item branch reads the graphic and the flags from the item's packed ItemDrawRow (one
+        // record lookup) instead of the Graphic and Flags getters (ItemPrep). CUO_ITEM_PREP_ROWS=1|0 overrides it in developer
+        // builds, CUO_ITEM_PREP_CHECK=1 checks it. Default off.
+        [JsonPropertyName("item_prep_rows")] public bool ItemPrepRows { get; set; }
+
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.

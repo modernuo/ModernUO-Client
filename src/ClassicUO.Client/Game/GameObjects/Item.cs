@@ -107,8 +107,10 @@ namespace ClassicUO.Game.GameObjects
 
         public int MultiDistanceBonus { get; private set; }
 
+        internal const ushort CORPSE_GRAPHIC = 0x2006;
+
         public bool IsCorpse => /*MathHelper.InRange(Graphic, 0x0ECA, 0x0ED2) ||*/
-            Graphic == 0x2006;
+            Graphic == CORPSE_GRAPHIC;
 
         public bool OnGround => !SerialHelper.IsValid(Container);
 

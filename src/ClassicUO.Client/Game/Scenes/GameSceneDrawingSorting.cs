@@ -1192,29 +1192,37 @@ namespace ClassicUO.Game.Scenes
 
                     case Item item:
                         {
-                            ref StaticTiles itemData = ref (
-                                item.IsMulti
-                                    ? ref Client.Game.UO.FileManager.TileData.StaticData[item.MultiGraphic]
-                                    : ref item.ItemData
-                            );
+                            // pa-itemprep: the graphic and the locked test read once (item_prep_rows: from the ItemDrawRow),
+                            // the tiledata row selected once; CUO_ITEM_PREP_CHECK compares them with the old getters
+                            StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
+                            ushort itemGraphic = ItemPrep.Read(item, staticData, ItemPrep.Enabled, out bool itemLocked);
+                            bool isCorpse = itemGraphic == Item.CORPSE_GRAPHIC;
+                            bool isMulti = item.IsMulti;
+#if CUO_DEVTOOLS
+                            if (ItemPrep.Check)
+                            {
+                                ItemPrep.Compare(item, staticData, itemGraphic, itemLocked);
+                            }
+#endif
+                            ref StaticTiles itemData = ref staticData[isMulti ? item.MultiGraphic : itemGraphic];
 
-                            if (!item.IsCorpse && itemData.IsInternal)
+                            if (!isCorpse && itemData.IsInternal)
                             {
                                 continue;
                             }
 
                             if (
-                                item.IsCorpse
+                                isCorpse
                                 || (
-                                    !item.IsMulti
-                                    && (!item.IsLocked || itemData.IsContainer)
+                                    !isMulti
+                                    && (!itemLocked || itemData.IsContainer)
                                 )
                             )
                             {
                                 UpdateObjectHandles(item, useObjectHandles);
                             }
 
-                            if (!item.IsMulti && !IsFoliageVisibleAtSeason(ref itemData, _world.Season))
+                            if (!isMulti && !IsFoliageVisibleAtSeason(ref itemData, _world.Season))
                             {
                                 continue;
                             }
@@ -1256,12 +1264,12 @@ namespace ClassicUO.Game.Scenes
                                 continue;
                             }
 
-                            if (!item.IsCorpse)
+                            if (!isCorpse)
                             {
                                 CheckIfBehindATree(obj, ref itemData);
                             }
 
-                            if (item.IsCorpse)
+                            if (isCorpse)
                             {
                                 PushToRenderQueue(
                                     obj,
