@@ -574,9 +574,18 @@ namespace ClassicUO.UnitTests.Ecs
             e.Y = y;
             e.Z = z;
             e.UpdateScreenPosition();
-            e.OffsetX = 0;
-            e.OffsetY = 0;
-            e.OffsetZ = 0;
+
+            // T9 S7: an item's offset is its ItemOffset component
+            if (e is Mobile m)
+            {
+                m.OffsetX = 0;
+                m.OffsetY = 0;
+                m.OffsetZ = 0;
+            }
+            else
+            {
+                ItemOffsets.Push(e.World, e, default);
+            }
 
             if (e.IsPlaced)
             {

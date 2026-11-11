@@ -13,6 +13,13 @@ namespace ClassicUO.Game.GameObjects
     {
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
+            // T9 S7: the frame from the state (none once destroyed: nothing to draw)
+            if (EcsEntity.IsNull)
+            {
+                return false;
+            }
+
+            ushort animationGraphic = ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.EffectState>(EcsEntity).AnimGraphic;
             ushort hue = Hue;
 
             if (ProfileManager.CurrentProfile.NoColorObjectsOutOfRange && Distance > World.ClientViewRange)
@@ -27,7 +34,7 @@ namespace ClassicUO.Game.GameObjects
             Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, false, 1);
             hueVec.Y = hueVec.X > 1.0f ? ShaderHueTranslator.SHADER_LIGHTS : ShaderHueTranslator.SHADER_NONE;
 
-            Client.Game.UO.FileManager.Gumps.TryGetSize(AnimationGraphic, out int gumpWidth, out int gumpHeight);
+            Client.Game.UO.FileManager.Gumps.TryGetSize(animationGraphic, out int gumpWidth, out int gumpHeight);
 
             posX -= gumpWidth >> 1;
             posY -= gumpHeight;
@@ -37,7 +44,7 @@ namespace ClassicUO.Game.GameObjects
             DrawGump
             (
                 batcher,
-                AnimationGraphic,
+                animationGraphic,
                 posX,
                 posY,
                 hueVec,

@@ -49,45 +49,46 @@ namespace ClassicUO.Game.GameObjects
             int x = X;
             int y = Y;
             int z = PriorityZ;
+            Vector3 offset = ScreenOffset;
 
             // Offsets are in SCREEN coordinates
-            if (Offset.X > 0 && Offset.Y < 0)
+            if (offset.X > 0 && offset.Y < 0)
             {
                 // North
             }
-            else if (Offset.X > 0 && Offset.Y == 0)
+            else if (offset.X > 0 && offset.Y == 0)
             {
                 // Northeast
                 x++;
             }
-            else if (Offset.X > 0 && Offset.Y > 0)
+            else if (offset.X > 0 && offset.Y > 0)
             {
                 // East
-                z += Math.Max(0, (int)Offset.Z);
+                z += Math.Max(0, (int)offset.Z);
                 x++;
             }
-            else if (Offset.X == 0 && Offset.Y > 0)
+            else if (offset.X == 0 && offset.Y > 0)
             {
                 // Southeast
                 x++;
                 y++;
             }
-            else if (Offset.X < 0 && Offset.Y > 0)
+            else if (offset.X < 0 && offset.Y > 0)
             {
                 // South
-                z += Math.Max(0, (int)Offset.Z);
+                z += Math.Max(0, (int)offset.Z);
                 y++;
             }
-            else if (Offset.X < 0 && Offset.Y == 0)
+            else if (offset.X < 0 && offset.Y == 0)
             {
                 // Southwest
                 y++;
             }
-            else if (Offset.X < 0 && Offset.Y > 0)
+            else if (offset.X < 0 && offset.Y > 0)
             {
                 // West
             }
-            else if (Offset.X == 0 && Offset.Y < 0)
+            else if (offset.X == 0 && offset.Y < 0)
             {
                 // Northwest
             }
@@ -99,8 +100,9 @@ namespace ClassicUO.Game.GameObjects
         {
             Rectangle prect = Rectangle.Empty;
 
-            prect.X = (int)(RealScreenPosition.X - FrameInfo.X + 22 + Offset.X);
-            prect.Y = (int)(RealScreenPosition.Y - FrameInfo.Y + 22 + (Offset.Y - Offset.Z));
+            Vector3 offset = ScreenOffset;
+            prect.X = (int)(RealScreenPosition.X - FrameInfo.X + 22 + offset.X);
+            prect.Y = (int)(RealScreenPosition.Y - FrameInfo.Y + 22 + (offset.Y - offset.Z));
             prect.Width = FrameInfo.Width;
             prect.Height = FrameInfo.Height;
 

@@ -308,17 +308,17 @@ namespace ClassicUO.UnitTests.Ecs
             const string Src =
                 "partial class GameObject {\n" +
                 "    public ushort Graphic { get => _graphic; set { FunnelCheck.Write(this, FunnelField.Graphic); _graphic = value; } }\n" +
-                "    public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }\n" +
+                "    public ushort X { get => _x; set { FunnelCheck.Write(this, FunnelField.X); _x = value; } }\n" +
                 "    public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }\n" +
-                "    void F() { _graphic = 3; _offset.Y = 1; _amount++; }\n" +
+                "    void F() { _graphic = 3; _x = 1; _amount++; }\n" +
                 "    public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _graphic = value; } }\n" + // another field's setter
                 "}\n";
 
-            // inside the declaring type (GameObject declares _graphic, _offset; _amount is Item's), in any file
+            // inside the declaring type (GameObject declares _graphic, _x; _amount is Item's), in any file
             foreach (string file in new[] { "GameObject.cs", "Views/View.cs" })
             {
                 WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/" + file, new HashSet<string> { "Player" }, true)
-                    .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_graphic", 5), ("_offset", 5), ("_graphic", 6) }, file);
+                    .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_graphic", 5), ("_x", 5), ("_graphic", 6) }, file);
             }
 
             // a private field of the same name in another class is another field (PlayerMobile's own _amount)
@@ -544,7 +544,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal static readonly Dictionary<string, string> CheckedBackingFields = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["_graphic"] = "GameObject", ["_hue"] = "GameObject", ["_x"] = "GameObject", ["_y"] = "GameObject",
-            ["_z"] = "GameObject", ["_offset"] = "GameObject",
+            ["_z"] = "GameObject", ["_offset"] = "Mobile",
             ["_flags"] = "Entity", ["_serial"] = "Entity", ["_name"] = "Entity", ["_animIndex"] = "Entity",
             ["_executeAnimation"] = "Entity", ["_lastAnimationChangeTime"] = "Entity", ["_lastStepTime"] = "Entity",
             ["_amount"] = "Item", ["_container"] = "Item", ["_isDamageable"] = "Item", ["_layer"] = "Item",

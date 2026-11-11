@@ -287,7 +287,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             // the container a gump drag hovers is extracted with the highlight hue: never bake it, try again later
-            if (item.AlphaHue != 0xFF || item.Offset != Vector3.Zero || item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ||
+            if (item.AlphaHue != 0xFF || ItemOffsets.Read(item) != Vector3.Zero || item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ||
                 item.TextContainer != null && !item.TextContainer.IsEmpty || ReferenceEquals(item, _gpuSelContainer))
             {
                 return 2;
@@ -330,7 +330,7 @@ namespace ClassicUO.Game.Scenes
 
             a = item.Graphic | (ulong)item.Hue << 16 | amount << 32 | flags << 48 | (ulong)item.AlphaHue << 56;
             ulong state = (item.AllowedToDraw ? 1UL : 0) | (item.IsDestroyed ? 2UL : 0) | (item.TextContainer != null && !item.TextContainer.IsEmpty ? 4UL : 0) |
-                          (item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ? 8UL : 0) | (item.Offset != Vector3.Zero ? 16UL : 0) |
+                          (item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ? 8UL : 0) | (ItemOffsets.Read(item) != Vector3.Zero ? 16UL : 0) |
                           (_gpuItemKeyRange && item.Distance > _world.ClientViewRange ? 32UL : 0);
             b = item.X | (ulong)item.Y << 16 | (ulong)(byte)item.Z << 32 | (ulong)(ushort)item.PriorityZ << 40 | state << 56;
         }

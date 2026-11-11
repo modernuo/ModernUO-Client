@@ -654,7 +654,8 @@ namespace ClassicUO.Ecs
     /// <para>
     /// The kinds' motion is computed here too (<c>EffectSystem</c>'s motion step): position,
     /// offset (<see cref="OffsetZ"/> included), angle, the moving effect's target and the drag effect's next move time
-    /// (<see cref="MoveTime"/>); the object's fields are written from these values for the views.
+    /// (<see cref="MoveTime"/>). The object keeps only the position (its tile placement); the views read the frame, offset and
+    /// angle from here (T9 S7).
     /// </para>
     /// </summary>
     public struct EffectState : IComponent

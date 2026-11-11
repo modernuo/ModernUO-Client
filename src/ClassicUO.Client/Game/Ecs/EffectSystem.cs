@@ -15,8 +15,8 @@ namespace ClassicUO.Game
     /// T8: graphic effects as ECS entities. Every effect created through
     /// <c>EffectManager</c> gets an entity with an <see cref="EffectState"/> (no serial, not in the mirror's serial index). The
     /// state owns the animation and lifetime (frame, next change time, duration), which <see cref="Animate"/> and
-    /// <see cref="AnimateLightning"/> advance with the legacy rules (the object's <c>AnimIndex</c>, <c>AnimationGraphic</c> and
-    /// <c>NextChangeFrameTime</c> become write-through caches for the views). The source and target are references to their
+    /// <see cref="AnimateLightning"/> advance with the legacy rules, and the offset and angle (T9 S7 deleted the object's copies
+    /// of the frame, offset and angle: the views read the state). The source and target are references to their
     /// mirror records in the state (T8 ownership), and the kinds' motion is the motion step over the state
     /// (EffectSystem.Motion.cs); T9 deleted the object path of <c>ecs_effect_endpoints</c> and <c>ecs_effect_motion</c>. The
     /// visiting order is <c>EffectManager.Update</c>'s list order and no random number is drawn. Tile placement is the
@@ -39,6 +39,23 @@ namespace ClassicUO.Game
 
         private static uint s_nextLog;
 
+        /// <summary>The animation graphic before the first frame step (the views draw nothing).</summary>
+        internal const ushort NO_FRAME = 0xFFFF;
+
+        /// <summary>The effect's offset from its state (zero once destroyed or before it registers).</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public static Microsoft.Xna.Framework.Vector3 OffsetOf(GameEffect e)
+        {
+            if (e.EcsEntity.IsNull)
+            {
+                return default;
+            }
+
+            ref readonly EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+
+            return new Microsoft.Xna.Framework.Vector3(s.OffsetX, s.OffsetY, s.OffsetZ);
+        }
+
         public static byte KindOf(GameEffect e) => e switch
         {
             MovingEffect => EffectState.KIND_MOVING,
@@ -54,23 +71,15 @@ namespace ClassicUO.Game
             EffectState s = default;
             s.Kind = KindOf(e);
             s.Graphic = e.Graphic;
-            s.AnimGraphic = e.AnimationGraphic;
             s.Hue = e.Hue;
             s.Blend = (byte)e.Blend;
-            s.AnimIndex = e.AnimIndex;
+            s.AnimGraphic = NO_FRAME;
             s.Interval = e.IntervalInMs;
             s.Duration = e.Duration;
-            s.NextChange = e.NextChangeFrameTime;
             s.Flags = (byte)((e.IsEnabled ? EffectState.FLAG_ENABLED : 0) | (e.CanCreateExplosionEffect ? EffectState.FLAG_EXPLODES : 0) |
                              (e is MovingEffect m && m.FixedDir ? EffectState.FLAG_FIXED_DIR : 0));
 
             BindEndpoints(e, ref s);
-
-            if (e is DragEffect drag)
-            {
-                s.MoveTime = drag.LastMoveTime;
-            }
-
             e.Publish(ref s);
             e.EcsEntity = e.World.Ecs.Mirror.Store.CreateEntity(s);
 
@@ -134,13 +143,7 @@ namespace ClassicUO.Game
             if (destroyed)
             {
                 e.Destroy();
-
-                return;
             }
-
-            e.AnimationGraphic = s.AnimGraphic;
-            e.AnimIndex = s.AnimIndex;
-            e.NextChangeFrameTime = s.NextChange;
         }
 
         /// <summary>LightningEffect's frame step on the state. False when the effect was destroyed.</summary>
@@ -167,10 +170,6 @@ namespace ClassicUO.Game
 
                 return false;
             }
-
-            e.AnimationGraphic = s.AnimGraphic;
-            e.AnimIndex = s.AnimIndex;
-            e.NextChangeFrameTime = s.NextChange;
 
             return true;
         }
@@ -408,9 +407,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// CUO_EFFECT_CHECK, end of the effects stage: each live effect has an entity whose state equals the object (position,
-        /// offset, angle, frame, graphic, duration), the object's tile is the chunk and cell of its position, and the entities
-        /// are the list's effects.
+        /// CUO_EFFECT_CHECK, end of the effects stage: each live effect has an entity whose position equals the object's (the
+        /// object keeps it for its tile placement; T9 S7 deleted the frame, offset and angle copies and their comparison), the
+        /// object's tile is the chunk and cell of its position, and the entities are the list's effects.
         /// </summary>
         public static void Check(World world, EffectManager manager)
         {
@@ -439,17 +438,6 @@ namespace ClassicUO.Game
                 if (s.X != e.X || s.Y != e.Y || s.Z != e.Z)
                 {
                     Mismatch($"effect 0x{e.Graphic:X4} position ECS ({s.X},{s.Y},{s.Z}) | object ({e.X},{e.Y},{e.Z})");
-                }
-
-                if (s.OffsetX != e.OffsetX || s.OffsetY != e.OffsetY || s.Angle != e.AngleToTarget)
-                {
-                    Mismatch($"effect 0x{e.Graphic:X4} offset ECS ({s.OffsetX},{s.OffsetY},{s.Angle}) | object ({e.OffsetX},{e.OffsetY},{e.AngleToTarget})");
-                }
-
-                if (s.AnimGraphic != e.AnimationGraphic || s.AnimIndex != e.AnimIndex || s.NextChange != e.NextChangeFrameTime ||
-                    s.Graphic != e.Graphic || s.Duration != e.Duration || s.Blend != (byte)e.Blend)
-                {
-                    Mismatch($"effect 0x{e.Graphic:X4} frame ECS (g=0x{s.AnimGraphic:X4} i={s.AnimIndex} next={s.NextChange}) | object (g=0x{e.AnimationGraphic:X4} i={e.AnimIndex} next={e.NextChangeFrameTime})");
                 }
 
                 if (e.PendingBlock < 0 && e.TileChunk != null)

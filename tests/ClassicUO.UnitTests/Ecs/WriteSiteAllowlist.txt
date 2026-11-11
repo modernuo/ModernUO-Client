@@ -6,8 +6,6 @@ src/ClassicUO.Client/DevBench.cs|Hue|1
 src/ClassicUO.Client/DevBench.cs|X|1
 src/ClassicUO.Client/DevBench.cs|Y|1
 src/ClassicUO.Client/DevBench.cs|Z|1
-src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Graphic|1
-src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|AnimIndex|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|LastAnimationChangeTime|1
@@ -16,7 +14,6 @@ src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Graphic|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Hue|2
-src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Offset|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|X|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Y|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Z|2
@@ -43,9 +40,6 @@ src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isRunning|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_isSA_Poisoned|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_lastAnimationIdleDelay|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_notorietyFlag|1
-src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Offset|5
-src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|X|1
-src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Y|1
 src/ClassicUO.Client/Game/GameObjects/Multi.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Graphic|1

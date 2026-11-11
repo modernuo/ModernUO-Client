@@ -206,7 +206,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 frames.Should().BeGreaterThan(15);
                 world.Items.Get(BOAT).X.Should().Be(1012, "every queued step was taken");
-                world.Get(OTHER).Offset.Should().NotBe(Vector3.Zero, "boat 2 was removed mid-step");
+                world.Get(OTHER).ScreenOffset.Should().NotBe(Vector3.Zero, "boat 2 was removed mid-step");
                 world.Writer.Violations.Should().Be(0);
 
                 // the component is the state; the reference's dictionaries never add it
@@ -321,13 +321,13 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW + 599;
             world.BoatMovingManager.Update();
             boat.X.Should().Be(1000, "1 ms short of the step's 500 ms");
-            boat.Offset.Should().NotBe(Vector3.Zero);
+            boat.ScreenOffset.Should().NotBe(Vector3.Zero);
 
             Time.Ticks = NOW + 600;
             world.BoatMovingManager.Update();
             Time.Ticks = NOW;
             boat.X.Should().Be(1001, "the step's time is reached");
-            boat.Offset.Should().Be(Vector3.Zero);
+            boat.ScreenOffset.Should().Be(Vector3.Zero);
         }
 
         // ---- the Codex audit of ecs_boat_steps (P2 1): the boats step in the old manager's order, its dictionary's insertion
@@ -541,7 +541,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (how == "multi")
                 {
-                    world.Get(OTHER).Offset.Should().Be(Vector3.Zero, "the recreated multi's reload reset the passenger");
+                    world.Get(OTHER).ScreenOffset.Should().Be(Vector3.Zero, "the recreated multi's reload reset the passenger");
                 }
 
                 world.BoatMovingManager.Steps.ParkedCount.Should().Be(0, "nothing waits once a frame ran");

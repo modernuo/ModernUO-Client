@@ -10,7 +10,6 @@ namespace ClassicUO.Game.GameObjects
             : base(world, manager, 0x4E20, hue, 400, 0)
         {
             IsEnabled = true;
-            AnimIndex = 0;
 
             Entity source = World.Get(src);
 

@@ -95,13 +95,39 @@ namespace ClassicUO.Game.GameObjects
             }
         }
         public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _hue = value; } }
-        // A struct property: `obj.Offset.Z = v` does not compile (CS1612, it would write a copy).
-        // Write members through OffsetX/OffsetY/OffsetZ, or assign a whole Vector3.
-        private Vector3 _offset;
-        public Vector3 Offset { get => _offset; set { FunnelCheck.Write(this, FunnelField.Offset); _offset = value; } }
-        public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }
-        public float OffsetY { get => _offset.Y; set { FunnelCheck.Write(this, FunnelField.OffsetY); _offset.Y = value; } }
-        public float OffsetZ { get => _offset.Z; set { FunnelCheck.Write(this, FunnelField.OffsetZ); _offset.Z = value; } }
+        /// <summary>
+        /// T9 S7: the object's screen offset from where its kind keeps it: an item's ItemOffset component
+        /// (<see cref="ItemOffsets"/>), an effect's <see cref="ClassicUO.Ecs.EffectState"/>, a mobile's step offset and a boat
+        /// component's (<see cref="Multi"/>) on the object; land and statics have none. The sealed kinds are tested first.
+        /// </summary>
+        public Vector3 ScreenOffset
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get
+            {
+                if (this is Static || this is Land)
+                {
+                    return default;
+                }
+
+                if (this is Item item)
+                {
+                    return ItemOffsets.Read(item);
+                }
+
+                if (this is Multi multi)
+                {
+                    return multi.Offset;
+                }
+
+                if (this is Mobile mobile)
+                {
+                    return mobile.Offset;
+                }
+
+                return this is GameEffect effect ? EffectSystem.OffsetOf(effect) : default;
+            }
+        }
         public short PriorityZ;
         public GameObject TNext;
         public GameObject TPrevious;
@@ -137,9 +163,11 @@ namespace ClassicUO.Game.GameObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Vector2 GetScreenPosition()
         {
+            Vector3 offset = ScreenOffset;
+
             return new Vector2(
-                RealScreenPosition.X + Offset.X,
-                RealScreenPosition.Y + (Offset.Y - Offset.Z)
+                RealScreenPosition.X + offset.X,
+                RealScreenPosition.Y + (offset.Y - offset.Z)
             );
         }
 
@@ -356,8 +384,9 @@ namespace ClassicUO.Game.GameObjects
 
             p.Y -= bounds.Height >> 1;
 
-            p.X += (int)Offset.X + 22;
-            p.Y += (int)(Offset.Y - Offset.Z) + 44;
+            Vector3 offset = ScreenOffset;
+            p.X += (int)offset.X + 22;
+            p.Y += (int)(offset.Y - offset.Z) + 44;
 
             p = Client.Game.Scene.Camera.WorldToScreen(p, true);
 
@@ -521,7 +550,6 @@ namespace ClassicUO.Game.GameObjects
             PriorityZ = 0;
             IsPositionChanged = false;
             Hue = 0;
-            Offset = Vector3.Zero;
             RealScreenPosition = Point.Zero;
             IsFlipped = false;
             Graphic = 0;
@@ -555,7 +583,6 @@ namespace ClassicUO.Game.GameObjects
             FoliageIndex = -1;
             Graphic = 0;
             Hue = 0;
-            Offset = Vector3.Zero;
             PriorityZ = 0;
             TNext = TPrevious = null;
             TileChunk = null;

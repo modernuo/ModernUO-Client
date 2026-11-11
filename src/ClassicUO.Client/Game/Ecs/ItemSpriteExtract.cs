@@ -157,7 +157,7 @@ namespace ClassicUO.Game
 
             i.AlphaHue = item.AlphaHue;
             // the ItemOffset component, from the row ReadRecord already holds
-            i.Offset = ItemOffsets.ReadRow(item, record, in data);
+            i.Offset = ItemOffsets.ReadRow(record, in data);
             i.Flipped = item.ViewFlipped;
 
             // GameObject.Distance for an item

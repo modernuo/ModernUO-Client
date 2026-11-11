@@ -657,7 +657,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Both(o => o.Update(BOAT), n => n.Update(), NOW + t);
             }
 
-            Microsoft.Xna.Framework.Vector3 mid = newWorld.Items.Get(BOAT).Offset;
+            Microsoft.Xna.Framework.Vector3 mid = newWorld.Items.Get(BOAT).ScreenOffset;
             mid.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "mid-step");
             newHouse.Components.Should().OnlyContain(c => c.Offset == mid);
             newWorld.Mobiles.Get(MOB).Offset.Should().Be(mid);
@@ -743,7 +743,7 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                 }
 
-                (foreign.Offset, foreignBoat.Offset, strangerOnDeck.Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)));
+                (foreign.Offset, foreignBoat.ScreenOffset, strangerOnDeck.Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)));
                 foreignHouse.Components.Select(c => c.Offset.X).Should().Equal(0f, 1f, 2f);
                 world.Writer.Violations.Should().Be(5);
             }
@@ -754,7 +754,7 @@ namespace ClassicUO.UnitTests.Ecs
             w.Writer.InterpolateStep(w.Mobiles.Get(MOB), 1, 1, 1);
             w.Writer.InterpolateBoat(w.Items.Get(BOAT), 1, 1, 1);
             w.Ecs.EndFold(w.Mobiles.Get(OTHER));
-            (w.Mobiles.Get(MOB).Offset, w.Items.Get(BOAT).Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)), "a nested call is rejected");
+            (w.Mobiles.Get(MOB).Offset, w.Items.Get(BOAT).ScreenOffset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)), "a nested call is rejected");
             w.Writer.Violations.Should().Be(2);
         }
 
@@ -1030,10 +1030,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.InterpolateStep(m, 5, -5, 1);
             world.Writer.InterpolateBoat(boat, 2, 3, 0);
             world.Writer.FollowBoatComponents(boat, house);
-            world.Writer.FollowBoat(m, boat.Offset);
+            world.Writer.FollowBoat(m, boat.ScreenOffset);
             world.Writer.JumpBoat(boat, 1002, 1000, 0);
 
-            (m.Offset, house.Components[0].Offset).Should().Be((boat.Offset, boat.Offset));
+            (m.Offset, house.Components[0].Offset).Should().Be((boat.ScreenOffset, boat.ScreenOffset));
             FunnelCheck.Total.Should().Be(0, "ProcessSteps' walk offset, the boat's offset, its components' and its passengers', 0xF6's jump");
         }
     }

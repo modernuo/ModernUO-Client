@@ -509,8 +509,9 @@ namespace ClassicUO.Game.GameObjects
                 var bounds = Client.Game.UO.Arts.GetRealArtBounds(Graphic);
                 p.Y -= bounds.Height >> 1;
 
-                p.X += (int)Offset.X + 22;
-                p.Y += (int)(Offset.Y - Offset.Z) + 22;
+                Vector3 offset = ItemOffsets.Read(this);
+                p.X += (int)offset.X + 22;
+                p.Y += (int)(offset.Y - offset.Z) + 22;
 
                 p = Client.Game.Scene.Camera.WorldToScreen(p, true);
 

@@ -331,6 +331,15 @@ namespace ClassicUO.Game.GameObjects
         }
 
         public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
+
+        // T9 S7: the step offset stays on the mobile (moved from GameObject): ProcessSteps writes it for the mobiles the step
+        // system declines, and CUO_STEP_CHECK compares the Steps component with it. A struct property: `m.Offset.Z = v` does
+        // not compile (CS1612, it would write a copy); write members through OffsetX/OffsetY/OffsetZ, or assign a Vector3.
+        private Vector3 _offset;
+        public Vector3 Offset { get => _offset; set { FunnelCheck.Write(this, FunnelField.Offset); _offset = value; } }
+        public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }
+        public float OffsetY { get => _offset.Y; set { FunnelCheck.Write(this, FunnelField.OffsetY); _offset.Y = value; } }
+        public float OffsetZ { get => _offset.Z; set { FunnelCheck.Write(this, FunnelField.OffsetZ); _offset.Z = value; } }
         public string Title = string.Empty;
 
         public static Mobile Create(World world, uint serial)
