@@ -72,7 +72,8 @@ namespace ClassicUO.Game.GameObjects
             ref byte animIndex,
             byte direction,
             out SpriteInfo spriteInfo,
-            out bool isUOP
+            out bool isUOP,
+            bool sync = false
         )
         {
             spriteInfo = default;
@@ -82,7 +83,8 @@ namespace ClassicUO.Game.GameObjects
                 animGroup,
                 direction,
                 out _,
-                out isUOP
+                out isUOP,
+                sync: sync
             );
 
             if (frames.Length == 0)
@@ -150,6 +152,10 @@ namespace ClassicUO.Game.GameObjects
 
             SpriteInfo spriteInfo;
             bool isUop;
+            // anim_frame_count_tables: the advance no longer loads the body's current direction (it never loaded the mount's
+            // or the equipment's), so the first hover does, synchronously: a worker load (first sight) would leave the drawn
+            // mobile unpickable for a few frames in Gpu mode
+            bool syncPick = AnimFrameCount.UseTables;
 
             if (isHuman)
             {
@@ -207,7 +213,7 @@ namespace ClassicUO.Game.GameObjects
                 }
             }
 
-            if (GetTexture(graphic, animGroup, ref animIndex, dir, out spriteInfo, out isUop))
+            if (GetTexture(graphic, animGroup, ref animIndex, dir, out spriteInfo, out isUop, syncPick))
             {
                 int x =
                     position.X

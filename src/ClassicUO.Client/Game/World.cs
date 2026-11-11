@@ -634,6 +634,13 @@ namespace ClassicUO.Game
                 Ecs.PushClock(mob);
             }
 
+            if (AnimFrameCount.UseTables)
+            {
+                // anim_frame_count_tables: the advance no longer calls GetAnimationFrames, whose first step uploads the
+                // directions the anim workers finished (picking may have queued some); drain them each frame as it did
+                Client.Game?.UO?.Animations?.DrainFinished();
+            }
+
             if (t0 != 0)
             {
                 WorldEcs.ClockUpdateTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;

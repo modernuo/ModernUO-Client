@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -162,7 +163,8 @@ namespace ClassicUO.Renderer.Animations
             out bool useUOP,
             bool isEquip = false,
             bool isCorpse = false,
-            bool forceUOP = false
+            bool forceUOP = false,
+            bool sync = false
         )
         {
             hue = 0;
@@ -198,10 +200,28 @@ namespace ClassicUO.Renderer.Animations
 
             if (sprites == null)
             {
-                sprites = LoadDirection(id, action, dir);
+                sprites = LoadDirection(id, action, dir, sync);
+            }
+            else if (sync && _pendingSprites.Count != 0 && _pendingSprites.Contains(sprites))
+            {
+                // queued for a worker (e.g. by GetAnimationDimensions): a sync caller (picking) needs the textures and
+                // masks now, so decode here and supersede the job; Complete drops its result without uploading
+                var loaded = LoadDirection(id, action, dir, true);
+                _pendingSprites.Remove(sprites);
+                sprites = loaded;
             }
 
             return sprites;
+        }
+
+        /// <summary>Uploads the directions the workers finished (within the drain budget), as every GetAnimationFrames call
+        /// does first: for callers that no longer call it every frame (anim_frame_count_tables).</summary>
+        public void DrainFinished()
+        {
+            if (_queue.HasReady)
+            {
+                DrainReady();
+            }
         }
 
         /// <summary>
@@ -213,12 +233,15 @@ namespace ClassicUO.Renderer.Animations
         private readonly DecodeQueue<DirectionJob> _queue;
         private readonly Action<DirectionJob> _retire;
         private bool[] _bodyDrawn; // the body has at least one direction uploaded (it may be on screen)
+        // main thread: the frames of the directions submitted to a worker and not yet completed, retired or superseded by a
+        // sync load
+        private readonly HashSet<SpriteInfo[]> _pendingSprites = new HashSet<SpriteInfo[]>(ReferenceEqualityComparer.Instance);
         private int _pendingJobs;
 
         /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
         public int PendingDirections => Volatile.Read(ref _pendingJobs);
 
-        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir)
+        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies
             if (!_animationLoader.TryGetDirection(body, action, dir + 3, out var entry))
@@ -235,7 +258,7 @@ namespace ClassicUO.Renderer.Animations
             // an empty frame. Once a body has a direction uploaded, later directions and actions stay synchronous, so a
             // visible mobile never blinks when it turns or changes action; the worker prefetches the chunks of the other
             // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
-            if (AsyncFirstSight && !_bodyDrawn[body] && !IsResident(entry))
+            if (AsyncFirstSight && !sync && !_bodyDrawn[body] && !IsResident(entry))
             {
                 long heldBytes = 0;
 
@@ -254,6 +277,7 @@ namespace ClassicUO.Renderer.Animations
 
                 var job = new DirectionJob(this, body, action, dir, entry, sprites);
                 Interlocked.Increment(ref _pendingJobs);
+                _pendingSprites.Add(sprites);
                 _queue.Submit(job, heldBytes, counted: true);
 
                 return sprites;
@@ -365,6 +389,16 @@ namespace ClassicUO.Renderer.Animations
             }
 
             Interlocked.Decrement(ref _pendingJobs);
+
+            if (!_pendingSprites.Remove(job.Sprites))
+            {
+                // superseded by a sync load of the same direction (already uploaded, with its masks): drop the result
+                job.Buffers.ReturnAll();
+                _queue.Release(job);
+
+                return;
+            }
+
             _bodyDrawn[job.Body] = true;
 
             try
@@ -389,6 +423,7 @@ namespace ClassicUO.Renderer.Animations
         {
             Interlocked.Decrement(ref _pendingJobs);
             job.Buffers.ReturnAll();
+            _pendingSprites.Remove(job.Sprites);
             ForgetCached(job);
         }
 

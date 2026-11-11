@@ -1223,6 +1223,8 @@ namespace ClassicUO.Game.Scenes
             Matrix matrix = Camera.ViewTransformMatrix;
 
             var gpu = Client.Game.GetGpuWorld();
+            // anim_frame_count_tables: the advance reads the frame counts from the tables only while the Gpu world draws
+            AnimFrameCount.GpuWorld = gpu != null;
 
             if (gpu != null)
             {
