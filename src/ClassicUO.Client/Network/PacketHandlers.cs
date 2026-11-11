@@ -42,6 +42,9 @@ namespace ClassicUO.Network
         );
 
         private List<uint> _clilocRequests = new List<uint>();
+        private OplRequestQueue _oplQueue;
+        private static readonly OplBatchSink s_oplSink = SendOplBatch;
+        private static int s_oplFramePackets, s_oplFrameSerials;
         private List<uint> _customHouseRequests = new List<uint>();
         private readonly OnPacketBufferReader[] _handlers = new OnPacketBufferReader[0x100];
 
@@ -418,25 +421,59 @@ namespace ClassicUO.Network
 
         public static void SendMegaClilocRequests(World world)
         {
-            if (world.ClientFeatures.TooltipsEnabled && Handler._clilocRequests.Count != 0)
+            s_oplFramePackets = s_oplFrameSerials = 0;
+            int budget = OplRequestQueue.Budget;
+
+            if (world.ClientFeatures.TooltipsEnabled)
             {
-                if (Client.Game.UO.Version >= Utility.ClientVersion.CV_5090)
+                if (budget > 0)
                 {
-                    if (Handler._clilocRequests.Count != 0)
+                    Handler._oplQueue?.Drain(Time.Ticks, budget, s_oplSink, out _);
+                }
+                else if (Handler._clilocRequests.Count != 0)
+                {
+                    if (Client.Game.UO.Version >= Utility.ClientVersion.CV_5090)
                     {
+                        int n = Math.Min(OplRequestQueue.MaxPerPacket, Handler._clilocRequests.Count);
+#if CUO_DEVTOOLS
+                        if (OplSpreadCheck.On)
+                        {
+                            for (int i = 0; i < n; i++)
+                            {
+                                OplSpreadCheck.Sent(Handler._clilocRequests[i], Time.Ticks);
+                            }
+                        }
+#endif
+                        s_oplFrameSerials += n;
+                        s_oplFramePackets++;
                         NetClient.Socket.Send_MegaClilocRequest(Handler._clilocRequests);
                     }
-                }
-                else
-                {
-                    foreach (uint serial in Handler._clilocRequests)
+                    else
                     {
-                        NetClient.Socket.Send_MegaClilocRequest_Old(serial);
-                    }
+                        foreach (uint serial in Handler._clilocRequests)
+                        {
+#if CUO_DEVTOOLS
+                            if (OplSpreadCheck.On)
+                            {
+                                OplSpreadCheck.Sent(serial, Time.Ticks);
+                            }
+#endif
+                            NetClient.Socket.Send_MegaClilocRequest_Old(serial);
+                        }
 
-                    Handler._clilocRequests.Clear();
+                        s_oplFrameSerials += Handler._clilocRequests.Count;
+                        s_oplFramePackets += Handler._clilocRequests.Count;
+                        Handler._clilocRequests.Clear();
+                    }
                 }
             }
+
+#if CUO_DEVTOOLS
+            if (OplSpreadCheck.On)
+            {
+                OplSpreadCheck.FrameEnd(Time.Ticks, s_oplFramePackets, s_oplFrameSerials, world.ClientFeatures.TooltipsEnabled, budget);
+            }
+#endif
 
             if (Handler._customHouseRequests.Count > 0)
             {
@@ -449,8 +486,70 @@ namespace ClassicUO.Network
             }
         }
 
-        public static void AddMegaClilocRequest(uint serial)
+        // opl_request_budget: one 0xD6 per batch the queue hands out (a 0xBF.10 per serial before 5.0.9)
+        private static void SendOplBatch(ReadOnlySpan<uint> serials)
         {
+            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_5090)
+            {
+                NetClient.Socket.Send_MegaClilocRequest(serials);
+                s_oplFramePackets++;
+            }
+            else
+            {
+                foreach (uint serial in serials)
+                {
+                    NetClient.Socket.Send_MegaClilocRequest_Old(serial);
+                }
+
+                s_oplFramePackets += serials.Length;
+            }
+
+            s_oplFrameSerials += serials.Length;
+
+#if CUO_DEVTOOLS
+            if (OplSpreadCheck.On)
+            {
+                foreach (uint serial in serials)
+                {
+                    OplSpreadCheck.Sent(serial, Time.Ticks);
+                }
+            }
+#endif
+        }
+
+        /// <summary>The queue behind <c>opl_request_budget</c> (created at the first request while the switch is on).</summary>
+        internal static OplRequestQueue OplQueue => Handler._oplQueue;
+
+        /// <summary>Tests: the old path's request list (switch off).</summary>
+        internal static IReadOnlyList<uint> OldClilocRequests => Handler._clilocRequests;
+
+        /// <summary>Tests: empties both request paths.</summary>
+        internal static void ResetMegaClilocRequestsForTests()
+        {
+            Handler._clilocRequests.Clear();
+            Handler._oplQueue = null;
+        }
+
+        /// <summary>A hovered object without properties (OPL.Contains).</summary>
+        public static void AddMegaClilocRequest(uint serial) => AddMegaClilocRequest(serial, OplRequestKind.Hover, 0);
+
+        public static void AddMegaClilocRequest(uint serial, OplRequestKind kind, uint revision)
+        {
+#if CUO_DEVTOOLS
+            if (OplSpreadCheck.On)
+            {
+                OplSpreadCheck.Demand(serial, kind, revision, Time.Ticks);
+            }
+#endif
+
+            if (OplRequestQueue.Budget > 0)
+            {
+                Handler._oplQueue ??= new OplRequestQueue { DistanceOf = OplDistance };
+                Handler._oplQueue.Request(serial, kind, revision, Time.Ticks);
+
+                return;
+            }
+
             foreach (uint s in Handler._clilocRequests)
             {
                 if (s == serial)
@@ -460,6 +559,51 @@ namespace ClassicUO.Network
             }
 
             Handler._clilocRequests.Add(serial);
+        }
+
+        /// <summary>World removed the object (deleted, out of range): its queued request is dropped (opl_request_budget).</summary>
+        public static void OnOplRemoved(uint serial)
+        {
+            Handler._oplQueue?.Remove(serial);
+#if CUO_DEVTOOLS
+            if (OplSpreadCheck.On)
+            {
+                OplSpreadCheck.Removed(serial);
+            }
+#endif
+        }
+
+        /// <summary>World cleared every property list (logout, reconnect).</summary>
+        public static void OnOplCleared()
+        {
+            Handler._oplQueue?.Clear();
+#if CUO_DEVTOOLS
+            if (OplSpreadCheck.On)
+            {
+                OplSpreadCheck.Cleared();
+            }
+#endif
+        }
+
+        // the queue's priority: the object's distance from the player, a contained item by its root's (-1: unknown)
+        private static int OplDistance(uint serial)
+        {
+            World world = Client.Game?.UO?.World;
+
+            if (world?.Player == null)
+            {
+                return -1;
+            }
+
+            Entity entity = world.Get(serial);
+
+            if (entity is Item item && !item.OnGround)
+            {
+                uint root = item.RootContainer;
+                entity = SerialHelper.IsValid(root) ? world.Get(root) : null;
+            }
+
+            return entity == null ? -1 : entity.Distance;
         }
 
         private static void TargetCursor(World world, ref StackDataReader p)
@@ -4960,6 +5104,14 @@ namespace ClassicUO.Network
 
             uint revision = p.ReadUInt32BE();
 
+            Handler._oplQueue?.Answered(serial);
+#if CUO_DEVTOOLS
+            if (OplSpreadCheck.On)
+            {
+                OplSpreadCheck.Answered(serial);
+            }
+#endif
+
             Entity entity = world.FindMobile(serial);
 
             if (entity == null)
@@ -5401,7 +5553,7 @@ namespace ClassicUO.Network
 
                 if (!world.OPL.IsRevisionEquals(serial, revision))
                 {
-                    AddMegaClilocRequest(serial);
+                    AddMegaClilocRequest(serial, OplRequestKind.Revision, revision);
                 }
             }
         }
@@ -6991,7 +7143,7 @@ namespace ClassicUO.Network
                             && (!world.OPL.TryGetRevision(s, out uint rev) || rev == 0)
                         )
                         {
-                            AddMegaClilocRequest(s);
+                            AddMegaClilocRequest(s, OplRequestKind.Gump, 0);
                         }
                     }
                 }
