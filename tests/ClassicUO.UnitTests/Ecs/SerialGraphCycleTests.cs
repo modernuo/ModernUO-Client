@@ -14,6 +14,7 @@ namespace ClassicUO.UnitTests.Ecs
     // the merged serial graph (FindItem, GetTotalAmount and the destroy cascades then recursed until the stack overflowed).
     // WorldWriter refuses an attach that would close a loop (the item keeps what it had: no write); the recursive readers
     // and cascades stop at their root and at WorldState.MaxNestingDepth if a loop ever gets in some other way.
+    [Collection(nameof(TimeTicksCollection))]
     public class SerialGraphCycleTests
     {
         private const uint MOB = 0x0000_3300, DEAD = 0x8000_3300;

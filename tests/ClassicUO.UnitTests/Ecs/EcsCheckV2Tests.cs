@@ -14,6 +14,7 @@ namespace ClassicUO.UnitTests.Ecs
     // T1 funnel part 9 (ecs-transition-plan.md, T1 Checkers): -ecscheck v2. The funnel commits Name, Hits/HitsMax,
     // NotorietyFlag, every item's Layer, Price and the child order (a stamp per PushToBack) to the mirror; the check compares
     // them with World. A world built through the funnel checks clean; each deliberate divergence is reported.
+    [Collection(nameof(TimeTicksCollection))]
     public class EcsCheckV2Tests
     {
         private const uint MOB = 0x0000_3900, VENDOR = 0x0000_3901, STAT = 0x0000_3902, PACK = 0x4000_7900, A = 0x4000_7901, B = 0x4000_7902, C = 0x4000_7903, SHIRT = 0x4000_7904, HELM = 0x4000_7905, CORPSE = 0x4000_7906, LOOT = 0x4000_7907, RET = 0x4000_7909, WEAR = 0x4000_790A, CLOOT = 0x4000_790B;

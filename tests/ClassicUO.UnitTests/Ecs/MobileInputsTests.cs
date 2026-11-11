@@ -13,6 +13,7 @@ namespace ClassicUO.UnitTests.Ecs
     // The in-client checks (CUO_MOBILE_INPUT_CHECK every sampled frame, the pushed-vs-fresh comparison in -ecscheck) cover
     // the paths that need the running client (packets, the player's walk, CV_7000 rules); these cover the rules and the
     // pushes a World without a client can drive.
+    [Collection(nameof(TimeTicksCollection))]
     public class MobileInputsTests
     {
         private const uint SERIAL = 0x0000_2000;
