@@ -948,27 +948,65 @@ namespace ClassicUO.Game
         }
 
         /// <summary>T9 S4: a preview mobile's record from the operation's values (body, hue, flags, and the traits).</summary>
-        internal void CommitPreviewMobile(Mobile mobile, in MobileState v, in MobileTraits traits)
+        internal void CommitPreviewMobile(object owner, Mobile mobile, in MobileState v, in MobileTraits traits)
         {
-            _previews ??= new WorldMirror();
-            _previews.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
-            _previews.SetMobileTraits(v.Serial, in traits);
+            WorldMirror previews = PreviewsFor(owner, mobile);
+            previews.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
+            previews.SetMobileTraits(v.Serial, in traits);
+        }
+
+        // a preview gump holds one mobile and a few dozen items at most
+        private const int PREVIEW_CAPACITY = 32;
+
+        // T9 S4 (Codex audit P2): the instances each owner (a preview gump) committed, so closing one gump releases only its
+        // own records; another open gump's, or a newer gump's under the same serials, stay. By reference: Entity's Equals
+        // compares serials, and a gump's replaced item has its predecessor's serial
+        private Dictionary<object, HashSet<Entity>> _previewOwners;
+
+        private WorldMirror PreviewsFor(object owner, Entity entity)
+        {
+            _previews ??= new WorldMirror(PREVIEW_CAPACITY);
+            _previewOwners ??= new Dictionary<object, HashSet<Entity>>(ReferenceEqualityComparer.Instance);
+
+            if (!_previewOwners.TryGetValue(owner, out HashSet<Entity> owned))
+            {
+                owned = new HashSet<Entity>(ReferenceEqualityComparer.Instance);
+                _previewOwners.Add(owner, owned);
+            }
+
+            owned.Add(entity);
+
+            return _previews;
         }
 
         /// <summary>
         /// T9 S4: a preview item's record from the operation's values. Never attached (no child-order stamp): the gumps keep
         /// the worn table themselves (<see cref="Mobile.Preview"/>, the race-change gump's hair and beard fields).
         /// </summary>
-        internal void CommitPreviewItem(Item item, in ItemState v)
+        internal void CommitPreviewItem(object owner, Item item, in ItemState v)
         {
-            _previews ??= new WorldMirror();
-            _previews.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach: false, handle: item);
+            PreviewsFor(owner, item).UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach: false, handle: item);
         }
 
-        /// <summary>T9 S4: drops every preview record (a preview gump closed), so no closed gump's objects stay reachable.</summary>
-        internal void ReleasePreviews()
+        /// <summary>
+        /// T9 S4: drops the records of the instances <paramref name="owner"/> (a preview gump that closed) committed, so its
+        /// objects stay reachable no longer. A record a newer instance took over (the same serial, another gump) stays, and
+        /// a second call for the same owner finds nothing.
+        /// </summary>
+        internal void ReleasePreviews(object owner)
         {
-            _previews?.Clear();
+            if (_previews == null || owner == null || !_previewOwners.Remove(owner, out HashSet<Entity> owned))
+            {
+                return;
+            }
+
+            foreach (Entity entity in owned)
+            {
+                if (_previews.TryGetEntityOf(entity.Serial, entity, out _))
+                {
+                    _previews.Remove(entity.Serial);
+                }
+            }
         }
 
         public void OnWorldCleared()

@@ -19,6 +19,9 @@ namespace ClassicUO.UnitTests.Ecs
     {
         private const uint PREVIEW = 1, RACE_PREVIEW = 0;
 
+        // the gump that owns the previews (ReleasePreviews releases one owner's records)
+        private static readonly object Owner = new object();
+
         private static World NewWorld()
         {
             var world = new World();
@@ -68,10 +71,10 @@ namespace ClassicUO.UnitTests.Ecs
             return item;
         }
 
-        private static Item NewItem(World world, ushort graphic, ushort hue, Layer layer, Mobile wearer)
+        private static Item NewItem(World world, ushort graphic, ushort hue, Layer layer, Mobile wearer, object owner = null)
         {
             Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
-            world.Writer.SetPreviewItem(item, graphic, hue, layer, wearer != null ? wearer.Serial : item.Container);
+            world.Writer.SetPreviewItem(owner ?? Owner, item, graphic, hue, layer, wearer != null ? wearer.Serial : item.Container);
 
             return item;
         }
@@ -100,12 +103,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             // a first pass with the other sex (the gump's sex buttons rebuild the same instance), then this one
             OldBody(oldM, race, !female);
-            newWorld.Writer.SetPreviewBody(newM, Body(race, !female), race, !female);
+            newWorld.Writer.SetPreviewBody(Owner, newM, Body(race, !female), race, !female);
             OldBody(oldM, race, female);
-            newWorld.Writer.SetPreviewBody(newM, Body(race, female), race, female);
+            newWorld.Writer.SetPreviewBody(Owner, newM, Body(race, female), race, female);
 
             oldM.Hue = 0x83EA; // UpdateEquipments' skin
-            newWorld.Writer.SetPreviewHue(newM, 0x83EA);
+            newWorld.Writer.SetPreviewHue(Owner, newM, 0x83EA);
 
             Item oldShirt = OldItem(oldWorld, 0x1518, 0x0384, Layer.Shirt, oldM);
             Item newShirt = NewItem(newWorld, 0x1518, 0x0384, Layer.Shirt, newM);
@@ -113,7 +116,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item newHair = NewItem(newWorld, 0x203B, 0x044E, Layer.Hair, newM);
 
             oldShirt.Hue = 0x0021; // a colour pick
-            newWorld.Writer.SetPreviewHue(newShirt, 0x0021);
+            newWorld.Writer.SetPreviewHue(Owner, newShirt, 0x0021);
 
             Fields(newM).Should().Be(Fields(oldM));
             Fields(newShirt).Should().Be(Fields(oldShirt));
@@ -142,17 +145,17 @@ namespace ClassicUO.UnitTests.Ecs
             var newM = new PlayerMobile(newWorld, RACE_PREVIEW);
 
             OldBody(oldM, RaceType.ELF, false);
-            newWorld.Writer.SetPreviewBody(newM, Body(RaceType.ELF, false), RaceType.ELF, false);
+            newWorld.Writer.SetPreviewBody(Owner, newM, Body(RaceType.ELF, false), RaceType.ELF, false);
 
             // CreateCharacter's hair: the id argument is the serial (the gump's own quirk, kept), truncated to a graphic;
             // UpdateEquipments then writes the real graphic and hue, keeping layer and container
             Item oldHair = OldItem(oldWorld, unchecked((ushort)(0x4000_0000 + (int)Layer.Hair)), 0, Layer.Hair, null);
             Item newHair = NewItem(newWorld, unchecked((ushort)(0x4000_0000 + (int)Layer.Hair)), 0, Layer.Hair, null);
             oldM.Hue = 0x8402;
-            newWorld.Writer.SetPreviewHue(newM, 0x8402);
+            newWorld.Writer.SetPreviewHue(Owner, newM, 0x8402);
             oldHair.Graphic = 0x2FBF;
             oldHair.Hue = 0x0035;
-            newWorld.Writer.SetPreviewItem(newHair, 0x2FBF, 0x0035, newHair.Layer, newHair.Container);
+            newWorld.Writer.SetPreviewItem(Owner, newHair, 0x2FBF, 0x0035, newHair.Layer, newHair.Container);
 
             Fields(newM).Should().Be(Fields(oldM));
             Fields(newHair).Should().Be(Fields(oldHair));
@@ -167,7 +170,7 @@ namespace ClassicUO.UnitTests.Ecs
             int records = world.Ecs.Mirror.Count;
             var m = new PlayerMobile(world, PREVIEW);
 
-            world.Writer.SetPreviewBody(m, 0x0190, RaceType.HUMAN, false);
+            world.Writer.SetPreviewBody(Owner, m, 0x0190, RaceType.HUMAN, false);
             NewItem(world, 0x1710, 0x0384, Layer.Shoes, m);
 
             world.Ecs.Mirror.Count.Should().Be(records);
@@ -181,7 +184,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = NewWorld();
             var m = new PlayerMobile(world, PREVIEW);
-            world.Writer.SetPreviewBody(m, 0x0190, RaceType.HUMAN, false);
+            world.Writer.SetPreviewBody(Owner, m, 0x0190, RaceType.HUMAN, false);
 
             // CreateItem replaces the layer's item with a new instance under the same serial
             Item first = NewItem(world, 0x1710, 0x0384, Layer.Shoes, m);
@@ -191,7 +194,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.TryGetPreviewRecord(second, out EcsEntity e).Should().BeTrue();
             e.GetComponent<ClassicUO.Ecs.Graphic>().Value.Should().Be((ushort)0x170F);
 
-            world.Ecs.ReleasePreviews();
+            world.Ecs.ReleasePreviews(Owner);
 
             world.Ecs.TryGetPreviewRecord(m, out _).Should().BeFalse();
             world.Ecs.TryGetPreviewRecord(second, out _).Should().BeFalse();
@@ -206,13 +209,13 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile held = world.GetOrCreateMobile(0x0000_1234);
             held.Graphic = 0x0190;
 
-            Action act = () => world.Writer.SetPreviewBody(held, 0x025D, RaceType.ELF, true);
+            Action act = () => world.Writer.SetPreviewBody(Owner, held, 0x025D, RaceType.ELF, true);
             act.Should().Throw<ArgumentException>();
 
             world.Writer.ThrowOnViolation = false;
             int before = world.Writer.Violations;
-            world.Writer.SetPreviewHue(held, 0x0021);
-            world.Writer.SetPreviewBody(held, 0x025D, RaceType.ELF, true);
+            world.Writer.SetPreviewHue(Owner, held, 0x0021);
+            world.Writer.SetPreviewBody(Owner, held, 0x025D, RaceType.ELF, true);
 
             world.Writer.Violations.Should().Be(before + 2);
             (held.Graphic, held.Hue, held.IsFemale).Should().Be(((ushort)0x0190, (ushort)0, false), "a rejected operation changes nothing");
@@ -221,8 +224,61 @@ namespace ClassicUO.UnitTests.Ecs
             // another World's detached object is not this World's preview
             World other = NewWorld();
             other.Writer.ThrowOnViolation = false;
-            other.Writer.SetPreviewBody(new PlayerMobile(world, PREVIEW), 0x0190, RaceType.HUMAN, false);
+            other.Writer.SetPreviewBody(Owner, new PlayerMobile(world, PREVIEW), 0x0190, RaceType.HUMAN, false);
             other.Writer.Violations.Should().Be(1);
+        }
+
+        // Codex audit of S4 (P2): closing one preview gump must not drop another open gump's records
+        [Fact]
+        public void Releasing_One_Owner_Keeps_Another_Owners_Records()
+        {
+            World world = NewWorld();
+            object a = new object(), b = new object();
+
+            // A: a character-creation preview; B: a race-change preview in the same World (another mobile serial, the same
+            // hair serial: B's hair is newer, so B holds that serial)
+            var ma = new PlayerMobile(world, PREVIEW);
+            world.Writer.SetPreviewBody(a, ma, 0x0190, RaceType.HUMAN, false);
+            Item shirtA = NewItem(world, 0x1518, 0x0384, Layer.Shirt, ma, a);
+            Item hairA = NewItem(world, 0x203B, 0x044E, Layer.Hair, ma, a);
+
+            var mb = new PlayerMobile(world, RACE_PREVIEW);
+            world.Writer.SetPreviewBody(b, mb, 0x025D, RaceType.ELF, false);
+            Item hairB = NewItem(world, 0x2FBF, 0x0035, Layer.Hair, null, b);
+
+            world.Ecs.ReleasePreviews(a);
+
+            world.Ecs.TryGetPreviewRecord(mb, out _).Should().BeTrue("B is still open");
+            world.Ecs.TryGetPreviewRecord(hairB, out EcsEntity h).Should().BeTrue("B holds the shared hair serial");
+            h.GetComponent<ClassicUO.Ecs.Graphic>().Value.Should().Be((ushort)0x2FBF);
+            world.Ecs.TryGetPreviewRecord(ma, out _).Should().BeFalse();
+            world.Ecs.TryGetPreviewRecord(shirtA, out _).Should().BeFalse();
+            world.Ecs.TryGetPreviewRecord(hairA, out _).Should().BeFalse();
+            world.Ecs.Previews.Count.Should().Be(2);
+        }
+
+        // Codex audit of S4 (P2): a repeated release of a closed gump must not erase a gump opened after it
+        [Fact]
+        public void A_Repeated_Release_Keeps_A_Newer_Owners_Records()
+        {
+            World world = NewWorld();
+            object a = new object(), b = new object();
+
+            var ma = new PlayerMobile(world, RACE_PREVIEW);
+            world.Writer.SetPreviewBody(a, ma, 0x0190, RaceType.HUMAN, false);
+            NewItem(world, 0x203B, 0x044E, Layer.Hair, null, a);
+            world.Ecs.ReleasePreviews(a);
+
+            // B reuses the same serials
+            var mb = new PlayerMobile(world, RACE_PREVIEW);
+            world.Writer.SetPreviewBody(b, mb, 0x025D, RaceType.ELF, true);
+            Item hairB = NewItem(world, 0x2FBF, 0x0035, Layer.Hair, null, b);
+
+            world.Ecs.ReleasePreviews(a);
+
+            world.Ecs.TryGetPreviewRecord(mb, out _).Should().BeTrue();
+            world.Ecs.TryGetPreviewRecord(hairB, out _).Should().BeTrue();
+            world.Ecs.Previews.Count.Should().Be(2);
         }
     }
 }

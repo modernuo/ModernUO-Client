@@ -246,7 +246,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             };
 
             // T9 S4: the preview's record (WorldEcs.Previews) and its cache, through the funnel
-            World.Writer.SetPreviewBody(_character, body, race, isFemale);
+            World.Writer.SetPreviewBody(this, _character, body, race, isFemale);
 
             switch (race)
             {
@@ -326,7 +326,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             Layer layer;
             CharacterCreationValues.ComboContent content;
 
-            World.Writer.SetPreviewHue(_character, CurrentColorOption[Layer.Invalid].Item2);
+            World.Writer.SetPreviewHue(this, _character, CurrentColorOption[Layer.Invalid].Item2);
 
             if (!_characterInfo.IsFemale && race != RaceType.ELF)
             {
@@ -626,12 +626,12 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
                 if (item != null)
                 {
-                    World.Writer.SetPreviewHue(item, e.SelectedHue);
+                    World.Writer.SetPreviewHue(this, item, e.SelectedHue);
                 }
             }
             else
             {
-                World.Writer.SetPreviewHue(_character, e.SelectedHue);
+                World.Writer.SetPreviewHue(this, _character, e.SelectedHue);
             }
 
             _paperDoll.RequestUpdate();
@@ -947,9 +947,15 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
         public override void Dispose()
         {
-            // T9 S4: the preview records go with the creation flow (this gump is a page of CharCreationGump, disposed with it)
-            World?.Ecs.ReleasePreviews();
+            bool first = !IsDisposed;
             base.Dispose();
+
+            // T9 S4: this gump's preview records go with the creation flow (this gump is a page of CharCreationGump, disposed
+            // with it); once, after the base disposal, and only this gump's (another preview gump's records stay)
+            if (first)
+            {
+                World?.Ecs.ReleasePreviews(this);
+            }
         }
 
         // T9 child-list slice A: the preview's clothes are its table (Mobile.Preview)
@@ -973,7 +979,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             // T1 (funnel part 8, Codex audit P2 #2): a detached item (Item.Create, not in World.Items), linked to the
             // detached preview mobile below; the paperdoll finds it through the mobile's item list
             Item item = Item.Create(World, 0x4000_0000 + (uint) layer); // use layer as unique Serial
-            World.Writer.SetPreviewItem(item, (ushort) id, hue, layer, _character);
+            World.Writer.SetPreviewItem(this, item, (ushort) id, hue, layer, _character);
 
             return item;
         }

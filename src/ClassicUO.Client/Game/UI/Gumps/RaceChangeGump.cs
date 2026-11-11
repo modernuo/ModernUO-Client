@@ -325,7 +325,7 @@ namespace ClassicUO.Game.UI.Gumps
             // held by the gump), so there is nothing to remove from the World. T9 S4: its record (WorldEcs.Previews) and cache
             // are written through the funnel
             ushort body = selectedRace == RaceType.ELF ? (ushort)(isFemale ? 0x025E : 0x025D) : (ushort)(isFemale ? 0x0191 : 0x0190);
-            World.Writer.SetPreviewBody(fakeMobile, body, selectedRace, isFemale);
+            World.Writer.SetPreviewBody(this, fakeMobile, body, selectedRace, isFemale);
             #endregion
 
             hair = CreateItem(0x4000_0000 + (int)Layer.Hair, 0, Layer.Hair);
@@ -390,13 +390,13 @@ namespace ClassicUO.Game.UI.Gumps
             switch (e.Layer)
             {
                 case Layer.Beard:
-                    World.Writer.SetPreviewHue(beard, e.SelectedHue);
+                    World.Writer.SetPreviewHue(this, beard, e.SelectedHue);
                     break;
                 case Layer.Hair:
-                    World.Writer.SetPreviewHue(hair, e.SelectedHue);
+                    World.Writer.SetPreviewHue(this, hair, e.SelectedHue);
                     break;
                 case Layer.Invalid:
-                    World.Writer.SetPreviewHue(fakeMobile, e.SelectedHue);
+                    World.Writer.SetPreviewHue(this, fakeMobile, e.SelectedHue);
                     break;
             }
 
@@ -438,27 +438,33 @@ namespace ClassicUO.Game.UI.Gumps
             Layer layer;
             CharacterCreationValues.ComboContent content;
 
-            World.Writer.SetPreviewHue(fakeMobile, CurrentColorOption[Layer.Invalid].Item2);
+            World.Writer.SetPreviewHue(this, fakeMobile, CurrentColorOption[Layer.Invalid].Item2);
 
             if (beard != null)
             {
                 layer = Layer.Beard;
                 content = CharacterCreationValues.GetFacialHairComboContent(selectedRace);
 
-                World.Writer.SetPreviewItem(beard, (ushort)content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, beard.Layer, beard.Container);
+                World.Writer.SetPreviewItem(this, beard, (ushort)content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, beard.Layer, beard.Container);
             }
 
             layer = Layer.Hair;
             content = CharacterCreationValues.GetHairComboContent(isFemale, selectedRace);
 
-            World.Writer.SetPreviewItem(hair, (ushort)content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, hair.Layer, hair.Container);
+            World.Writer.SetPreviewItem(this, hair, (ushort)content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, hair.Layer, hair.Container);
         }
 
         public override void Dispose()
         {
-            // T9 S4: the preview records go with the gump (its mobile, hair and beard live only here)
-            World?.Ecs.ReleasePreviews();
+            bool first = !IsDisposed;
             base.Dispose();
+
+            // T9 S4: this gump's preview records (its mobile, hair and beard live only here); once, after the base disposal,
+            // and only this gump's (another preview gump's records stay)
+            if (first)
+            {
+                World?.Ecs.ReleasePreviews(this);
+            }
         }
 
         private Item CreateItem(int id, ushort hue, Layer layer)
@@ -472,7 +478,7 @@ namespace ClassicUO.Game.UI.Gumps
             // draws the instance it is given. Before, GetOrCreateItem put it in the in-game World under 0x4000_0000 + layer,
             // a serial a real server item can have (that item would have been rewritten, then removed on Apply)
             Item item = Item.Create(World, 0x4000_0000 + (uint)layer); // use layer as unique Serial
-            World.Writer.SetPreviewItem(item, (ushort)id, hue, layer, item.Container);
+            World.Writer.SetPreviewItem(this, item, (ushort)id, hue, layer, item.Container);
 
             return item;
         }

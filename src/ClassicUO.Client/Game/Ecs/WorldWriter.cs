@@ -3477,11 +3477,12 @@ namespace ClassicUO.Game
         /// The character-creation and race-change gumps' preview mobile: its body, race and sex (the gump's sex and race
         /// buttons). The record in <see cref="WorldEcs.Previews"/> first, then the cache: Race, IsFemale, the Female flag and
         /// Graphic, as the gumps wrote them before (the hue is <see cref="SetPreviewHue"/>'s). The mobile must be detached
-        /// (a World object is rejected as <see cref="Violation.NotDetached"/>; nothing changes).
+        /// (a World object is rejected as <see cref="Violation.NotDetached"/>; nothing changes). <paramref name="owner"/> is the
+        /// gump: <see cref="WorldEcs.ReleasePreviews"/> releases the records of what it committed when it closes.
         /// </summary>
-        public void SetPreviewBody(Mobile mobile, ushort graphic, RaceType race, bool female)
+        public void SetPreviewBody(object owner, Mobile mobile, ushort graphic, RaceType race, bool female)
         {
-            if (mobile == null || !Admitted(nameof(SetPreviewBody), mobile.Serial) || !AcceptedPreview(mobile, nameof(SetPreviewBody)))
+            if (owner == null || mobile == null || !Admitted(nameof(SetPreviewBody), mobile.Serial) || !AcceptedPreview(mobile, nameof(SetPreviewBody)))
             {
                 return;
             }
@@ -3502,7 +3503,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, null))
             {
-                _world.Ecs.CommitPreviewMobile(mobile, in v, in traits);
+                _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
                 mobile.Race = race;
                 mobile.IsFemale = female;
                 mobile.Flags = v.Flags;
@@ -3516,9 +3517,9 @@ namespace ClassicUO.Game
         /// cache. Wearing is the gump's table, not an attach (<see cref="WorldEcs.CommitPreviewItem"/>). Rejections as
         /// <see cref="SetPreviewBody"/>.
         /// </summary>
-        public void SetPreviewItem(Item item, ushort graphic, ushort hue, Layer layer, uint container)
+        public void SetPreviewItem(object owner, Item item, ushort graphic, ushort hue, Layer layer, uint container)
         {
-            if (item == null || !Admitted(nameof(SetPreviewItem), item.Serial) || !AcceptedPreview(item, nameof(SetPreviewItem)))
+            if (owner == null || item == null || !Admitted(nameof(SetPreviewItem), item.Serial) || !AcceptedPreview(item, nameof(SetPreviewItem)))
             {
                 return;
             }
@@ -3539,7 +3540,7 @@ namespace ClassicUO.Game
 
             using (Open(item, null))
             {
-                _world.Ecs.CommitPreviewItem(item, in v);
+                _world.Ecs.CommitPreviewItem(owner, item, in v);
                 item.Graphic = graphic;
                 item.Hue = hue;
                 item.Layer = layer;
@@ -3551,9 +3552,9 @@ namespace ClassicUO.Game
         /// The preview gumps' colour pickers: the hue of the preview mobile (skin) or of one of its items. Rejections as
         /// <see cref="SetPreviewBody"/>.
         /// </summary>
-        public void SetPreviewHue(Entity entity, ushort hue)
+        public void SetPreviewHue(object owner, Entity entity, ushort hue)
         {
-            if (entity == null || !Admitted(nameof(SetPreviewHue), entity.Serial) || !AcceptedPreview(entity, nameof(SetPreviewHue)))
+            if (owner == null || entity == null || !Admitted(nameof(SetPreviewHue), entity.Serial) || !AcceptedPreview(entity, nameof(SetPreviewHue)))
             {
                 return;
             }
@@ -3575,7 +3576,7 @@ namespace ClassicUO.Game
                     v.Container = item.Container;
                     v.Layer = item.Layer;
                     v.IsMulti = item.IsMulti;
-                    _world.Ecs.CommitPreviewItem(item, in v);
+                    _world.Ecs.CommitPreviewItem(owner, item, in v);
                 }
                 else if (entity is Mobile mobile)
                 {
@@ -3590,7 +3591,7 @@ namespace ClassicUO.Game
                     v.Flags = mobile.Flags;
                     v.IsPlayer = false;
                     ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
-                    _world.Ecs.CommitPreviewMobile(mobile, in v, in traits);
+                    _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
                 }
 
                 entity.Hue = hue;
