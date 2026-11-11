@@ -653,6 +653,20 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // outrange on|off: the profile's NoColorObjectsOutOfRange; range <n>: the client view range, as the server's
+                // 0xC8 sets it (local only). DevBench's outrange:/range: entries; pa-meshhue's gate crosses the tint with them
+                case "outrange" when args.Length > 0 && ProfileManager.CurrentProfile is { } outProfile:
+                    outProfile.NoColorObjectsOutOfRange = args[0] == "on";
+                    Log.Info($"[ECS] driver: outrange {args[0]}");
+
+                    return false;
+
+                case "range" when args.Length > 0 && byte.TryParse(args[0], out byte viewRange):
+                    world.ClientViewRange = viewRange;
+                    Log.Info($"[ECS] driver: range {viewRange}");
+
+                    return false;
+
                 // season <spring|summer|fall|winter|desolation>: as the server's season packet (World.ChangeSeason). E12: map
                 // statics drawn in another season's graphic replace their baked sprite, so the world pass queues overrides
                 // war on|off: the war mode request (0x72), as the war-mode toggle sends it; the server answers with 0x72
