@@ -118,8 +118,8 @@ Ideas from reading CrossUO (AGPL-3.0: techniques only, no code taken). Notes wit
 | User memory cap (later, after the dynamic eviction budget): one option "Memory use: Auto / Balanced / Low / Custom MB per client" mapped onto every large consumer's ceiling (Legacy anim/art/text atlases, Gpu page residency, item pool with a floor that still covers 10k+ item house recalls, GC heap: GCConserveMemory / heap hard limit are startup-only, so restart). Auto = machine memory split across the running clients (count via a small shared named object; see multi-instance). Penalty under a tight cap = reloads, near zero for idle clients (bank, house, busy dungeon on a second screen). Options page shows usage vs cap and the reload counter. Owner idea 2026-11-11 | options, eviction budgets | 5 clients without exhausting RAM | later |
 | Unfocused/minimized cost: check how low `ReduceFPSWhenInactive` goes, skip prepare/draw entirely when minimized (keep packets and update), default for multi-instance | GameController.cs ~575-599, Profile.cs:261 | CPU/GPU of background clients (CrossUO: ~4-5 fps inactive, no draw minimized) | open, check current behaviour first |
 | World text: lay out positions and overlap only when an owner moved, a line was added or the zoom changed; replay cached positions otherwise; skip owners not drawn last frame | `TextRenderer.ProcessWorldText`, `GameScene.UpdateTextServerEntities` | ProcessWorldText ~4 % (Legacy large scene) | open |
-| Picking: walk the draw list top-down and stop at the first hit; skip when the mouse is outside the game window or already over a gump/text; cheap bounds test before the pixel test | `Item.CheckMouseSelection`, `SpritePickTable` | CheckMouseSelection ~2.5 % | open, check what ours already skips |
-| Tile chain early exits: stop the chain at the first object right of the window and when an object's Z passes the draw limit (break, not continue) | `GameScene.AddTileToRenderList` | part of the 20-35 % hot spot | open, check first (may already break) |
+| Picking: skip pick tests while the mouse is not over the world (`pick_skip_off_world`, default off, `CUO_PICK_SKIP_CHECK`); stop-at-first-hit does not apply (picking runs inside the draw walk); bounds-before-mask already done. Follow-ups: Gpu prepare skips the walk of tiles under the mouse when picking is off (GameSceneGpuPrepare ~456-500, GpuItemCache ~522); depth-dominance pick skip; coarse per-tile reject before `TryItemArt`/`ItemOffsets.Read` | `FillGameObjectList`, `ItemView.CheckMouseSelection` | CheckMouseSelection ~2.5 % | switch on `bg/qw-renderlist`, jobs running |
+| Tile chain early exits | `AddTileToRenderList` | none: X break and maxZ return already there (qw-renderlist); the existing `return` on item/unmeshed-static Z + height can drop later objects (PriorityZ order is not monotonic in Z + height): correctness issue for the clipping milestone | not needed |
 | Per-mobile prepass: compute frame info / offset / screen rect once per frame and reuse for culling, picking and text placement | `Mobile.get_Offset`, `MobileSpriteExtract` | get_Offset ~2.4 % | open |
 | Legacy depth-tested world pass: per-quad depth from tile order so batches never flush for draw order | UltimaBatcher2D, `GameScene` sort | could cut sort/flush work; alpha edges and translucent order are the risk | design experiment |
 | Legacy texture array for land texmaps and small art (one bound texture for many sprites) | UltimaBatcher2D, art upload | fewer texture switches; driver ~10 % (`DrawIndexedPrimitives`) | design experiment |
@@ -127,6 +127,26 @@ Ideas from reading CrossUO (AGPL-3.0: techniques only, no code taken). Notes wit
 | Pack tables as shared read-only mappings (no heap copies) so instances share the OS page cache | PackAssets | memory across instances | open, check |
 | Startup: only boot-critical tables block (tiledata, hues, indexes); the rest loads lazily or in the background | PackAssets startup | startup time | open |
 | Periodic sweeps bounded per frame (range removal, cache clears, GC-like passes) | World/managers | walk hitch candidates | open, audit |
+
+## Perf audit 2026-11-11 (Codex, profile bench-000700)
+
+Source: cuo-poc-state audits/perf-audit-1111/out.md. Savings are provisional (exclusive samples of the main thread, busy machine); each slice is verified for correctness and allocations now and timed in the quiet pass.
+
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| Gpu item-cache validity by render generations instead of rebuilding every item's signature every frame | GameSceneGpuItemCache.cs:319, 565 | Gpu large scene 10-20 % (GpuItemTileValid 28-29 %) | slice pa-gpusig (switch + every-use checker) |
+| Screen-shaped chunk/tile traversal (reject whole chunks before lookup, projected tile masks, separate draw/fade/pick masks) | GetViewPort, FillGameObjectList, Map.GetChunkForDraw | Britain z2.5 Legacy 5-15 %, Gpu 8-20 % | with the clipping milestone (high render-order risk) |
+| Item preparation reads once per item (graphic/flags/amount/ground, tiledata once) | GameSceneDrawingSorting.cs:1187, Item.ItemData | Legacy large scene 2-4 % | slice pa-itemprep (switch + `CUO_ITEM_PREP_CHECK`) |
+| Mesh hue only on input change | ApplyMeshHue, MeshLayer.SetHue | Legacy Britain 2-4 % | slice pa-meshhue (`CUO_MESH_HUE_CHECK`) |
+| Text renderer tail maintained instead of scanned twice per frame | TextRenderer.cs:29, 123 | Legacy 1-3 %, Gpu 2-4 % | slice pa-small (`CUO_TEXT_ORDER_CHECK`) |
+| Mobile offset read once per operation | MobileView.cs:110, EntityTextContainer.cs:264 | Legacy 0.5-1.5 %, Gpu 1-2 % | slice pa-small |
+| Item pick rejection before full resolution; S5 `OnGround` probes | ItemView.cs:34, Item.cs:113 | Legacy 0.5-1.5 % (overlaps item prep) | slice pa-itemprep (`CUO_ITEM_PICK_CHECK`) |
+| Packed mesh visibility bitset | MeshLayer.ResetVisibility/BuildVisibleIndices | Legacy Britain 0-1.5 % | slice pa-meshhue, only if attribution supports it |
+| Tile-walk setup/continuation simplification | DynamicTileIndex.cs:323, 369 | Legacy large scene 0.3-1 % | open |
+| Gpu reverse-copy handoff removed | GpuWorldRenderer.cs:875 | Gpu 0.3-1 % (upper bound) | open, measure the loop first |
+| `GetAnimationDimensions` from pack metadata (no decode) | Animation.cs:113 | cold-path decodes, not steady CPU | after anim-count merges |
+| Anim page packing by co-use | Uo.Converter AnimConvert.cs:461, 793 | bodies window churn only (128/128, 233 evictions); large-scene walks show none | record page reuse distances first |
+| Not to do: remove Legacy prefetch, per-site cast/StelemRef tweaks, generic subpixel LOD | | | rejected by the audit |
 
 ## Done (commit ids)
 
