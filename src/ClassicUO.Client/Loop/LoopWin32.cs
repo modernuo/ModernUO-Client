@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright (c) 2025, ModernUO
+// IORingGroup code used under the BSD 3-Clause License; its full text (conditions and disclaimer) is in
+// licenses/IORingGroup-LICENSE, which every build and publish copies next to the executable.
 //
 // The kernel32/winmm event, timer and wait declarations below are copied from IORingGroup
 // (IORingGroup/Windows/RIOInterop.cs, commit 1a54cff2389ba49619f6b3d33bc8d53263199940), BSD reuse approved by the owner
