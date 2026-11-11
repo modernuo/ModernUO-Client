@@ -77,8 +77,10 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+            // the old per-frame path, without a key store (keys from an earlier on period never match: BeginMeshHueFrame
+            // moves the epoch when the switch changes)
             source.HueOf(out hueX, out hueY);
-            layer.SetHue(index, hueX, hueY);
+            layer.SetHueKeyless(index, hueX, hueY);
 
             return false;
         }

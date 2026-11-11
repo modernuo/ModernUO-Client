@@ -219,6 +219,13 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>
+        /// The per-frame SetHue with mesh_hue_on_change off: leaves the key as it is (the caller moves its epoch when the
+        /// switch turns on again, so no key from before matches).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetHueKeyless(int index, float hueX, float hueY) => WriteHue(index, hueX, hueY);
+
+        /// <summary>
         /// <see cref="SetHue(int, float, float)"/> that records the key the hue was computed from (<see cref="HueKey"/>).
         /// </summary>
         public void SetHue(int index, float hueX, float hueY, long key)

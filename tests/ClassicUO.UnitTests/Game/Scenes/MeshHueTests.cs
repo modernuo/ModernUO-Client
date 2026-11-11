@@ -94,6 +94,29 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void Turning_the_switch_off_and_on_again_recomputes()
+        {
+            var layer = Layer(2);
+            var epoch = new MeshHueEpoch();
+            var c = new Counter { X = 5, Y = 1 };
+            var src = new FakeSource { C = c };
+
+            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, 6, ref src);
+
+            // off (BeginMeshHueFrame bumps on every switch change): the per-frame path writes, the key stays
+            epoch.Bump();
+            c.X = 7;
+            MeshHueEpoch.Apply(layer, 0, false, epoch.Epoch, 6, ref src);
+            HueX(layer, 0).Should().Be(7);
+
+            // on again with the inputs as they were in the first on period
+            epoch.Bump();
+            c.X = 5;
+            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, 6, ref src).Should().BeFalse();
+            HueX(layer, 0).Should().Be(5);
+        }
+
+        [Fact]
         public void A_rebuild_resets_the_keys()
         {
             var layer = Layer(2);
