@@ -88,7 +88,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             map.LoadEmptyChunkForTest(0, 1);
             map.LoadEmptyChunkForTest(1, 0);
             map.LoadEmptyChunkForTest(1, 1);
-            Put(map, Plain, 7, 7, 20); // empty tiledata entry, no art (a padded entry)
+            // on the player's own tile: the first pass counts any non-roof static there (the diagonal pass counts only roofs)
+            Put(map, Plain, 6, 6, 20); // empty tiledata entry, no art (a padded entry)
             Put(map, Roof, 7, 7, 40);
 
             _state.Update(map, _tiles, 6, 6, 0, true, force: true, ArtFor(Roof)).Should().BeTrue();
