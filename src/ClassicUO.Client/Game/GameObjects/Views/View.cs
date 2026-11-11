@@ -41,7 +41,9 @@ namespace ClassicUO.Game.GameObjects
             set => IsFlipped = value;
         }
 
-        public abstract bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth);
+        /// <summary>The view's draw: Land, Static and Multi only. Mobiles, items and effects draw through the ECS extracts' sinks
+        /// (LegacySpriteSink, EffectSpriteSink, GpuWorldRenderer); T9 S8a deleted their view bodies, so they draw nothing here.</summary>
+        public virtual bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth) => false;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public float CalculateDepthZ()
@@ -164,69 +166,6 @@ namespace ClassicUO.Game.GameObjects
                     0f,
                     Vector2.Zero,
                     scale,
-                    SpriteEffects.None,
-                    depth + 0.5f
-                );
-            }
-        }
-
-        protected static void DrawGump(
-            UltimaBatcher2D batcher,
-            ushort graphic,
-            int x,
-            int y,
-            Vector3 hue,
-            float depth
-        )
-        {
-            ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(graphic);
-
-            if (gumpInfo.Texture != null)
-            {
-                batcher.Draw(
-                    gumpInfo.Texture,
-                    new Vector2(x, y),
-                    gumpInfo.UV,
-                    hue,
-                    0f,
-                    Vector2.Zero,
-                    1f,
-                    SpriteEffects.None,
-                    depth + 0.5f
-                );
-            }
-        }
-
-        protected static void DrawStaticRotated(
-            UltimaBatcher2D batcher,
-            ushort graphic,
-            int x,
-            int y,
-            float angle,
-            Vector3 hue,
-            float depth
-        )
-        {
-            ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(graphic);
-
-            if (artInfo.Texture != null)
-            {
-                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
-                index.Width = (short)((artInfo.UV.Width >> 1) - 22);
-                index.Height = (short)(artInfo.UV.Height - 44);
-
-                batcher.Draw(
-                    artInfo.Texture,
-                    new Rectangle(
-                        x - index.Width,
-                        y - index.Height,
-                        artInfo.UV.Width,
-                        artInfo.UV.Height
-                    ),
-                    artInfo.UV,
-                    hue,
-                    angle,
-                    Vector2.Zero,
                     SpriteEffects.None,
                     depth + 0.5f
                 );

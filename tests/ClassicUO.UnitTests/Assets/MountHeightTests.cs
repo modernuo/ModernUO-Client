@@ -139,7 +139,7 @@ namespace ClassicUO.UnitTests.Assets
 
         // Round-3 finding 3: turkey 95 (and Corpse.def alias 156 -> 95) has death action 8 but no 12; a corpse with the
         // second-death bit (UsedLayer) selected 12 and drew nothing. GetDeathAction falls back to the first death action.
-        // Draw (ItemView.Draw, ItemSpriteExtract) and pick (ItemView.CheckMouseSelection) both take the group from
+        // Draw (ItemSpriteExtract) and pick (ItemView.CheckMouseSelection) both take the group from
         // GetDeathAction and the frames from the resolved body (see Renderers_Use_The_Shared_Rules for the call sites).
         [MountPackFact("CUO_MOUNT_AOS_PACK")]
         public void Corpse_Death_Variants_Have_Frames_For_Turkey_95_And_Alias_156()
@@ -269,11 +269,11 @@ namespace ClassicUO.UnitTests.Assets
                 .MatchRegex(@"s\.MountOffsetY\s*=\s*\(short\)AnimationRules\.MountOffsetY\(eq\.MountGraphic,\s*animations\.GetMountSeat\(mountBody\)\)");
             Read("src/ClassicUO.Client/Game/Ecs/MobileSpriteExtract.cs").Should().MatchRegex(@"int mountOffset\s*=\s*s\.MountOffsetY;");
 
-            // Legacy draw and pick: both MobileView sites add the shift of the mount body (before its alias).
+            // Pick: MobileView's pick adds the shift of the mount body (before its alias). (T9 S8a deleted MobileView.Draw; both
+            // worlds draw through MobileSpriteExtract above.)
             string view = Read("src/ClassicUO.Client/Game/GameObjects/Views/MobileView.cs");
             Regex.Matches(view, @"AnimationRules\.MountOffsetY\(mount\.Graphic,\s*Client\.Game\.UO\.Animations\.GetMountSeat\(mountGraphic\)\)").Count
-                .Should().Be(2, "MobileView draw (mountOffsetY) and pick (position.Y) both use table + shift");
-            view.Should().MatchRegex(@"mountOffsetY\s*=\s*AnimationRules\.MountOffsetY\(mount\.Graphic,");
+                .Should().Be(1, "MobileView's pick (position.Y) uses table + shift");
             view.Should().MatchRegex(@"position\.Y\s*\+=\s*AnimationRules\.MountOffsetY\(mount\.Graphic,");
 
             // No renderer reads the table offset on its own.
@@ -302,10 +302,10 @@ namespace ClassicUO.UnitTests.Assets
             aliasAt.Should().BeGreaterThan(offsetAt, "the shift belongs to the original mount body, before its alias");
             Regex.Matches(poc, @"Add\(outFrames, ref n, [^;]*mountOffset,").Count.Should().Be(2, "the body and the equipment layers are drawn at the rider offset");
 
-            // Corpses: Gpu extract, Legacy draw and pick and the corpse tick take the group from GetDeathAction (whose
+            // Corpses: the extract (both worlds since T9 S8a), the pick and the corpse tick take the group from GetDeathAction (whose
             // second-death fallback the death test above covers).
             Read("src/ClassicUO.Client/Game/Ecs/ItemSpriteExtract.cs").Should().Contain("anims.GetDeathAction(converted,");
-            Regex.Matches(Read("src/ClassicUO.Client/Game/GameObjects/Views/ItemView.cs"), @"Animations\.GetDeathAction\(").Count.Should().Be(2, "ItemView draw and pick");
+            Regex.Matches(Read("src/ClassicUO.Client/Game/GameObjects/Views/ItemView.cs"), @"Animations\.GetDeathAction\(").Count.Should().Be(1, "ItemView pick");
             Read("src/ClassicUO.Client/Game/GameObjects/Item.cs").Should().Contain("Animations.TryCorpseFrame(id, UsedLayer, dir, frameIndex, out byte frame)", "the corpse tick (round-4 finding 1)");
         }
     }

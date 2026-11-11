@@ -36,6 +36,20 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
+    /// T9 S8a: a lightning effect's sprite (LightningEffectView.Draw, deleted): one gump, the effect's animation graphic, drawn
+    /// additively by the batcher in both worlds (the Gpu world's capture never mapped gumps, so it always went to FNA). The
+    /// resolve (<see cref="ClassicUO.Game.Scenes.EffectSpriteSink.DrawLightning"/>) centres it horizontally on (X, Y) with its
+    /// bottom at Y, from the gump's size.
+    /// </summary>
+    internal struct LightningSprite
+    {
+        public ushort Gump;
+        public int X, Y;
+        public Vector3 Hue;
+        public float Depth;
+    }
+
+    /// <summary>
     /// T7b part 3: what the effect select reads. The effect's own state comes from its <see cref="EffectState"/> (graphic,
     /// animation graphic, hue, blend, position, offset, angle, kind); the scene's from the profile and the player; the draw
     /// permission from the object (IsDestroyed, AllowedToDraw, as the item input); the source object only for the depth and
@@ -52,7 +66,7 @@ namespace ClassicUO.Game
 
         public float OffsetX, OffsetY, OffsetZ, Angle;
 
-        /// <summary>GameEffectView: not destroyed and allowed to draw; DragEffect: not destroyed.</summary>
+        /// <summary>GameEffectView: not destroyed and allowed to draw; DragEffect and LightningEffectView: not destroyed.</summary>
         public bool Drawable;
 
         /// <summary>The tiledata flags of <see cref="Graphic"/> (not the animation graphic, as the views read them).</summary>
@@ -69,7 +83,7 @@ namespace ClassicUO.Game
         public float SourceDepth;
 
         /// <summary>The effect's state and the scene into <paramref name="i"/>. False: the effect has no state (not yet
-        /// registered, or destroyed): the caller draws its view.</summary>
+        /// registered, or destroyed): not drawn (T9 S8a; the views it went to drew nothing for such an effect either).</summary>
         public static bool Gather(GameEffect e, out EffectSpriteInput i)
         {
             i = default;
@@ -90,7 +104,7 @@ namespace ClassicUO.Game
             i.OffsetY = s.OffsetY;
             i.OffsetZ = s.OffsetZ;
             i.Angle = s.Angle;
-            i.Drawable = s.Kind == EffectState.KIND_DRAG || e.AllowedToDraw;
+            i.Drawable = s.Kind == EffectState.KIND_DRAG || s.Kind == EffectState.KIND_LIGHTNING || e.AllowedToDraw;
 
             TileDataLoader tiles = Client.Game?.UO?.FileManager?.TileData;
 
@@ -116,8 +130,8 @@ namespace ClassicUO.Game
                 i.DeadGray = !i.OutOfRange && world.Player != null && world.Player.IsDead && profile.EnableBlackWhiteEffect;
             }
 
-            // GameEffectView reads the source for its depth always, DragEffect only for a light
-            if (s.Kind != EffectState.KIND_DRAG || i.TileLight)
+            // GameEffectView reads the source for its depth always, DragEffect only for a light, lightning never
+            if (s.Kind != EffectState.KIND_LIGHTNING && (s.Kind != EffectState.KIND_DRAG || i.TileLight))
             {
                 i.Source = e.SourceObject;
 
@@ -135,7 +149,7 @@ namespace ClassicUO.Game
     /// T7b part 3: the renderer-neutral select of an effect's sprite, from
     /// <see cref="EffectSpriteInput"/> and the pack's art table, reproducing GameEffectView.Draw (fixed, moving and explosion
     /// effects: the rotated art draw of the animation graphic, the effect hue, the source's depth, the blend mode, the light
-    /// at the source) and DragEffect.Draw. Lightning stays on its view (a gump drawn additively: the FNA overlay). Side effects
+    /// at the source), DragEffect.Draw, and LightningEffectView.Draw (<see cref="LightningSprite"/>, T9 S8a). Side effects
     /// kept: the art entry's draw offset (ArtEntry.Width/Height; art entries are shared with items and statics, whose picking
     /// reads them) and the light request (<see cref="Light"/>; the caller adds it for <see cref="EffectSpriteInput.Source"/>).
     /// Effects are not pickable (GameEffect.CheckMouseSelection), so nothing goes to SpritePickTable.
@@ -148,6 +162,7 @@ namespace ClassicUO.Game
 
         private readonly ArtLoader _artsOverride;
         private EffectSprite _sprite;
+        private LightningSprite _lightning;
 
         public EffectSpriteExtract() { }
 
@@ -164,8 +179,13 @@ namespace ClassicUO.Game
 
         public ref readonly EffectSprite Sprite => ref _sprite;
 
-        /// <summary>The art the effect draws has no pixels in the pack: the view draws Arts.GetArt's placeholder, so the caller
-        /// draws the view instead (nothing else of the select applies).</summary>
+        /// <summary>The last select was a lightning effect's (<see cref="Lightning"/>).</summary>
+        public bool HasLightning { get; private set; }
+
+        public ref readonly LightningSprite Lightning => ref _lightning;
+
+        /// <summary>The art the effect draws has no pixels in the pack (a pack bug: the converter writes every effect graphic):
+        /// nothing is drawn and nothing else of the select applies. The deleted view drew Arts.GetArt's placeholder.</summary>
         public bool MissingArt { get; private set; }
 
         /// <summary>The view would add a light at (LightX, LightY) for the source (GameScene.AddLight(source, source, …)).</summary>
@@ -175,23 +195,33 @@ namespace ClassicUO.Game
 
         public int LightY { get; private set; }
 
-        /// <summary>The effect kinds the extract reproduces: every one but lightning (a gump, drawn by its view).</summary>
-        public static bool Handles(GameEffect e) => e is not LightningEffect;
-
         /// <summary>The view's Draw for one effect at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the
         /// render list's <paramref name="depth"/>. False = not drawn (the view's result).</summary>
         public bool Select(in EffectSpriteInput i, int posX, int posY, float depth)
         {
             HasSprite = false;
+            HasLightning = false;
             MissingArt = false;
             Light = false;
 
-            if (!i.Drawable || i.Kind == EffectState.KIND_LIGHTNING)
+            if (!i.Drawable)
             {
                 return false;
             }
 
             ushort hue = i.OutOfRange ? (ushort)Constants.OUT_RANGE_COLOR : i.DeadGray ? (ushort)Constants.DEAD_RANGE_COLOR : i.Hue;
+
+            if (i.Kind == EffectState.KIND_LIGHTNING)
+            {
+                // LightningEffectView.Draw: the gump at the render-list position with a plain hue, lights shader for hues
+                // past the first row; no source depth, no light
+                Vector3 lightningHue = ShaderHueTranslator.GetHueVector(hue, false, 1);
+                lightningHue.Y = lightningHue.X > 1.0f ? ShaderHueTranslator.SHADER_LIGHTS : ShaderHueTranslator.SHADER_NONE;
+                _lightning = new LightningSprite { Gump = i.AnimGraphic, X = posX, Y = posY, Hue = lightningHue, Depth = depth + 0.5f };
+                HasLightning = true;
+
+                return true;
+            }
 
             if (i.Kind == EffectState.KIND_DRAG)
             {

@@ -217,7 +217,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             var profile = ProfileManager.CurrentProfile;
-            bool want = Settings.GlobalSettings.GpuPrepareItemCache && _gpuWorld.EcsSprites;
+            bool want = Settings.GlobalSettings.GpuPrepareItemCache;
             bool gray = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             bool range = profile.NoColorObjectsOutOfRange;
             bool mixed = Settings.GlobalSettings.GpuPrepareItemCacheMixed;

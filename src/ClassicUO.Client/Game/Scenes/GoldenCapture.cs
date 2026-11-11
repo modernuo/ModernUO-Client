@@ -104,7 +104,7 @@ namespace ClassicUO.Game.Scenes
 
         public static void Mark(GameObject obj, int at)
         {
-            // a draw that falls back to another marked draw (an effect the Gpu capture takes from its view)
+            // a draw that passes to another marked draw (a translucent effect: GpuWorldRenderer.DrawObject, then DrawEffect)
             if (_marks > 0 && ReferenceEquals(_markObj[_marks - 1], obj) && _markAt[_marks - 1] == at)
             {
                 return;

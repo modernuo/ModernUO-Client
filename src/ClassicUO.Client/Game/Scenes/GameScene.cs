@@ -1398,12 +1398,7 @@ namespace ClassicUO.Game.Scenes
                 && _world.TargetManager.TargetingState == CursorTarget.MultiPlacement
             )
             {
-                _multi.Draw(
-                    batcher,
-                    _multi.RealScreenPosition.X,
-                    _multi.RealScreenPosition.Y,
-                    _multi.CalculateDepthZ()
-                );
+                LegacySpriteSink.DrawPreview(batcher, _multi, _multi.CalculateDepthZ());
             }
 
             // draw weather

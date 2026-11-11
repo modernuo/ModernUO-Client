@@ -59,54 +59,5 @@ namespace ClassicUO.Game.GameObjects
         {
             EffectSystem.StepDrag(this);
         }
-
-        public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
-        {
-            if (IsDestroyed || EcsEntity.IsNull)
-            {
-                return false;
-            }
-
-            // T9 S7: the frame and offset from the state
-            ref readonly EffectState s = ref EcsRead.Get<EffectState>(EcsEntity);
-            ushort hue;
-            if (ProfileManager.CurrentProfile.NoColorObjectsOutOfRange && Distance > World.ClientViewRange)
-            {
-                hue = Constants.OUT_RANGE_COLOR;
-            }
-            else if (World.Player.IsDead && ProfileManager.CurrentProfile.EnableBlackWhiteEffect)
-            {
-                hue = Constants.DEAD_RANGE_COLOR;
-            }
-            else
-            {
-                hue = Hue;
-            }
-
-            Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue);
-
-            //Engine.DebugInfo.EffectsRendered++;
-
-            DrawStatic
-            (
-                batcher,
-                s.AnimGraphic,
-                posX - ((int) s.OffsetX + 22),
-                posY - ((int) -s.OffsetY + 22),
-                hueVec,
-                depth
-            );
-
-            ref var data = ref Client.Game.UO.FileManager.TileData.StaticData[Graphic];
-
-            GameObject source;
-
-            if (data.IsLight && (source = SourceObject) != null)
-            {
-                Client.Game.GetScene<GameScene>().AddLight(source, source, posX + 22, posY + 22);
-            }
-
-            return true;
-        }
     }
 }

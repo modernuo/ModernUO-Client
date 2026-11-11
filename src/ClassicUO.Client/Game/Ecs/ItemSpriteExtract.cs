@@ -325,9 +325,6 @@ namespace ClassicUO.Game
 
         public int ArtPickH { get; private set; }
 
-        /// <summary>True when the extract reproduces this item's view: every world item (art items, multis and corpses).</summary>
-        public static bool Handles(Item item) => true;
-
         /// <summary>ItemView.Draw for one item at screen position (<paramref name="posX"/>, <paramref name="posY"/>): select, then
         /// the Gpu resolve into <see cref="Instances"/>. False = not drawn.</summary>
         public bool Emit(in ItemSpriteInput item, PackSet pack, int offsetX, int offsetY, int posX, int posY, float depth)
