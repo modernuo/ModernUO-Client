@@ -360,8 +360,8 @@ namespace ClassicUO.Game.Scenes
             ulong walk = 0, full = 0, mobiles = 0, mobileStops = 0, effects = 0;
             int minZ = int.MaxValue, maxZ = int.MinValue, halfW = 22, height = 44;
             int mobileCount = 0;
-            // T6b: GpuMobiles is in the walk's order, so with world_tile_index a tile with dynamics reads the merged order
-            ulong mergeCells = TileWalk.MergeCells(chunk, DynamicTileIndex.Merged);
+            // T6b: GpuMobiles is in the walk's order, so a tile with dynamics reads the merged order
+            ulong mergeCells = TileWalk.MergeCells(chunk);
 
             for (int x = 0; x < 8; x++)
             {

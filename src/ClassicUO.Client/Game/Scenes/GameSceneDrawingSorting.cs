@@ -122,13 +122,7 @@ namespace ClassicUO.Game.Scenes
 
         private void ApplyFoliageTransparency(ushort graphic, int x, int y, int z)
         {
-            if (TileOrder.Check)
-            {
-                // T6b part 2: the objects the list walk and the merged walk would stamp are the same set (order does not matter here)
-                CheckFoliage(x, y, graphic, z);
-            }
-
-            GameObject obj = _world.Map.OpenTile(x, y, true, DynamicTileIndex.WalkOn, out TileReader reader);
+            GameObject obj = _world.Map.OpenTile(x, y, true, out TileReader reader);
 
             for (; obj != null; obj = reader.Next())
             {
@@ -142,28 +136,6 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     obj.FoliageIndex = FoliageIndex;
-                }
-            }
-        }
-
-        private void CheckFoliage(int x, int y, ushort graphic, int z)
-        {
-            var listMatches = new List<GameObject>();
-            var mergedMatches = new List<GameObject>();
-            CollectFoliageMatches(x, y, graphic, z, false, listMatches);
-            CollectFoliageMatches(x, y, graphic, z, true, mergedMatches);
-            TileOrder.ReaderCheck(TileOrder.SameObjects(listMatches, mergedMatches), "ApplyFoliageTransparency", () => $"{x},{y} graphic {graphic:X4} z {z}: {listMatches.Count} vs {mergedMatches.Count}");
-        }
-
-        private void CollectFoliageMatches(int x, int y, ushort graphic, int z, bool merged, List<GameObject> into)
-        {
-            GameObject obj = _world.Map.OpenTile(x, y, true, merged, out TileReader reader);
-
-            for (; obj != null; obj = reader.Next())
-            {
-                if (obj.Graphic == graphic && obj.Z == z)
-                {
-                    into.Add(obj);
                 }
             }
         }
@@ -839,9 +811,9 @@ namespace ClassicUO.Game.Scenes
             bool detail = FrameStats.Detail;
             bool prepCheck = PrepCheck.On;
 
-            // T6b (world_tile_index): a whole tile's walk with dynamics on the tile (mergeTile: the caller's bit of
-            // TileWalk.MergeCells) reads the list's land, statics and multis merged by key with the tile's DynamicTileIndex
-            // array; every other walk follows TNext from obj, as with the switch off. The one-object walks (the callers pass
+            // T6b: a whole tile's walk with dynamics on the tile (mergeTile: the caller's bit of TileWalk.MergeCells) reads the
+            // list's land, statics and multis merged by key with the tile's DynamicTileIndex array; every other walk follows
+            // TNext from obj. The one-object walks (the callers pass
             // stopAt = obj.TNext, which is null for a tile's last object) never merge.
             bool merged = mergeTile;
             obj = TileWalk.StartTile(obj, chunk, merged, out TileWalk tileWalk);

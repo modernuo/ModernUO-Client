@@ -420,15 +420,9 @@ namespace ClassicUO.Game.Managers
             }
         }
 
-        private void CheckTarget(GameObject found, int x, int y, ushort graphic, short z)
+        private GameObject FindTarget(int x, int y, ushort graphic, short z)
         {
-            GameObject other = FindTarget(x, y, graphic, z, !DynamicTileIndex.WalkOn);
-            TileOrder.ReaderCheck(ReferenceEquals(found, other), "TargetManager.Target", () => $"{x},{y} graphic {graphic:X4} z {z}");
-        }
-
-        private GameObject FindTarget(int x, int y, ushort graphic, short z, bool merged)
-        {
-            GameObject candidate = _world.Map.OpenTile(x, y, true, merged, out TileReader reader);
+            GameObject candidate = _world.Map.OpenTile(x, y, true, out TileReader reader);
 
             for (; candidate != null; candidate = reader.Next())
             {
@@ -451,13 +445,7 @@ namespace ClassicUO.Game.Managers
             switch (TargetingState)
             {
                 case CursorTarget.CallbackTarget:
-                    GameObject found = FindTarget(x, y, graphic, z, DynamicTileIndex.WalkOn);
-
-                    if (TileOrder.Check)
-                    {
-                        // T6b part 2
-                        CheckTarget(found, x, y, graphic, z);
-                    }
+                    GameObject found = FindTarget(x, y, graphic, z);
 
                     if (found != null)
                     {

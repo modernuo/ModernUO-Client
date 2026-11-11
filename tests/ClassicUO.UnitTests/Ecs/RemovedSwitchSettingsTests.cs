@@ -27,7 +27,8 @@ namespace ClassicUO.UnitTests.Ecs
             "ecs_active_items_source",
             "ecs_effect_motion",
             "ecs_effect_endpoints",
-            "ecs_effect_sprites"
+            "ecs_effect_sprites",
+            "world_tile_index"
         };
 
         [Fact]

@@ -1257,14 +1257,14 @@ namespace ClassicUO.Game.GameObjects
         }
 
         // the first chair-like object (item, static, multi) within 1 Z of this mobile on its tile, in tile order
-        internal bool FindChair(bool merged, out AnimationsLoader.SittingInfoData data)
+        internal bool FindChair(out AnimationsLoader.SittingInfoData data)
         {
             TileReader reader = default;
             GameObject start = this;
 
             if (TileChunk != null)
             {
-                start = TileReader.Open(TileChunk, TileCell, merged, null, out reader);
+                start = TileReader.Open(TileChunk, TileCell, null, out reader);
             }
             else
             {
@@ -1291,28 +1291,13 @@ namespace ClassicUO.Game.GameObjects
             return false;
         }
 
-        // kept out of TryGetSittingInfoIf so the lambda's closure is only allocated when CUO_TILE_ORDER_CHECK is on
-        private void CheckChair(bool found, AnimationsLoader.SittingInfoData data)
-        {
-            bool foundOther = FindChair(!DynamicTileIndex.WalkOn, out var dataOther);
-            TileOrder.ReaderCheck(found == foundOther && (!found || data.Equals(dataOther)), "Mobile.TryGetSittingInfo", () => $"{X},{Y},{Z}: {found}/{foundOther}");
-        }
-
         private bool TryGetSittingInfoIf(bool eligible, out AnimationsLoader.SittingInfoData data)
         {
             ushort result = 0;
 
             if (eligible)
             {
-                bool found = FindChair(DynamicTileIndex.WalkOn, out data);
-
-                if (TileOrder.Check)
-                {
-                    // T6b part 2
-                    CheckChair(found, data);
-                }
-
-                if (found)
+                if (FindChair(out data))
                 {
                     return true;
                 }

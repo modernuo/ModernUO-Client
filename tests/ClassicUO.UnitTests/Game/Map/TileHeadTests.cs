@@ -14,17 +14,16 @@ namespace ClassicUO.UnitTests.Game.Map
 {
     /// <summary>
     /// tile-head: <see cref="Chunk.GetHeadObject"/> returns a stored per-cell head instead of following TPrevious from the anchor.
-    /// Random placements, moves, removals (land and statics too), in-place reloads and chunk teardown with pool reuse, under each
-    /// state of the tile-list switches; after every step every cell's stored head must be the head found by TPrevious from the
-    /// anchor, and the list read from it must equal an independent copy of the legacy insertion rule.
+    /// Random placements, moves, removals (land and statics too), in-place reloads and chunk teardown with pool reuse; after
+    /// every step every cell's stored head must be the head found by TPrevious from the anchor, and the list read from it must
+    /// equal an independent copy of the legacy insertion rule without the dynamics (the list holds none).
     /// </summary>
-    [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData and the DynamicTileIndex switches are process-wide
+    [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData is process-wide
     public sealed class TileHeadTests : IDisposable
     {
         private const ushort Plain = 1, Tall = 2, Background = 3, MultiMovable = 4, TallBackground = 5;
 
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
 
         public TileHeadTests()
         {
@@ -36,17 +35,11 @@ namespace ClassicUO.UnitTests.Game.Map
             data[TallBackground].Flags = TileFlag.Background;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
-            _savedMaintain = DynamicTileIndex.Maintain;
-            _savedDropped = DynamicTileIndex.ListDropped;
-            _savedShadow = DynamicTileIndex.Shadow;
         }
 
         public void Dispose()
         {
             Chunk.StaticTileData = _savedStaticData;
-            DynamicTileIndex.Maintain = _savedMaintain;
-            DynamicTileIndex.ListDropped = _savedDropped;
-            DynamicTileIndex.Shadow = _savedShadow;
         }
 
         private static Land NewLand(World world, sbyte z)
@@ -142,7 +135,7 @@ namespace ClassicUO.UnitTests.Game.Map
 
         private static int s_frontInsertions, s_headRemovals;
 
-        private static void AssertHeads(Chunk[] chunks, Model model, bool dropped)
+        private static void AssertHeads(Chunk[] chunks, Model model)
         {
             for (int slot = 0; slot < chunks.Length; slot++)
             {
@@ -159,13 +152,8 @@ namespace ClassicUO.UnitTests.Game.Map
                     Assert.Same(walked, chunk.HeadAt(cell));
                     Assert.Null(walked?.TPrevious);
 
-                    // the list read from it is the legacy order (with the list dropped: without the dynamics)
-                    List<GameObject> expected = model.Cells[slot].Cell(cell) ?? new List<GameObject>();
-
-                    if (dropped)
-                    {
-                        expected = expected.Where(o => !DynamicTileIndex.Holds(o)).ToList();
-                    }
+                    // the list read from it is the legacy order without the dynamics
+                    List<GameObject> expected = (model.Cells[slot].Cell(cell) ?? new List<GameObject>()).Where(o => !DynamicTileIndex.Holds(o)).ToList();
 
                     Assert.Equal(expected, Chain(chunk, cell));
 
@@ -178,11 +166,8 @@ namespace ClassicUO.UnitTests.Game.Map
             }
         }
 
-        private static void RunRandom(int seed, int steps, bool maintain, bool dropped, bool effects)
+        private static void RunRandom(int seed, int steps, bool effects)
         {
-            DynamicTileIndex.Maintain = maintain;
-            DynamicTileIndex.ListDropped = dropped;
-            DynamicTileIndex.Shadow = false;
             s_frontInsertions = s_headRemovals = 0;
 
             var world = new World();
@@ -205,7 +190,7 @@ namespace ClassicUO.UnitTests.Game.Map
                 }
             }
 
-            AssertHeads(chunks, model, dropped);
+            AssertHeads(chunks, model);
 
             for (int i = 0; i < steps; i++)
             {
@@ -272,7 +257,7 @@ namespace ClassicUO.UnitTests.Game.Map
                     reuses += ReferenceEquals(old, chunks[slot]) ? 1 : 0;
                 }
 
-                AssertHeads(chunks, model, dropped);
+                AssertHeads(chunks, model);
             }
 
             // the run reached what it is for: new heads in front of an old head, and heads that left
@@ -293,32 +278,22 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Theory]
-        // switch off, no index (a test-only state since T9; with and without effects)
-        [InlineData(21, false, false, false)]
-        [InlineData(22, false, false, true)]
-        // switch off, index maintained (the default)
-        [InlineData(23, true, false, true)]
-        [InlineData(24, true, false, false)]
-        // world_tile_index on: the list holds no dynamics
-        [InlineData(25, true, true, true)]
-        [InlineData(26, true, true, false)]
-        public void The_Stored_Head_Is_The_Walked_Head_After_Every_Operation(int seed, bool maintain, bool dropped, bool effects)
+        // the list holds no dynamics; with and without effects
+        [InlineData(25, true)]
+        [InlineData(26, false)]
+        [InlineData(27, true)]
+        public void The_Stored_Head_Is_The_Walked_Head_After_Every_Operation(int seed, bool effects)
         {
-            RunRandom(seed, 1500, maintain, dropped, effects);
+            RunRandom(seed, 1500, effects);
         }
 
         [Theory]
-        [InlineData(false, false)]
-        [InlineData(false, true)]
-        [InlineData(true, false)]
-        [InlineData(true, true)]
-        public void Teardown_Leaves_No_Head_When_The_Player_Heads_A_Tile(bool dropped, bool reload)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Teardown_Leaves_No_Head_When_The_Player_Heads_A_Tile(bool reload)
         {
             // the player is unlinked by the teardown without RemoveFromTile (it is not destroyed), so only the teardown's own
             // clear drops it as a head
-            DynamicTileIndex.Maintain = true;
-            DynamicTileIndex.ListDropped = dropped;
-            DynamicTileIndex.Shadow = false;
             var world = new World();
             var player = (PlayerMobile)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(PlayerMobile));
             typeof(BaseGameObject).GetField("<World>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(player, world);
@@ -331,7 +306,7 @@ namespace ClassicUO.UnitTests.Game.Map
             chunk.AddGameObject(player, 3, 3);
             chunk.AddGameObject(player, 4, 4); // alone on a tile too, after a move
             chunk.AddGameObject(player, 3, 3);
-            Assert.Same(dropped ? land : player, chunk.GetHeadObject(3, 3));
+            Assert.Same(land, chunk.GetHeadObject(3, 3));
 
             if (reload)
             {
@@ -354,8 +329,6 @@ namespace ClassicUO.UnitTests.Game.Map
         [Fact]
         public void The_Checker_Flags_A_Stale_Head()
         {
-            DynamicTileIndex.Maintain = false;
-            DynamicTileIndex.ListDropped = false;
             var world = new World();
             var chunk = new Chunk(world);
             Land land = NewLand(world, 5);

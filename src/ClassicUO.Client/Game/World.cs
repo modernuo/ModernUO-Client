@@ -320,7 +320,7 @@ namespace ClassicUO.Game
                         // order does not matter (each object updates itself); the merged walk also reaches the index's objects
                         TileReader reader = default;
 
-                        for (GameObject obj = chunk == null ? null : TileReader.Open(chunk, x << 3 | y, DynamicTileIndex.WalkOn, null, out reader); obj != null; obj = reader.Next())
+                        for (GameObject obj = chunk == null ? null : TileReader.Open(chunk, x << 3 | y, null, out reader); obj != null; obj = reader.Next())
                         {
                             obj.UpdateGraphicBySeason();
                         }

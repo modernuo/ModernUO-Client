@@ -405,7 +405,7 @@ namespace ClassicUO.Game.GameObjects
                 return DoorScan(world, x, y, z, data);
             }
 
-            for (GameObject obj = TileReader.Open(chunk, (x & 7) << 3 | (y & 7), DynamicTileIndex.WalkOn, null, out TileReader reader);
+            for (GameObject obj = TileReader.Open(chunk, (x & 7) << 3 | (y & 7), null, out TileReader reader);
                  obj != null;
                  obj = reader.Next())
             {

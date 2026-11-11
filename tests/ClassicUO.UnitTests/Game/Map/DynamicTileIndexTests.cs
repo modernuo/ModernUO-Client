@@ -12,11 +12,11 @@ using Xunit;
 namespace ClassicUO.UnitTests.Game.Map
 {
     /// <summary>
-    /// T6b: the per-tile dynamic index (items, mobiles) that Chunk.AddGameObject and RemoveFromTile maintain beside the tile
-    /// list, and the merged order TileWalk reads (the list's other objects merged by key with the index), which must equal the
-    /// list while both are maintained.
+    /// T6b: the per-tile dynamic index (items, mobiles, effects) that Chunk.AddGameObject and RemoveFromTile maintain beside the
+    /// tile list, and the merged order TileWalk reads (the list's land, statics and multis merged by key with the index), which
+    /// must equal the legacy list order (<see cref="LegacyTileOrder"/>).
     /// </summary>
-    [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData and DynamicTileIndex.Maintain are process-wide
+    [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData is process-wide
     public sealed class DynamicTileIndexTests : IDisposable
     {
         private const ushort Plain = 1, Tall = 2, Background = 3, MultiMovable = 4, TallBackground = 5;
@@ -24,7 +24,6 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a, _b;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public DynamicTileIndexTests()
@@ -37,14 +36,6 @@ namespace ClassicUO.UnitTests.Game.Map
             data[TallBackground].Flags = TileFlag.Background;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
-            _savedMaintain = DynamicTileIndex.Maintain;
-            _savedDropped = DynamicTileIndex.ListDropped;
-            _savedShadow = DynamicTileIndex.Shadow;
-            DynamicTileIndex.Maintain = true;
-            // these tests compare the merged order with a list that still holds the dynamics (world_tile_index's list-kept
-            // mode); ListDropTests covers the dropped list, the default since the switch went on
-            DynamicTileIndex.ListDropped = false;
-            DynamicTileIndex.Shadow = false;
             _a = new Chunk(_world) { X = 0, Y = 0 };
             _b = new Chunk(_world) { X = 1, Y = 0 };
         }
@@ -52,9 +43,6 @@ namespace ClassicUO.UnitTests.Game.Map
         public void Dispose()
         {
             Chunk.StaticTileData = _savedStaticData;
-            DynamicTileIndex.Maintain = _savedMaintain;
-            DynamicTileIndex.ListDropped = _savedDropped;
-            DynamicTileIndex.Shadow = _savedShadow;
         }
 
         private static Land NewLand(World world, sbyte z)
@@ -92,7 +80,10 @@ namespace ClassicUO.UnitTests.Game.Map
             chunk.AddGameObject(obj, x, y);
         }
 
-        private static List<GameObject> List(Chunk chunk, int x, int y)
+        // the legacy list order of the tile (every object)
+        private static List<GameObject> List(Chunk chunk, int x, int y) => LegacyTileOrder.Of(chunk, x << 3 | y);
+
+        private static List<GameObject> RealList(Chunk chunk, int x, int y)
         {
             var list = new List<GameObject>();
 
@@ -120,12 +111,14 @@ namespace ClassicUO.UnitTests.Game.Map
         private static List<GameObject> Indexed(Chunk chunk, int x, int y) =>
             chunk.Dynamic == null ? new List<GameObject>() : chunk.Dynamic.Cell(x << 3 | y).ToArray().Select(e => e.Obj).ToList();
 
-        // the merged order is the list; the index holds exactly the list's items and mobiles, in list order; the checker agrees
+        // the merged order is the legacy list; the index holds exactly its items, mobiles and effects, in that order, and the
+        // tile list the rest; the checker agrees
         private static void AssertMerged(Chunk chunk, int x, int y)
         {
             List<GameObject> list = List(chunk, x, y);
             Assert.Equal(list, Merged(chunk, x, y));
             Assert.Equal(list.Where(DynamicTileIndex.Holds).ToList(), Indexed(chunk, x, y));
+            Assert.Equal(list.Where(o => !DynamicTileIndex.Holds(o)).ToList(), RealList(chunk, x, y));
             TileOrder.IndexCheck r = TileOrder.CheckIndex(chunk, x, y);
             Assert.False(r.Failed, $"order {r.OrderMismatches}, bad entries {r.BadEntries}, count {r.CountMismatch}");
             Assert.False(TileOrder.CheckTile(chunk, x, y).Failed);
@@ -147,12 +140,12 @@ namespace ClassicUO.UnitTests.Game.Map
 
         // The render-list walk's start (AddTileToRenderList calls TileWalk.Start). The walk itself needs a scene; this is the
         // entry point it uses for the whole-tile / single-object decision.
-        private static List<GameObject> WalkFrom(GameObject first, Chunk chunk, bool single, bool walkOn)
+        private static List<GameObject> WalkFrom(GameObject first, Chunk chunk, bool single)
         {
             var seen = new List<GameObject>();
             GameObject stopAt = single ? first.TNext : null;
 
-            for (GameObject o = TileWalk.Start(first, chunk, single, walkOn, out TileWalk w, out bool merged); o != stopAt; o = merged ? w.Next() : o.TNext)
+            for (GameObject o = TileWalk.Start(first, chunk, single, out TileWalk w, out bool merged); o != stopAt; o = merged ? w.Next() : o.TNext)
             {
                 seen.Add(o);
                 Assert.True(seen.Count < 100_000, "walk does not end");
@@ -174,15 +167,12 @@ namespace ClassicUO.UnitTests.Game.Map
             List<GameObject> list = List(_a, 2, 2);
             Assert.Null(list[^1].TNext);
 
-            foreach (bool walkOn in new[] { true, false })
+            foreach (GameObject o in list)
             {
-                foreach (GameObject o in list)
-                {
-                    Assert.Equal(new[] { o }, WalkFrom(o, _a, true, walkOn));
-                }
-
-                Assert.Equal(list, WalkFrom(list[0], _a, false, walkOn));
+                Assert.Equal(new[] { o }, WalkFrom(o, _a, true));
             }
+
+            Assert.Equal(list, WalkFrom(list[0], _a, false));
         }
 
         [Fact]
@@ -192,8 +182,7 @@ namespace ClassicUO.UnitTests.Game.Map
             Place(_a, NewItem(Plain, 0), 1, 1);
             Place(_a, NewMobile(0), 1, 1);
             List<GameObject> list = List(_a, 1, 1);
-            Assert.Equal(list, WalkFrom(list[0], _a, false, true));
-            Assert.Equal(list, WalkFrom(list[0], _a, false, false));
+            Assert.Equal(list, WalkFrom(list[0], _a, false));
         }
 
         [Fact]
@@ -343,13 +332,6 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.True(DynamicTileIndex.Holds(NewItem(Plain, 0)));
             Assert.True(DynamicTileIndex.Holds(NewMobile(0)));
             Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
-            Assert.True(DynamicTileIndex.Maintain, "the index is always maintained (effects live in it)");
-        }
-
-        [Fact]
-        public void The_Setting_Defaults_On()
-        {
-            Assert.True(new ClassicUO.Configuration.Settings().WorldTileIndex);
         }
 
         [Fact]
@@ -520,12 +502,11 @@ namespace ClassicUO.UnitTests.Game.Map
             Place(_a, a, 7, 7);
             Place(_a, b, 7, 7);
 
-            // missing: the index loses b behind the list's back
+            // missing: the index loses b behind the chunk's back; b still says it is on the tile, so it is unreachable
+            Assert.True(TileOrder.IsReachable(b));
             Assert.True(_a.Dynamic.Remove(b, 7 << 3 | 7));
-            TileOrder.IndexCheck r = TileOrder.CheckIndex(_a, 7, 7);
-            Assert.True(r.Failed);
-            Assert.True(r.CountMismatch);
-            Assert.True(r.OrderMismatches > 0);
+            Assert.False(TileOrder.IsReachable(b));
+            TileOrder.IndexCheck r;
 
             // extra: an entry on a cell whose object is elsewhere
             _a.Dynamic.Add(b, 7 << 3 | 7);
@@ -585,19 +566,7 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
-        public void Off_Means_No_Index()
-        {
-            DynamicTileIndex.Maintain = false;
-            Place(_a, NewLand(_world, 0), 0, 0);
-            Item i = NewItem(Plain, 0);
-            Place(_a, i, 0, 0);
-            Assert.Null(_a.Dynamic);
-            i.RemoveFromTile();
-            Assert.Null(_a.Dynamic);
-        }
-
-        [Fact]
-        public void Random_Operations_Keep_The_Merged_Order_Equal_To_The_List()
+        public void Random_Operations_Keep_The_Merged_Order_Equal_To_The_Legacy_List()
         {
             var rng = new Random(4321);
             var objects = new List<GameObject>();
