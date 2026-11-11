@@ -1929,16 +1929,6 @@ namespace ClassicUO
                         break;
                     }
 
-                    if (_plan[_planIndex].StartsWith("ecssprites:"))
-                    {
-                        Configuration.Settings.GlobalSettings.GpuEcsSprites = _plan[_planIndex] == "ecssprites:on";
-                        Log.Info($"[bench] gpu world mobiles from the ECS sprite extract: {Configuration.Settings.GlobalSettings.GpuEcsSprites}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
                     if (_plan[_planIndex].StartsWith("uicache:"))
                     {
                         Configuration.Settings.GlobalSettings.UiRenderCache = _plan[_planIndex] == "uicache:on";

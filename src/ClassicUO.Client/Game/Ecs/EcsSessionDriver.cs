@@ -1189,12 +1189,6 @@ namespace ClassicUO.Game
 
                     return false;
 
-                // ecssprites on|off: gpu_ecs_sprites (mobiles drawn from the ECS extract or captured from their views)
-                case "ecssprites" when args.Length > 0:
-                    Settings.GlobalSettings.GpuEcsSprites = args[0] == "on";
-
-                    return false;
-
                 // logout: drop the socket, then swap to the login scene (World.Clear) and exit; log back in with a new process
                 case "logout":
                     ReleaseMouse();
