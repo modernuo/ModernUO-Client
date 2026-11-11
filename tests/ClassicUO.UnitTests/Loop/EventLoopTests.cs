@@ -248,7 +248,7 @@ namespace ClassicUO.UnitTests.Loop
         }
 
         [Fact]
-        public void LateWake_Escalation_Resets_After_A_Clean_Minute()
+        public void LateWake_Escalation_Resets_After_A_Clean_Minute_Of_Event_Loop_Time()
         {
             var m = new LateWakeMonitor();
             long now = 1000;
@@ -258,11 +258,64 @@ namespace ClassicUO.UnitTests.Loop
             Second(m, ref now, 50, 20);
             m.CurrentBackoffMs.Should().Be(LateWakeMonitor.BackoffBaseMs);
 
-            now += LateWakeMonitor.ResetAfterCleanMs + 1;
-            Second(m, ref now, 50, 0);
+            // the suspension runs out, then 59 clean seconds: not yet a clean minute
+            while (m.IsSuspended(now + LateWakeMonitor.SampleMs))
+            {
+                Second(m, ref now, 0, 0);
+            }
+
+            for (int i = 0; i < 59; i++)
+            {
+                Second(m, ref now, 50, 0);
+            }
+
+            Second(m, ref now, 50, 20); // a bad second breaks the streak
+            Second(m, ref now, 50, 20);
+            m.CurrentBackoffMs.Should().Be(LateWakeMonitor.BackoffBaseMs * 2, "59 clean seconds are not a clean minute");
+
+            while (m.IsSuspended(now + LateWakeMonitor.SampleMs))
+            {
+                Second(m, ref now, 0, 0);
+            }
+
+            for (int i = 0; i < 60; i++)
+            {
+                Second(m, ref now, 50, 0);
+            }
+
             Second(m, ref now, 50, 20);
             Second(m, ref now, 50, 20);
-            m.CurrentBackoffMs.Should().Be(LateWakeMonitor.BackoffBaseMs);
+            m.CurrentBackoffMs.Should().Be(LateWakeMonitor.BackoffBaseMs, "a clean minute resets the escalation");
+        }
+
+        [Fact]
+        public void LateWake_A_Suspension_Longer_Than_The_Reset_Period_Does_Not_Reset_The_Escalation()
+        {
+            var m = new LateWakeMonitor();
+            long now = 1000;
+            m.Sample(now);
+
+            // escalate to 80 s (5, 10, 20, 40, 80), sampling every second through each suspension (legacy loop: no waits)
+            long expected = LateWakeMonitor.BackoffBaseMs;
+
+            for (int k = 0; k < 5; k++)
+            {
+                Second(m, ref now, 50, 20);
+                Second(m, ref now, 50, 20);
+                m.CurrentBackoffMs.Should().Be(expected);
+                expected = Math.Min(expected * 2, LateWakeMonitor.BackoffMaxMs);
+
+                while (m.IsSuspended(now + LateWakeMonitor.SampleMs))
+                {
+                    Second(m, ref now, 0, 0);
+                }
+            }
+
+            m.CurrentBackoffMs.Should().BeGreaterThan(LateWakeMonitor.ResetAfterCleanMs);
+
+            Second(m, ref now, 50, 20);
+            Second(m, ref now, 50, 20);
+            m.CurrentBackoffMs.Should().Be(LateWakeMonitor.BackoffMaxMs, "suspended seconds are not clean time");
         }
 
         // ---- the Windows waiter ----

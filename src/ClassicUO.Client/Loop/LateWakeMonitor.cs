@@ -9,8 +9,9 @@ namespace ClassicUO.Loop
     /// timed wait reports whether it returned late (more than <see cref="LateThresholdMs"/> after its deadline). Once a second
     /// the rate is checked: a sample is bad when more than <see cref="MinLate"/> waits were late and they were at least
     /// <see cref="LatePercent"/> % of the waits. Two bad samples in a row suspend the event loop (the legacy loop runs) for a
-    /// backoff that starts at 5 s and doubles up to 120 s; 60 s without a backoff resets the escalation. Times are in ms on a
-    /// monotonic clock and compared by subtraction.
+    /// backoff that starts at 5 s and doubles up to 120 s. 60 clean event-loop seconds in a row reset the escalation; suspended
+    /// seconds (legacy loop, no waits) neither count as clean nor as bad. Times are in ms on a monotonic clock and compared by
+    /// subtraction.
     /// </summary>
     internal sealed class LateWakeMonitor
     {
@@ -23,7 +24,7 @@ namespace ClassicUO.Loop
         public const long ResetAfterCleanMs = 60_000;
 
         private int _late, _waits, _badSamples, _backoffs;
-        private long _nextSample, _suspendedUntil, _lastBackoff, _currentBackoffMs;
+        private long _nextSample, _suspendedUntil, _currentBackoffMs, _cleanMs;
         private bool _started, _suspended;
 
         /// <summary>Backoffs so far (for the log).</summary>
@@ -66,17 +67,29 @@ namespace ClassicUO.Loop
             int late = _late, waits = _waits;
             _late = _waits = 0;
 
-            if (_backoffs > 0 && nowMs - _lastBackoff > ResetAfterCleanMs)
-            {
-                _backoffs = 0;
-            }
-
-            if (late <= MinLate || late * 100 < waits * LatePercent)
+            // A suspended second ran the legacy loop: no event-loop waits, so it proves nothing either way and does not
+            // count as clean time (a backoff longer than the reset period would otherwise reset its own escalation).
+            if (IsSuspended(nowMs))
             {
                 _badSamples = 0;
 
                 return false;
             }
+
+            if (late <= MinLate || late * 100 < waits * LatePercent)
+            {
+                _badSamples = 0;
+                _cleanMs += SampleMs;
+
+                if (_backoffs > 0 && _cleanMs >= ResetAfterCleanMs)
+                {
+                    _backoffs = 0;
+                }
+
+                return false;
+            }
+
+            _cleanMs = 0;
 
             if (++_badSamples < 2)
             {
@@ -87,7 +100,6 @@ namespace ClassicUO.Loop
             _currentBackoffMs = Math.Min(BackoffBaseMs << Math.Min(_backoffs, 5), BackoffMaxMs);
             _backoffs++;
             TotalBackoffs++;
-            _lastBackoff = nowMs;
             _suspendedUntil = nowMs + _currentBackoffMs;
             _suspended = true;
 
