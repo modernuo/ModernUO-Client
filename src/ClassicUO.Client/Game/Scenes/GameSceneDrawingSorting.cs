@@ -573,8 +573,43 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ApplyMeshHue(GameObject obj, MeshLayer layer)
         {
+            ushort objHue = obj.Hue;
+            var source = new SceneMeshHue(this, obj, objHue);
+
+            // mesh_hue_on_change: the sprite keeps its vertex hue while the frame-wide inputs (epoch) and the object's graphic
+            // (partial-hue flag; a season swap changes it in place) and hue are those it was computed from
+            if (MeshHueEpoch.Apply(layer, obj.MeshSpriteIndex, _meshHueOnChange, _meshHueEpoch.Epoch, obj.Graphic, objHue, ref source))
+            {
+#if CUO_DEVTOOLS
+                if (_meshHueCheck)
+                {
+                    CheckMeshHue(obj, layer, objHue);
+                }
+#endif
+            }
+        }
+
+        private readonly struct SceneMeshHue : IMeshHueSource
+        {
+            private readonly GameScene _scene;
+            private readonly GameObject _obj;
+            private readonly ushort _hue;
+
+            public SceneMeshHue(GameScene scene, GameObject obj, ushort hue)
+            {
+                _scene = scene;
+                _obj = obj;
+                _hue = hue;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void HueOf(out float hueX, out float hueY) => _scene.MeshHueOf(_obj, _hue, out hueX, out hueY);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void MeshHueOf(GameObject obj, int hue, out float hueX, out float hueY)
+        {
             var profile = ProfileManager.CurrentProfile;
-            int hue = obj.Hue;
             bool partial = false;
 
             if (profile.NoColorObjectsOutOfRange && obj.Distance > _world.ClientViewRange)
@@ -594,7 +629,6 @@ namespace ClassicUO.Game.Scenes
                 partial = m.ItemData.IsPartialHue;
             }
 
-            float hueX, hueY;
             if (hue != 0)
             {
                 hueX = hue - 1;
@@ -611,8 +645,6 @@ namespace ClassicUO.Game.Scenes
                 else
                     hueY = ShaderHueTranslator.SHADER_NONE;
             }
-
-            layer.SetHue(obj.MeshSpriteIndex, hueX, hueY);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using BitOperations = System.Numerics.BitOperations;
 using System.Runtime.CompilerServices;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -42,10 +43,33 @@ namespace ClassicUO.Renderer
         private bool _alphaDirty;
         private bool[] _prevVisible = new bool[INITIAL_CAPACITY];
 
+        // mesh_vis_bits: this frame's visibility as one bit per sprite (ResetVisibility clears (Count + 63) / 64 words instead
+        // of Count bytes; BuildVisibleIndices compares words and walks set bits). The mode is the caller's, per frame.
+        private ulong[] _visBits = new ulong[INITIAL_CAPACITY / 64];
+        private ulong[] _prevVisBits = new ulong[INITIAL_CAPACITY / 64];
+        private bool _packed;
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_MESH_VIS_CHECK: with bits on, Visible[] is kept as well, and every BuildVisibleIndices compares
+        // its index sequence and runs with the ones the bool path builds from Visible[]
+        private bool _visCheck;
+        private short[] _checkIndexData = Array.Empty<short>();
+        private TextureRun[] _checkRuns = new TextureRun[16];
+
+        /// <summary>CUO_MESH_VIS_CHECK totals (main thread): layers compared, layers whose indices or runs differed.</summary>
+        public static long VisChecks, VisMismatches;
+
+        /// <summary>The first mismatch since the caller last cleared it.</summary>
+        public static string VisSample;
+#endif
+
         // Track which sprite indices had alpha modified (avoids full scan in ResetAlpha)
         private int[] _alphaDirtyIndices = new int[16];
         private int _alphaDirtyCount;
 
+        // mesh_hue_on_change: per sprite, the key (caller's hue epoch and object hue) its vertex hue was last set from; 0 =
+        // unknown (built, or set without a key, like the highlight). The caller skips SetHue while the key matches.
+        private long[] _hueKeys = new long[INITIAL_CAPACITY];
 
         /// <summary>
         /// Ensures internal arrays can hold at least <paramref name="minCapacity"/> sprites.
@@ -62,6 +86,8 @@ namespace ClassicUO.Renderer
             Array.Resize(ref Vertices, newSize);
             Array.Resize(ref Textures, newSize);
             Array.Resize(ref Visible, newSize);
+            Array.Resize(ref _hueKeys, newSize);
+            Array.Resize(ref _visBits, (newSize + 63) >> 6);
         }
 
         /// <summary>
@@ -75,13 +101,62 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>
+        /// <see cref="ResetVisibility()"/> in the frame's mode: <paramref name="packed"/> (mesh_vis_bits) keeps visibility as
+        /// bits; <paramref name="check"/> (CUO_MESH_VIS_CHECK, developer builds) keeps Visible[] too and compares the indices.
+        /// </summary>
+        public void ResetVisibility(bool packed, bool check)
+        {
+            if (packed != _packed)
+            {
+                _packed = packed;
+                _visibilityDirty = true;
+            }
+
+            if (!packed)
+            {
+                ResetVisibility();
+
+                return;
+            }
+
+#if CUO_DEVTOOLS
+            _visCheck = check;
+
+            if (check)
+            {
+                ResetVisibility();
+            }
+#endif
+            int words = (Count + 63) >> 6;
+            ulong[] bits = _visBits;
+
+            for (int w = 0; w < words; w++)
+            {
+                bits[w] = 0;
+            }
+        }
+
+        /// <summary>
         /// Marks a sprite as visible this frame and updates its vertex alpha.
         /// AlphaHue=0 means "not yet processed" → treat as fully opaque.
         /// AlphaHue=255 means fully opaque. Any other value is a fade in progress.
         /// </summary>
         public void SetVisible(int index, byte alphaHue, bool circletrans = false)
         {
-            Visible[index] = true;
+            if (_packed)
+            {
+                _visBits[index >> 6] |= 1UL << index;
+#if CUO_DEVTOOLS
+                if (_visCheck)
+                {
+                    Visible[index] = true;
+                }
+#endif
+            }
+            else
+            {
+                Visible[index] = true;
+            }
 
             float alpha;
             if (circletrans)
@@ -138,6 +213,48 @@ namespace ClassicUO.Renderer
         /// Used per-frame to apply out-of-range color or sync with runtime hue changes.
         /// </summary>
         public void SetHue(int index, float hueX, float hueY)
+        {
+            _hueKeys[index] = 0;
+            WriteHue(index, hueX, hueY);
+        }
+
+        /// <summary>
+        /// The per-frame SetHue with mesh_hue_on_change off: leaves the key as it is (the caller moves its epoch when the
+        /// switch turns on again, so no key from before matches).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetHueKeyless(int index, float hueX, float hueY) => WriteHue(index, hueX, hueY);
+
+        /// <summary>
+        /// <see cref="SetHue(int, float, float)"/> that records the key the hue was computed from (<see cref="HueKey"/>).
+        /// </summary>
+        public void SetHue(int index, float hueX, float hueY, long key)
+        {
+            _hueKeys[index] = key;
+            WriteHue(index, hueX, hueY);
+        }
+
+        /// <summary>The key of the sprite's last keyed <see cref="SetHue(int, float, float, long)"/>; 0 if none since.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public long HueKeyAt(int index) => _hueKeys[index];
+
+        /// <summary>A key for <see cref="SetHue(int, float, float, long)"/>: never 0 for an epoch other than 0.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static long HueKey(int epoch, ushort graphic, ushort hue) => ((long)(uint)epoch << 32) | ((long)graphic << 16) | hue;
+
+        /// <summary>This frame's visible index data (6 per visible sprite).</summary>
+        public ReadOnlySpan<short> VisibleIndices => _visibleIndexData.AsSpan(0, VisibleSpriteCount * 6);
+
+        /// <summary>The sprite's current vertex hue (X = hue index, Y = shader type).</summary>
+        public void GetHue(int index, out float hueX, out float hueY)
+        {
+            ref var v = ref Vertices[index];
+            hueX = v.Hue0.X;
+            hueY = v.Hue0.Y;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteHue(int index, float hueX, float hueY)
         {
             ref var v = ref Vertices[index];
             if (v.Hue0.X == hueX && v.Hue0.Y == hueY)
@@ -237,6 +354,18 @@ namespace ClassicUO.Renderer
                 return false;
             }
 
+            if (_packed)
+            {
+                bool any = BuildVisibleIndicesPacked();
+#if CUO_DEVTOOLS
+                if (_visCheck)
+                {
+                    CheckVisibleIndices();
+                }
+#endif
+                return any;
+            }
+
             // Check if visibility changed since last frame
             if (!_visibilityDirty)
             {
@@ -314,6 +443,146 @@ namespace ClassicUO.Renderer
             return VisibleSpriteCount > 0;
         }
 
+        private bool BuildVisibleIndicesPacked()
+        {
+            int words = (Count + 63) >> 6;
+            ulong[] bits = _visBits;
+
+            if (!_visibilityDirty && bits.AsSpan(0, words).SequenceEqual(_prevVisBits.AsSpan(0, words)))
+                return VisibleSpriteCount > 0;
+
+            if (_prevVisBits.Length < bits.Length)
+                _prevVisBits = new ulong[bits.Length];
+            bits.AsSpan(0, words).CopyTo(_prevVisBits);
+            _visibilityDirty = false;
+
+            VisibleSpriteCount = 0;
+            VisibleRunCount = 0;
+
+            int maxIndices = Count * 6;
+            if (_visibleIndexData.Length < maxIndices)
+                _visibleIndexData = new short[maxIndices];
+
+            short[] indexData = _visibleIndexData;
+            Texture2D[] textures = Textures;
+            Texture2D curTexture = null;
+            int runStart = 0;
+            int indexPos = 0;
+
+            for (int w = 0; w < words; w++)
+            {
+                ulong word = bits[w];
+
+                while (word != 0)
+                {
+                    int i = (w << 6) + BitOperations.TrailingZeroCount(word);
+                    word &= word - 1;
+
+                    var tex = textures[i];
+                    if (tex != curTexture)
+                    {
+                        if (curTexture != null && VisibleSpriteCount > runStart)
+                            AddRun(curTexture, runStart);
+                        curTexture = tex;
+                        runStart = VisibleSpriteCount;
+                    }
+
+                    short baseVertex = (short)(i * 4);
+                    indexData[indexPos++] = baseVertex;
+                    indexData[indexPos++] = (short)(baseVertex + 1);
+                    indexData[indexPos++] = (short)(baseVertex + 2);
+                    indexData[indexPos++] = (short)(baseVertex + 1);
+                    indexData[indexPos++] = (short)(baseVertex + 3);
+                    indexData[indexPos++] = (short)(baseVertex + 2);
+
+                    VisibleSpriteCount++;
+                }
+            }
+
+            if (curTexture != null && VisibleSpriteCount > runStart)
+                AddRun(curTexture, runStart);
+
+            return VisibleSpriteCount > 0;
+        }
+
+        private void AddRun(Texture2D texture, int runStart)
+        {
+            if (VisibleRunCount >= VisibleRuns.Length)
+                Array.Resize(ref VisibleRuns, VisibleRuns.Length * 2);
+
+            VisibleRuns[VisibleRunCount++] = new TextureRun
+            {
+                Texture = texture,
+                Start = runStart,
+                Count = VisibleSpriteCount - runStart
+            };
+        }
+
+#if CUO_DEVTOOLS
+        // the bool path's indices and runs from Visible[] (BuildVisibleIndices' loop), compared with the packed ones
+        private void CheckVisibleIndices()
+        {
+            VisChecks++;
+
+            if (_checkIndexData.Length < Count * 6)
+                _checkIndexData = new short[Count * 6];
+
+            int sprites = 0, runs = 0, runStart = 0, indexPos = 0;
+            Texture2D curTexture = null;
+
+            for (int i = 0; i < Count; i++)
+            {
+                if (!Visible[i])
+                    continue;
+
+                var tex = Textures[i];
+                if (tex != curTexture)
+                {
+                    if (curTexture != null && sprites > runStart)
+                        AddCheckRun(ref runs, curTexture, runStart, sprites);
+                    curTexture = tex;
+                    runStart = sprites;
+                }
+
+                short baseVertex = (short)(i * 4);
+                _checkIndexData[indexPos++] = baseVertex;
+                _checkIndexData[indexPos++] = (short)(baseVertex + 1);
+                _checkIndexData[indexPos++] = (short)(baseVertex + 2);
+                _checkIndexData[indexPos++] = (short)(baseVertex + 1);
+                _checkIndexData[indexPos++] = (short)(baseVertex + 3);
+                _checkIndexData[indexPos++] = (short)(baseVertex + 2);
+                sprites++;
+            }
+
+            if (curTexture != null && sprites > runStart)
+                AddCheckRun(ref runs, curTexture, runStart, sprites);
+
+            bool same = sprites == VisibleSpriteCount && runs == VisibleRunCount
+                && _checkIndexData.AsSpan(0, indexPos).SequenceEqual(VisibleIndices);
+
+            for (int r = 0; same && r < runs; r++)
+            {
+                ref var a = ref _checkRuns[r];
+                ref var b = ref VisibleRuns[r];
+                same = a.Texture == b.Texture && a.Start == b.Start && a.Count == b.Count;
+            }
+
+            if (!same)
+            {
+                VisMismatches++;
+                VisSample ??= $"layer of {Count} sprites: bool path {sprites} visible in {runs} runs, bits {VisibleSpriteCount} in {VisibleRunCount} runs";
+            }
+        }
+
+        private void AddCheckRun(ref int runs, Texture2D texture, int runStart, int sprites)
+        {
+            if (runs >= _checkRuns.Length)
+                Array.Resize(ref _checkRuns, _checkRuns.Length * 2);
+
+            _checkRuns[runs++] = new TextureRun { Texture = texture, Start = runStart, Count = sprites - runStart };
+        }
+#endif
+
         /// <summary>
         /// Uploads the per-frame visible index data to a shared DynamicIndexBuffer.
         /// </summary>
@@ -357,6 +626,7 @@ namespace ClassicUO.Renderer
 
         public void Reset()
         {
+            Array.Clear(_hueKeys);
             Count = 0;
             VisibleSpriteCount = 0;
             VisibleRunCount = 0;
@@ -370,6 +640,7 @@ namespace ClassicUO.Renderer
         /// </summary>
         public void SoftReset()
         {
+            Array.Clear(_hueKeys);
             Count = 0;
             VisibleSpriteCount = 0;
             VisibleRunCount = 0;
