@@ -31,6 +31,107 @@ namespace ClassicUO.Game.GameObjects
         internal static bool OutsidePickBounds(int entryWidth, int entryHeight, int mouseX, int mouseY)
             => mouseX < -5 || mouseY < -5 || mouseX >= (entryWidth + 23) * 2 || mouseY >= entryHeight + 44;
 
+        // the art item's pick test after its drawn graphic is resolved: the stored draw offset, the bounds reject, the pixels
+        private bool PickArt(ushort graphic, ushort itemGraphic, bool isMulti, ref StaticTiles tile)
+        {
+            ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
+
+            // an item seen for the first time has no stored draw offset yet: store the one the view and ItemSpriteExtract
+            // store when they draw it (from the pack's sprite size), so the reject below works before the first draw
+            // instead of decoding the art of every new item in the walk (its art decodes on a worker, FirstSightArt). A
+            // sprite the pack lacks, and CUO_ART_SYNC=1, keep the old path
+            var packSprites = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
+            uint spriteIdx = graphic + 0x4000u;
+
+            // T7b part 2b: the offset the extract stored when it drew this graphic for this item last draw
+            // (the Legacy sink, or the Gpu world's extracts), else the art entry's
+            bool records = Scenes.SpritePickTable.TryItemArt(this, graphic, in index, out int entryW, out int entryH);
+
+            if (!records)
+            {
+                entryW = index.Width;
+                entryH = index.Height;
+            }
+
+            bool sized = (entryW | entryH) != 0;
+
+            if (!sized && global::ClassicUO.Game.Map.Map.ArtWait && spriteIdx < (uint)packSprites.Length && packSprites[spriteIdx].OrigW != 0 && packSprites[spriteIdx].OrigH != 0)
+            {
+                PickEntryFromSize(packSprites[spriteIdx].OrigW, packSprites[spriteIdx].OrigH, out entryW, out entryH);
+                sized = true;
+
+                if (!records)
+                {
+                    index.Width = entryW;
+                    index.Height = entryH;
+                }
+            }
+
+            Point position = RealScreenPosition;
+            Vector3 offset = ItemOffsets.Read(this);
+            position.X += (int)offset.X;
+            position.Y += (int)(offset.Y + offset.Z);
+            position.X -= entryW;
+            position.Y -= entryH;
+
+            // the drawn art is at most (Width + 23) * 2 by Height + 44 pixels (the view and ItemSpriteExtract store
+            // those offsets when they draw it; 0, 0 = not drawn yet or 44 x 44, unless sized from the pack above), and
+            // a stack is tested 5 px further:
+            // reject the mouse outside that before the art lookup (most of the per-item picking cost in big scenes)
+            int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - position.X;
+            int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - position.Y;
+
+            if (sized && OutsidePickBounds(entryW, entryH, mouseX, mouseY))
+            {
+                // not under the mouse: its art (the frame drawn now) decodes on a worker if it isn't in the atlas yet
+                // (an item whose graphic changed in place, an atlas reload); an item under the mouse decodes below
+                global::ClassicUO.Game.Map.FirstSightArt.RequestStatic(graphic, frames: false);
+
+                if (Scenes.PrepCheck.On)
+                {
+                    Scenes.PrepCheck.PicksRejected++;
+
+                    if (Client.Game.UO.Arts.GetArt(graphic).Texture != null && (Client.Game.UO.Arts.PixelCheck(graphic, mouseX, mouseY) ||
+                        !isMulti && !IsCoinGraphic(itemGraphic) && tile.IsStackable && Amount > 1 && Client.Game.UO.Arts.PixelCheck(graphic, mouseX + 5, mouseY + 5)))
+                    {
+                        Scenes.PrepCheck.PicksWrong++;
+                        Scenes.PrepCheck.Sample ??= $"item 0x{Serial:X8} graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {entryW},{entryH}";
+                    }
+                }
+
+                return false;
+            }
+
+            if (Client.Game.UO.Arts.GetArt(graphic).Texture != null)
+            {
+                if (
+                    Client.Game.UO.Arts.PixelCheck(
+                        graphic,
+                        SelectedObject.TranslatedMousePositionByViewport.X - position.X,
+                        SelectedObject.TranslatedMousePositionByViewport.Y - position.Y
+                    )
+                )
+                {
+                    return true;
+                }
+                else if (!isMulti && !IsCoinGraphic(itemGraphic) && tile.IsStackable && Amount > 1)
+                {
+                    if (
+                        Client.Game.UO.Arts.PixelCheck(
+                            graphic,
+                            SelectedObject.TranslatedMousePositionByViewport.X - position.X + 5,
+                            SelectedObject.TranslatedMousePositionByViewport.Y - position.Y + 5
+                        )
+                    )
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         public override bool CheckMouseSelection()
         {
             // pa-itemprep (perf audit #7): the record graphic read once, its tiledata row selected once, and the cheap
@@ -76,100 +177,30 @@ namespace ClassicUO.Game.GameObjects
                     }
                 }
 
-                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
-
-                // an item seen for the first time has no stored draw offset yet: store the one the view and ItemSpriteExtract
-                // store when they draw it (from the pack's sprite size), so the reject below works before the first draw
-                // instead of decoding the art of every new item in the walk (its art decodes on a worker, FirstSightArt). A
-                // sprite the pack lacks, and CUO_ART_SYNC=1, keep the old path
-                var packSprites = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
-                uint spriteIdx = graphic + 0x4000u;
-
-                // T7b part 2b: the offset the extract stored when it drew this graphic for this item last draw
-                // (the Legacy sink, or the Gpu world's extracts), else the art entry's
-                bool records = Scenes.SpritePickTable.TryItemArt(this, graphic, in index, out int entryW, out int entryH);
-
-                if (!records)
+                // pa-itemprep (perf audit #7), item_pick_early_reject: a mouse outside every box this art can be tested in
+                // misses (ItemPick); CUO_ITEM_PICK_CHECK runs the full test too and counts a reject it would have hit
+                if (Scenes.ItemPick.Enabled || Scenes.ItemPick.Check)
                 {
-                    entryW = index.Width;
-                    entryH = index.Height;
-                }
-
-                bool sized = (entryW | entryH) != 0;
-
-                if (!sized && global::ClassicUO.Game.Map.Map.ArtWait && spriteIdx < (uint)packSprites.Length && packSprites[spriteIdx].OrigW != 0 && packSprites[spriteIdx].OrigH != 0)
-                {
-                    PickEntryFromSize(packSprites[spriteIdx].OrigW, packSprites[spriteIdx].OrigH, out entryW, out entryH);
-                    sized = true;
-
-                    if (!records)
+                    bool reject = Scenes.ItemPick.Outside(this, graphic);
+#if CUO_DEVTOOLS
+                    if (Scenes.ItemPick.Check)
                     {
-                        index.Width = entryW;
-                        index.Height = entryH;
+                        bool hit = PickArt(graphic, itemGraphic, isMulti, ref tile);
+                        Scenes.ItemPick.Judge(this, graphic, reject, hit);
+
+                        return hit;
+                    }
+#endif
+
+                    if (reject)
+                    {
+                        Scenes.ItemPick.Rejected(graphic);
+
+                        return false;
                     }
                 }
 
-                Point position = RealScreenPosition;
-                Vector3 offset = ItemOffsets.Read(this);
-                position.X += (int)offset.X;
-                position.Y += (int)(offset.Y + offset.Z);
-                position.X -= entryW;
-                position.Y -= entryH;
-
-                // the drawn art is at most (Width + 23) * 2 by Height + 44 pixels (the view and ItemSpriteExtract store
-                // those offsets when they draw it; 0, 0 = not drawn yet or 44 x 44, unless sized from the pack above), and
-                // a stack is tested 5 px further:
-                // reject the mouse outside that before the art lookup (most of the per-item picking cost in big scenes)
-                int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - position.X;
-                int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - position.Y;
-
-                if (sized && OutsidePickBounds(entryW, entryH, mouseX, mouseY))
-                {
-                    // not under the mouse: its art (the frame drawn now) decodes on a worker if it isn't in the atlas yet
-                    // (an item whose graphic changed in place, an atlas reload); an item under the mouse decodes below
-                    global::ClassicUO.Game.Map.FirstSightArt.RequestStatic(graphic, frames: false);
-
-                    if (Scenes.PrepCheck.On)
-                    {
-                        Scenes.PrepCheck.PicksRejected++;
-
-                        if (Client.Game.UO.Arts.GetArt(graphic).Texture != null && (Client.Game.UO.Arts.PixelCheck(graphic, mouseX, mouseY) ||
-                            !isMulti && !IsCoinGraphic(itemGraphic) && tile.IsStackable && Amount > 1 && Client.Game.UO.Arts.PixelCheck(graphic, mouseX + 5, mouseY + 5)))
-                        {
-                            Scenes.PrepCheck.PicksWrong++;
-                            Scenes.PrepCheck.Sample ??= $"item 0x{Serial:X8} graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {entryW},{entryH}";
-                        }
-                    }
-
-                    return false;
-                }
-
-                if (Client.Game.UO.Arts.GetArt(graphic).Texture != null)
-                {
-                    if (
-                        Client.Game.UO.Arts.PixelCheck(
-                            graphic,
-                            SelectedObject.TranslatedMousePositionByViewport.X - position.X,
-                            SelectedObject.TranslatedMousePositionByViewport.Y - position.Y
-                        )
-                    )
-                    {
-                        return true;
-                    }
-                    else if (!isMulti && !IsCoinGraphic(itemGraphic) && tile.IsStackable && Amount > 1)
-                    {
-                        if (
-                            Client.Game.UO.Arts.PixelCheck(
-                                graphic,
-                                SelectedObject.TranslatedMousePositionByViewport.X - position.X + 5,
-                                SelectedObject.TranslatedMousePositionByViewport.Y - position.Y + 5
-                            )
-                        )
-                        {
-                            return true;
-                        }
-                    }
-                }
+                return PickArt(graphic, itemGraphic, isMulti, ref tile);
             }
             else
             {

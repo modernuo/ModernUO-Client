@@ -143,6 +143,11 @@ namespace ClassicUO.Configuration
         // builds, CUO_ITEM_PREP_CHECK=1 checks it. Default off.
         [JsonPropertyName("item_prep_rows")] public bool ItemPrepRows { get; set; }
 
+        // pa-itemprep: an art item's pick test rejects a mouse outside every box its pack sprite can be tested in before it
+        // looks up the stored draw offset (ItemPick). CUO_ITEM_PICK_EARLY_REJECT=1|0 overrides it in developer builds,
+        // CUO_ITEM_PICK_CHECK=1 checks it. Default off.
+        [JsonPropertyName("item_pick_early_reject")] public bool ItemPickEarlyReject { get; set; }
+
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
