@@ -132,6 +132,12 @@ namespace ClassicUO.Configuration
         // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
 
+        // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
+        // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
+        // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.
+        // Default off.
+        [JsonPropertyName("pick_skip_off_world")] public bool PickSkipOffWorld { get; set; }
+
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.

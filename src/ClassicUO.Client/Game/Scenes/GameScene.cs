@@ -609,6 +609,8 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            PickSkip.BeginFill(UIManager.IsMouseOverWorld);
+
             // T6a: the tile lists exactly as this frame's walk (both renderers) is about to read them
             if (Map.TileOrder.Check)
             {
@@ -1527,11 +1529,21 @@ namespace ClassicUO.Game.Scenes
         public override void DrawUI(UltimaBatcher2D batcher)
         {
             _healthLinesManager.Draw(batcher, 0f);
+#if CUO_DEVTOOLS
+            BaseGameObject fillSelection = SelectedObject.Object;
+#endif
 
             if (!UIManager.IsMouseOverWorld)
             {
                 SelectedObject.Object = null;
             }
+
+#if CUO_DEVTOOLS
+            if (PickSkip.Check)
+            {
+                PickSkip.Judge(fillSelection, SelectedObject.Object);
+            }
+#endif
 
             _world.WorldTextManager.ProcessWorldText(true);
             _world.WorldTextManager.Draw(batcher, Camera.Bounds.X, Camera.Bounds.Y, 0);
