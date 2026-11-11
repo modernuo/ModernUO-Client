@@ -33,7 +33,7 @@ namespace ClassicUO.Game
         /// <summary>The frame was selected through the corpse alias (GetAnimationFrames' isCorpse).</summary>
         Corpse = 8,
 
-        /// <summary>Art the pack has no pixels for (Legacy select only): drawn with Arts.GetArt's placeholder; X/Y are the
+        /// <summary>Art the pack has no pixels for: drawn with Arts.GetArt's placeholder; X/Y are the
         /// position before the art's draw offset, which comes from the placeholder's size.</summary>
         MissingArt = 16
     }
@@ -120,6 +120,15 @@ namespace ClassicUO.Game
 
             if (s.Kind == DynamicSpriteKind.Art)
             {
+                if ((s.Flags & DynamicSpriteFlags.MissingArt) != 0)
+                {
+                    // Arts.GetArt's placeholder is sprite 0, drawn less the offset its own size gives
+                    ref readonly SpriteEntry ph = ref t.Sprites[0];
+                    Art(in t, 0, s.X + offsetX - ((ph.OrigW >> 1) - 22), s.Y + offsetY - (ph.OrigH - 44), s.Hue, s.Depth, s.ObjX, s.Rank, ref buffer, ref count, true);
+
+                    return;
+                }
+
                 Art(in t, s.Id, s.X + offsetX, s.Y + offsetY, s.Hue, s.Depth, s.ObjX, s.Rank, ref buffer, ref count);
 
                 return;
@@ -136,9 +145,9 @@ namespace ClassicUO.Game
 
         // View.DrawStaticAnimated (no shadow, not wet) + GpuWorldRenderer.Emit for a whole art sprite at (x, y) with the offset
         private static void Art(in GpuSpriteTables t, uint graphic, int x, int y, Vector3 hue, float depth, int objX, int rank,
-            ref SpriteInstance[] buffer, ref int count)
+            ref SpriteInstance[] buffer, ref int count, bool placeholder = false)
         {
-            ref readonly SpriteEntry sp = ref t.Sprites[graphic + 0x4000];
+            ref readonly SpriteEntry sp = ref t.Sprites[placeholder ? 0 : graphic + 0x4000];
             float alpha = hue.Z > 1f ? hue.Z - 1f : hue.Z;
 
             if (alpha <= 0f || !sp.Present)

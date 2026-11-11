@@ -362,7 +362,10 @@ namespace ClassicUO.UnitTests.Ecs
                 sprites[g + 0x4000] = new SpriteEntry { Page = 3, X = 10, Y = 20, W = 40, H = 50, TrimX = 2, TrimY = 4, OrigW = 44, OrigH = 60 };
             }
 
-            // art the pack has no pixels for (Legacy draws Arts.GetArt's placeholder)
+            // Arts.GetArt's placeholder (sprite 0), which missing art is drawn as
+            sprites[0] = new SpriteEntry { Page = 3, X = 1, Y = 2, W = 30, H = 40, TrimX = 1, TrimY = 3, OrigW = 46, OrigH = 50 };
+
+            // art the pack has no pixels for (the view draws Arts.GetArt's placeholder)
             sprites[MISSING_ART + 0x4000] = default;
 
             var arts = new ArtLoader(new UOFileManager(default, Path.GetTempPath(), null));
