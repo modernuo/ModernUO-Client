@@ -6696,3 +6696,20 @@ Base 5812d469a. Two items from the CrossUO scout (perf-opportunities.md), checke
   
   No code change.
 - **Verification.** Dev unit suite 3481 passed, 6 skipped. The one failure was the AtomicFileTests flake under load, which passed when rerun alone (base 3475/6, plus 7 `PickSkipTests`). The `-p:CuoDevTools=false` client build is OK. The `-p:CuoDevTools=false` test suite passes 3476 with 6 skipped: the checker tests are dev-only, the 4 switch-state tests run in both variants. Jobs prepared, not submitted: measure/qw-renderlist (gate-legacy, gate-gpu with the switch on; pick with switch and checker on). No timing: the machine is not quiet.
+
+## 2026-11-12 clip-1: render order / clipping milestone, phase 1 (bg/clip-1)
+
+- **Acceptance scenes** (measure/clip-1: gen_scenes.py writes c1-feet, c1-large, c1-maxz; job-clip-shots.sh and
+  job-clip-dump.sh run on lane L5; sheet.py makes Gpu/Legacy contact sheets). Tip build 6748f4d29, job bench6-000014:
+  acceptance #1 reproduces on BOTH renderers, identically. At Felucca 1453 1668 z 10 the player's feet (all facings) and,
+  mounted, the horse's hooves are drawn on the art studio's corner walls. Daemon and balron hooves, the dragon's tail and the
+  titan's whole legs do the same. Outside the walls everything orders correctly.
+- **Root cause #1** (formulas: cuo-poc-state/surveys/clip-design-2026-11-12.md, section 2): not the anchor. Mobile frames are
+  cut at the anchor row; the rows below it (strip 1) are drawn at depth + 3 (Gpu D + 200 over strip 0), which beats walls up
+  to two diagonals in front (south/east wall +1.5, corner +2.5 relative to the player's tile). The bonus exists so feet beat
+  the floors of the next tiles; one depth per sprite cannot separate floors from walls on the same diagonal.
+- **Walk max-Z cut fixed behind `walk_maxz_continue`** (default off); checker CUO_WALK_MAXZ_CHECK=1, override CUO_WALK_MAXZ,
+  driver `walkmaxz on|off`; WalkMaxZTests (both states). Dev tool: driver `clipdump <name> [radius]` (render-order inputs).
+- **Verification.** Dev unit suite 3575 passed, 6 skipped; client build OK with and without CuoDevTools. Scene c1-maxz and
+  the clipdump numbers: job bench6-000015 (pending at handoff).
+- No accepted costs: the switch is off by default, the off path adds no work, and the cut path is out of line and rare.
