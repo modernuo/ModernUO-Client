@@ -68,6 +68,11 @@ namespace ClassicUO.Game.Managers
                         continue;
                     }
                 }
+                else if (overheadDamage.Value.ParentReused)
+                {
+                    // item_pool: the parent object was reused for another item; follow the one under the key
+                    overheadDamage.Value.SetParent(mob);
+                }
 
                 overheadDamage.Value.Draw(batcher, layerDepth);
             }
@@ -107,6 +112,10 @@ namespace ClassicUO.Game.Managers
             {
                 dm = new OverheadDamage(World, World.Get(obj));
                 _damages[obj] = dm;
+            }
+            else if (dm.ParentReused)
+            {
+                dm.SetParent(World.Get(obj));
             }
 
             dm.Add(dmg);

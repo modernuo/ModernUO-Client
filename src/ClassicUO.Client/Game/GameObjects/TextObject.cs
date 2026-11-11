@@ -48,6 +48,14 @@ namespace ClassicUO.Game.GameObjects
         public bool IsTransparent;
         public GameObject Owner;
 
+        /// <summary>item_pool: the owner's <see cref="GameObject.Incarnation"/> when it got this text. A container item's text
+        /// lives in its gump until it expires, past the item's Destroy; a click on it must not reach the item reused since.</summary>
+        public uint OwnerIncarnation;
+
+        /// <summary>The owner, unless it was reused for another object since (item_pool; with the switch off an entity's
+        /// Incarnation never changes, so this is the owner as before).</summary>
+        public Entity LiveOwnerEntity => Owner is Entity e && e.Incarnation == OwnerIncarnation ? e : null;
+
         public RenderedText RenderedText;
         public long Time, SecondTime;
         public MessageType Type;
