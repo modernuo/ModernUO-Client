@@ -42,7 +42,7 @@ namespace ClassicUO.Game.Scenes
         /// Recomputes the decision when <paramref name="force"/> is set or an input changed (<see cref="NeedsUpdate"/>);
         /// returns whether it did.
         /// </summary>
-        public bool Update(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, bool force)
+        public bool Update(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, bool force, ArtLoader arts = null)
         {
             if (!force && !NeedsUpdate(map, playerX, playerY, playerZ, drawRoofs))
             {
@@ -50,7 +50,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             var reach = new ChunkReach();
-            Compute(map, tiles, playerX, playerY, playerZ, drawRoofs, ref reach);
+            Compute(map, tiles, arts, playerX, playerY, playerZ, drawRoofs, ref reach);
 
             map.SetDecisionReach(reach);
 
@@ -66,8 +66,14 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
+        /// <summary>
+        /// A component whose tiledata entry has no art (a padded legacy-pack entry, an empty house component) does not
+        /// lower max Z: it is invisible, so it cannot be a roof over the player. null arts = every graphic counts (tests).
+        /// </summary>
+        internal static bool HasDrawableArt(ArtLoader arts, ushort graphic) => arts == null || arts.Exists(graphic + 0x4000);
+
         // the upstream decision, unchanged but for the tracked chunk lookups (Map.GetChunkForDecision)
-        private void Compute(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, ref ChunkReach reach)
+        private void Compute(Map.Map map, StaticTiles[] tiles, ArtLoader arts, int playerX, int playerY, int playerZ, bool drawRoofs, ref ChunkReach reach)
         {
             sbyte maxGroundZ = 127;
             MaxGroundZ = 127;
@@ -116,7 +122,7 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                if (tileZ > pz14 && MaxZ > tileZ)
+                if (tileZ > pz14 && MaxZ > tileZ && HasDrawableArt(arts, obj.Graphic))
                 {
                     ref StaticTiles itemdata = ref tiles[obj.Graphic];
 
@@ -150,7 +156,7 @@ namespace ClassicUO.Game.Scenes
 
                     if (tileZ > pz14 && MaxZ > tileZ)
                     {
-                        if (!(obj2 is Land))
+                        if (!(obj2 is Land) && HasDrawableArt(arts, obj2.Graphic))
                         {
                             ref StaticTiles itemdata = ref tiles[obj2.Graphic];
 

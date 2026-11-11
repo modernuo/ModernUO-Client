@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using ClassicUO.Assets;
+using Uo.Pack;
 using ClassicUO.Game;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Map;
@@ -61,6 +63,52 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             _state.NoDrawRoofs.Should().BeFalse();
             _state.MaxZ.Should().Be(127);
+        }
+
+        private static ArtLoader ArtFor(params ushort[] graphicsWithArt)
+        {
+            var sprites = new SpriteEntry[0x14000];
+
+            foreach (ushort g in graphicsWithArt)
+            {
+                sprites[g + 0x4000] = new SpriteEntry { Page = 1, W = 44, H = 44, OrigW = 44, OrigH = 44 };
+            }
+
+            var arts = new ArtLoader(new UOFileManager(default, Path.GetTempPath(), null));
+            arts.SetTablesForTests(sprites);
+
+            return arts;
+        }
+
+        [Fact]
+        public void A_Component_Without_Art_Does_Not_Lower_Max_Z_A_Component_With_Art_Does()
+        {
+            var map = new MapT(_world, 0, 4, 4);
+            map.LoadEmptyChunkForTest(0, 0);
+            map.LoadEmptyChunkForTest(0, 1);
+            map.LoadEmptyChunkForTest(1, 0);
+            map.LoadEmptyChunkForTest(1, 1);
+            Put(map, Plain, 7, 7, 20); // empty tiledata entry, no art (a padded entry)
+            Put(map, Roof, 7, 7, 40);
+
+            _state.Update(map, _tiles, 6, 6, 0, true, force: true, ArtFor(Roof)).Should().BeTrue();
+            _state.MaxZ.Should().Be(40, "the artless component at z 20 is skipped");
+
+            _state.Update(map, _tiles, 6, 6, 0, true, force: true, ArtFor(Plain, Roof)).Should().BeTrue();
+            _state.MaxZ.Should().Be(20, "with art the same component hides what is above it");
+
+            _state.Update(map, _tiles, 6, 6, 0, true, force: true, arts: null);
+            _state.MaxZ.Should().Be(20, "no art index: every graphic counts");
+        }
+
+        [Fact]
+        public void HasDrawableArt_Follows_The_Art_Index()
+        {
+            ArtLoader arts = ArtFor(Roof);
+            MaxDrawZState.HasDrawableArt(arts, Roof).Should().BeTrue();
+            MaxDrawZState.HasDrawableArt(arts, Plain).Should().BeFalse();
+            MaxDrawZState.HasDrawableArt(arts, 0xFFFF).Should().BeFalse();
+            MaxDrawZState.HasDrawableArt(null, Plain).Should().BeTrue();
         }
 
         [Fact]
