@@ -16,6 +16,7 @@ namespace ClassicUO.UnitTests.Ecs
     // that compared the switch states now write out the expected orders (equal to the list's, which they were compared with)
     // or compare a world with CUO_ACTIVE_ITEMS_CHECK (the tags against the order) on and off, and that checker must stay
     // silent.
+    [Collection(nameof(TimeTicksCollection))]
     public class ActiveItemsSourceTests
     {
         private const uint PLAYER = 0x0000_0100;

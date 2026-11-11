@@ -7,6 +7,7 @@ namespace ClassicUO.UnitTests
 {
     // Weather.SimulateSkippedDraw (skip_draw_when_minimized): expired weather ends by time, whatever its particle count.
     // Generate needs the client's camera, so the state is set through the fields.
+    [Collection(nameof(TimeTicksCollection))]
     public class WeatherSkippedDrawTests
     {
         private static void Set(Weather w, string field, object value) =>

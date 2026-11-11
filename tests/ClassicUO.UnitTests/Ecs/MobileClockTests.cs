@@ -13,6 +13,7 @@ namespace ClassicUO.UnitTests.Ecs
     // E4: the due-time rule, the system that applies it over the clock components, and the
     // pushes that keep the clock equal to the Mobile. The in-client checker CUO_MOBILE_UPDATE_CHECK covers the paths that
     // need the running client (packets, ProcessAnimation's timers, corpses, the player's walk).
+    [Collection(nameof(TimeTicksCollection))]
     public class MobileClockTests
     {
         private const uint SERIAL = 0x0000_3000;

@@ -13,6 +13,7 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // item_pool: World offers the destroyed items it drops from Items to its ItemPool; after the quarantine GetOrCreateItem
     // hands one out again, reset to a new Item's state. Off, nothing is pooled and every new serial is a new object.
+    [Collection(nameof(TimeTicksCollection))]
     public class ItemPoolTests
     {
         private const uint PLAYER = 0x0000_0100;
