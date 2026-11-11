@@ -350,8 +350,8 @@ namespace ClassicUO.Game.Scenes
                 result += DrawMeshLayer(batcher, chunk.Mesh.Statics);
             batcher.ResetWorldOffset();
 
-            // Draw excluded statics + animations + effects. T7b (legacy_ecs_sprites): mobiles and items through the sink, at
-            // the same list position (LegacySpriteSink); T7b part 3: effects through EffectSpriteSink
+            // Draw excluded statics + animations + effects. T7b: mobiles and items through the sink, at the same list position
+            // (LegacySpriteSink); T7b part 3: effects through EffectSpriteSink
             LegacySpriteSink.BeginFrame();
 #if CUO_DEVTOOLS
             GoldenCapture.BeginLegacy(batcher);
@@ -656,32 +656,17 @@ namespace ClassicUO.Game.Scenes
             return done;
         }
 
-        // the Legacy world's lists: DrawRenderList with mobiles and items through LegacySpriteSink while it routes them
+        // the Legacy world's lists: DrawRenderList with mobiles and items through LegacySpriteSink
         private static int DrawWorldRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ)
         {
-#if CUO_DEVTOOLS
-            // T9 golden capture: the same draws (LegacySpriteSink.Draw draws the view while it does not route), each object marked
-            if (!LegacySpriteSink.Routes && !GoldenCapture.Recording)
-#else
-            if (!LegacySpriteSink.Routes)
-#endif
-            {
-                return DrawRenderList(batcher, renderList, maxGroundZ);
-            }
-
             int done = 0;
             // the draws don't change the list (the List enumerator this loop used would have thrown)
             ReadOnlySpan<GameObject> list = CollectionsMarshal.AsSpan(renderList);
-            bool prefetch = LegacySpriteSink.On;
 
             for (int i = 0; i < list.Length; i++)
             {
                 GameObject obj = list[i];
-
-                if (prefetch)
-                {
-                    LegacySpriteSink.Prefetch(list, i);
-                }
+                LegacySpriteSink.Prefetch(list, i);
 #if CUO_DEVTOOLS
                 if (GoldenCapture.Recording)
                 {

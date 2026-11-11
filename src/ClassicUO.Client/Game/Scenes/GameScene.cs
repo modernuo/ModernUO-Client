@@ -423,9 +423,6 @@ namespace ClassicUO.Game.Scenes
             );
         }
 
-        // the light list so far (LegacyEcsParity compares the lights the sink adds with the view's)
-        internal int LightCount => _lightCount;
-
         internal (byte Id, ushort Color, bool IsHue, int X, int Y) LightAt(int i) =>
             (_lights[i].ID, _lights[i].Color, _lights[i].IsHue, _lights[i].DrawX, _lights[i].DrawY);
 

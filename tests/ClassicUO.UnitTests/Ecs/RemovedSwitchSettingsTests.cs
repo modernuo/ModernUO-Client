@@ -31,7 +31,8 @@ namespace ClassicUO.UnitTests.Ecs
             "world_tile_index",
             "world_entity_index",
             "ecs_item_draw_row",
-            "gpu_ecs_sprites"
+            "gpu_ecs_sprites",
+            "legacy_ecs_sprites"
         };
 
         [Fact]

@@ -362,7 +362,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// legacy_ecs_sprites: <see cref="Select"/> with each record drawn on <paramref name="batcher"/> as it is made, in the
+        /// The Legacy sink (LegacySpriteSink): <see cref="Select"/> with each record drawn on <paramref name="batcher"/> as it is made, in the
         /// order <see cref="LegacySpriteResolve.DrawAll"/> would draw <see cref="Selected"/> (the same batcher calls), with the
         /// same side effects. An art record is drawn straight from its fields, without building a <see cref="DynamicSprite"/>
         /// or a <see cref="LegacyDraw"/>; <see cref="Selected"/> stays empty.

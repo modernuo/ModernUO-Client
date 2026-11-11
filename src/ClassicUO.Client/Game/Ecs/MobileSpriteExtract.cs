@@ -752,7 +752,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// legacy_ecs_sprites: the Legacy batcher calls of <see cref="Select(EcsEntity, in EcsRow, int, int, float)"/> resolved
+        /// The Legacy sink (LegacySpriteSink): the Legacy batcher calls of <see cref="Select(EcsEntity, in EcsRow, int, int, float)"/> resolved
         /// through <paramref name="src"/> and drawn, or the calls <paramref name="cache"/> recorded for the same selection,
         /// alpha, override hue, body hue and source, moved to this frame's draw origin and base depth (as the Gpu path's
         /// <see cref="Emit(EcsEntity, in EcsRow, in AnimationState, in MobileRenderState, int, int, float, MobileFrameCache)"/>).

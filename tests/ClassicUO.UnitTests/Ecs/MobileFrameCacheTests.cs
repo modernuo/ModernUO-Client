@@ -5,8 +5,8 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // W5: the mobile frame cache. The in-client checks (CUO_MOBILE_CACHE_CHECK, CUO_LEGACY_ECS_PARITY)
-    // cover the replay against fresh selections and extracts; these cover the pure parts.
+    // W5: the mobile frame cache. The in-client check (CUO_MOBILE_CACHE_CHECK) covers the replay against fresh selections
+    // and extracts; these cover the pure parts.
     public class MobileFrameCacheTests
     {
         [Fact]
