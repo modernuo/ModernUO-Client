@@ -1425,6 +1425,7 @@ namespace ClassicUO.Game.UI.Gumps
                         Directory.CreateDirectory(_mapsCachePath);
                         using var stream2 = AtomicFile.OpenWrite(fileMapPath);
                         img.Save(stream2, imageEncoder);
+                        stream2.Commit();
                     }
                     catch (Exception ex)
                     {

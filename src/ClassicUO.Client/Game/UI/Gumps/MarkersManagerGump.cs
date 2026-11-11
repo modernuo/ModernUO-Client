@@ -297,7 +297,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             if (_isMarkerListModified)
             {
-                using (StreamWriter writer = AtomicFile.CreateText(_userMarkersFilePath))
+                using (StreamWriter writer = AtomicFile.CreateText(_userMarkersFilePath, out var atomic))
                 {
                     foreach (var marker in _markers)
                     {
@@ -305,6 +305,8 @@ namespace ClassicUO.Game.UI.Gumps
 
                         writer.WriteLine(newLine);
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
                 _isMarkerListModified = false;
                 ReloadUserMarkers();

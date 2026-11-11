@@ -22,12 +22,14 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(chair))
             {
-                using (StreamWriter writer = AtomicFile.CreateText(chair))
+                using (StreamWriter writer = AtomicFile.CreateText(chair, out var atomic))
                 {
                     foreach (var item in _defaultTable)
                     {
                         writer.WriteLine($"{item.Graphic},{item.Direction1},{item.Direction2},{item.Direction3},{item.Direction4},{item.OffsetY},{item.MirrorOffsetY}");
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 

@@ -55,23 +55,34 @@ namespace ClassicUO.Utility
             using var stream = OpenWrite(path);
             var bytes = new UTF8Encoding(false).GetBytes(text);
             stream.Write(bytes, 0, bytes.Length);
+            stream.Commit();
         }
 
         public static void WriteAllBytes(string path, ReadOnlySpan<byte> bytes)
         {
             using var stream = OpenWrite(path);
             stream.Write(bytes);
+            stream.Commit();
         }
 
-        /// <summary>A UTF-8 (no BOM) text writer; disposing it replaces the target.</summary>
-        public static StreamWriter CreateText(string path)
-            => new StreamWriter(OpenWrite(path), new UTF8Encoding(false));
+        /// <summary>
+        /// A UTF-8 (no BOM) text writer onto a temp file. Disposing it replaces the target only if
+        /// <paramref name="stream"/>.Commit() was called after the last write (see <see cref="OpenWrite"/>).
+        /// </summary>
+        public static StreamWriter CreateText(string path, out AtomicStream stream)
+        {
+            stream = OpenWrite(path);
+
+            return new StreamWriter(stream, new UTF8Encoding(false));
+        }
 
         /// <summary>
-        /// A stream onto a temp file; disposing it (after the data is written) replaces <paramref name="path"/>.
-        /// Creates the directory. Use with `using`; pass it to XmlTextWriter or StreamWriter, which close it.
+        /// A stream onto a temp file. The target is replaced when the stream is disposed AND Commit() was called; a stream
+        /// disposed without Commit() (an exception unwound the writer) deletes the temp and leaves the target untouched.
+        /// Creates the directory. Pass it to XmlTextWriter or StreamWriter, call Commit() after the last write, and let
+        /// the writer dispose it.
         /// </summary>
-        public static FileStream OpenWrite(string path)
+        public static AtomicStream OpenWrite(string path)
         {
             string full = Path.GetFullPath(path);
             string dir = Path.GetDirectoryName(full);
@@ -109,25 +120,34 @@ namespace ClassicUO.Utility
             }
         }
 
-        private sealed class AtomicStream : FileStream
+        public sealed class AtomicStream : FileStream
         {
             private readonly string _target;
             private readonly string _temp;
             private bool _done;
+            private bool _commit;
 
-            public AtomicStream(string target, string temp)
+            internal AtomicStream(string target, string temp)
                 : base(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.None)
             {
                 _target = target;
                 _temp = temp;
             }
 
+            /// <summary>Marks the data complete: disposing now publishes it. Call after the last write (and after flushing any writer wrapped around it), never from a catch.</summary>
+            public void Commit()
+            {
+                // surfaces a disk error here, while the write can still be abandoned
+                Flush(true);
+                _commit = true;
+            }
+
             protected override void Dispose(bool disposing)
             {
-                base.Dispose(disposing);
-
                 if (!disposing || _done)
                 {
+                    base.Dispose(disposing);
+
                     return;
                 }
 
@@ -135,20 +155,34 @@ namespace ClassicUO.Utility
 
                 try
                 {
-                    Replace(_temp, _target);
+                    base.Dispose(true);
+
+                    if (_commit)
+                    {
+                        Replace(_temp, _target);
+
+                        return;
+                    }
                 }
                 catch
                 {
-                    try
-                    {
-                        File.Delete(_temp);
-                    }
-                    catch
-                    {
-                        // the temp is left behind; it is named per process, so it never clashes
-                    }
+                    DeleteTemp();
 
                     throw;
+                }
+
+                DeleteTemp();
+            }
+
+            private void DeleteTemp()
+            {
+                try
+                {
+                    File.Delete(_temp);
+                }
+                catch
+                {
+                    // the temp is left behind; it is named per process, so it never clashes
                 }
             }
         }

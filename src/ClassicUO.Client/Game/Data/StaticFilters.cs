@@ -44,7 +44,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(cave))
             {
-                using (StreamWriter writer = AtomicFile.CreateText(cave))
+                using (StreamWriter writer = AtomicFile.CreateText(cave, out var atomic))
                 {
                     for (int i = 0x053B; i < 0x0553 + 1; i++)
                     {
@@ -53,12 +53,14 @@ namespace ClassicUO.Game.Data
                             writer.WriteLine(i);
                         }
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
             if (!File.Exists(vegetation))
             {
-                using (StreamWriter writer = AtomicFile.CreateText(vegetation))
+                using (StreamWriter writer = AtomicFile.CreateText(vegetation, out var atomic))
                 {
                     ushort[] vegetationTiles =
                     {
@@ -92,12 +94,14 @@ namespace ClassicUO.Game.Data
 
                         writer.WriteLine(g);
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
             if (!File.Exists(trees))
             {
-                using (StreamWriter writer = AtomicFile.CreateText(trees))
+                using (StreamWriter writer = AtomicFile.CreateText(trees, out var atomic))
                 using (StreamWriter writerveg = new StreamWriter(vegetation, true))
                 {
                     ushort[] treeTiles =
@@ -146,6 +150,8 @@ namespace ClassicUO.Game.Data
                             writer.WriteLine($"{graphic}={flag}");
                         }
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 

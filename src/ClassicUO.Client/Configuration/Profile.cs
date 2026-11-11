@@ -372,7 +372,8 @@ namespace ClassicUO.Configuration
         {
             string gumpsXmlPath = Path.Combine(path, "gumps.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(AtomicFile.OpenWrite(gumpsXmlPath), Encoding.UTF8)
+            using var atomic = AtomicFile.OpenWrite(gumpsXmlPath);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -441,6 +442,8 @@ namespace ClassicUO.Configuration
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
 
 

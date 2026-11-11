@@ -255,6 +255,8 @@ namespace ClassicUO.Game.Managers
                     );
                 }
 
+                writer.Flush();
+                stream2.Commit();
                 writer.Close();
             }
 

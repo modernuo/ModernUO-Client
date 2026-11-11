@@ -120,7 +120,8 @@ namespace ClassicUO.Game.Managers
         {
             string ignoreXmlPath = Path.Combine(ProfileManager.ProfilePath, "ignore_list.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(AtomicFile.OpenWrite(ignoreXmlPath), Encoding.UTF8)
+            using var atomic = AtomicFile.OpenWrite(ignoreXmlPath);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -139,6 +140,8 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
     }

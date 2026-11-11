@@ -70,9 +70,62 @@ namespace ClassicUO.UnitTests.Utility
                 stream.Flush();
 
                 File.ReadAllText(path).Should().Be("old");
+                stream.Commit();
             }
 
             File.ReadAllText(path).Should().Be("new");
+        }
+
+        [Fact]
+        public void A_stream_disposed_without_Commit_leaves_the_target_untouched_and_removes_the_temp()
+        {
+            string path = P("skillsgroups.xml");
+            AtomicFile.WriteAllText(path, "valid");
+
+            using (var stream = AtomicFile.OpenWrite(path))
+            {
+                stream.Write(new byte[] { (byte)'x' });
+            }
+
+            File.ReadAllText(path).Should().Be("valid");
+            Directory.GetFiles(_dir).Should().ContainSingle();
+        }
+
+        [Fact]
+        public void An_exception_while_writing_does_not_publish_the_prefix()
+        {
+            string path = P("macros.xml");
+            AtomicFile.WriteAllText(path, "<macros><m/></macros>");
+
+            Action act = () =>
+            {
+                var atomic = AtomicFile.OpenWrite(path);
+
+                using (var xml = new XmlTextWriter(atomic, System.Text.Encoding.UTF8))
+                {
+                    xml.WriteStartDocument(true);
+                    xml.WriteStartElement("macros");
+                    throw new InvalidOperationException("serialization failed");
+                }
+            };
+
+            act.Should().Throw<InvalidOperationException>();
+            File.ReadAllText(path).Should().Be("<macros><m/></macros>");
+            Directory.GetFiles(_dir).Should().ContainSingle();
+        }
+
+        [Fact]
+        public void A_missing_target_stays_missing_when_the_write_is_not_committed()
+        {
+            string path = P("new.txt");
+
+            using (var stream = AtomicFile.OpenWrite(path))
+            {
+                stream.Write(new byte[] { 1 });
+            }
+
+            File.Exists(path).Should().BeFalse();
+            Directory.GetFiles(_dir).Should().BeEmpty();
         }
 
         [Fact]
@@ -180,12 +233,16 @@ namespace ClassicUO.UnitTests.Utility
         {
             string path = P("infobar.xml");
 
-            using (var xml = new XmlTextWriter(AtomicFile.OpenWrite(path), System.Text.Encoding.UTF8))
+            var atomic = AtomicFile.OpenWrite(path);
+
+            using (var xml = new XmlTextWriter(atomic, System.Text.Encoding.UTF8))
             {
                 xml.WriteStartDocument(true);
                 xml.WriteStartElement("infos");
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
 
             var doc = new XmlDocument();
@@ -200,9 +257,11 @@ namespace ClassicUO.UnitTests.Utility
         {
             string path = P("chair.txt");
 
-            using (var w = AtomicFile.CreateText(path))
+            using (var w = AtomicFile.CreateText(path, out var atomic))
             {
                 w.WriteLine("1,2");
+                w.Flush();
+                atomic.Commit();
             }
 
             AtomicFile.ReadAllText(path).Should().Be("1,2" + Environment.NewLine);

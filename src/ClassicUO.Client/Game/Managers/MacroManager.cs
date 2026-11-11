@@ -105,7 +105,8 @@ namespace ClassicUO.Game.Managers
 
             string path = Path.Combine(ProfileManager.ProfilePath, "macros.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(AtomicFile.OpenWrite(path), Encoding.UTF8)
+            using var atomic = AtomicFile.OpenWrite(path);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -122,6 +123,8 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
 

@@ -337,7 +337,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(path) || force)
             {
-                using (StreamWriter writer = AtomicFile.CreateText(path))
+                using (StreamWriter writer = AtomicFile.CreateText(path, out var atomic))
                 {
                     writer.WriteLine("# FORMAT");
 
@@ -350,6 +350,8 @@ namespace ClassicUO.Game.Data
                     {
                         writer.WriteLine($"# {e.Key} {e.Value.RGB:X6} {e.Value.RedCurve} {e.Value.GreenCurve} {e.Value.BlueCurve}");
                     }
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 
@@ -401,7 +403,7 @@ namespace ClassicUO.Game.Data
 
             if (!File.Exists(lights))
             {
-                using (StreamWriter writer = AtomicFile.CreateText(lights))
+                using (StreamWriter writer = AtomicFile.CreateText(lights, out var atomic))
                 {
                     writer.WriteLine("# FORMAT");
                     writer.WriteLine("# ITEM_ID LIGHT_SHADER_OR_HUE");
@@ -412,6 +414,8 @@ namespace ClassicUO.Game.Data
                     writer.WriteLine("# Example for hue");
                     writer.WriteLine("# 0xE31 H1234");
                     writer.WriteLine("");
+                    writer.Flush();
+                    atomic.Commit();
                 }
             }
 

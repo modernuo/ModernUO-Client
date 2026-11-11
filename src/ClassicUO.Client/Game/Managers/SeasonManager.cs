@@ -183,7 +183,7 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-            using (StreamWriter writer = AtomicFile.CreateText(_seasonsFile))
+            using (StreamWriter writer = AtomicFile.CreateText(_seasonsFile, out var atomic))
             {
                 writer.WriteLine("spring,static,0x0CA7,0x0C84");
                 writer.WriteLine("spring,static,0x0CAC,0x0C46");
@@ -683,6 +683,8 @@ namespace ClassicUO.Game.Managers
                 writer.WriteLine("desolation,static,0x0D19,0x1BAE");
                 writer.WriteLine("desolation,static,0x0D2D,0x1BAE");
                 writer.WriteLine("desolation,static,0x0D2F,0x1BAE");
+                writer.Flush();
+                atomic.Commit();
             }
         }
 
