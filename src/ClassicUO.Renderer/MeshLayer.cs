@@ -46,6 +46,9 @@ namespace ClassicUO.Renderer
         private int[] _alphaDirtyIndices = new int[16];
         private int _alphaDirtyCount;
 
+        // mesh_hue_on_change: per sprite, the key (caller's hue epoch and object hue) its vertex hue was last set from; 0 =
+        // unknown (built, or set without a key, like the highlight). The caller skips SetHue while the key matches.
+        private long[] _hueKeys = new long[INITIAL_CAPACITY];
 
         /// <summary>
         /// Ensures internal arrays can hold at least <paramref name="minCapacity"/> sprites.
@@ -62,6 +65,7 @@ namespace ClassicUO.Renderer
             Array.Resize(ref Vertices, newSize);
             Array.Resize(ref Textures, newSize);
             Array.Resize(ref Visible, newSize);
+            Array.Resize(ref _hueKeys, newSize);
         }
 
         /// <summary>
@@ -138,6 +142,38 @@ namespace ClassicUO.Renderer
         /// Used per-frame to apply out-of-range color or sync with runtime hue changes.
         /// </summary>
         public void SetHue(int index, float hueX, float hueY)
+        {
+            _hueKeys[index] = 0;
+            WriteHue(index, hueX, hueY);
+        }
+
+        /// <summary>
+        /// <see cref="SetHue(int, float, float)"/> that records the key the hue was computed from (<see cref="HueKey"/>).
+        /// </summary>
+        public void SetHue(int index, float hueX, float hueY, long key)
+        {
+            _hueKeys[index] = key;
+            WriteHue(index, hueX, hueY);
+        }
+
+        /// <summary>The key of the sprite's last keyed <see cref="SetHue(int, float, float, long)"/>; 0 if none since.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public long HueKeyAt(int index) => _hueKeys[index];
+
+        /// <summary>A key for <see cref="SetHue(int, float, float, long)"/>: never 0 for an epoch other than 0.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static long HueKey(int epoch, ushort hue) => ((long)(uint)epoch << 16) | hue;
+
+        /// <summary>The sprite's current vertex hue (X = hue index, Y = shader type).</summary>
+        public void GetHue(int index, out float hueX, out float hueY)
+        {
+            ref var v = ref Vertices[index];
+            hueX = v.Hue0.X;
+            hueY = v.Hue0.Y;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void WriteHue(int index, float hueX, float hueY)
         {
             ref var v = ref Vertices[index];
             if (v.Hue0.X == hueX && v.Hue0.Y == hueY)
@@ -357,6 +393,7 @@ namespace ClassicUO.Renderer
 
         public void Reset()
         {
+            Array.Clear(_hueKeys);
             Count = 0;
             VisibleSpriteCount = 0;
             VisibleRunCount = 0;
@@ -370,6 +407,7 @@ namespace ClassicUO.Renderer
         /// </summary>
         public void SoftReset()
         {
+            Array.Clear(_hueKeys);
             Count = 0;
             VisibleSpriteCount = 0;
             VisibleRunCount = 0;
