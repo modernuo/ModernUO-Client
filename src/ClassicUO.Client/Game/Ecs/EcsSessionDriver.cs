@@ -918,6 +918,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // depthmodel on|off: depth_model (clip-2, DepthModel; CUO_DEPTH_MODEL overrides it)
+                case "depthmodel" when args.Length > 0:
+                    Settings.GlobalSettings.DepthModel = args[0] == "on";
+                    Log.Info($"[ECS] driver: depth_model {Settings.GlobalSettings.DepthModel} (effective {DepthModel.On})");
+
+                    return false;
+
                 // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
                 case "renderer" when args.Length > 0:
                 {

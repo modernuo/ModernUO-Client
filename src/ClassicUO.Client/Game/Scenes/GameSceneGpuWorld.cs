@@ -382,6 +382,7 @@ namespace ClassicUO.Game.Scenes
             FinishGpuCollect();
             gpu.SetOffset(_offset.X, _offset.Y);
             gpu.SetZHiding(_maxZ, _maxGroundZ, _noDrawRoofs);
+            gpu.GeometricDepth = DepthModel.On;
 
             if (_gpuTintAll)
             {

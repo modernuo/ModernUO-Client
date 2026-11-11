@@ -342,6 +342,12 @@ namespace ClassicUO.Game.Scenes
         }
 
         /// <summary>GameScene's _maxZ / _maxGroundZ / _noDrawRoofs, applied to baked land and statics in the shader.</summary>
+        /// <summary>clip-2 depth model (DepthModel): per-pixel geometric depth on the world renderer.</summary>
+        public bool GeometricDepth
+        {
+            set => _world.GeometricDepth = value;
+        }
+
         public void SetZHiding(int maxZ, int maxGroundZ, bool hideRoofs)
         {
             _world.SetZHiding(maxZ, maxGroundZ, hideRoofs);

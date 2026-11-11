@@ -28,7 +28,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var x = new MobileSpriteExtract(null);
             x.Begin(null, 0, 0);
-            x.Replay(c, dx, dy, depth, objX, dx, dy);
+            x.Replay(c, dx, dy, depth, objX, dx, dy, 0);
 
             return x.Instances.ToArray();
         }
@@ -78,8 +78,8 @@ namespace ClassicUO.UnitTests.Ecs
             // second replay at another position within the same Begin: the first emission must survive
             var xs = new MobileSpriteExtract(null);
             xs.Begin(null, 0, 0);
-            xs.Replay(c, 100, 0, 5f, 1, 100, 0);
-            xs.Replay(c, 120, 0, 5f, 1, 120, 0);
+            xs.Replay(c, 100, 0, 5f, 1, 100, 0, 0);
+            xs.Replay(c, 120, 0, 5f, 1, 120, 0, 0);
             SpriteInstance[] both = xs.Instances.ToArray();
 
             Assert.Equal(6, both.Length);

@@ -194,6 +194,7 @@ namespace ClassicUO.Game
             ref readonly MobileRenderState rs = ref data.Get<MobileRenderState>();
             ref readonly EquipmentSlots eq = ref data.Get<EquipmentSlots>();
             _objX = data.Get<Position>().X;
+            _objZ = data.Get<Position>().Z;
             _fiX = _fiY = _fiW = _fiH = 0;
             ushort bodyHue = data.Get<Hue>().Value;
 
@@ -407,9 +408,9 @@ namespace ClassicUO.Game
                 }
             }
 
-#if CUO_DEVTOOLS
             int anchorX = x, anchorY = y;
-#endif
+            _geoAnchorX = anchorX;
+            _geoAnchorY = anchorY;
             x -= mirror ? w - fe.CenterX : fe.CenterX;
             y -= h + fe.CenterY;
 
@@ -501,7 +502,11 @@ namespace ClassicUO.Game
                 Hue = hue,
                 Depth = DepthOf(baseDepth, kind, add),
                 ObjX = _objX,
-                SitMod = sitMod
+                SitMod = sitMod,
+                GeoAx = (short)Math.Clamp(_geoAnchorX - px, short.MinValue, short.MaxValue),
+                GeoAy = (short)Math.Clamp(_geoAnchorY - py, short.MinValue, short.MaxValue),
+                GeoZ = _objZ,
+                Geo = true
             };
 
             if (_selectOnly)
@@ -539,6 +544,10 @@ namespace ClassicUO.Game
         // the seated body's waist and knee rows for its equipment (MobileView's statics), and whether the mobile is human
         private SitDeform.BodyRows _sitRows;
         private bool _human;
+
+        // clip-2 depth model: the current Layer's anchor and the mobile's z (DynamicSprite.GeoAx/GeoAy/GeoZ)
+        private int _geoAnchorX, _geoAnchorY;
+        private sbyte _objZ;
         private ushort _selBody;
         private byte _selGroup, _selDir, _selFrame;
         private bool _selEquip;
@@ -601,7 +610,7 @@ namespace ClassicUO.Game
                 int objX = data.Get<Position>().X;
                 int lightStart = _lightCount;
                 int start = _count;
-                Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, objX, baseX, baseY);
+                Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, objX, baseX, baseY, data.Get<Position>().Z);
 
 #if CUO_DEVTOOLS
                 if (MobileAnimationSystem.CacheCheck)
@@ -680,7 +689,7 @@ namespace ClassicUO.Game
         /// </list>
         /// The instances are then exposed as a view when this is the first thing emitted since Begin, else appended to _out.
         /// </summary>
-        internal void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY)
+        internal void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY, sbyte z)
         {
             // a pending view aliases cache.Abs when this cache was replayed earlier since Begin: keep it before Abs changes
             MaterializeView();
@@ -694,11 +703,11 @@ namespace ClassicUO.Game
                     abs = cache.Abs = new SpriteInstance[Math.Max(n, 16)];
                 }
 
-                RebuildAbs(cache, abs, n, dx, dy, depth, objX);
+                RebuildAbs(cache, abs, n, dx, dy, depth, objX, z);
             }
             else if (cache.AbsDepth != depth || cache.AbsObjX != objX)
             {
-                RebuildAbs(cache, abs, n, dx, dy, depth, objX);
+                RebuildAbs(cache, abs, n, dx, dy, depth, objX, z);
             }
             else if (cache.AbsDx != dx || cache.AbsDy != dy)
             {
@@ -746,7 +755,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private static void RebuildAbs(MobileFrameCache cache, SpriteInstance[] abs, int n, int dx, int dy, float depth, int objX)
+        private static void RebuildAbs(MobileFrameCache cache, SpriteInstance[] abs, int n, int dx, int dy, float depth, int objX, sbyte z)
         {
             for (int i = 0; i < n; i++)
             {
@@ -756,6 +765,12 @@ namespace ClassicUO.Game
                 inst.X += dx;
                 inst.Y += dy;
                 inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(DepthOf(depth, entry.Kind, entry.Add) * 100f) - 50, objX, RANK_MOBILE);
+
+                // clip-2: the recorded layers carry the z of their record; a z change also changes the depth, so it lands here
+                if (inst.TryGeoMobile(out int adx, out int ady, out int rz) && rz != z)
+                {
+                    inst.GeoMobile(adx, ady, z);
+                }
             }
 
             cache.AbsValid = true;

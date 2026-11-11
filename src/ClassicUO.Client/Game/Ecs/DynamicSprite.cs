@@ -84,6 +84,12 @@ namespace ClassicUO.Game
         /// <summary><see cref="DynamicSpriteFlags.Sitted"/>: DrawCharacterSitted's section modifier.</summary>
         public Vector3 SitMod;
 
+        /// <summary>clip-2 depth model: a mobile layer's composite anchor (MobileView's draw point) relative to
+        /// (<see cref="X"/>, <see cref="Y"/>), and the mobile's z; <see cref="Geo"/> false for everything else.</summary>
+        public short GeoAx, GeoAy;
+        public sbyte GeoZ;
+        public bool Geo;
+
         public readonly bool Flipped => (Flags & DynamicSpriteFlags.Flip) != 0;
     }
 
@@ -136,6 +142,18 @@ namespace ClassicUO.Game
 
             int before = count;
             WriteFrame(in t, ref buffer, ref count, s.Id, s.X + offsetX, s.Y + offsetY, s.SrcY, s.SrcH, s.Hue, flip, s.Depth, s.ObjX, s.Rank);
+
+            // clip-2 depth model: every instance of a mobile layer carries the composite's anchor (read only by the geometric
+            // pipelines; the key path ignores it). Not shadows (sheared, translucent) or seated sections (Corners in use).
+            if (s.Geo && (s.Flags & DynamicSpriteFlags.Sitted) == 0 && (int)s.Hue.Y != ShaderHueTranslator.SHADER_SHADOW)
+            {
+                int ax = s.X + offsetX + s.GeoAx, ay = s.Y + offsetY + s.GeoAy;
+
+                for (int c = before; c < count; c++)
+                {
+                    buffer[c].GeoMobile(ax - buffer[c].X, ay - buffer[c].Y, s.GeoZ);
+                }
+            }
 
             if ((s.Flags & DynamicSpriteFlags.Sitted) != 0 && count > before)
             {
