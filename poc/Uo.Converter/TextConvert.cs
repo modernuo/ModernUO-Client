@@ -157,14 +157,18 @@ public static class TextConvert
     public static HashSet<string> ClilocSkip = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>--no-cliloc-overrides: don't fold the client folder's Clilocs.txt into text/cliloc.bin.</summary>
     public static bool ClilocOverridesOff;
+    /// <summary>--cliloc-overrides file: fold this Clilocs.txt instead of the client folder's (a shard keeps it outside the install).</summary>
+    public static string? ClilocOverridesPath;
 
     /// <summary>The Cliloc.* language files of the client folder (<see cref="ClilocDiscovery.Find"/>), enu first; throws when none is left.</summary>
     public static List<(string Lang, string Path)> ClilocFiles(string folder) =>
         ClilocDiscovery.Find(folder, ClilocSkip, m => Console.WriteLine($"  cliloc: {m}"));
 
-    public static string Cliloc(UOFileManager fm, string outDir)
+    public static string Cliloc(UOFileManager fm, string outDir) => Cliloc(fm.BasePath, outDir);
+
+    public static string Cliloc(string folder, string outDir)
     {
-        var files = ClilocFiles(fm.BasePath);
+        var files = ClilocFiles(folder);
         var raws = new byte[files.Count][];
         var counts = new int[files.Count];
         Parallel.For(0, files.Count, ConvertOptions.Par, i =>
@@ -173,7 +177,7 @@ public static class TextConvert
             counts[i] = entries.Count;
             raws[i] = ClilocTable.Build(entries.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
         });
-        var ours = OverridesFile(fm.BasePath);
+        var ours = OverridesFile(folder);
         var w = new RecordStoreWriter(files.Count + (ours != null ? 1 : 0));
         long raw = 0, stored = 0;
         var parts = new List<string>();
@@ -201,10 +205,15 @@ public static class TextConvert
         return $"{files.Count} languages ({string.Join(", ", parts)}), {raw / 1048576.0:F2} MiB -> {new FileInfo(path).Length / 1048576.0:F2} MiB";
     }
 
-    /// <summary>The client folder's Clilocs.txt (the shard's own strings), or null when there is none or it is switched off.</summary>
+    /// <summary>The shard's own strings: --cliloc-overrides' file when given (it must exist), else the client folder's Clilocs.txt; null when there is none or it is switched off.</summary>
     public static Dictionary<int, string>? OverridesFile(string folder)
     {
         if (ClilocOverridesOff) return null;
+        if (ClilocOverridesPath != null)
+        {
+            if (!File.Exists(ClilocOverridesPath)) throw new FileNotFoundException($"--cliloc-overrides: '{ClilocOverridesPath}' not found");
+            return ClilocOverrides.Parse(File.ReadLines(ClilocOverridesPath));
+        }
         var p = Directory.EnumerateFiles(folder).FirstOrDefault(f => string.Equals(Path.GetFileName(f), ClilocOverrides.FileName, StringComparison.OrdinalIgnoreCase));
         return p == null ? null : ClilocOverrides.Parse(File.ReadLines(p));
     }

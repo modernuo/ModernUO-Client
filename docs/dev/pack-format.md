@@ -479,7 +479,7 @@ A record store with magic `CLIL` (0x4C494C43): one record per language, and at m
   | blob | UTF-8, the strings back to back in id order |
 
   A string is the UTF-8 encoding of the client's decoded text (cut at the first NUL, invalid bytes as U+FFFD). Ship profile: codec 0 (`--cliloc-brotli` stores the whole record as one Brotli stream).
-- **Overrides record:** the converter folds the client folder's `Clilocs.txt` into a flat record of its own (`--no-cliloc-overrides` leaves it out), parsed by `ClilocOverrides.Parse`, the same rules the client uses for the loose file: one "number text" per line, a tab or the first run of spaces between them, blank lines and `#` lines skipped, a later line wins.
+- **Overrides record:** the converter folds the client folder's `Clilocs.txt`, or the file named by `--cliloc-overrides`, into a flat record of its own (`--no-cliloc-overrides` leaves it out), parsed by `ClilocOverrides.Parse`, the same rules the client uses for the loose file: one "number text" per line, a tab or the first run of spaces between them, blank lines and `#` lines skipped, a later line wins.
 - **Lookups:** the client reads the language's record and, for any other language, enu's, plus the overrides record. A lookup tries, in order: a loose `Clilocs.txt` in the client folder, the pack's overrides record, the language, then enu.
 - **Converter discovery** (`ClilocDiscovery.Find`): files whose name starts with `Cliloc.` in any case; the extension (1-4 ASCII letters or digits) is the language code. Exports and backups beside them are told apart by content, not by name: a cliloc file is BWT-compressed (byte 3 = 0x8E) or a raw table whose records add up exactly to the file's end. `--cliloc-skip a,b` drops more by extension. No language left, no enu, or two files for one code (names differing only in case) fail the conversion.
 
@@ -632,7 +632,7 @@ Decode cost on one worker (desktop CPU): an anim page about 2.6 ms, an art page 
 | World map images | `MultiMapLoader` (Multimap.rle, facet*.mul) | |
 | Anim1.def / Anim2.def group replaces, animinfo.mul, sitting tables | `AnimationsLoader` and client tables | runtime fallbacks for mounts and missing groups |
 
-`Clilocs.txt` (a shard's own cliloc strings) stays a plain text file in the client folder, read at load on top of the pack's tables; the converter also folds it into the overrides record.
+`Clilocs.txt` (a shard's own cliloc strings) is folded into the pack's overrides record at conversion; a loose `Clilocs.txt` in the client folder is still read at load and wins over the packed record, so a shard can ship an edit without a new pack.
 
 Picking needs CPU-side alpha. The client decodes pack pages on the CPU (B5G5R5A1 bit 15; Indexed8 index other than 0), and gump records likewise (the picker mask is built from the decoded image at upload). Mask sidecars are not part of the format.
 
