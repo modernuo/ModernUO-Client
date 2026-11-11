@@ -22,7 +22,8 @@ namespace ClassicUO.UnitTests.Ecs
             "ecs_effects",
             "ecs_step_mount_inputs",
             "ecs_item_offset",
-            "ecs_boat_steps"
+            "ecs_boat_steps",
+            "ecs_small_fields"
         };
 
         [Fact]

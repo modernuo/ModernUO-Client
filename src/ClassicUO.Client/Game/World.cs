@@ -539,31 +539,8 @@ namespace ClassicUO.Game
         /// <summary>T6c: Mobile.Update runs it instead of ProcessSteps while <see cref="WorldEcs.StepsEnabled"/>.</summary>
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
 
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_SMALL_FIELDS=1|0)
-        private static readonly bool? _envSmallFields = System.Environment.GetEnvironmentVariable("CUO_ECS_SMALL_FIELDS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envSmallFields = null;
-#endif
-
-        private static class SmallFieldsSwitch
-        {
-            public static readonly bool On = _envSmallFields ?? Settings.GlobalSettings.EcsSmallFields;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? SmallFieldsOverride;
-
         /// <summary>Tests: CUO_SMALL_FIELDS_CHECK for this World (null: the environment).</summary>
         internal bool? SmallFieldsCheckOverride;
-
-        /// <summary><c>ecs_small_fields</c>: the small cold fields are read from the ECS record (<see cref="SmallFields"/>).</summary>
-        internal bool SmallFieldsOn => SmallFieldsOverride ?? SmallFieldsSwitch.On;
 
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);

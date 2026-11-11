@@ -241,7 +241,7 @@ namespace ClassicUO.Game.GameObjects
         private long _lastStepSoundTime;
         public byte AnimationFrameCount { get => _animationFrameCount; set { FunnelCheck.Write(this, FunnelField.AnimationFrameCount); _animationFrameCount = value; } }
         public bool AnimationFromServer { get => _animationFromServer; set { FunnelCheck.Write(this, FunnelField.AnimationFromServer); _animationFromServer = value; } }
-        // ecs_small_fields: the record's MobileTraits with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
+        // the record's MobileTraits (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
         public bool IsRenamable
         {
             get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.IsRenamable, ClassicUO.Ecs.MobileTraitBits.Renamable, _isRenamable) : _isRenamable;

@@ -187,7 +187,7 @@ namespace ClassicUO.Game.GameObjects
         public ushort Amount { get { ScalarReads.Count(ScalarField.Amount); return _amount; } set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
         public uint Container { get { ScalarReads.Count(ScalarField.Container); return _container; } set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
 
-        // ecs_small_fields: the record's ItemTraits with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
+        // the record's ItemTraits (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
         public bool IsDamageable
         {
             get => SmallFields.Routed(World) ? SmallFields.ItemBit(this, SmallField.IsDamageable, ClassicUO.Ecs.ItemTraitBits.Damageable, _isDamageable) : _isDamageable;

@@ -171,7 +171,7 @@ namespace ClassicUO.Game
 
             if (i.IsCorpse)
             {
-                // only the corpse draw reads these (UsedLayer is a small-field ECS read with ecs_small_fields on)
+                // only the corpse draw reads these (UsedLayer is a small-field ECS read)
                 i.AnimIndex = item.AnimIndex;
                 i.UsedLayer = item.UsedLayer;
                 i.CorpseHidden = world.CorpseManager.Exists(i.Serial, 0);
