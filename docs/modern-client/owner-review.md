@@ -4,7 +4,11 @@ Open owner decisions, decisions already made, and queued work. History (what mer
 
 ## 1. Needs you
 
-- **FPS test:** you run `tools/fps-test/run-fps-test.ps1 -Username kbatman` with no agent clients running and send the `results-<timestamp>.md` path. The published build (cd670ceb9, 2026-10-26) predates T4-T9; a fresh build is published once the current merges land.
+- **FPS test:** the coordinator now runs it unattended as a bench job (`CUO_FPS_TEST_PASSWORD` from the runner's environment) with no agent builds or jobs running, after the T9 work and before the quiet timing pass. Nothing to do unless you want to run it yourself.
+- **Rest of T9: the hot caches** (survey `cuo-poc-state/surveys/t9-remaining-2026-11-11.md`). Proceeding with the defaults below unless you say otherwise:
+  1. X/Y/Z (about 940 read sites each): *default:* keep one position cache written only by the funnel, as the last hot field. Moving every reader (render walks included) to the record or to snapshots costs a large slice and risks Legacy `world_prepare`. The alternative is a full move, measured.
+  2. Packs without animation tables: *default:* a pack made with the converter's `--no-anims` (a dev/test option) is not supported for play: mobiles draw nothing there, and `MobileView.Draw` goes with the other view fallbacks. The alternative keeps the view path for that case only.
+  3. Perf switches (`gpu_prepare_*`, `ui_render_cache`, `text_skip_expired`) and their checkers: *default:* keep them as toggles until the final quiet pass, then delete the ones that are clearly better on.
 
 ## 2. Decisions made
 
