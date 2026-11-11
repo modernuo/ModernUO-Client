@@ -19,7 +19,16 @@ namespace ClassicUO.UnitTests.Ecs
             "world_item_anim_system",
             "world_anim_system",
             "world_step_system",
-            "ecs_effects"
+            "ecs_effects",
+            "ecs_step_mount_inputs",
+            "ecs_item_offset",
+            "ecs_boat_steps",
+            "ecs_small_fields",
+            "ecs_active_items_source",
+            "ecs_effect_motion",
+            "ecs_effect_endpoints",
+            "ecs_effect_sprites",
+            "world_tile_index"
         };
 
         [Fact]

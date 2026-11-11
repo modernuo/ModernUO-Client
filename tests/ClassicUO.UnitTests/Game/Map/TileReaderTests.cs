@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using ClassicUO.Assets;
 using ClassicUO.Game;
@@ -13,7 +14,8 @@ namespace ClassicUO.UnitTests.Game.Map
     /// <summary>
     /// T6b part 2: the readers that moved to <see cref="TileReader"/> (GetMapZ's and CalculateNearZ's scans, the max-Z
     /// decision, the pathfinder, targeting, foliage, sitting, HasNoExternalData, the season change) give the same results from
-    /// the tile list and from the merged walk (the list's other objects plus the DynamicTileIndex).
+    /// the merged walk (the list's land, statics and multis plus the DynamicTileIndex) as the pre-T6b readers over the legacy
+    /// list order (<see cref="LegacyTileOrder"/>).
     /// </summary>
     [Collection("ChunkStaticTileDataCollection")]
     public sealed class TileReaderTests : IDisposable
@@ -23,7 +25,6 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public TileReaderTests()
@@ -33,13 +34,6 @@ namespace ClassicUO.UnitTests.Game.Map
             data[RoofB].Flags = TileFlag.Roof;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
-            _savedMaintain = DynamicTileIndex.Maintain;
-            _savedDropped = DynamicTileIndex.ListDropped;
-            _savedShadow = DynamicTileIndex.Shadow;
-            DynamicTileIndex.Maintain = true;
-            // the list and the merged walk are compared, so the list keeps the dynamics (world_tile_index's list-kept mode)
-            DynamicTileIndex.ListDropped = false;
-            DynamicTileIndex.Shadow = false;
             _a = new Chunk(_world) { X = 0, Y = 0 };
             ChairTable.Table[Chair] = new AnimationsLoader.SittingInfoData(Chair, 1, 2, 3, 4, 5, 6, false);
             ChairTable.Table[Chair + 1] = new AnimationsLoader.SittingInfoData(Chair + 1, 1, 2, 3, 4, 5, 6, false);
@@ -48,9 +42,6 @@ namespace ClassicUO.UnitTests.Game.Map
         public void Dispose()
         {
             Chunk.StaticTileData = _savedStaticData;
-            DynamicTileIndex.Maintain = _savedMaintain;
-            DynamicTileIndex.ListDropped = _savedDropped;
-            DynamicTileIndex.Shadow = _savedShadow;
             ChairTable.Table.Remove(Chair);
             ChairTable.Table.Remove((ushort)(Chair + 1));
         }
@@ -88,11 +79,11 @@ namespace ClassicUO.UnitTests.Game.Map
             _a.AddGameObject(obj, x, y);
         }
 
-        private static List<GameObject> Read(Chunk chunk, int cell, bool merged, GameObject from)
+        private static List<GameObject> Read(Chunk chunk, int cell, GameObject from)
         {
             var seq = new List<GameObject>();
 
-            for (GameObject o = TileReader.Open(chunk, cell, merged, from, out TileReader r); o != null; o = r.Next())
+            for (GameObject o = TileReader.Open(chunk, cell, from, out TileReader r); o != null; o = r.Next())
             {
                 seq.Add(o);
                 Assert.True(seq.Count < 100_000, "reader does not end");
@@ -101,12 +92,22 @@ namespace ClassicUO.UnitTests.Game.Map
             return seq;
         }
 
+        // the pre-T6b scans' sequence: the legacy list order from the land anchor (on a tile with land) or from its head
+        private static IEnumerable<GameObject> OldScan(Chunk chunk, int cx, int cy)
+        {
+            List<GameObject> legacy = LegacyTileOrder.Of(chunk, cx << 3 | cy);
+            int start = chunk.Tiles[cx, cy] is Land land ? legacy.IndexOf(land) : 0;
+            Assert.True(start >= 0);
+
+            return legacy.Skip(start);
+        }
+
         // the pre-T6b readers, kept here as the oracle
         private static void OldScanMapZ(Chunk chunk, int cx, int cy, out sbyte groundZ, out sbyte staticZ)
         {
             groundZ = staticZ = 0;
 
-            for (GameObject obj = ClassicUO.Game.Map.Map.ScanStart(chunk, cx, cy); obj != null; obj = obj.TNext)
+            foreach (GameObject obj in OldScan(chunk, cx, cy))
             {
                 if (obj is Land)
                 {
@@ -121,7 +122,7 @@ namespace ClassicUO.UnitTests.Game.Map
 
         private static GameObject OldNearRoof(Chunk chunk, int cx, int cy, int z, StaticTiles[] tiles)
         {
-            for (GameObject obj = ClassicUO.Game.Map.Map.ScanStart(chunk, cx, cy); obj != null; obj = obj.TNext)
+            foreach (GameObject obj in OldScan(chunk, cx, cy))
             {
                 if (!(obj is Static) && !(obj is Multi) || obj.Graphic >= tiles.Length)
                 {
@@ -137,6 +138,21 @@ namespace ClassicUO.UnitTests.Game.Map
             }
 
             return null;
+        }
+
+        private static bool OldFindChair(Mobile m, out AnimationsLoader.SittingInfoData data)
+        {
+            foreach (GameObject o in LegacyTileOrder.Of(m.TileChunk, m.TileCell))
+            {
+                if ((o is Item || o is Static || o is Multi) && Math.Abs(m.Z - o.Z) <= 1 && ChairTable.Table.TryGetValue(o.Graphic, out data))
+                {
+                    return true;
+                }
+            }
+
+            data = AnimationsLoader.SittingInfoData.Empty;
+
+            return false;
         }
 
         // Fills the chunk with random objects: some tiles landless, items/mobiles at Z below and above the land, multis, statics.
@@ -175,7 +191,7 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
-        public void Reader_Sequence_From_The_Head_And_From_Every_Object_Equals_The_List()
+        public void Reader_Sequence_From_The_Head_And_From_Every_Object_Equals_The_Legacy_List()
         {
             Fill(new Random(11), 400);
 
@@ -184,13 +200,12 @@ namespace ClassicUO.UnitTests.Game.Map
                 for (int y = 0; y < 8; y++)
                 {
                     int cell = x << 3 | y;
-                    List<GameObject> list = Read(_a, cell, false, null);
-                    Assert.Equal(list, Read(_a, cell, true, null));
+                    List<GameObject> list = LegacyTileOrder.Of(_a, cell);
+                    Assert.Equal(list, Read(_a, cell, null));
 
                     for (int i = 0; i < list.Count; i++)
                     {
-                        Assert.Equal(list.GetRange(i, list.Count - i), Read(_a, cell, false, list[i]));
-                        Assert.Equal(list.GetRange(i, list.Count - i), Read(_a, cell, true, list[i]));
+                        Assert.Equal(list.GetRange(i, list.Count - i), Read(_a, cell, list[i]));
                     }
                 }
             }
@@ -200,14 +215,13 @@ namespace ClassicUO.UnitTests.Game.Map
         public void Reader_On_A_Chunk_Without_An_Index_Falls_Back_To_The_List()
         {
             var plain = new Chunk(_world) { X = 5, Y = 5 };
-            DynamicTileIndex.Maintain = false;
             Land land = NewLand(_world, 0);
             land.X = 40;
             land.Y = 40;
             plain.AddGameObject(land, 0, 0);
             Assert.Null(plain.Dynamic);
-            Assert.Equal(new List<GameObject> { land }, Read(plain, 0, true, null));
-            Assert.Empty(Read(plain, 9, true, null));
+            Assert.Equal(new List<GameObject> { land }, Read(plain, 0, null));
+            Assert.Empty(Read(plain, 9, null));
         }
 
         [Fact]
@@ -222,16 +236,12 @@ namespace ClassicUO.UnitTests.Game.Map
                     for (int y = 0; y < 4; y++)
                     {
                         OldScanMapZ(_a, x, y, out sbyte g0, out sbyte s0);
+                        ClassicUO.Game.Map.Map.ScanMapZ(_a, x, y, out sbyte g, out sbyte s);
+                        Assert.Equal((g0, s0), (g, s));
 
-                        foreach (bool merged in new[] { false, true })
+                        for (int z = -8; z < 40; z += 3)
                         {
-                            ClassicUO.Game.Map.Map.ScanMapZ(_a, x, y, merged, out sbyte g, out sbyte s);
-                            Assert.Equal((g0, s0), (g, s));
-
-                            for (int z = -8; z < 40; z += 3)
-                            {
-                                Assert.Same(OldNearRoof(_a, x, y, z, Chunk.StaticTileData), ClassicUO.Game.Map.Map.FindNearRoof(_a, x, y, z, Chunk.StaticTileData, merged));
-                            }
+                            Assert.Same(OldNearRoof(_a, x, y, z, Chunk.StaticTileData), ClassicUO.Game.Map.Map.FindNearRoof(_a, x, y, z, Chunk.StaticTileData));
                         }
                     }
                 }
@@ -244,34 +254,27 @@ namespace ClassicUO.UnitTests.Game.Map
             Place(NewItem(Plain, 9), 1, 1);
             Place(NewMobile(14), 1, 1);
 
-            foreach (bool merged in new[] { false, true })
-            {
-                ClassicUO.Game.Map.Map.ScanMapZ(_a, 1, 1, merged, out sbyte g, out sbyte s);
-                Assert.Equal(((sbyte)0, (sbyte)14), (g, s));
-            }
+            ClassicUO.Game.Map.Map.ScanMapZ(_a, 1, 1, out sbyte g, out sbyte s);
+            Assert.Equal(((sbyte)0, (sbyte)14), (g, s));
         }
 
         [Fact]
-        public void The_Land_Anchor_Skips_Objects_Sorted_Before_The_Land_In_Both_Walks()
+        public void The_Land_Anchor_Skips_Objects_Sorted_Before_The_Land()
         {
             // legacy scan start (T6a): on a tile with land the scan starts at the land, so a lower-priority object before it is not read
             Land land = NewLand(_world, 10);
             Place(land, 2, 2);
             Item below = NewItem(Plain, 5); // priority below the land's: sorted before it
             Place(below, 2, 2);
-            Assert.Same(below, _a.GetHeadObject(2, 2));
+            Assert.Same(below, LegacyTileOrder.Of(_a, 2 << 3 | 2)[0]);
             OldScanMapZ(_a, 2, 2, out sbyte g0, out sbyte s0);
             Assert.Equal(((sbyte)10, (sbyte)0), (g0, s0));
-
-            foreach (bool merged in new[] { false, true })
-            {
-                ClassicUO.Game.Map.Map.ScanMapZ(_a, 2, 2, merged, out sbyte g, out sbyte s);
-                Assert.Equal((g0, s0), (g, s));
-            }
+            ClassicUO.Game.Map.Map.ScanMapZ(_a, 2, 2, out sbyte g, out sbyte s);
+            Assert.Equal((g0, s0), (g, s));
         }
 
         [Fact]
-        public void Chair_Search_Is_The_Same_In_Both_Walks_And_Sees_Items()
+        public void Chair_Search_Is_The_Legacy_One_And_Sees_Items()
         {
             for (int seed = 0; seed < 6; seed++)
             {
@@ -281,8 +284,8 @@ namespace ClassicUO.UnitTests.Game.Map
                 {
                     if (o is Mobile m && m.TileChunk != null)
                     {
-                        bool a = m.FindChair(false, out var da);
-                        bool b = m.FindChair(true, out var db);
+                        bool a = OldFindChair(m, out var da);
+                        bool b = m.FindChair(out var db);
                         Assert.Equal(a, b);
                         Assert.Equal(da, db);
                     }
@@ -292,9 +295,7 @@ namespace ClassicUO.UnitTests.Game.Map
             Mobile sitter = NewMobile(4);
             Place(sitter, 3, 3);
             Place(NewItem(Chair, 5), 3, 3); // an item chair at the mobile's Z +1, found only if the walk reaches items
-            Assert.True(sitter.FindChair(true, out var found));
-            Assert.Equal(Chair, found.Graphic);
-            Assert.True(sitter.FindChair(false, out found));
+            Assert.True(sitter.FindChair(out var found));
             Assert.Equal(Chair, found.Graphic);
         }
 
@@ -307,23 +308,19 @@ namespace ClassicUO.UnitTests.Game.Map
             Place(first, 3, 3);
             Place(NewStatic(Chair + 1, 4), 3, 3);
 
-            foreach (bool merged in new[] { false, true })
-            {
-                Assert.True(sitter.FindChair(merged, out var d));
-                Assert.Equal(Chair, d.Graphic);
-            }
+            Assert.True(sitter.FindChair(out var d));
+            Assert.Equal(Chair, d.Graphic);
         }
 
         [Fact]
-        public void An_Unplaced_Mobile_Has_No_Chair_In_Either_Walk()
+        public void An_Unplaced_Mobile_Has_No_Chair()
         {
             Mobile loose = NewMobile(0);
-            Assert.False(loose.FindChair(false, out _));
-            Assert.False(loose.FindChair(true, out _));
+            Assert.False(loose.FindChair(out _));
         }
 
         [Fact]
-        public void HasNoExternalData_Is_False_For_A_Chunk_With_An_Item_Or_Mobile_In_Both_Walk_Settings()
+        public void HasNoExternalData_Is_False_For_A_Chunk_With_An_Item_Or_Mobile()
         {
             Place(NewLand(_world, 0), 0, 0);
             Place(NewStatic(Plain, 0), 0, 0);
@@ -332,39 +329,13 @@ namespace ClassicUO.UnitTests.Game.Map
             Item item = NewItem(Plain, 0);
             Place(item, 0, 0);
             Assert.False(_a.HasNoExternalData());
-#if CUO_DEVTOOLS
-            bool saved = DynamicTileIndex.WalkOn;
-            DynamicTileIndex.WalkOn = true;
-
-            try
-            {
-                Assert.False(_a.HasNoExternalData());
-                item.RemoveFromTile();
-                Assert.True(_a.HasNoExternalData());
-                Mobile mob = NewMobile(0);
-                Place(mob, 7, 7);
-                Assert.False(_a.HasNoExternalData());
-                mob.RemoveFromTile();
-                Assert.True(_a.HasNoExternalData());
-            }
-            finally
-            {
-                DynamicTileIndex.WalkOn = saved;
-            }
-#endif
-        }
-
-        [Fact]
-        public void Foliage_Check_Compares_Object_Identity_And_Multiplicity_Not_Counts()
-        {
-            Static a = NewStatic(Plain, 0), b = NewStatic(Plain, 0), c = NewStatic(Plain, 0);
-
-            Assert.True(TileOrder.SameObjects(new List<GameObject> { a, b, b }, new List<GameObject> { b, a, b }));
-            Assert.True(TileOrder.SameObjects(new List<GameObject>(), new List<GameObject>()));
-            // the merged walk misses A and repeats B: same count, different objects
-            Assert.False(TileOrder.SameObjects(new List<GameObject> { a, b }, new List<GameObject> { b, b }));
-            Assert.False(TileOrder.SameObjects(new List<GameObject> { a, b }, new List<GameObject> { a, c }));
-            Assert.False(TileOrder.SameObjects(new List<GameObject> { a }, new List<GameObject> { a, a }));
+            item.RemoveFromTile();
+            Assert.True(_a.HasNoExternalData());
+            Mobile mob = NewMobile(0);
+            Place(mob, 7, 7);
+            Assert.False(_a.HasNoExternalData());
+            mob.RemoveFromTile();
+            Assert.True(_a.HasNoExternalData());
         }
 
         [Fact]

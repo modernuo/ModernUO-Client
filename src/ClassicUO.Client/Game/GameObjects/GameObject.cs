@@ -208,14 +208,12 @@ namespace ClassicUO.Game.GameObjects
                 TileChunk.OnTileContentChanged(this);
                 // Chunk.Tiles[cell] must not keep pointing at an object that left (it is how the walk finds the list)
                 TileChunk.ReleaseAnchor(this);
-                // T6b: the dynamic index follows the list (part 3, list dropped: the index alone holds the dynamics; their
-                // TNext/TPrevious stay null, so the unlink below and ReleaseAnchor, which never sees them as the anchor, are no-ops)
+                // T6b part 3: the index alone holds the dynamics; their TNext/TPrevious stay null, so the unlink below and
+                // ReleaseAnchor, which never sees them as the anchor, are no-ops
                 if (TileChunk.Dynamic != null && DynamicTileIndex.Holds(this))
                 {
                     TileChunk.Dynamic.Remove(this, TileCell);
                 }
-                // CUO_TILE_ORDER_CHECK with the list dropped: the legacy order's shadow
-                TileChunk.Shadow?.Remove(this, TileCell);
                 TileChunk = null;
             }
 
@@ -597,8 +595,8 @@ namespace ClassicUO.Game.GameObjects
         }
 
         /// <summary><see cref="CanBeDrawn(World, ushort)"/> with the player's race already read: a caller that tests many
-        /// graphics in one synchronous pass (a chunk's statics, a multi's components) reads it once, since with
-        /// <c>ecs_small_fields</c> each <see cref="Mobile.Race"/> read is an ECS lookup.</summary>
+        /// graphics in one synchronous pass (a chunk's statics, a multi's components) reads it once, since each
+        /// <see cref="Mobile.Race"/> read is an ECS lookup.</summary>
         public static bool CanBeDrawn(ushort g, bool playerIsGargoyle)
         {
             ClassicUO.Assets.StaticTiles[] data = Client.Game != null ? Client.Game.UO.FileManager.TileData.StaticData : TestStaticData;
@@ -609,8 +607,8 @@ namespace ClassicUO.Game.GameObjects
             return CanBeDrawn(data, g, playerIsGargoyle);
         }
 
-        /// <summary>The only player input of <see cref="CanBeDrawn(World, ushort)"/>. Game thread only (with
-        /// <c>ecs_small_fields</c> the race is an unsynchronized ECS read); the player is read once, so a logout between two
+        /// <summary>The only player input of <see cref="CanBeDrawn(World, ushort)"/>. Game thread only (the
+        /// race is an unsynchronized ECS read); the player is read once, so a logout between two
         /// reads cannot see it go null.</summary>
         public static bool PlayerIsGargoyle(World world)
         {

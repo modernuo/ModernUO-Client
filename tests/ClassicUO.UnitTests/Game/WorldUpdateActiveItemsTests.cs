@@ -42,12 +42,10 @@ namespace ClassicUO.UnitTests.Game
             Assert.True(item.NeedsFrameUpdate);
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)] // ecs_active_items_source (default on): membership is the item's ActiveItemEntry
-        public void QueueItemUpdate_Lists_An_Item_Once(bool source)
+        [Fact]
+        public void QueueItemUpdate_Lists_An_Item_Once()
         {
-            var world = new World { ActiveItemsSourceOverride = source };
+            var world = new World();
             Item a = world.GetOrCreateItem(0x40000002);
             Item b = world.GetOrCreateItem(0x40000003);
 

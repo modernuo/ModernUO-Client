@@ -23,13 +23,13 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// <c>ecs_small_fields</c> (wave 1C): the small cold fields are ECS-owned. WorldWriter's operations commit them to the
-    /// record's <see cref="ItemTraits"/> (Item <c>LightID</c>, <c>IsDamageable</c>, <c>UsedLayer</c>) and
-    /// <see cref="MobileTraits"/> (Mobile <c>Race</c>, <c>SpeedMode</c>, <c>IsFemale</c>, <c>IsRenamable</c>, the player's
-    /// <c>InWarMode</c>) before their cache writes, whatever the switch; with the switch on the getters read the record. An
-    /// instance without a held record (a preview, the detached player, a stale or destroyed instance) reads its cache, as
-    /// with the switch off. CUO_SMALL_FIELDS_CHECK=1 routes every getter through here with either switch state and compares
-    /// the record with the cache at every read.
+    /// Wave 1C: the small cold fields are ECS-owned. WorldWriter's operations commit them to the record's
+    /// <see cref="ItemTraits"/> (Item <c>LightID</c>, <c>IsDamageable</c>, <c>UsedLayer</c>) and <see cref="MobileTraits"/>
+    /// (Mobile <c>Race</c>, <c>SpeedMode</c>, <c>IsFemale</c>, <c>IsRenamable</c>, the player's <c>InWarMode</c>) before
+    /// their cache writes, and the getters read the record (T9 deleted <c>ecs_small_fields</c>' off path). An instance
+    /// without a held record (a preview, the detached player, a stale or destroyed instance) or without a World reads its
+    /// cache, which also seeds a record created later. CUO_SMALL_FIELDS_CHECK=1 compares the record with the cache at every
+    /// read.
     /// </summary>
     internal static class SmallFields
     {
@@ -55,9 +55,9 @@ namespace ClassicUO.Game
             _logAt = 0;
         }
 
-        /// <summary>Whether a getter asks here: the switch is on, or the checker runs.</summary>
+        /// <summary>Whether a getter asks here: the instance has a World (else it reads its cache).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static bool Routed(World world) => world != null && (world.SmallFieldsOn || Check(world));
+        internal static bool Routed(World world) => world != null;
 
         internal static byte LightId(Item item)
         {
@@ -146,7 +146,7 @@ namespace ClassicUO.Game
                 Compare(entity, field, ecs, cache);
             }
 
-            return entity.World.SmallFieldsOn ? ecs : cache;
+            return ecs;
         }
 
         private static void Compare(Entity entity, SmallField field, int ecs, int cache)
@@ -167,8 +167,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>The counters, for the periodic log line.</summary>
-        internal static string Summary(World world) =>
-            $"[small-fields-check] ecs_small_fields {(world.SmallFieldsOn ? "on" : "off")}: record reads {Reads}, fallbacks to the cache {Fallbacks}; checked {Checks}, different {Diffs}";
+        internal static string Summary() =>
+            $"[small-fields-check] record reads {Reads}, fallbacks to the cache {Fallbacks}; checked {Checks}, different {Diffs}";
 
         /// <summary>Every 5 s while the checker is on: <see cref="Summary"/> (WorldEcs.Update, once per frame).</summary>
         internal static void LogSummary(World world)
@@ -179,7 +179,7 @@ namespace ClassicUO.Game
             }
 
             _logAt = Time.Ticks + 5000;
-            Log.Info(Summary(world));
+            Log.Info(Summary());
         }
     }
 }

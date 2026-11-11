@@ -57,29 +57,7 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
-            if (UsesMotion && !EcsEntity.IsNull)
-            {
-                EffectSystem.StepFixed(this);
-
-                return;
-            }
-
-            base.Update();
-
-            if (!IsDestroyed)
-            {
-                (var x, var y, var z) = GetSource();
-
-                if (TryGetSourceOffset(out var offset))
-                {
-                    Offset = offset;
-                }
-
-                if (X != x || Y != y || Z != z)
-                {
-                    SetInWorldTile(x, y, z);
-                }
-            }
+            EffectSystem.StepFixed(this);
         }
     }
 }

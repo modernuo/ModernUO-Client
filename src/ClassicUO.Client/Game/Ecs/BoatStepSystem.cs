@@ -8,7 +8,6 @@ using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
-using ClassicUO.Utility.Logging;
 using Friflo.Engine.ECS;
 using Microsoft.Xna.Framework;
 using EcsEntity = Friflo.Engine.ECS.Entity;
@@ -35,8 +34,8 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// <c>BoatMovingManager</c>'s step timing and offset math, unchanged, shared by its dictionaries (<c>ecs_boat_steps</c> off,
-    /// and the checker's shadow) and <see cref="BoatStepSystem"/>; plus the <see cref="BoatSteps"/> ring and passenger list.
+    /// The old <c>BoatMovingManager</c>'s step timing and offset math, unchanged, used by <see cref="BoatStepSystem"/>; plus
+    /// the <see cref="BoatSteps"/> ring and passenger list.
     /// </summary>
     internal static class BoatStepRules
     {
@@ -149,43 +148,24 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// <c>ecs_boat_steps</c>: <c>BoatMovingManager.Update</c> as a system over the boats' <see cref="BoatSteps"/> and their
+    /// The old <c>BoatMovingManager.Update</c> as a system over the boats' <see cref="BoatSteps"/> and their
     /// records' <see cref="Position"/>. Once per frame (GameScene.Update, where the manager's Update ran): every boat with a
     /// queued step, in the old manager's order, decides its front step with <see cref="BoatStepRules.Decide"/> and writes
     /// through the same boat operations as before (<c>InterpolateBoat</c>, <c>FollowBoatComponents</c>, <c>FollowBoat</c>,
     /// <c>CompleteBoatStep</c>, <c>MoveBoatPassenger</c>, <c>SetBoatStepTime</c>) with the same values; the system itself
     /// only advances the ring. The boats are collected first (the operations can move a boat's record between archetypes:
-    /// ItemOffset, OnGround).
-    /// CUO_BOAT_CHECK=1 keeps the manager's dictionaries in shadow: at every decision the shadow's front step and decision
-    /// from the Item's fields are compared with the component's, and after every boat its queue, step clock and passenger
-    /// list.
+    /// ItemOffset, OnGround). T9 deleted <c>ecs_boat_steps</c>' off path (the manager's dictionaries) with CUO_BOAT_CHECK,
+    /// which kept them in shadow.
     /// </summary>
     internal sealed class BoatStepSystem
     {
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_BOAT_CHECK=1, the manager's dictionaries in shadow, compared every frame
-        public static readonly bool EnvCheck = Environment.GetEnvironmentVariable("CUO_BOAT_CHECK") == "1";
-#else
-        public static readonly bool EnvCheck = false;
-#endif
-
-        /// <summary>Tests: the checker on or off (null: the environment).</summary>
-        internal static bool? CheckOverride;
-
-        public static bool Check => CheckOverride ?? EnvCheck;
-
+        // tests read these
         public static long Frames, Boats, Interpolated, Completed, Turns, PassengerMoves, Follows, Fallbacks;
-        public static long Checks, StateChecks, DecisionDiffs, StateDiffs;
-        private static int _logged;
-        private static uint _logAt;
 
         /// <summary>Tests: the counters back to zero.</summary>
         internal static void ResetCounters()
         {
             Frames = Boats = Interpolated = Completed = Turns = PassengerMoves = Follows = Fallbacks = 0;
-            Checks = StateChecks = DecisionDiffs = StateDiffs = 0;
-            _logged = 0;
-            _logAt = 0;
         }
 
         private readonly World _world;
@@ -202,7 +182,7 @@ namespace ClassicUO.Game
         // by the next frame that finds no Item under the serial: at most one frame for a boat that does not come back.
         // A boat removed with nothing queued parks nothing; its key stays, as the old _steps key did.
         private readonly Dictionary<uint, BoatSteps> _order = new Dictionary<uint, BoatSteps>();
-        private readonly List<uint> _due = new List<uint>(), _stepped = new List<uint>(), _gone = new List<uint>();
+        private readonly List<uint> _due = new List<uint>(), _gone = new List<uint>();
 
         public BoatStepSystem(World world)
         {
@@ -235,8 +215,8 @@ namespace ClassicUO.Game
         /// <summary>The boat's record is being removed (<c>WorldEcs.OnDestroyed</c>): its queued steps, passengers and clock
         /// wait under its serial (see <see cref="_order"/>).</summary>
         // Codex re-review P3 (accepted): a boat with an empty queue but listed passengers keeps no parked state, where the old
-        // manager kept _items[serial]. Every smooth 0xF6 resends the full passenger list before the next step uses it, so only
-        // CUO_BOAT_CHECK can see the difference (a passenger-state mismatch on the next frame).
+        // manager kept _items[serial]. Every smooth 0xF6 resends the full passenger list before the next step uses it, so the
+        // difference was visible only to the deleted CUO_BOAT_CHECK (a passenger-state mismatch on the next frame).
         internal void Park(uint serial, in BoatSteps steps)
         {
             ref BoatSteps slot = ref CollectionsMarshal.GetValueRefOrNullRef(_order, serial);
@@ -310,13 +290,11 @@ namespace ClassicUO.Game
             }
         }
 
-        /// <summary>One frame of every boat with a queued step, in the old manager's order; <paramref name="shadow"/> (the
-        /// checker) follows each step.</summary>
-        public void Run(BoatMovingManager shadow)
+        /// <summary>One frame of every boat with a queued step, in the old manager's order.</summary>
+        public void Run()
         {
             Frames++;
             _due.Clear();
-            _stepped.Clear();
 
             // collected first: the operations can move a boat's record between archetypes, and the removals wait for the end
             foreach (uint serial in _order.Keys)
@@ -350,9 +328,8 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                _stepped.Add(serial);
                 Boats++;
-                Step(item, shadow);
+                Step(item);
             }
 
             // the old Update's _toRemove, in its order
@@ -362,17 +339,10 @@ namespace ClassicUO.Game
             }
 
             _gone.Clear();
-
-            if (shadow != null)
-            {
-                shadow.ShadowFrameEnd(_stepped);
-            }
         }
 
-        private void Step(Item item, BoatMovingManager shadow)
+        private void Step(Item item)
         {
-            uint serial = item.Serial;
-
             while (TryBoatSteps(item, out EcsEntity e))
             {
                 ref BoatSteps s = ref e.GetComponent<BoatSteps>();
@@ -406,11 +376,6 @@ namespace ClassicUO.Game
 
                 BoatStepRules.Decide(in step, x, y, z, last, Time.Ticks, out BoatStepDecision d);
 
-                if (shadow != null)
-                {
-                    shadow.ShadowDecide(item, in step, in d);
-                }
-
                 if (d.Interpolate)
                 {
                     _world.Writer.InterpolateBoat(item, d.X, d.Y, d.Z);
@@ -428,7 +393,6 @@ namespace ClassicUO.Game
                         BoatStepRules.PopFront(ref e.GetComponent<BoatSteps>());
                     }
 
-                    shadow?.ShadowPop(serial);
                     Completed++;
 
                     house?.Generate(true, true, true);
@@ -458,7 +422,7 @@ namespace ClassicUO.Game
 
                     if (passengerCount != 0)
                     {
-                        // the boat's offset as the item readers see it (ecs_item_offset: the ItemOffset component)
+                        // the boat's offset as the item readers see it (its ItemOffset component)
                         Vector3 offset = ItemOffsets.Read(item);
 
                         for (int k = 0; k < passengerCount; k++)
@@ -483,42 +447,6 @@ namespace ClassicUO.Game
 
                 Turns++;
             }
-        }
-
-        /// <summary>The checker's finding (a warning for the first ten).</summary>
-        internal static void Diff(bool decision, string text)
-        {
-            if (decision)
-            {
-                DecisionDiffs++;
-            }
-            else
-            {
-                StateDiffs++;
-            }
-
-            if (_logged++ < 10)
-            {
-                Log.Warn($"[boat-check] {text} (tick {Time.Ticks})");
-            }
-        }
-
-        /// <summary>The counters, for the periodic log line.</summary>
-        internal static string Summary(World world) =>
-            $"[boat-check] ecs_boat_steps {(world.BoatStepsOn ? "on" : "off")}: frames {Frames}, boats stepped {Boats}, interpolated {Interpolated}, " +
-            $"steps done {Completed} (turns {Turns}), passenger moves {PassengerMoves}, follows {Follows}, position fallbacks {Fallbacks}; " +
-            $"decisions checked {Checks}, different {DecisionDiffs}; boats checked {StateChecks}, different {StateDiffs}";
-
-        /// <summary>Every 5 s while the checker is on: <see cref="Summary"/> (BoatMovingManager.Update, once per frame).</summary>
-        internal static void LogSummary(World world)
-        {
-            if (!Check || Time.Ticks < _logAt)
-            {
-                return;
-            }
-
-            _logAt = Time.Ticks + 5000;
-            Log.Info(Summary(world));
         }
     }
 }

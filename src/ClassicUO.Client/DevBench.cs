@@ -40,19 +40,16 @@ namespace ClassicUO
     //   target with a replay of the recordings and with a direct redraw every N frames (default 30)
     //   plan entry minimap opens the minimap gump
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
-    //   plan entries tileindex:on|off switch the T6b merged tile walk (world_tile_index; needs CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK)
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
     //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache), itemmixed:on|off its mixed tiles (gpu_prepare_item_cache_mixed, E7), fxserve:on|off its tiles holding effects (gpu_prepare_item_cache_effects, E6); effects:N:graphic[:blend[:radius[:z[:f|m|l]]]] spawns N client-side effects (fixed endless, moving, lightning) round the player, effects:0 removes every effect; name:lsreinit is reinit in the large-scale scene
     //   plan entries w5:on|off switch the W5 shortcut that still has a switch (textskip)
     //   plan entries textskip:on|off switch skipping the text layout of entities whose overhead texts all expired (text_skip_expired, W5)
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on;
-    //   pickscan:CxR:world_tile_index compares it with the T6b merged walk off and on instead (both renderers; needs the index
-    //   maintained: CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK); pickscan:CxR:legacy_ecs_sprites compares the T7b Legacy
+    //   pickscan:CxR:legacy_ecs_sprites compares the T7b Legacy
     //   sink off and on (Legacy only); pickscan:CxR:pick_records compares picking from the T7b extract's records
     //   (SpritePickTable) off and on (both renderers); legacysprites:on|off|setting overrides legacy_ecs_sprites;
-    //   effectsprites:on|off|setting overrides ecs_effect_sprites (T7b part 3, both renderers); cot:on|off
-    //   switches the circle of transparency
+    //   cot:on|off switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
     //   CUO_WORLD_HOLD=0    never hold the last world frame after a discontinuity (observe only: the before/after baseline)
@@ -1299,7 +1296,7 @@ namespace ClassicUO
                 {
                     for (int dy = -r; dy <= r; dy++)
                     {
-                        var o = world.Map.OpenTile(player.X + dx, player.Y + dy, true, ClassicUO.Game.Map.DynamicTileIndex.WalkOn, out var reader);
+                        var o = world.Map.OpenTile(player.X + dx, player.Y + dy, true, out var reader);
 
                         for (; o != null; o = reader.Next())
                         {
@@ -1414,14 +1411,12 @@ namespace ClassicUO
 
         private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanWait, _scanSame, _scanDiff, _scanEmpty;
         private static string _scanOff;
-        // pickscan's world_tile_index mode (T6b): the setting compared is DynamicTileIndex.WalkOn, not the Gpu prepare's skipping
-        private static bool _scanTileIndex, _scanTileIndexWas;
         // pickscan's legacy_ecs_sprites mode (T7b): the Legacy sink (LegacySpriteSink.Override) off, then on
         private static bool _scanLegacySprites;
         // pickscan's pick_records mode (T7b part 2b): picking from the extract's records (SpritePickTable.ReadOverride) off, then on
         private static bool _scanPickRecords;
 
-        private static string ScanWhat => _scanPickRecords ? "pick_records" : _scanLegacySprites ? "legacy_ecs_sprites" : _scanTileIndex ? "world_tile_index" : "skip";
+        private static string ScanWhat => _scanPickRecords ? "pick_records" : _scanLegacySprites ? "legacy_ecs_sprites" : "skip";
 
         // frames a point may wait for the Gpu prepare's skipping to become active before the scan gives up
         private const int SCAN_WAIT_LIMIT = 600;
@@ -1461,10 +1456,6 @@ namespace ClassicUO
                 {
                     Game.Scenes.LegacySpriteSink.Override = false;
                 }
-                else if (_scanTileIndex)
-                {
-                    SetTileIndexWalk(game, false);
-                }
                 else
                 {
                     settings.GpuPrepareSkipBaked = false;
@@ -1482,10 +1473,6 @@ namespace ClassicUO
                     {
                         Game.Scenes.LegacySpriteSink.Override = true;
                     }
-                    else if (_scanTileIndex)
-                    {
-                        SetTileIndexWalk(game, true);
-                    }
                     else
                     {
                         settings.GpuPrepareSkipBaked = true;
@@ -1497,7 +1484,7 @@ namespace ClassicUO
             }
             else if (_scanPhase == 1)
             {
-                if (!_scanTileIndex && !_scanLegacySprites && !_scanPickRecords && !gs.IsGpuPrepareSkipping)
+                if (!_scanLegacySprites && !_scanPickRecords && !gs.IsGpuPrepareSkipping)
                 {
                     _scanFrames = 0;
 
@@ -1529,7 +1516,7 @@ namespace ClassicUO
 
                     if (--_scanLeft == 0)
                     {
-                        Log.Info($"[bench-scan] done{(_scanPickRecords || _scanLegacySprites || _scanTileIndex ? $" ({ScanWhat})" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
+                        Log.Info($"[bench-scan] done{(_scanPickRecords || _scanLegacySprites ? $" ({ScanWhat})" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
                         EndPickScan();
                     }
                 }
@@ -1544,45 +1531,8 @@ namespace ClassicUO
             Input.Mouse.Override = null;
         }
 
-        // T6b: the merged walk on or off; the Gpu item caches rebuild, so the served runs are built in the order compared.
-        // T6b part 3: with the list dropped "off" is the shadow list (the legacy order; CUO_TILE_ORDER_CHECK keeps it)
-        private static bool SetTileIndexWalk(GameController game, bool on)
-        {
-            if (Game.Map.DynamicTileIndex.IndexWalkOn == on)
-            {
-                return true;
-            }
-
-            if (!Game.Map.DynamicTileIndex.SetWalk(on))
-            {
-                Log.Warn("[bench] tile index walk off needs the shadow list once the list is dropped (set CUO_TILE_ORDER_CHECK=1)");
-
-                return false;
-            }
-
-            if (game.UO.World?.Map is { } map)
-            {
-                foreach (var chunk in map.GetUsedChunks())
-                {
-                    if (chunk != null)
-                    {
-                        chunk.GpuItemsDirty = true;
-                        chunk.GpuMaskDirty = true;
-                    }
-                }
-            }
-
-            return true;
-        }
-
         private static void EndPickScan()
         {
-            if (_scanTileIndex)
-            {
-                _scanTileIndex = false;
-                Game.Map.DynamicTileIndex.SetWalk(_scanTileIndexWas);
-            }
-
             if (_scanLegacySprites)
             {
                 _scanLegacySprites = false;
@@ -1920,7 +1870,6 @@ namespace ClassicUO
                     {
                         // pickscan:CxR hovers a C x R grid over the game view; at each point the selection with the Gpu
                         // prepare's skipping off and then on must be the same object
-                        bool tileIndexMode = _plan[_planIndex].EndsWith(":world_tile_index");
                         bool legacySpritesMode = _plan[_planIndex].EndsWith(":legacy_ecs_sprites");
                         bool pickRecordsMode = _plan[_planIndex].EndsWith(":pick_records");
 
@@ -1933,24 +1882,7 @@ namespace ClassicUO
                             break;
                         }
 
-                        if (tileIndexMode && !Game.Map.DynamicTileIndex.Maintain)
-                        {
-                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the tile index isn't maintained (set CUO_WORLD_TILE_INDEX=0|1)");
-                            _planIndex++;
-
-                            break;
-                        }
-
-                        if (tileIndexMode && Game.Map.DynamicTileIndex.ListDropped && !Game.Map.DynamicTileIndex.Shadow)
-                        {
-                            // T6b part 3: with the list dropped, "off" is the shadow list's legacy order (CUO_TILE_ORDER_CHECK only)
-                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the list is dropped and no shadow list is kept (set CUO_TILE_ORDER_CHECK=1)");
-                            _planIndex++;
-
-                            break;
-                        }
-
-                        if (!tileIndexMode && !legacySpritesMode && !pickRecordsMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
+                        if (!legacySpritesMode && !pickRecordsMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
                         {
                             // Legacy has no Gpu prepare, so its skipping never becomes active and the scan would never end
                             Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the Gpu world renderer isn't active");
@@ -1960,10 +1892,8 @@ namespace ClassicUO
                         }
 
                         string[] g = _plan[_planIndex].Substring(9).Split(':')[0].Split('x');
-                        _scanTileIndex = tileIndexMode;
                         _scanLegacySprites = legacySpritesMode;
                         _scanPickRecords = pickRecordsMode;
-                        _scanTileIndexWas = Game.Map.DynamicTileIndex.IndexWalkOn;
                         _scanCols = int.Parse(g[0]);
                         _scanRows = int.Parse(g[1]);
                         _scanLeft = _scanCols * _scanRows;
@@ -1983,37 +1913,6 @@ namespace ClassicUO
                         string v = _plan[_planIndex].Substring(14);
                         Game.Scenes.LegacySpriteSink.Override = v == "on" ? true : v == "off" ? false : null;
                         Log.Info($"[bench] legacy_ecs_sprites override {v}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("effectsprites:"))
-                    {
-                        // T7b part 3: effects from the effect extract (ecs_effect_sprites) on, off, or back to the setting, both renderers
-                        string v = _plan[_planIndex].Substring(14);
-                        Game.Scenes.EffectSpriteSink.Override = v == "on" ? true : v == "off" ? false : null;
-                        Log.Info($"[bench] ecs_effect_sprites override {v}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("tileindex:"))
-                    {
-                        // T6b: the merged tile walk (world_tile_index) on or off, for shots of both orders in one session
-                        if (Game.Map.DynamicTileIndex.Maintain)
-                        {
-                            SetTileIndexWalk(game, _plan[_planIndex] == "tileindex:on");
-                            Log.Info($"[bench] tile index walk {(Game.Map.DynamicTileIndex.IndexWalkOn ? "on" : "off")}{(Game.Map.DynamicTileIndex.ShadowWalk ? " (shadow list, legacy order)" : "")}");
-                        }
-                        else
-                        {
-                            Log.Warn($"[bench] {_plan[_planIndex]} skipped: the tile index isn't maintained (set CUO_WORLD_TILE_INDEX=0|1)");
-                        }
-
                         _planIndex++;
                         _stepAt = now + sec;
 

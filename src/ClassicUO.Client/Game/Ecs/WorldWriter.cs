@@ -2346,8 +2346,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// The boat's step clock (<c>BoatMovingManager</c>: a first step queued, a step done): <c>LastStepTime</c>, and with
-        /// <c>ecs_boat_steps</c> the <c>BoatSteps</c> component's (the step system's input). Rejections as
+        /// The boat's step clock (<c>BoatMovingManager</c>: a first step queued, a step done): <c>LastStepTime</c> and the
+        /// <c>BoatSteps</c> component's (the step system's input). Rejections as
         /// <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void SetBoatStepTime(Item boat, uint time)
@@ -2361,7 +2361,7 @@ namespace ClassicUO.Game
             {
                 boat.LastStepTime = time;
 
-                if (_world.BoatStepsOn && BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
+                if (BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
                 {
                     e.GetComponent<ClassicUO.Ecs.BoatSteps>().LastStepTime = time;
                 }
@@ -2369,23 +2369,17 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// <c>ecs_boat_steps</c>: 0xF6 with smooth boat movement (<c>BoatMovingManager.AddStep</c>) queues a step on the boat's
+        /// 0xF6 with smooth boat movement (<c>BoatMovingManager.AddStep</c>) queues a step on the boat's
         /// <c>BoatSteps</c> (added at the first): the queue is trimmed to 5, a first step starts the step clock (as
         /// <see cref="SetBoatStepTime"/>), the step takes the speed's time (a first step, or no move request or step before:
         /// <paramref name="timePacket"/> 0) or the time since the last packet, and the passenger list is dropped (the packet's
         /// list follows: <see cref="SetBoatPassenger"/>). The boat joins the step order first, and a boat recreated under its serial
         /// takes over the state its removed record left (<c>BoatStepSystem.Restore</c>; also in the two operations below).
-        /// Nothing with the switch off or without a record. Rejections as
-        /// <see cref="CompleteBoatStep"/>.
+        /// Nothing without a record. Rejections as <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void QueueBoatStep(Item boat, byte speed, Direction movingDir, ushort x, ushort y, sbyte z, uint timePacket)
         {
             if (boat == null || !Admitted(nameof(QueueBoatStep), boat.Serial) || !Accepted(boat, nameof(QueueBoatStep)))
-            {
-                return;
-            }
-
-            if (!_world.BoatStepsOn)
             {
                 return;
             }
@@ -2442,9 +2436,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// <c>ecs_boat_steps</c>: one object of 0xF6's list (<c>BoatMovingManager.PushItemToList</c>): its offset from the boat
-        /// is updated if it is listed already, else it is appended (in packet order). Nothing with the switch off or without a
-        /// record. Rejections as <see cref="CompleteBoatStep"/>.
+        /// One object of 0xF6's list (<c>BoatMovingManager.PushItemToList</c>): its offset from the boat is updated if it is
+        /// listed already, else it is appended (in packet order). Nothing without a record. Rejections as
+        /// <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void SetBoatPassenger(Item boat, uint passenger, int x, int y, int z)
         {
@@ -2453,7 +2447,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!_world.BoatStepsOn || !boat.TryScalarEntity(out EcsEntity e))
+            if (!boat.TryScalarEntity(out EcsEntity e))
             {
                 return;
             }
@@ -2472,9 +2466,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// <c>ecs_boat_steps</c>: the boat's passenger list dropped (<c>BoatMovingManager.ClearEntities</c>); with
+        /// The boat's passenger list dropped (<c>BoatMovingManager.ClearEntities</c>); with
         /// <paramref name="steps"/> its queued steps too (the end of <c>BoatMovingManager.ClearSteps</c>, after the offsets'
-        /// <see cref="ResetBoatOffset"/>). Nothing with the switch off, without a record or a component. Rejections as
+        /// <see cref="ResetBoatOffset"/>). Nothing without a record or a component. Rejections as
         /// <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void DropBoatSteps(Item boat, bool steps)
@@ -2484,7 +2478,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!_world.BoatStepsOn || !boat.TryScalarEntity(out EcsEntity e) ||
+            if (!boat.TryScalarEntity(out EcsEntity e) ||
                 (!e.HasComponent<ClassicUO.Ecs.BoatSteps>() && !_world.BoatMovingManager.Steps.TryParked(boat.Serial, out _)))
             {
                 return;
@@ -2507,7 +2501,7 @@ namespace ClassicUO.Game
         /// <summary>
         /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration, a multi's (re)load through
         /// <see cref="ClearBoatSteps"/>): the offset of the boat or of one object on it
-        /// back to zero: a mobile's Steps (T6c) and, with <c>ecs_item_offset</c>, an item's <c>ItemOffset</c> (<see cref="ItemOffsets"/>).
+        /// back to zero: a mobile's Steps (T6c) and an item's <c>ItemOffset</c> (<see cref="ItemOffsets"/>).
         /// Rejections as <see cref="SetHits"/>.
         /// </summary>
         public void ResetBoatOffset(Entity entity)
@@ -2605,7 +2599,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
-        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too with <c>ecs_item_offset</c>, as every boat
+        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too, as every boat
         /// operation that writes an item's offset). Rejections as <see cref="MoveBoatPassenger"/>.
         /// </summary>
         public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)
@@ -2784,7 +2778,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// 0xBF.26 (the player's movement speed mode): an input since the T6c follow-up (<c>MobileInputs.SpeedMode</c>, the
-        /// step system's mounted pace with <c>ecs_step_mount_inputs</c>). Folded, the inputs committed once, as
+        /// step system's mounted pace). Folded, the inputs committed once, as
         /// <see cref="SetWarMode"/>; rejections as <see cref="SetName"/>.
         /// </summary>
         public void SetSpeedMode(Mobile mobile, CharacterSpeedType mode)

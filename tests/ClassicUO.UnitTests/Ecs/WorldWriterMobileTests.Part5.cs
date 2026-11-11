@@ -50,7 +50,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void EnterWorld_Equals_The_Old_Path(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
@@ -69,7 +68,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void EnterWorld_On_The_Player_Publishes_Its_Callbacks_As_Before_T1()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
@@ -85,6 +83,7 @@ namespace ClassicUO.UnitTests.Ecs
             b.OnMoved.Should().BeNull("the position callback ran");
             b.OnTurned.Should().BeNull("the direction callback ran");
             b.Direction.Should().Be(Direction.South);
+            OracleTraits.Sync(oldWorld); // the old path wrote the small fields' caches only
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
@@ -143,7 +142,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void DenyWalk_And_ConfirmWalk_Equal_The_Old_Path(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
@@ -179,7 +177,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void WalkerManager_DenyWalk_Goes_Through_The_Funnel_As_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             GiveWalker(b);
@@ -267,7 +264,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void CompleteStep_Equals_The_Old_Step_Completion(Start start, bool placed)
         {
             World oldWorld = Build(start), newWorld = Build(start);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
@@ -311,7 +307,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void CompleteStep_Of_The_Player_Publishes_Its_Callbacks_As_Before_T1()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
@@ -359,7 +354,6 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (Start start in new[] { Start.Standing, Start.Walking })
             {
                 World oldWorld = Build(start), newWorld = Build(start);
-                oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
                 a.Direction = b.Direction = Direction.Left;
                 a.Flags = b.Flags = Flags.WarMode;
@@ -397,7 +391,6 @@ namespace ClassicUO.UnitTests.Ecs
         {
             // a stale instance still updating: written unfolded, nothing reaches the ECS (as before T1); no violation
             World oldWorld = Build(Start.Standing), newWorld = Build(Start.Standing);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = Mobile.Create(oldWorld, MOB), b = Mobile.Create(newWorld, MOB);
 
@@ -505,7 +498,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Sweep_Removals_Equal_The_Old_Path(Start start)
         {
             World oldWorld = BuildSweep(start, out _, out _), newWorld = BuildSweep(start, out _, out _);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             // the sweep's instances: what the loops iterate (the destroyed-but-held mobile too: the old removal returned false)
@@ -609,7 +601,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Walker_And_EnterWorld_Operations_Write_The_Detached_Player_As_Before_T1(bool throws)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = throws;
 

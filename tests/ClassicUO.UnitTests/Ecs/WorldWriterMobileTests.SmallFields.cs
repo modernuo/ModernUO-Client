@@ -11,34 +11,26 @@ using Flags = ClassicUO.Game.Data.Flags;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // ecs_small_fields (wave 1C): WorldWriter's operations commit the small cold fields (Item LightID, IsDamageable, UsedLayer;
-    // Mobile Race, SpeedMode, IsFemale, IsRenamable; the player's InWarMode) to the record's ItemTraits/MobileTraits before
-    // their cache writes, whatever the switch. With the switch on the getters read the record (an instance without a held
-    // record reads its cache); CUO_SMALL_FIELDS_CHECK (here World.SmallFieldsCheckOverride) compares the two at every read.
+    // Wave 1C: WorldWriter's operations commit the small cold fields (Item LightID, IsDamageable, UsedLayer; Mobile Race,
+    // SpeedMode, IsFemale, IsRenamable; the player's InWarMode) to the record's ItemTraits/MobileTraits before their cache
+    // writes, and the getters read the record (an instance without a held record reads its cache; T9 deleted
+    // ecs_small_fields' off path); CUO_SMALL_FIELDS_CHECK (here World.SmallFieldsCheckOverride) compares the two at every read.
     public partial class WorldWriterMobileTests
     {
-        [Fact]
-        public void The_SmallFields_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().EcsSmallFields.Should().BeTrue();
-        }
-
         private const uint LAMP = 0x4000_7A01, BARREL = 0x4000_7A02, HOUSE = 0x4000_7A03, BODY = 0x4000_7A04;
 
-        private static World BuildSmall(bool on, bool check = true)
+        private static World BuildSmall(bool check = true)
         {
             World world = Build(Start.Standing);
-            world.SmallFieldsOverride = on;
             world.SmallFieldsCheckOverride = check;
             world.Writer.ThrowOnViolation = true;
 
             return world;
         }
 
-        private static World BuildSmallPlayer(bool on, out TestPlayer player)
+        private static World BuildSmallPlayer(out TestPlayer player)
         {
             World world = BuildPlayer(out player);
-            world.SmallFieldsOverride = on;
             world.SmallFieldsCheckOverride = true;
             world.Writer.ThrowOnViolation = true;
 
@@ -98,12 +90,10 @@ namespace ClassicUO.UnitTests.Ecs
             SmallFields.Diffs.Should().Be(diffs, because);
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Item_Operations_Commit_Light_Damageable_And_UsedLayer(bool on)
+        [Fact]
+        public void The_Item_Operations_Commit_Light_Damageable_And_UsedLayer()
         {
-            World world = BuildSmall(on);
+            World world = BuildSmall();
             long reads = SmallFields.Reads;
 
             // 0x1A/0xF3: a light source (the direction byte is its light id), a damageable barrel (type 3), a multi (type 2
@@ -160,12 +150,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Violations.Should().Be(0);
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Mobile_Operations_Commit_Race_Sex_Renamable_And_Speed(bool on)
+        [Fact]
+        public void The_Mobile_Operations_Commit_Race_Sex_Renamable_And_Speed()
         {
-            World world = BuildSmall(on);
+            World world = BuildSmall();
             Mobile m = world.Mobiles.Get(MOB);
 
             // 0x11 (renamable, the extended part's sex; the race), 0xBF.26, then body changes with CheckGraphicChange's sex
@@ -201,12 +189,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Violations.Should().Be(0);
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Players_War_Mode_Is_Committed(bool on)
+        [Fact]
+        public void The_Players_War_Mode_Is_Committed()
         {
-            World world = BuildSmallPlayer(on, out TestPlayer player);
+            World world = BuildSmallPlayer(out TestPlayer player);
 
             foreach (bool war in new[] { true, true, false, true })
             {
@@ -221,13 +207,11 @@ namespace ClassicUO.UnitTests.Ecs
             (e.GetComponent<MobileInputs>().Flags & AnimStateFlags.WarMode).Should().NotBe((AnimStateFlags)0);
         }
 
-        // a write that bypasses the funnel (the cache only): the switch decides what the getter returns, the checker reports it
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Getters_Read_The_Record_With_The_Switch_On(bool on)
+        // a write that bypasses the funnel (the cache only): the getter returns the record, the checker reports it
+        [Fact]
+        public void The_Getters_Read_The_Record()
         {
-            World world = BuildSmallPlayer(on, out TestPlayer player);
+            World world = BuildSmallPlayer(out TestPlayer player);
             Upsert(world, LAMP, 0xA22, 0x1E, 3);
             Upsert(world, BODY, 0x2006, 0x82, 0);
             world.Writer.SetMobileStatus(player, true, true, true);
@@ -247,35 +231,31 @@ namespace ClassicUO.UnitTests.Ecs
             player.InWarMode = false;
 
             long diffs = SmallFields.Diffs;
-            lamp.LightID.Should().Be(on ? (byte)0x1E : (byte)0x05);
-            lamp.IsDamageable.Should().Be(on);
-            body.UsedLayer.Should().Be(on);
-            player.Race.Should().Be(on ? RaceType.ELF : RaceType.GARGOYLE);
-            player.SpeedMode.Should().Be(on ? CharacterSpeedType.CantRun : CharacterSpeedType.Normal);
-            player.IsFemale.Should().Be(on);
-            player.IsRenamable.Should().Be(on);
-            player.InWarMode.Should().Be(on);
+            lamp.LightID.Should().Be((byte)0x1E);
+            lamp.IsDamageable.Should().BeTrue();
+            body.UsedLayer.Should().BeTrue();
+            player.Race.Should().Be(RaceType.ELF);
+            player.SpeedMode.Should().Be(CharacterSpeedType.CantRun);
+            player.IsFemale.Should().BeTrue();
+            player.IsRenamable.Should().BeTrue();
+            player.InWarMode.Should().BeTrue();
             (SmallFields.Diffs - diffs).Should().Be(8, "the checker reports each stale field");
 
-            // the checker off: with the switch off the getters do not ask the record
+            // the checker off: no comparison
             world.SmallFieldsCheckOverride = false;
             long reads = SmallFields.Reads;
             diffs = SmallFields.Diffs;
-            player.Race.Should().Be(on ? RaceType.ELF : RaceType.GARGOYLE);
-            lamp.LightID.Should().Be(on ? (byte)0x1E : (byte)0x05);
+            player.Race.Should().Be(RaceType.ELF);
+            lamp.LightID.Should().Be((byte)0x1E);
             SmallFields.Diffs.Should().Be(diffs, "no check");
-
-            if (!on)
-            {
-                SmallFields.Reads.Should().Be(reads, "switch and checker off: the cache only");
-            }
+            SmallFields.Reads.Should().Be(reads + 2);
         }
 
         // an instance without a held record (a preview, the detached player, a destroyed instance) reads its cache
         [Fact]
         public void Without_A_Held_Record_The_Getters_Read_The_Cache()
         {
-            World world = BuildSmallPlayer(true, out TestPlayer player);
+            World world = BuildSmallPlayer(out TestPlayer player);
             long fallbacks = SmallFields.Fallbacks;
 
             var preview = new Item(world) { LightID = 7, IsDamageable = true, UsedLayer = true };
@@ -296,12 +276,10 @@ namespace ClassicUO.UnitTests.Ecs
 
         // a record created while the instance already holds values (a held instance whose record went, a record of the other
         // kind replaced under its serial) starts from the cache
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void A_Record_Created_Later_Is_Seeded_From_The_Cache(bool on)
+        [Fact]
+        public void A_Record_Created_Later_Is_Seeded_From_The_Cache()
         {
-            World world = BuildSmallPlayer(on, out TestPlayer player);
+            World world = BuildSmallPlayer(out TestPlayer player);
             world.Writer.SetWarMode(player, true);
             world.Writer.SetSpeedMode(player, CharacterSpeedType.FastUnmount);
             world.Writer.SetMobileStatus(player, true, true, true);
@@ -331,12 +309,10 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         // 0xAF: the record moves to serial | 0x80000000 and keeps the traits
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Death_Rekey_Carries_The_Mobile_Traits(bool on)
+        [Fact]
+        public void The_Death_Rekey_Carries_The_Mobile_Traits()
         {
-            World world = BuildSmall(on);
+            World world = BuildSmall();
             Mobile m = world.Mobiles.Get(MOB);
             world.Writer.SetMobileStatus(m, true, true, true);
             world.Writer.SetRace(m, RaceType.GARGOYLE);
@@ -353,13 +329,11 @@ namespace ClassicUO.UnitTests.Ecs
         // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or an item's record under the
         // mobile's own serial) the re-key carries the traits from the caches, not the item record's defaults
         [Theory]
-        [InlineData(false, false)]
-        [InlineData(true, false)]
-        [InlineData(false, true)]
-        [InlineData(true, true)]
-        public void The_Death_Rekey_Carries_The_Traits_Without_A_Mobile_Source_Record(bool on, bool itemRecord)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void The_Death_Rekey_Carries_The_Traits_Without_A_Mobile_Source_Record(bool itemRecord)
         {
-            World world = BuildSmall(on);
+            World world = BuildSmall();
             Mobile m = world.Mobiles.Get(MOB);
             world.Writer.SetMobileStatus(m, true, true, true);
             world.Writer.SetRace(m, RaceType.GARGOYLE);

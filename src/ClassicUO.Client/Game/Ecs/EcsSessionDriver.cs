@@ -664,7 +664,7 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // small: ecs_small_fields, the player's small fields and counts over every held object, read through the
+                // small: the player's small fields and counts over every held object, read through the
                 // getters (with CUO_SMALL_FIELDS_CHECK each read is compared with the record)
                 case "small":
                     int lights = 0, damageable = 0, usedLayer = 0, multis = 0, female = 0, renamable = 0, fast = 0;
@@ -686,7 +686,7 @@ namespace ClassicUO.Game
                         fast += sm.SpeedMode != CharacterSpeedType.Normal ? 1 : 0;
                     }
 
-                    Log.Info($"[ECS] small player race {player.Race} female {player.IsFemale} renamable {player.IsRenamable} speed {player.SpeedMode} war {player.InWarMode} body 0x{player.Graphic:X4}; items {world.Items.Count} lights {lights} damageable {damageable} usedlayer {usedLayer} multis {multis}; mobiles {world.Mobiles.Count} races {races[0]}/{races[1]}/{races[2]}/{races[3]} female {female} renamable {renamable} speedmode {fast}; {SmallFields.Summary(world)}");
+                    Log.Info($"[ECS] small player race {player.Race} female {player.IsFemale} renamable {player.IsRenamable} speed {player.SpeedMode} war {player.InWarMode} body 0x{player.Graphic:X4}; items {world.Items.Count} lights {lights} damageable {damageable} usedlayer {usedLayer} multis {multis}; mobiles {world.Mobiles.Count} races {races[0]}/{races[1]}/{races[2]}/{races[3]} female {female} renamable {renamable} speedmode {fast}; {SmallFields.Summary()}");
 
                     return false;
 
@@ -1186,13 +1186,6 @@ namespace ClassicUO.Game
                 case "legacysprites" when args.Length > 0:
                     LegacySpriteSink.Override = args[0] switch { "on" => true, "off" => false, _ => null };
                     Log.Info($"[ECS] driver: legacy_ecs_sprites override {args[0]}");
-
-                    return false;
-
-                // effectsprites on|off|default: ecs_effect_sprites for this session (EffectSpriteSink.Override)
-                case "effectsprites" when args.Length > 0:
-                    EffectSpriteSink.Override = args[0] switch { "on" => true, "off" => false, _ => null };
-                    Log.Info($"[ECS] driver: ecs_effect_sprites override {args[0]}");
 
                     return false;
 

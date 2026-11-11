@@ -18,7 +18,7 @@ namespace ClassicUO.Game.Scenes
     /// Gpu path (GpuWorldRenderer.TryDrawMobileEcs/EmitItem): the mobile's FrameInfo and mirror bit, the corpse's mirror bit,
     /// the item art entry's picking offset (written by the select), the aura, and the lights. While the switch is on, picking
     /// reads the same pick state from <see cref="SpritePickTable"/> (2b), which the sink records from the select. Effects have their
-    /// own sink (EffectSpriteSink, ecs_effect_sprites). A mobile without a mirror entity falls back to its view. CUO_LEGACY_ECS_PARITY=1 (<see cref="LegacyEcsParity"/>) compares the view's batcher calls with the sink's.
+    /// own sink (EffectSpriteSink). A mobile without a mirror entity falls back to its view. CUO_LEGACY_ECS_PARITY=1 (<see cref="LegacyEcsParity"/>) compares the view's batcher calls with the sink's.
     /// </summary>
     internal static class LegacySpriteSink
     {
