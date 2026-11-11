@@ -165,6 +165,16 @@ Example against a local ModernUO server on the default port:
 
 The client stores a password in `settings.json` as an encrypted string (`Crypter.Encrypt`, a machine-specific key). Write the encrypted `<password>` into a throwaway `settings.json` instead of passing it on the command line. `-password <password>` is encrypted on read but is visible in the process list. `-password_enc` takes an already encrypted value. ModernUO creates an account on first login by default.
 
+### Running several instances
+
+Several clients can run on one machine against one install and one pack.
+
+- **The pack** is opened read-only with `FileShare.Read`, so any number of clients share it. Do not regenerate a pack in place while clients run (on Windows the rename over an open page fails); publish a new pack folder and start new clients with `-pack`.
+- **Files are written atomically** (temp file, then rename; `AtomicFile`), so no instance ever reads a half-written `settings.json`, `profile.json`, `gumps.xml`, `macros.xml` or world map image. A save waits up to about a second for another instance's read.
+- **Shared files are last-writer-wins.** Two instances logged in as the same character share one profile folder and the last one to save wins; the same holds for `globalprofile.json`, `lastcharacter.json` and `settings.json`. There is no locking. For independent state give each instance its own `-settings <file>` and `-profilespath <dir>`.
+- **Logs, journals, screenshots and crash dumps** carry the process id in their name (`2026-11-10_01-02-03_<pid>_packets.log`), so instances started in the same second do not share a file.
+- **Memory** is per process: plan on roughly 0.7-0.9 GB working set per Legacy client and about 0.25 GB more with the Gpu world (see `memory-footprint.md`). `DOTNET_GCHeapHardLimit` applies to each process separately.
+
 ### World renderer
 
 `world_renderer` (or `-worldrenderer`, which wins for one run and is not saved) is `auto`, `gpu` or `legacy`. The choice is made once at startup and logged as a `[renderer]` line. `auto` picks the Gpu renderer when SDL_GPU on Vulkan works and the Legacy (FNA batcher) renderer otherwise. `gpu` exits with an error if the Gpu world cannot run.
