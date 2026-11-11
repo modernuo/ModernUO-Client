@@ -11,6 +11,9 @@ Open owner decisions, decisions already made, and queued work. History (what mer
   2. Packs without animation tables: *default:* a pack made with the converter's `--no-anims` (a dev/test option) is not supported for play: mobiles draw nothing there, and `MobileView.Draw` goes with the other view fallbacks. The alternative keeps the view path for that case only.
   3. Perf switches (`gpu_prepare_*`, `ui_render_cache`, `text_skip_expired`) and their checkers: *default:* keep them as toggles until the final quiet pass, then delete the ones that are clearly better on.
 
+- **ModernUO closes the connection after a large-scene arrival (2026-11-11):** twice (bench6-000004, bench-000713) the server closed the socket ~2 s after a client's `[go 5156 2150`, with several lanes running. The client read EOF ("Disconnected: Success" -> Connection Reset gump); `Distribution/network-disconnects.log` has no entry (last 11/08), so it is a close without a `Disconnect(reason)`. On arrival the client asks for ~21k property lists (0xD6) on top of ~1 MB of world packets. Client side is not at fault (packet framing proven by tests, `bg/net-framing`). Questions: can you check the server console at such an arrival? *Default meanwhile:* a client slice that spreads the 0xD6 requests over frames (on-screen objects first) behind a switch.
+- **Unfocused 10 fps for existing profiles:** the new `ReduceFPSWhenInactive` default (on, 100 ms) only reaches new profiles; existing `profile.json` files store `false`. *Default:* no migration (a one-time profile-version migration would override players who turned it off). Say if you want the migration.
+
 ## 2. Decisions made
 
 Architecture and scope
