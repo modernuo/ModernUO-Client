@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using ClassicUO.Game;
 using ClassicUO.Game.GameObjects;
 using FluentAssertions;
@@ -18,8 +17,12 @@ namespace ClassicUO.UnitTests.Ecs
         private static void ShouldMatch(ItemTable table, ItemTable other, Dictionary<uint, Item> dict, List<Item> seen, string why)
         {
             table.Values.ToList().Should().Equal(dict.Values.ToList(), (a, b) => ReferenceEquals(a, b), why);
-            table.OrderMatches(out int at).Should().BeTrue($"{why}: slots differ from the dictionary at {at}");
-            table.Keys.ToList().Should().Equal(dict.Keys.ToList(), why);
+
+            foreach (KeyValuePair<uint, Item> kv in dict)
+            {
+                table.Get(kv.Key).Should().BeSameAs(kv.Value, $"{why}: key 0x{kv.Key:X}");
+            }
+
             table.Count.Should().Be(dict.Count, why);
 
             foreach (Item i in seen)
@@ -31,14 +34,12 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Holds_And_Order_Answer_Like_The_Dictionary_Through_Random_Operations(bool ordered)
+        [Fact]
+        public void Holds_And_Order_Answer_Like_The_Dictionary_Through_Random_Operations()
         {
             var world = new World();
-            var table = new ItemTable { OrderedWithoutOwner = ordered };
-            var other = new ItemTable { OrderedWithoutOwner = ordered };
+            var table = new ItemTable();
+            var other = new ItemTable();
             var dict = new Dictionary<uint, Item>();
             var seen = new List<Item>();
             var rng = new System.Random(1109);
@@ -222,13 +223,13 @@ namespace ClassicUO.UnitTests.Ecs
             items.Should().OnlyContain(i => !world.Items.Holds(i));
         }
 
-        // T9 slice 4: with world_entity_index on, Values walks the slots. Removing while walking and clearing are legal for
-        // the dictionary, so the walk must follow it there too.
+        // T9 slice 4: Values walks the slots. Removing while walking and clearing were legal for the dictionary, so the walk
+        // must follow it there too.
         [Fact]
         public void An_Ordered_Walk_Follows_The_Dictionary_Through_Removals_During_The_Walk_And_Clears()
         {
             var world = new World();
-            var table = new ItemTable { OrderedWithoutOwner = true };
+            var table = new ItemTable();
             var dict = new Dictionary<uint, Item>();
             var rng = new System.Random(4);
 
@@ -283,34 +284,29 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 table.Values.ToList().Should().Equal(dict.Values.ToList(), (a, b) => ReferenceEquals(a, b), $"step {step}");
-                table.OrderMatches(out _).Should().BeTrue($"step {step}");
             }
         }
 
         [Fact]
-        public void A_Freed_Slot_Is_Reused_Last_In_First_Out_In_Both_Orders()
+        public void A_Freed_Slot_Is_Reused_Last_In_First_Out()
         {
             var world = new World();
+            var t = new ItemTable();
 
-            foreach (bool ordered in new[] { false, true })
+            for (uint s = 1; s <= 70; s++) // past the first slot array size
             {
-                var t = new ItemTable { OrderedWithoutOwner = ordered };
-
-                for (uint s = 1; s <= 70; s++) // past the first slot array size
-                {
-                    t.Add(Item.Create(world, 0x4000_0000 | s));
-                }
-
-                t.Remove(0x4000_0002);
-                t.Remove(0x4000_0004);
-                t.Add(Item.Create(world, 0x4000_0100)); // takes 4's slot (the last freed)
-                t.Add(Item.Create(world, 0x4000_0101)); // takes 2's slot
-                t.Add(Item.Create(world, 0x4000_0102)); // appended
-
-                t.Values.Take(5).Select(i => i.Serial & 0xFFFF).Should().Equal(new uint[] { 1, 0x101, 3, 0x100, 5 }, $"ordered {ordered}");
-                t.Values.Last().Serial.Should().Be(0x4000_0102);
-                t.Get(0x4000_0100).Ordinal.Should().Be(3);
+                t.Add(Item.Create(world, 0x4000_0000 | s));
             }
+
+            t.Remove(0x4000_0002);
+            t.Remove(0x4000_0004);
+            t.Add(Item.Create(world, 0x4000_0100)); // takes 4's slot (the last freed)
+            t.Add(Item.Create(world, 0x4000_0101)); // takes 2's slot
+            t.Add(Item.Create(world, 0x4000_0102)); // appended
+
+            t.Values.Take(5).Select(i => i.Serial & 0xFFFF).Should().Equal(new uint[] { 1, 0x101, 3, 0x100, 5 });
+            t.Values.Last().Serial.Should().Be(0x4000_0102);
+            t.Get(0x4000_0100).Ordinal.Should().Be(3);
         }
 
         private static string Outcome(System.Func<object> f)
@@ -328,18 +324,16 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         // Codex audit of slice 4 (P3): the enumerator's contract, step by step, against Dictionary<uint, Item>.ValueCollection's
-        // enumerator in both modes: the non-generic Current before the start, on an item, past the end and after Reset; Reset
+        // enumerator: the non-generic Current before the start, on an item, past the end and after Reset; Reset
         // after an insert, a removal and a Clear; MoveNext after a Clear during the walk
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Enumerator_Contract_Matches_The_Dictionary(bool ordered)
+        [Fact]
+        public void The_Enumerator_Contract_Matches_The_Dictionary()
         {
             var world = new World();
 
             foreach (string scenario in new[] { "current", "insert-reset", "remove-reset", "clear-walk", "clear-reset" })
             {
-                var t = new ItemTable { OrderedWithoutOwner = ordered };
+                var t = new ItemTable();
                 var d = new Dictionary<uint, Item>();
 
                 for (uint s = 1; s <= 4; s++)
@@ -416,7 +410,7 @@ namespace ClassicUO.UnitTests.Ecs
                         break;
                 }
 
-                got.Should().Equal(want, $"{scenario}, ordered {ordered}");
+                got.Should().Equal(want, scenario);
             }
         }
 
@@ -424,7 +418,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void An_Insert_During_An_Ordered_Walk_Throws_Like_The_Dictionary_And_A_Refused_Add_Does_Not()
         {
             var world = new World();
-            var t = new ItemTable { OrderedWithoutOwner = true };
+            var t = new ItemTable();
             t.Add(Item.Create(world, 0x4000_0001));
             t.Add(Item.Create(world, 0x4000_0002));
 
@@ -447,30 +441,36 @@ namespace ClassicUO.UnitTests.Ecs
             refused.Should().NotThrow();
         }
 
-        // the world's own table follows world_entity_index; with the checker on, World.Update's bookkeeping compares the slots
-        // with the dictionary every update
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void World_Items_Follow_The_Switch_And_Keep_The_Dictionary_Order(bool on)
+        // World's own paths (create, destroy, sweep, forced removal, re-create) keep the dictionary's order: the same operations
+        // on a Dictionary<uint, Item> (the old World.Items) are the reference
+        [Fact]
+        public void World_Items_Keep_The_Dictionary_Order()
         {
             World world = WorldWriterMobileTests.BuildPlayer(out _, 0x0000_0100);
-            world.EntityIndexOverride = on;
-            world.EntityIndexCheckOverride = true;
-            world.Items.Ordered.Should().Be(on);
+            var dict = new Dictionary<uint, Item>();
+
+            foreach (Item i in world.Items.Values)
+            {
+                dict.Add(i.Serial, i);
+            }
+
+            void Create(uint s) => dict.Add(s, world.GetOrCreateItem(s));
 
             for (uint s = 1; s <= 40; s++)
             {
-                world.GetOrCreateItem(0x4000_0000 | s);
+                Create(0x4000_0000 | s);
             }
 
             world.RemoveItem(0x4000_0003, forceRemove: true);
+            dict.Remove(0x4000_0003);
             world.RemoveItem(0x4000_0007);
             world.DropDestroyedItems();
+            dict.Remove(0x4000_0007);
             world.RemoveItem(0x4000_0011, forceRemove: true);
-            world.GetOrCreateItem(0x4000_0200);
-            world.GetOrCreateItem(0x4000_0201);
-            world.GetOrCreateItem(0x4000_0202);
+            dict.Remove(0x4000_0011);
+            Create(0x4000_0200);
+            Create(0x4000_0201);
+            Create(0x4000_0202);
 
             var order = new List<uint>();
 
@@ -479,38 +479,11 @@ namespace ClassicUO.UnitTests.Ecs
                 order.Add(i.Serial);
             }
 
-            order.Should().Equal(world.Items.Keys.ToList(), "the dictionary's order");
+            order.Should().Equal(dict.Keys.ToList(), "the dictionary's order");
             order.IndexOf(0x4000_0200).Should().Be(order.IndexOf(0x4000_0010) + 1, "the last freed slot (0x11) comes first");
 
-            world.CheckTableOrder();
-            world.EntityIndexOrderChecks.Should().Be(1);
-            world.EntityIndexOrderDiffs.Should().Be(0);
-
             world.Clear();
-            world.CheckTableOrder();
-            world.EntityIndexOrderDiffs.Should().Be(0);
-        }
-
-        [Fact]
-        public void The_Order_Check_Reports_Slots_That_Differ_From_The_Dictionary()
-        {
-            World world = WorldWriterMobileTests.BuildPlayer(out _, 0x0000_0100);
-            world.EntityIndexCheckOverride = true;
-            var reports = new List<string>();
-            world.EntityIndexObserver = reports.Add;
-
-            for (uint s = 1; s <= 4; s++)
-            {
-                world.GetOrCreateItem(0x4000_0000 | s);
-            }
-
-            // swap two slots behind the table's back
-            var slots = (Item[])typeof(ItemTable).GetField("_slots", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(world.Items);
-            (slots[1], slots[2]) = (slots[2], slots[1]);
-
-            world.CheckTableOrder();
-            world.EntityIndexOrderDiffs.Should().Be(1);
-            reports.Should().ContainSingle().Which.Should().Contain("items differ at 1").And.Contain("mobiles same");
+            world.Items.Values.Should().BeEmpty();
         }
     }
 }

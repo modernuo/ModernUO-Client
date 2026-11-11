@@ -81,13 +81,13 @@ namespace ClassicUO.Ecs
 
         public bool TryGetEntity(uint serial, out Entity entity) => _bySerial.TryGetValue(serial, out entity);
 
-        // T9 (world_entity_index): the client object each record stands for, by entity id (ClassicUO.Ecs does not know the
+        // T9 (World.Get and its kin): the client object each record stands for, by entity id (ClassicUO.Ecs does not know the
         // client's types). Not a component: Friflo's DeleteEntity leaves the vacated tail uncleared, so a reference there would
         // keep removed objects reachable, and an extra component on every record costs archetype churn (T3a).
         private object[] _handles = new object[4096];
 
         /// <summary>
-        /// T9 (<c>world_entity_index</c>): the client object last upserted under <paramref name="serial"/>'s record (null: no
+        /// T9 (<c>World.Get</c>): the client object last upserted under <paramref name="serial"/>'s record (null: no
         /// record, or one written without a handle).
         /// </summary>
         public object GetHandle(uint serial)
@@ -103,7 +103,7 @@ namespace ClassicUO.Ecs
         }
 
         /// <summary>
-        /// T9 (<c>world_entity_index</c>): the record under <paramref name="serial"/> when it was last upserted with
+        /// T9 (<c>World.TryGetLiveRecord</c>): the record under <paramref name="serial"/> when it was last upserted with
         /// <paramref name="handle"/> (one lookup; the handle's kind is the record's, so no tag test is needed).
         /// </summary>
         public bool TryGetEntityOf(uint serial, object handle, out Entity entity)

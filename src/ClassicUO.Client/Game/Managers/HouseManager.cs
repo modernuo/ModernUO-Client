@@ -70,18 +70,11 @@ namespace ClassicUO.Game.Managers
                 //}
 
                 // T9 slice 3: the range sweep asks this for a destroyed multi the table still holds
-                // (World.DestroyedHeldMultiBeyond), and a live lookup would answer "in range" and keep its house: the caller
-                // passes the multi (world_entity_index on; off: the table's item under its serial)
-                Item found = _world.HouseMulti(multi);
+                // (World.DestroyedHeldMultiBeyond), and a live lookup would answer "in range" and keep its house: the caller's
+                // multi decides, destroyed or not
+                distance += multi.MultiDistanceBonus;
 
-                if (found == null)
-                {
-                    return true;
-                }
-
-                distance += found.MultiDistanceBonus;
-
-                return Math.Abs(found.X - currX) <= distance && Math.Abs(found.Y - currY) <= distance;
+                return Math.Abs(multi.X - currX) <= distance && Math.Abs(multi.Y - currY) <= distance;
             }
 
             return false;

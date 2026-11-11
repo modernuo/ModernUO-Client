@@ -392,9 +392,8 @@ namespace ClassicUO.Game.UI.Gumps
             Mobile mobile = World.FindMobile(LocalSerial);
 
             // the paperdoll closes when its mobile is destroyed (Mobile.Destroy closes it for every mobile but the player).
-            // T9 slice 3: with world_entity_index on, a destroyed mobile not yet swept is not found, so "the mobile shown
-            // before is gone" stands for it
-            if (mobile != null ? mobile.IsDestroyed : _hadMobile && World.EntityIndexOn)
+            // T9 slice 3: a destroyed mobile not yet swept is not found, so "the mobile shown before is gone" stands for it
+            if (mobile != null ? mobile.IsDestroyed : _hadMobile)
             {
                 Dispose();
 

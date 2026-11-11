@@ -125,42 +125,6 @@ namespace ClassicUO.Game.GameObjects
         /// same answer as <c>ReferenceEquals(Get(serial), mobile)</c>), from the mobile's own table marks: no lookup.</summary>
         public bool Holds(Mobile mobile, uint serial) => ReferenceEquals(mobile.OwnerTable, this) && mobile.TableKey == serial;
 
-        /// <summary>CUO_ENTITY_INDEX_CHECK (T9 slice 4): whether the slots enumerate the same mobiles in the same order as the
-        /// key dictionary, which has seen the same inserts, removals and overwrites (<paramref name="position"/>: the first
-        /// position that differs, -1 when equal). No allocation.</summary>
-        internal bool OrderMatches(out int position)
-        {
-            int i = 0;
-            int slot = 0;
-
-            foreach (Mobile m in _byKey.Values)
-            {
-                while (slot < _count && _slots[slot] == null)
-                {
-                    slot++;
-                }
-
-                if (slot >= _count || !ReferenceEquals(_slots[slot], m))
-                {
-                    position = i;
-
-                    return false;
-                }
-
-                slot++;
-                i++;
-            }
-
-            while (slot < _count && _slots[slot] == null)
-            {
-                slot++;
-            }
-
-            position = slot < _count ? i : -1;
-
-            return position < 0;
-        }
-
         // Ordinal is the mobile's storage address, so a mobile may sit in one table under one key only: a second key or a
         // second table would let one removal free the slot the other still points at. Checked before any change.
         private static void CheckUnowned(Mobile mobile)
