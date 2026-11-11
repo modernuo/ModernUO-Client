@@ -59,7 +59,10 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 | Dynamic-sprite page requests run twice; dynamic instances re-upload every frame (~400 KB at 5000 mobiles) | `WorldRenderer.BuildFrame`, Renderer.cs:314 | - | open; ties in with ground-item baking |
 | Expanding 16-bit pages to RGBA8 costs 3-5 ms per page (suspect write-combined memory) | renderer | only the WebGPU RGBA8 fallback | open |
 | Co-occurrence page packing v2 | pack-format-v0.md | fewer pages per screen | open |
-| TextureAtlas holds RGBA8 and never evicts | TextureAtlas | moot once Gpu is the only path | open |
+| TextureAtlas holds RGBA8 and never evicts | TextureAtlas | moot once Gpu is the only path; Gpu mode fills it too (survey anim-frame-cache-2026-11-11) | open; the advance's share in Gpu mode behind `anim_frame_count_tables` (bg/anim-count-tables, results pending) |
+| Gpu mode still loads Legacy anim directions for picking, health bars and overhead positions (`GetAnimationDimensions`: one direction per body) | MobileView.cs:80, Animation.cs:113 | dimensions from the tables (OrigW/OrigH, centre) need no decode; picking needs masks, not the atlas upload | open |
+| Anim pages packed body-major spread crowds over ~1 page per body | AnimConvert.cs:464-495 | action-major hot actions: all equipment stand frames 357 -> ~4 pages | open (survey G1) |
+| Legacy anim atlas stores untrimmed frames; TextureAtlas abandons the old page's free space | Animation.cs:327, TextureAtlas.cs:79 | -20 % atlas area | open (survey L2) |
 | GPU device-lost recovery (recreate device, reload textures) instead of exit 0xDEAD | GpuDeviceLost | robustness | open |
 | Visible body changing to an action it never showed decodes synchronously (~3 ms, 15 in a 20 s bodies run) | Animation | avoids a blink | open |
 
