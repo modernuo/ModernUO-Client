@@ -145,8 +145,10 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
             // an offset mid-step, which the clear zeroes
-            a.OffsetX = b.OffsetX = 7;
-            a.OffsetZ = b.OffsetZ = -2;
+            a.SetOffset(7, a.OffsetY, a.OffsetZ);
+            b.SetOffset(7, b.OffsetY, b.OffsetZ);
+            a.SetOffset(a.OffsetX, a.OffsetY, -2);
+            b.SetOffset(b.OffsetX, b.OffsetY, -2);
 
             var denies = new (int X, int Y, sbyte Z, Direction Dir)[] { (998, 1001, 2, Direction.Left), (-1, -1, -1, Direction.North), (1000, 1000, 0, Direction.East) };
 
@@ -163,7 +165,8 @@ namespace ClassicUO.UnitTests.Ecs
 
                 // the next step queued again, so the following deny clears a queue
                 Pair(() => OldEnqueueStep(a, a.X + 1, a.Y, a.Z, Direction.East, false), () => OldEnqueueStep(b, b.X + 1, b.Y, b.Z, Direction.East, false));
-                a.OffsetY = b.OffsetY = 3;
+                a.SetOffset(a.OffsetX, 3, a.OffsetZ);
+                b.SetOffset(b.OffsetX, 3, b.OffsetZ);
             }
 
             newWorld.Writer.Violations.Should().Be(0);
@@ -180,7 +183,8 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.ThrowOnViolation = true;
             GiveWalker(b);
             Pair(() => OldEnqueueStep(a, 1001, 1000, 0, Direction.East, true), () => OldEnqueueStep(b, 1001, 1000, 0, Direction.East, true));
-            a.OffsetX = b.OffsetX = 5;
+            a.SetOffset(5, a.OffsetY, a.OffsetZ);
+            b.SetOffset(5, b.OffsetY, b.OffsetZ);
 
             // the position callback walks again (RequestMove): the move is not folded
             a.OnMoved = StandInWalk(Direction.West);
@@ -210,9 +214,9 @@ namespace ClassicUO.UnitTests.Ecs
             m.Z = step.Z;
             m.TestSetDirection((Direction)step.Direction);
             m.IsRunning = step.Run;
-            m.OffsetX = 0;
-            m.OffsetY = 0;
-            m.OffsetZ = 0;
+            m.SetOffset(0, m.OffsetY, m.OffsetZ);
+            m.SetOffset(m.OffsetX, 0, m.OffsetZ);
+            m.SetOffset(m.OffsetX, m.OffsetY, 0);
             m.RemoveFirstStep();
             m.CalculateRandomIdleTime();
             m.World.Ecs.PushInputs(m);
@@ -234,7 +238,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.AddToTile();
             }
 
-            m.LastStepTime = Time.Ticks;
+            m.SetLastStepTime(Time.Ticks);
             m.World.Ecs.PushInputs(m);
         }
 
@@ -272,9 +276,12 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Time.Ticks += 150;
                 // mid-step offsets, as the per-frame interpolation leaves them
-                a.OffsetX = b.OffsetX = 11;
-                a.OffsetY = b.OffsetY = -6;
-                a.OffsetZ = b.OffsetZ = 1;
+                a.SetOffset(11, a.OffsetY, a.OffsetZ);
+                b.SetOffset(11, b.OffsetY, b.OffsetZ);
+                a.SetOffset(a.OffsetX, -6, a.OffsetZ);
+                b.SetOffset(b.OffsetX, -6, b.OffsetZ);
+                a.SetOffset(a.OffsetX, a.OffsetY, 1);
+                b.SetOffset(b.OffsetX, b.OffsetY, 1);
                 a.UpdateRealScreenPositionOnly(0, 0);
                 b.UpdateRealScreenPositionOnly(0, 0);
                 a.PendingBlock = b.PendingBlock = placed ? 0 : -1;
@@ -704,7 +711,7 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Total.Should().Be(0, "ProcessSteps' step completion");
 
             // 0x21 / 0x22
-            m.OffsetX = 4;
+            m.SetOffset(4, m.OffsetY, m.OffsetZ);
             FunnelCheck.Reset();
             world.Writer.StopMobile(m);
             world.Writer.SetMobileDirection(m, Direction.West);

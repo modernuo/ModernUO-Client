@@ -163,8 +163,13 @@ namespace ClassicUO.Ecs
             _bySerial.TryGetValue(serial, out entity) && entity.Tags.Has<MobileTag>() == mobile;
 
         /// <summary>Creates or updates a mobile's entity and returns it (the caller pushes <see cref="MobileInputs"/>).</summary>
+        /// <summary>T9 S8c: the last <see cref="UpsertMobile"/> created the record (its timer, queue and clock are new).</summary>
+        public bool LastMobileCreated { get; private set; }
+
         public Entity UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer, object handle = null)
         {
+            LastMobileCreated = false;
+
             if (!_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<MobileTag>())
             {
                 if (!e.IsNull)
@@ -186,6 +191,11 @@ namespace ClassicUO.Ecs
                     new MobileInputs(),
                     isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
                 );
+
+                // T9 S8c: the animation timer, the walk queue and the clock are the record's from its creation (their only
+                // copy; CreateEntity takes 10 components at most)
+                e.Add(AnimationTimer.MobileDefault, new Steps(), new MobileClock());
+                LastMobileCreated = true;
 
                 _bySerial[serial] = e;
                 MobileCount++;

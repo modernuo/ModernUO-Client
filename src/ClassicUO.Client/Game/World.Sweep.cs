@@ -70,7 +70,7 @@ namespace ClassicUO.Game
 
                 if (m.Steps.Count != 0)
                 {
-                    ref readonly Mobile.Step step = ref m.Steps.Back();
+                    Mobile.Step step = m.Steps.Back();
                     x = step.X;
                     y = step.Y;
                 }

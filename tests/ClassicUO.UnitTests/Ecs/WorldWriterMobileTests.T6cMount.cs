@@ -47,7 +47,6 @@ namespace ClassicUO.UnitTests.Ecs
             ran.Should().BeTrue();
             db.Should().Be(da, "the direction out");
             AssertSameWorld(oldWorld, newWorld, mob);
-            StepSystem.Diff(b, StepEntity(newWorld, b)).Should().BeNull();
         }
 
         private static void EquipMount(World world, ushort graphic) =>
@@ -70,7 +69,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (system)
             {
-                world.StepSystem.MountCheckOverride = true;
                 SlotsSeam(world);
             }
 
@@ -97,7 +95,7 @@ namespace ClassicUO.UnitTests.Ecs
                 World oldWorld = BuildMount(sc, false), newWorld = BuildMount(sc, true);
                 newWorld.Writer.ThrowOnViolation = true;
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
-                long diffs0 = StepSystem.MountDiffs, reads0 = StepSystem.MountEcsReads, checks0 = StepSystem.MountChecks;
+                long reads0 = StepSystem.MountEcsReads;
                 long rebuilds0 = StepSystem.MountSlotRebuilds;
                 bool everMounted = false;
 
@@ -151,8 +149,6 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 b.Steps.Count.Should().Be(0);
-                StepSystem.MountDiffs.Should().Be(diffs0, "CUO_STEP_MOUNT_CHECK: the ECS's mounted pace equals the Mobile's at every decision");
-                StepSystem.MountChecks.Should().BeGreaterThan(checks0);
 
                 StepSystem.MountEcsReads.Should().BeGreaterThan(reads0);
 
@@ -181,9 +177,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World oldWorld = BuildPlayerSteps(WalkerStart.AllAccepted, false, out TestPlayer a);
                 World newWorld = BuildPlayerSteps(WalkerStart.AllAccepted, true, out TestPlayer b);
-                newWorld.StepSystem.MountCheckOverride = true;
                 SlotsSeam(newWorld);
-                long diffs0 = StepSystem.MountDiffs;
 
                 Pair(() => oldWorld.Writer.SetSpeedMode(a, CharacterSpeedType.FastUnmountAndCantRun), () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmountAndCantRun));
                 StepEntity(newWorld, b).GetComponent<MobileInputs>().SpeedMode.Should().Be((byte)CharacterSpeedType.FastUnmountAndCantRun);
@@ -202,7 +196,6 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 b.Steps.Count.Should().Be(0);
-                StepSystem.MountDiffs.Should().Be(diffs0);
             }
             finally
             {
@@ -221,7 +214,6 @@ namespace ClassicUO.UnitTests.Ecs
             try
             {
                 World oldWorld = BuildSteps(StepScenario.OneStep, false), newWorld = BuildSteps(StepScenario.OneStep, true);
-                newWorld.StepSystem.MountCheckOverride = true;
                 SlotsSeam(newWorld);
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
                 a.Steps.Count.Should().Be(1);
@@ -233,13 +225,11 @@ namespace ClassicUO.UnitTests.Ecs
                 e.GetComponent<EquipmentSlots>().Mounted = true;
 
                 Time.Ticks = a.LastStepTime + 300;
-                long diffs0 = StepSystem.MountDiffs;
                 byte da = 0, db = 0;
                 // not paired: the paths part (the completion draws the idle timer)
                 a.ProcessSteps(out da, true);
                 newWorld.StepSystem.TryRun(newWorld, b, Time.Ticks, FRAME_DELAY, out db).Should().BeTrue();
 
-                StepSystem.MountDiffs.Should().Be(diffs0 + 1, "CUO_STEP_MOUNT_CHECK reports the stale slots");
                 a.Steps.Count.Should().Be(1, "the walking pace: not due yet");
                 b.Steps.Count.Should().Be(0, "the ECS says mounted: due");
             }

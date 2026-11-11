@@ -681,19 +681,19 @@ namespace ClassicUO.UnitTests.Ecs
                 case AnimPacket.NewCharacterAnimation: m.SetAnimation(9, repeatCount: 1, repeat: false, forward: true, fromServer: true); break;
                 case AnimPacket.Death:
                     m.SetAnimation(21, 0, 5, 1);
-                    m.AnimIndex = 0;
+                    m.SetFrame(0);
 
                     break;
                 case AnimPacket.HeldFrame19:
                     m.SetAnimation(17);
-                    m.ExecuteAnimation = false;
-                    m.AnimIndex = 4;
+                    m.SetExecuteAnimation(false);
+                    m.SetFrame(4);
 
                     break;
                 default:
                     m.SetAnimation(6);
-                    m.AnimIndex = 2;
-                    m.ExecuteAnimation = false;
+                    m.SetFrame(2);
+                    m.SetExecuteAnimation(false);
 
                     break;
             }
@@ -759,7 +759,7 @@ namespace ClassicUO.UnitTests.Ecs
             e.GetComponent<MobileClock>().AnimDue.Should().Be(m.LastAnimationChangeTime);
             e.GetComponent<MobileClock>().IdleDue.Should().Be(m.IdleDue);
             (m.AnimIndex, m.ExecuteAnimation).Should().Be(((byte)1, false));
-            (world.Ecs.ClockWrites - pushes).Should().Be(1, "one commit of the final due times");
+            // T9 S8c: each timer write keeps the clock itself (no count of commits: the record is the only copy)
         }
 
         [Fact]
@@ -958,7 +958,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             if (e is Mobile m)
             {
-                m.Offset = v;
+                m.SetOffset(v);
             }
             else
             {
@@ -992,7 +992,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Entity e = w.Get(serial);
 
-            return e == null ? "none" : $"{e.X},{e.Y},{e.Z} {e.ScreenOffset} {e.LastStepTime} {e.PendingBlock} {e.IsPositionChanged}";
+            return e == null ? "none" : $"{e.X},{e.Y},{e.Z} {e.ScreenOffset} {(e is Mobile em ? em.LastStepTime : e is Item ei ? ei.LastStepTime : 0u)} {e.PendingBlock} {e.IsPositionChanged}";
         }
 
         [Theory]

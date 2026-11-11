@@ -2488,7 +2488,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void All_Four_Offset_Setters_Are_Covered()
+        public void The_Offset_Write_Is_Covered()
         {
             if (!FunnelCheck.Available)
             {
@@ -2499,15 +2499,13 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.GetOrCreateMobile(MOB);
             FunnelCheck.Reset();
 
-            m.Offset = default;
-            m.OffsetX = 1;
-            m.OffsetY += 2;
-            m.OffsetZ = 4;
+            m.SetOffset(default);
+            m.SetOffset(1, m.OffsetY, m.OffsetZ);
+            m.SetOffset(m.OffsetX, m.OffsetY + 2, m.OffsetZ);
+            m.SetOffset(m.OffsetX, m.OffsetY, 4);
 
-            FunnelCheck.Count(FunnelField.Offset).Should().Be(1);
-            FunnelCheck.Count(FunnelField.OffsetX).Should().Be(1);
-            FunnelCheck.Count(FunnelField.OffsetY).Should().Be(1);
-            FunnelCheck.Count(FunnelField.OffsetZ).Should().Be(1);
+            // T9 S8c: the four setters are one write of the record's Steps offset (SetOffset)
+            FunnelCheck.Count(FunnelField.Offset).Should().Be(4);
         }
 
         [Fact]

@@ -353,21 +353,14 @@ namespace ClassicUO.Game
     /// <see cref="AnimationTimer"/>. Otherwise the old Update's order: the handles opening (<c>Entity.Update</c>), the idle
     /// animation, the step processing (<see cref="StepSystem"/>), the footstep sound, then the frame advance in the step's
     /// direction. The results go through the funnel (<c>WorldWriter.IdleAnimation</c>, the step operations,
-    /// <c>WorldWriter.AdvanceAnimationFromEcs</c>: the Mobile's fields, a dying mobile's removal). The caller runs the due
-    /// mobiles in table order, so the random draws keep the legacy sequence.
+    /// <c>WorldWriter.AdvanceAnimationFromEcs</c>: the record's timer, a dying mobile's removal). The caller runs the due
+    /// mobiles in table order, so the random draws keep the legacy sequence. T9 S8c: the timer is the record's only copy, so
+    /// the mobile half of CUO_ANIM_ADVANCE_CHECK (the component against the Mobile's timer) is gone; the switch now only
+    /// prints this system's counters with the corpse checker's (<see cref="ItemAnimationAdvanceSystem"/>).
     /// </summary>
     internal sealed class MobileAnimationAdvanceSystem
     {
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_ANIM_ADVANCE_CHECK=1: the component must equal the Mobile's timer before each advance (see
-        // Check). T9 deleted world_anim_system's off path and with it the comparison with a shadow of the legacy advance.
-        public static readonly bool AdvanceCheck = Environment.GetEnvironmentVariable("CUO_ANIM_ADVANCE_CHECK") == "1";
-#else
-        public const bool AdvanceCheck = false;
-#endif
-
         public static long Ran, RanStepping, Declined;
-        public static long SyncChecks, SyncDiffs;
         private static int _logged;
 
         /// <summary>
@@ -376,11 +369,10 @@ namespace ClassicUO.Game
         /// components are written together from the first update on), not mirrored or without its components.
         /// </summary>
         public bool TryRun(World world, Mobile mob) =>
-            TryRun(world, mob, new LiveAdvanceSource(Client.Game.UO.Animations), AdvanceCheck);
+            TryRun(world, mob, new LiveAdvanceSource(Client.Game.UO.Animations));
 
-        /// <summary><see cref="TryRun(World, Mobile)"/> over any animation data (the unit tests pass a stub; the checker needs
-        /// the client's).</summary>
-        internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source, bool check) where TAnims : struct, IAnimationAdvanceSource
+        /// <summary><see cref="TryRun(World, Mobile)"/> over any animation data (the unit tests pass a stub).</summary>
+        internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source) where TAnims : struct, IAnimationAdvanceSource
         {
             if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
             {
@@ -414,7 +406,7 @@ namespace ClassicUO.Game
 
             if (clock.Flags != MobileClockFlags.None)
             {
-                RunStepping(world, mob, e, in source, check);
+                RunStepping(world, mob, e, in source);
 
                 return true;
             }
@@ -423,13 +415,6 @@ namespace ClassicUO.Game
             MobileInputs inp = row.Get<MobileInputs>();
             EquipmentSlots eq = row.Get<EquipmentSlots>();
 
-#if CUO_DEVTOOLS
-            if (check)
-            {
-                Check(mob, in t);
-            }
-#endif
-
             AnimAdvanceOutcome outcome = AnimationAdvanceRules.Step(ref t, in inp, in eq, mob.Serial, in source, out int frame, out long due);
             world.Writer.AdvanceAnimationFromEcs(mob, in t, outcome == AnimAdvanceOutcome.Remove, frame, due);
 
@@ -437,7 +422,7 @@ namespace ClassicUO.Game
         }
 
         // the old Mobile.Update of a mobile with queued steps or a handles opening, in its order
-        private static void RunStepping<TAnims>(World world, Mobile mob, EcsEntity e, in TAnims source, bool check)
+        private static void RunStepping<TAnims>(World world, Mobile mob, EcsEntity e, in TAnims source)
             where TAnims : struct, IAnimationAdvanceSource
         {
             RanStepping++;
@@ -447,13 +432,6 @@ namespace ClassicUO.Game
 
             EcsRow row = EcsRead.Row(e);
             AnimationTimer t = row.Get<AnimationTimer>();
-
-#if CUO_DEVTOOLS
-            if (check)
-            {
-                Check(mob, in t);
-            }
-#endif
 
             if (t.IdleDue < Time.Ticks)
             {
@@ -469,8 +447,8 @@ namespace ClassicUO.Game
 
             StepSystem.FootstepSound(world, mob);
 
-            // the advance reads the timer and the inputs after the step operations (SetAnimation, CompleteStep)
-            world.Ecs.PushClock(mob);
+            // the advance reads the timer and the inputs after the step operations (SetAnimation, CompleteStep), which wrote
+            // them to the record
             row = EcsRead.Row(e);
 
             if (row.IsNull)
@@ -495,23 +473,6 @@ namespace ClassicUO.Game
             }
         }
 
-        // ---- the checker -------------------------------------------------------------------------------------------------
-
-#if CUO_DEVTOOLS
-        /// <summary>CUO_ANIM_ADVANCE_CHECK: the component must equal the Mobile's fields (a missed push otherwise).</summary>
-        private static void Check(Mobile mob, in AnimationTimer component)
-        {
-            AnimationTimer legacy = mob.FullAnimationTimer;
-            SyncChecks++;
-
-            if (!Same(in component, in legacy))
-            {
-                SyncDiffs++;
-                Log1($"component of 0x{mob.Serial:X8} differs from the Mobile: ecs {Describe(in component)} | mobile {Describe(in legacy)}");
-            }
-        }
-#endif
-
         internal static bool Same(in AnimationTimer a, in AnimationTimer b) =>
             a.Frame == b.Frame && a.FrameCount == b.FrameCount && a.Interval == b.Interval && a.RepeatMode == b.RepeatMode &&
             a.RepeatModeCount == b.RepeatModeCount && a.Repeat == b.Repeat && a.Forward == b.Forward && a.FromServer == b.FromServer &&
@@ -520,16 +481,8 @@ namespace ClassicUO.Game
         internal static string Describe(in AnimationTimer t) =>
             $"group {t.Group} frame {t.Frame}/{t.FrameCount} interval {t.Interval} repeat {t.RepeatMode}/{t.RepeatModeCount}/{t.Repeat} fwd {t.Forward} server {t.FromServer} exec {t.ExecuteAnimation} due {t.AnimDue} idle {t.IdleDue}";
 
-        private static void Log1(string message)
-        {
-            if (_logged++ < 25)
-            {
-                Log.Warn($"[anim-advance-check] {message}");
-            }
-        }
-
-        /// <summary>The checker and system counters for the periodic log line.</summary>
+        /// <summary>The system counters for the periodic log line.</summary>
         internal static string Summary() =>
-            $"[anim-advance-check] ecs advances {Ran} (stepping or handles {RanStepping}), declined {Declined}; component syncs checked {SyncChecks}, {SyncDiffs} different";
+            $"[anim-advance-check] ecs advances {Ran} (stepping or handles {RanStepping}), declined {Declined}";
     }
 }

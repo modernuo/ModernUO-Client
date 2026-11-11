@@ -66,6 +66,17 @@ namespace ClassicUO.Game.GameObjects
 
         private bool _isMulti;
 
+        // T9 S8c: moved from Entity (a mobile's live only in its record's AnimationTimer and Steps): a corpse's or animated
+        // item's frame and due time, and a boat's step time
+        private byte _animIndex;
+        private bool _executeAnimation = true;
+        private long _lastAnimationChangeTime;
+        private uint _lastStepTime;
+        public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
+        public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
+        internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
+        public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
+
         /// <summary>T9: the id of this item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity while it
         /// is listed, 0 otherwise (the O(1) membership test; an id, not an Entity, to keep Item 12 bytes smaller). Read membership
         /// through <c>World.IsItemListed</c>.</summary>

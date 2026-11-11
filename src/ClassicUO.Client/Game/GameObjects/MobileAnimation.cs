@@ -19,11 +19,11 @@ namespace ClassicUO.Game.GameObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Direction GetDirectionForAnimation()
         {
-            if (Steps.Count != 0)
-            {
-                ref readonly Step step = ref Steps.Front();
+            StepQueue steps = Steps;
 
-                return (Direction)step.Direction;
+            if (steps.Count != 0)
+            {
+                return (Direction)steps.Front().Direction;
             }
 
             return Direction;
@@ -51,7 +51,7 @@ namespace ClassicUO.Game.GameObjects
         {
             AnimGroupInput input = new AnimGroupInput
             {
-                ServerGroup = _animationGroup,
+                ServerGroup = AnimationGroupRaw,
                 FromServer = AnimationFromServer,
                 WarMode = InWarMode,
                 Walking = IsWalking,
@@ -84,7 +84,7 @@ namespace ClassicUO.Game.GameObjects
             return input;
         }
 
-        internal byte AnimationGroupRaw => _animationGroup;
+        internal byte AnimationGroupRaw => Timer.Group;
 
 
         public static bool IsReplacedObjectAnimation(byte anim, ushort v13)
@@ -222,7 +222,7 @@ namespace ClassicUO.Game.GameObjects
 
                     if (mob.Steps.Count != 0)
                     {
-                        ref readonly Step s = ref mob.Steps.Front();
+                        Step s = mob.Steps.Front();
 
                         if (s.X != mob.X || s.Y != mob.Y)
                         {

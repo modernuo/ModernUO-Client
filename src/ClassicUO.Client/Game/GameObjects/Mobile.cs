@@ -114,8 +114,6 @@ namespace ClassicUO.Game.GameObjects
         internal ushort _surfaceOverheadCacheY = ushort.MaxValue;
         internal int _surfaceOverheadCacheMaxZ = int.MinValue;
 
-        private long _lastAnimationIdleDelay;
-
         /// <summary>E10: this mobile's slot in <see cref="MobileTable"/> (its position in <c>World.Mobiles.Values</c>'s enumeration order), kept by the table on add and remove.</summary>
         internal int Ordinal;
 
@@ -125,35 +123,200 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>T9 slice 3: the key <see cref="OwnerTable"/> holds this mobile under (its serial, or the old one during a
         /// death re-key), kept by the table, so <c>MobileTable.Holds</c> answers without a lookup.</summary>
         internal uint TableKey;
-        private bool _isAnimationForwardDirection;
-        private byte _animationGroup = 0xFF;
-        private byte _animationInterval;
-        private bool _animationRepeat;
-        private ushort _animationRepeateMode = 1;
-        private ushort _animationRepeatModeCount = 1;
 
-        public Mobile(World world, uint serial) : base(world, serial)
-        {
-            LastAnimationChangeTime = Time.Ticks;
-            CalculateRandomIdleTime();
-        }
+        // T9 S8c: the PlayerMobile's timer start (its due time now, an idle delay drawn) is written when its record is created
+        // (WorldEcs.InitCreatedMobile), the record being the timer's only copy
+        public Mobile(World world, uint serial) : base(world, serial) { }
 
         public Mobile(World world) : base(world, 0) { }
 
-        // the walk queue: world state (T1). Read through Steps; changed only through the checked methods below.
-        private readonly Deque<Step> _walkSteps = new Deque<Step>(Constants.MAX_STEP_COUNT);
+        // ---- T9 S8c: the animation timer (AnimationTimer), the walk queue, its step time and walk offset (Steps) and the
+        // clock (MobileClock) live only in the record (Entity.TryRecord: the world mirror's, or a preview's), which has them
+        // from its creation. The getters read it; without one (a destroyed or stale instance, the detached player) they read
+        // a new mobile's values (AnimationTimer.MobileDefault, an empty queue) and the writes below are dropped. Only
+        // WorldWriter's operations call the writes; each keeps the record's MobileClock.
+
+        /// <summary>T9 S8c: the record's animation timer (a copy; a new mobile's without a record).</summary>
+        internal ClassicUO.Ecs.AnimationTimer Timer =>
+            TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e) : ClassicUO.Ecs.AnimationTimer.MobileDefault;
 
         /// <summary>The walk queue, read-only (T1, Codex audit round 2, #5): changes go through <see cref="AddStep"/>,
-        /// <see cref="RemoveFirstStep"/>, <see cref="ReplaceStep"/> and <see cref="ClearStepQueue"/>, which the funnel check sees.</summary>
-        public StepQueue Steps => new StepQueue(_walkSteps);
+        /// <see cref="RemoveFirstStep"/>, <see cref="ReplaceStep"/> and <see cref="ClearStepQueue"/>, which the funnel check
+        /// sees. T9 S8c: a view of the record's <see cref="ClassicUO.Ecs.Steps"/> (empty without a record).</summary>
+        public StepQueue Steps => new StepQueue(TryRecord(out Friflo.Engine.ECS.Entity e) ? e : default);
 
-        internal void AddStep(in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.AddToBack(step); }
+        public byte AnimIndex => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e).Frame : (byte)0;
 
-        internal void RemoveFirstStep() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.RemoveFromFront(); }
+        public bool ExecuteAnimation => !TryRecord(out Friflo.Engine.ECS.Entity e) || ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e).ExecuteAnimation;
 
-        internal void ReplaceStep(int index, in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps[index] = step; }
+        internal long LastAnimationChangeTime => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e).AnimDue : 0;
 
-        internal void ClearStepQueue() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.Clear(); }
+        /// <summary>E4: the idle timer's due time (the mobile update plans the idle animation when it is before the tick).</summary>
+        internal long IdleDue => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e).IdleDue : 0;
+
+        public byte AnimationFrameCount => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e).FrameCount : (byte)0;
+
+        public bool AnimationFromServer => TryRecord(out Friflo.Engine.ECS.Entity e) && ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e).FromServer;
+
+        public uint LastStepTime => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).LastStepTime : 0;
+
+        /// <summary>The walk offset (T9 S7 kept it on the Mobile; S8c: the record's <see cref="ClassicUO.Ecs.Steps"/>).</summary>
+        public Vector3 Offset
+        {
+            get
+            {
+                if (!TryRecord(out Friflo.Engine.ECS.Entity e))
+                {
+                    return default;
+                }
+
+                ref readonly ClassicUO.Ecs.Steps s = ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e);
+
+                return new Vector3(s.OffsetX, s.OffsetY, s.OffsetZ);
+            }
+        }
+
+        public float OffsetX => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).OffsetX : 0;
+
+        public float OffsetY => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).OffsetY : 0;
+
+        public float OffsetZ => TryRecord(out Friflo.Engine.ECS.Entity e) ? ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).OffsetZ : 0;
+
+        /// <summary>T9 S8c: writes the record's timer and its clock's due times (dropped without a record).</summary>
+        internal void WriteTimer(in ClassicUO.Ecs.AnimationTimer t)
+        {
+            FunnelCheck.Write(this, FunnelField.AnimationState);
+
+            if (TryOwnRecord(out Friflo.Engine.ECS.Entity e))
+            {
+                ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e) = t;
+                WorldEcs.WriteClock(this, e);
+            }
+        }
+
+        // the queue writes: the ring kept from slot 0 (Head 0), unused slots default, then the clock's Stepping flag
+        private bool TrySteps(out Friflo.Engine.ECS.Entity e)
+        {
+            FunnelCheck.Write(this, FunnelField.Steps);
+
+            return TryOwnRecord(out e);
+        }
+
+        internal void AddStep(in Step step)
+        {
+            if (!TrySteps(out Friflo.Engine.ECS.Entity e))
+            {
+                return;
+            }
+
+            ref ClassicUO.Ecs.Steps s = ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e);
+
+            // unreachable: PlanStep accepts a packet while fewer than MAX_STEP_COUNT are queued (Steps.CAPACITY asserts it)
+            if (s.Count >= ClassicUO.Ecs.Steps.CAPACITY)
+            {
+                return;
+            }
+
+            s.Ring[s.Count++] = ToEntry(in step);
+            WorldEcs.WriteClock(this, e);
+        }
+
+        internal void RemoveFirstStep()
+        {
+            if (!TrySteps(out Friflo.Engine.ECS.Entity e))
+            {
+                return;
+            }
+
+            ref ClassicUO.Ecs.Steps s = ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e);
+
+            if (s.Count == 0)
+            {
+                return;
+            }
+
+            for (int k = 1; k < s.Count; k++)
+            {
+                s.Ring[k - 1] = s.Ring[k];
+            }
+
+            s.Ring[--s.Count] = default;
+            WorldEcs.WriteClock(this, e);
+        }
+
+        internal void ReplaceStep(int index, in Step step)
+        {
+            if (TrySteps(out Friflo.Engine.ECS.Entity e))
+            {
+                ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).Ring[index] = ToEntry(in step);
+            }
+        }
+
+        internal void ClearStepQueue()
+        {
+            if (!TrySteps(out Friflo.Engine.ECS.Entity e))
+            {
+                return;
+            }
+
+            ref ClassicUO.Ecs.Steps s = ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e);
+            s.Ring = default;
+            s.Head = 0;
+            s.Count = 0;
+            WorldEcs.WriteClock(this, e);
+        }
+
+        internal void SetLastStepTime(uint time)
+        {
+            FunnelCheck.Write(this, FunnelField.LastStepTime);
+
+            if (TryOwnRecord(out Friflo.Engine.ECS.Entity e))
+            {
+                ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).LastStepTime = time;
+            }
+        }
+
+        /// <summary>The walk offset (the step interpolation, its reset, a boat carrying the mobile).</summary>
+        internal void SetOffset(float x, float y, float z)
+        {
+            FunnelCheck.Write(this, FunnelField.Offset);
+
+            if (TryOwnRecord(out Friflo.Engine.ECS.Entity e))
+            {
+                ref ClassicUO.Ecs.Steps s = ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e);
+                s.OffsetX = x;
+                s.OffsetY = y;
+                s.OffsetZ = z;
+            }
+        }
+
+        internal void SetOffset(Vector3 offset) => SetOffset(offset.X, offset.Y, offset.Z);
+
+        /// <summary>The frame index (0x6E/0xE2's frame, the advance's).</summary>
+        internal void SetFrame(byte frame)
+        {
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            t.Frame = frame;
+            WriteTimer(in t);
+        }
+
+        /// <summary>The next frame's due time (the advance's).</summary>
+        internal void SetAnimDue(long due)
+        {
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            t.AnimDue = due;
+            WriteTimer(in t);
+        }
+
+        internal void SetExecuteAnimation(bool on)
+        {
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            t.ExecuteAnimation = on;
+            WriteTimer(in t);
+        }
+
+        private static ClassicUO.Ecs.StepEntry ToEntry(in Step s) =>
+            new ClassicUO.Ecs.StepEntry { X = s.X, Y = s.Y, Z = s.Z, Direction = s.Direction, Run = s.Run };
         public bool IsParalyzed => (Flags & Flags.Frozen) != 0;
         public bool IsYellowHits => (Flags & Flags.YellowBar) != 0;
         public bool IsPoisoned =>
@@ -226,11 +389,7 @@ namespace ClassicUO.Game.GameObjects
 
         protected virtual bool IsWalking => LastStepTime > Time.Ticks - Constants.WALKING_DELAY;
 
-        private byte _animationFrameCount;
-        private bool _animationFromServer;
         private long _lastStepSoundTime;
-        public byte AnimationFrameCount { get => _animationFrameCount; set { FunnelCheck.Write(this, FunnelField.AnimationFrameCount); _animationFrameCount = value; } }
-        public bool AnimationFromServer { get => _animationFromServer; set { FunnelCheck.Write(this, FunnelField.AnimationFromServer); _animationFromServer = value; } }
         // T9 S5: the traits (IsRenamable, IsFemale, Race, SpeedMode, the player's InWarMode) live only in the record (the world
         // mirror's or a preview's: Entity.TryRecord); WorldWriter's operations commit them. Without one: the defaults
         public bool IsRenamable => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.MobileBit(e, ClassicUO.Ecs.MobileTraitBits.Renamable);
@@ -326,14 +485,6 @@ namespace ClassicUO.Game.GameObjects
 
         public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
 
-        // T9 S7: the step offset stays on the mobile (moved from GameObject): ProcessSteps writes it for the mobiles the step
-        // system declines, and CUO_STEP_CHECK compares the Steps component with it. A struct property: `m.Offset.Z = v` does
-        // not compile (CS1612, it would write a copy); write members through OffsetX/OffsetY/OffsetZ, or assign a Vector3.
-        private Vector3 _offset;
-        public Vector3 Offset { get => _offset; set { FunnelCheck.Write(this, FunnelField.Offset); _offset = value; } }
-        public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }
-        public float OffsetY { get => _offset.Y; set { FunnelCheck.Write(this, FunnelField.OffsetY); _offset.Y = value; } }
-        public float OffsetZ { get => _offset.Z; set { FunnelCheck.Write(this, FunnelField.OffsetZ); _offset.Z = value; } }
         public string Title = string.Empty;
 
         public static Mobile Create(World world, uint serial)
@@ -367,7 +518,9 @@ namespace ClassicUO.Game.GameObjects
 
         internal void CalculateRandomIdleTime()
         {
-            SetIdleDue(NextIdleDue());
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            t.IdleDue = NextIdleDue();
+            WriteTimer(in t);
         }
 
         /// <summary>T1 (funnel part 8): the next idle due time, 30 to 60 s from now (one random draw).</summary>
@@ -378,52 +531,35 @@ namespace ClassicUO.Game.GameObjects
             return Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
         }
 
-        // the idle timer's write: the due time, then the clock push
-        private void SetIdleDue(long due)
-        {
-            FunnelCheck.Write(this, FunnelField.AnimationState);
-            _lastAnimationIdleDelay = due;
-
-            // E4: the idle due time (and, from SetAnimation, the frame due time written just before) reach the ECS clock
-            PushClock();
-        }
-
-        /// <summary>E4: the idle timer's due time (the mobile update plans the idle animation when it is before the tick).</summary>
-        internal long IdleDue => _lastAnimationIdleDelay;
-
-        /// <summary>E4: writes the due times and flags of <see cref="MobileClock"/> after a change to one.</summary>
-        protected void PushClock()
-        {
-            World?.Ecs.PushClock(this);
-        }
-
         /// <summary>Tests: a hash of every field the mobile update can change (the update, the steps, the timers), to show an
         /// operation changed nothing.</summary>
         internal int UpdateStateHash()
         {
             var h = new HashCode();
-            h.Add(AnimIndex);
-            h.Add(AnimationFrameCount);
-            h.Add(AnimationFromServer);
-            h.Add(LastAnimationChangeTime);
-            h.Add(_lastAnimationIdleDelay);
-            h.Add(_animationGroup);
-            h.Add(_animationInterval);
-            h.Add(_animationRepeat);
-            h.Add(_animationRepeateMode);
-            h.Add(_animationRepeatModeCount);
-            h.Add(_isAnimationForwardDirection);
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            h.Add(t.Frame);
+            h.Add(t.FrameCount);
+            h.Add(t.FromServer);
+            h.Add(t.AnimDue);
+            h.Add(t.IdleDue);
+            h.Add(t.Group);
+            h.Add(t.Interval);
+            h.Add(t.Repeat);
+            h.Add(t.RepeatMode);
+            h.Add(t.RepeatModeCount);
+            h.Add(t.Forward);
             h.Add(X);
             h.Add(Y);
             h.Add(Z);
             h.Add((byte)Direction);
             h.Add(Offset);
-            h.Add(Steps.Count);
+            StepQueue steps = Steps;
+            h.Add(steps.Count);
 
             // T6c: the queued steps themselves
-            for (int i = 0; i < Steps.Count; i++)
+            for (int i = 0; i < steps.Count; i++)
             {
-                Step s = Steps[i];
+                Step s = steps[i];
                 h.Add(s.X);
                 h.Add(s.Y);
                 h.Add(s.Z);
@@ -449,7 +585,7 @@ namespace ClassicUO.Game.GameObjects
         public void ClearSteps()
         {
             ClearStepQueue();
-            Offset = Vector3.Zero;
+            SetOffset(0, 0, 0);
             PushInputs();
         }
 
@@ -570,7 +706,7 @@ namespace ClassicUO.Game.GameObjects
                     SetAnimation(0xFF);
                 }
 
-                LastStepTime = plan.StepTime;
+                SetLastStepTime(plan.StepTime);
             }
 
             if (plan.Count > 0) AddStep(plan.S0);
@@ -582,7 +718,9 @@ namespace ClassicUO.Game.GameObjects
 
         internal void GetEndPosition(out int x, out int y, out sbyte z, out Direction dir)
         {
-            if (Steps.Count == 0)
+            StepQueue steps = Steps;
+
+            if (steps.Count == 0)
             {
                 x = X;
                 y = Y;
@@ -591,7 +729,7 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                ref readonly Step step = ref Steps.Back();
+                Step step = steps.Back();
                 x = step.X;
                 y = step.Y;
                 z = step.Z;
@@ -609,19 +747,10 @@ namespace ClassicUO.Game.GameObjects
             bool fromServer = false
         )
         {
-            FunnelCheck.Write(this, FunnelField.AnimationState);
-            _animationGroup = id;
-            AnimIndex = (byte)(forward ? 0 : frameCount);
-            _animationInterval = interval;
-            AnimationFrameCount = (byte)(forward ? 0 : frameCount);
-            _animationRepeateMode = repeatCount;
-            _animationRepeatModeCount = repeatCount;
-            _animationRepeat = repeat;
-            _isAnimationForwardDirection = forward;
-            AnimationFromServer = fromServer;
-            LastAnimationChangeTime = Time.Ticks;
-
-            CalculateRandomIdleTime();
+            // the state, the frame due time (now), then the idle delay's random draw, as before
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            AnimationAdvanceRules.SetAnimation(ref t, id, interval, frameCount, repeatCount, repeat, forward, fromServer);
+            WriteTimer(in t);
         }
 
         /// <summary>
@@ -655,45 +784,10 @@ namespace ClassicUO.Game.GameObjects
         /// its old order.</summary>
         internal void ApplyIdle(in IdlePlan plan)
         {
-            SetIdleDue(plan.IdleDue);
-
-            if (!plan.Resets)
-            {
-                return;
-            }
-
-            FunnelCheck.Write(this, FunnelField.AnimationState);
-            AnimIndex = 0;
-            AnimationFrameCount = 0;
-            _animationInterval = 1;
-            _animationRepeateMode = 1;
-            _animationRepeatModeCount = 1;
-            _isAnimationForwardDirection = true;
-            _animationRepeat = false;
-            AnimationFromServer = true;
-
-            if (plan.Group == IdleGroup.Set)
-            {
-                _animationGroup = plan.Value;
-            }
-            else if (plan.Group == IdleGroup.SetAnimation)
-            {
-                SetAnimation(plan.Value);
-            }
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            AnimationAdvanceRules.ApplyIdle(ref t, in plan);
+            WriteTimer(in t);
         }
-
-        /// <summary>T1 (funnel part 7): the animation timer as <c>AnimationTiming.Advance</c> takes it (a pure read).</summary>
-        internal ClassicUO.Ecs.AnimationTimer AnimationTimerState => new ClassicUO.Ecs.AnimationTimer
-        {
-            Frame = AnimIndex,
-            FrameCount = AnimationFrameCount,
-            Interval = _animationInterval,
-            RepeatMode = _animationRepeateMode,
-            RepeatModeCount = _animationRepeatModeCount,
-            Repeat = _animationRepeat,
-            Forward = _isAnimationForwardDirection,
-            FromServer = AnimationFromServer
-        };
 
         /// <summary>
         /// T1 (funnel part 7): the timer fields an advance changes (the frame count and the repeat state; the frame index is
@@ -701,56 +795,32 @@ namespace ClassicUO.Game.GameObjects
         /// </summary>
         internal void ApplyAnimationTimer(in ClassicUO.Ecs.AnimationTimer timer)
         {
-            AnimationFrameCount = timer.FrameCount;
-            FunnelCheck.Write(this, FunnelField.AnimationState);
-            _animationRepeateMode = timer.RepeatMode;
-            _animationRepeatModeCount = timer.RepeatModeCount;
-            _animationRepeat = timer.Repeat;
+            ClassicUO.Ecs.AnimationTimer t = Timer;
+            t.FrameCount = timer.FrameCount;
+            t.RepeatMode = timer.RepeatMode;
+            t.RepeatModeCount = timer.RepeatModeCount;
+            t.Repeat = timer.Repeat;
+            WriteTimer(in t);
         }
 
-        /// <summary>T5b: every field of the ECS <see cref="AnimationTimer"/> as this Mobile holds it (a pure read; the clock push
-        /// copies it into the component, the checkers compare it).</summary>
-        internal ClassicUO.Ecs.AnimationTimer FullAnimationTimer => new ClassicUO.Ecs.AnimationTimer
-        {
-            Frame = AnimIndex,
-            FrameCount = AnimationFrameCount,
-            Interval = _animationInterval,
-            RepeatMode = _animationRepeateMode,
-            RepeatModeCount = _animationRepeatModeCount,
-            Repeat = _animationRepeat,
-            Forward = _isAnimationForwardDirection,
-            FromServer = AnimationFromServer,
-            Group = _animationGroup,
-            ExecuteAnimation = ExecuteAnimation,
-            AnimDue = LastAnimationChangeTime,
-            IdleDue = _lastAnimationIdleDelay
-        };
-
         /// <summary>
-        /// T5b: writes what <c>MobileAnimationAdvanceSystem</c> computed in the ECS back to this Mobile's fields (the cache the
-        /// views, the step path and the legacy update still read). <paramref name="frameAndDue"/> false leaves the frame index
-        /// and the frame due time for <see cref="WorldWriter.RemoveDeadMobile"/>, which writes them after the removal, as the
-        /// legacy advance did. Pushes nothing: the update loop pushes the clock after it. Called by
-        /// <see cref="WorldWriter.AdvanceAnimationFromEcs"/>.
+        /// T5b: writes what <c>MobileAnimationAdvanceSystem</c> computed (a copy of the record's timer, advanced) to the
+        /// record. <paramref name="frameAndDue"/> false leaves the frame index and the frame due time for
+        /// <see cref="WorldWriter.RemoveDeadMobile"/>, which writes them after the removal, as the legacy advance did. Called
+        /// by <see cref="WorldWriter.AdvanceAnimationFromEcs"/>.
         /// </summary>
         internal void WriteAnimationTimer(in ClassicUO.Ecs.AnimationTimer t, bool frameAndDue)
         {
-            FunnelCheck.Write(this, FunnelField.AnimationState);
-            _animationGroup = t.Group;
-            _animationInterval = t.Interval;
-            _animationRepeateMode = t.RepeatMode;
-            _animationRepeatModeCount = t.RepeatModeCount;
-            _animationRepeat = t.Repeat;
-            _isAnimationForwardDirection = t.Forward;
-            _lastAnimationIdleDelay = t.IdleDue;
-            AnimationFrameCount = t.FrameCount;
-            AnimationFromServer = t.FromServer;
+            ClassicUO.Ecs.AnimationTimer w = t;
 
-            if (frameAndDue)
+            if (!frameAndDue)
             {
-                AnimIndex = t.Frame;
-                LastAnimationChangeTime = t.AnimDue;
+                ClassicUO.Ecs.AnimationTimer now = Timer;
+                w.Frame = now.Frame;
+                w.AnimDue = now.AnimDue;
             }
+
+            WriteTimer(in w);
         }
 
         /// <summary>
@@ -759,12 +829,14 @@ namespace ClassicUO.Game.GameObjects
         /// </summary>
         internal byte StepFacing()
         {
-            if (Steps.Count == 0 || IsDestroyed)
+            StepQueue steps = Steps;
+
+            if (steps.Count == 0 || IsDestroyed)
             {
                 return (byte)((byte)Direction & 7);
             }
 
-            ref readonly Step step = ref Steps.Front();
+            Step step = steps.Front();
 
             return step.Run ? (byte)(step.Direction & 7) : step.Direction;
         }
@@ -890,8 +962,9 @@ namespace ClassicUO.Game.GameObjects
                 out int height
             );
 
-            p.X += (int)Offset.X + 22;
-            p.Y += (int)(Offset.Y - Offset.Z - (height + centerY + 8));
+            Vector3 offset = Offset;
+            p.X += (int)offset.X + 22;
+            p.Y += (int)(offset.Y - offset.Z - (height + centerY + 8));
             p = Client.Game.Scene.Camera.WorldToScreen(p, true);
 
             if (ObjectHandlesStatus == ObjectHandlesStatus.DISPLAYING)
@@ -955,8 +1028,7 @@ namespace ClassicUO.Game.GameObjects
         {
             uint serial = Serial & 0x3FFFFFFF;
 
-            ClearSteps();
-
+            // T9 S8c: the walk queue and offset go with the record (a destroyed instance reads none)
             base.Destroy();
 
             if (!(this is PlayerMobile))
@@ -976,20 +1048,30 @@ namespace ClassicUO.Game.GameObjects
             public bool Run;
         }
 
-        /// <summary>A read-only view of a mobile's walk queue (its steps come back by readonly reference or by value).</summary>
+        /// <summary>A read-only view of a mobile's walk queue (T9 S8c: its record's <see cref="ClassicUO.Ecs.Steps"/>, read at
+        /// each access; empty for a null record). Its steps come back by value.</summary>
         internal readonly struct StepQueue
         {
-            private readonly Deque<Step> _queue;
+            private readonly Friflo.Engine.ECS.Entity _record;
 
-            internal StepQueue(Deque<Step> steps) => _queue = steps;
+            internal StepQueue(Friflo.Engine.ECS.Entity record) => _record = record;
 
-            public int Count => _queue.Count;
+            public int Count => _record.IsNull ? 0 : ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(_record).Count;
 
-            public Step this[int index] => _queue[index];
+            public Step this[int index]
+            {
+                get
+                {
+                    ref readonly ClassicUO.Ecs.Steps s = ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(_record);
+                    ClassicUO.Ecs.StepEntry e = s.Ring[(s.Head + index) % ClassicUO.Ecs.Steps.CAPACITY];
 
-            public ref readonly Step Front() => ref _queue.Front();
+                    return new Step { X = e.X, Y = e.Y, Z = e.Z, Direction = e.Direction, Run = e.Run };
+                }
+            }
 
-            public ref readonly Step Back() => ref _queue.Back();
+            public Step Front() => this[0];
+
+            public Step Back() => this[Count - 1];
         }
     }
 }

@@ -266,11 +266,9 @@ namespace ClassicUO.UnitTests.Ecs
             var src = new FakeCorpseSource { Max = 1000 };
             var system = new ItemAnimationAdvanceSystem();
             World world = BuildT5bItem(3, false, 400);
-            world.Ecs.AnimTimerEnabled = true;
             Mobile m = world.Mobiles.Get(MOB);
             OldRekey(world, m);
             world.CorpseManager.Add(0x4000_7900, DEAD, m.Direction, false);
-            world.Ecs.ResyncClocks();
             Item corpse = world.Items.Get(CORPSE);
             Time.Ticks = NOW + 500;
             int mobileFrame = m.AnimIndex;

@@ -131,7 +131,7 @@ namespace ClassicUO.Game
                 BenchSample(world, m, e, in s, in rs);
             }
 
-            bool keysChanged = push ? SamplePushed(world, m, in inp, ref s, ref rs) : Sample(world, m, ref s, ref rs);
+            bool keysChanged = push ? SamplePushed(world, m, in inp, in data, ref s, ref rs) : Sample(world, m, ref s, ref rs);
 
             if (keysChanged || dirty)
             {
@@ -310,9 +310,10 @@ namespace ClassicUO.Game
             s.NextFrameTime = (uint)m.LastAnimationChangeTime;
             s.Facing = m.StepFacing();
 
+            Microsoft.Xna.Framework.Vector3 offset = m.Offset;
             rs.Alpha = m.AlphaHue;
-            rs.OffsetX = (short)(int)m.Offset.X;
-            rs.OffsetY = (short)(int)(m.Offset.Y - m.Offset.Z);
+            rs.OffsetX = (short)(int)offset.X;
+            rs.OffsetY = (short)(int)(offset.Y - offset.Z);
             rs.OverrideHue = SelectOverrideHue(world, m, profile, (f & AnimStateFlags.Human) != 0);
 
             return keysChanged;
@@ -325,14 +326,18 @@ namespace ClassicUO.Game
         /// <see cref="Sample"/> with the pushed inputs (<see cref="MobileInputs"/>): only the animation clock the legacy
         /// World.Update still advances (server action, frame, frame time, from-server), the mirror history, the walking
         /// offset and alpha, and the per-frame view context are read here. Mounted is added from the slots by the caller.
+        /// T9 S8c: the timer and the walk offset from <paramref name="data"/> (the mobile's record, which holds their only
+        /// copy; read in place, no lookup).
         /// </summary>
-        private static bool SamplePushed(World world, Mobile m, in MobileInputs inp, ref AnimationState s, ref MobileRenderState rs)
+        private static bool SamplePushed(World world, Mobile m, in MobileInputs inp, in EcsRow data, ref AnimationState s, ref MobileRenderState rs)
         {
             Profile profile = ProfileManager.CurrentProfile;
             AnimStateFlags f = inp.Flags;
+            ref readonly AnimationTimer t = ref data.Get<AnimationTimer>();
+            ref readonly Steps steps = ref data.Get<Steps>();
 
             if (m.ViewFlipped) f |= AnimStateFlags.Mirror;
-            if (m.AnimationFromServer) f |= AnimStateFlags.FromServer;
+            if (t.FromServer) f |= AnimStateFlags.FromServer;
             if (!m.IsDestroyed && m.AllowedToDraw) f |= AnimStateFlags.Visible;
             if (MobileInputRules.IsWalking(in inp, Time.Ticks)) f |= AnimStateFlags.Walking;
 
@@ -345,14 +350,14 @@ namespace ClassicUO.Game
 
             s.Flags = f;
             s.Body = inp.Body;
-            s.ServerGroup = m.AnimationGroupRaw;
-            s.Frame = m.AnimIndex;
-            s.NextFrameTime = (uint)m.LastAnimationChangeTime;
+            s.ServerGroup = t.Group;
+            s.Frame = t.Frame;
+            s.NextFrameTime = (uint)t.AnimDue;
             s.Facing = inp.Facing;
 
             rs.Alpha = m.AlphaHue;
-            rs.OffsetX = (short)(int)m.Offset.X;
-            rs.OffsetY = (short)(int)(m.Offset.Y - m.Offset.Z);
+            rs.OffsetX = (short)(int)steps.OffsetX;
+            rs.OffsetY = (short)(int)(steps.OffsetY - steps.OffsetZ);
             rs.OverrideHue = SelectOverrideHue(world, m, profile, in inp);
 
             return keysChanged;
@@ -463,7 +468,7 @@ namespace ClassicUO.Game
                     }
                     else
                     {
-                        SamplePushed(world, m, in inp, ref s, ref rs);
+                        SamplePushed(world, m, in inp, EcsRead.Row(e), ref s, ref rs);
 
                         if (mounted)
                         {

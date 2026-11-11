@@ -63,6 +63,24 @@ namespace ClassicUO.Game.GameObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal bool TryRecord(out Friflo.Engine.ECS.Entity e) => TryScalarEntity(out e) || FindPreviewRecord(out e);
 
+        /// <summary>
+        /// T9 S8c: the record the Mobile's timer and step writes go to: the world record only when its handle is this instance
+        /// (checked, not the cached handle: a replaced instance's cache can still name the record its successor took over
+        /// without an epoch change), else its preview record. Writes are rare next to the reads; the reads use
+        /// <see cref="TryRecord"/>.
+        /// </summary>
+        internal bool TryOwnRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            if (IsDestroyed || World?.Ecs == null)
+            {
+                return false;
+            }
+
+            return _serial != 0 && World.TryGetLiveRecord(this, _serial, out e) || FindPreviewRecord(out e);
+        }
+
         // previews are rare: no handle caching (the preview mirror has its own epoch)
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool FindPreviewRecord(out Friflo.Engine.ECS.Entity e)
@@ -94,13 +112,6 @@ namespace ClassicUO.Game.GameObjects
 
             return true;
         }
-
-        private byte _animIndex;
-        private bool _executeAnimation = true;
-        private long _lastAnimationChangeTime;
-        public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
-        public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
-        internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
 
         // T9 S6: Flags and Direction live only in the record (Flags, Facing: every record has both); WorldWriter's operations
         // commit them. Without one (an item before its first commit, the house placement preview, a destroyed or stale
@@ -135,8 +146,7 @@ namespace ClassicUO.Game.GameObjects
             }
         }
         public bool IsClicked;
-        private uint _lastStepTime, _serial;
-        public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
+        private uint _serial;
         public string Name
         {
             get
@@ -291,8 +301,13 @@ namespace ClassicUO.Game.GameObjects
 
             GameActions.SendCloseStatus(World, Serial, HitsRequest >= HitsRequestStatus.Pending);
 
-            AnimIndex = 0;
-            LastAnimationChangeTime = 0;
+            // T9 S8c: a mobile's timer goes with its record (OnDestroyed); an item's frame stays on the Item
+            if (this is Item destroyed)
+            {
+                destroyed.AnimIndex = 0;
+                destroyed.LastAnimationChangeTime = 0;
+            }
+
             World.Ecs.OnDestroyed(this);
 
             if (this is Item item)

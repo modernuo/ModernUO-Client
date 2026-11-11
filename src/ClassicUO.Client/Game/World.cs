@@ -509,12 +509,12 @@ namespace ClassicUO.Game
         // E4 (the mobile clock path) ---------------------------------------------------------------------------
         private readonly List<uint> _dueMobiles = new List<uint>();
         private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
-        private bool _mobileClocksSynced;
+        private bool _mobileClockStarted;
 
         internal void OnMobileDestroyed(Mobile mobile)
         {
-            // the queue is read by the clock path, which is enabled at the first update
-            if (Ecs.ClockEnabled)
+            // the queue is read by the clock path, from the first update on
+            if (_mobileClockStarted)
             {
                 _destroyedMobiles.Add(mobile);
             }
@@ -550,36 +550,8 @@ namespace ClassicUO.Game
         /// </summary>
         private void UpdateMobilesByClock(bool do_delete, bool wmap)
         {
-            Ecs.ClockEnabled = true;
-
-            if (!Ecs.AnimTimerEnabled)
-            {
-                // T5b: the timers are written with the clocks from the first update on: build them all
-                Ecs.AnimTimerEnabled = true;
-                _mobileClocksSynced = false;
-            }
-
-            if (!Ecs.StepsEnabled)
-            {
-                // T6c: the step components are written with the clocks from the first update on: build them all
-                Ecs.StepsEnabled = true;
-                _mobileClocksSynced = false;
-            }
-
-            if (!_mobileClocksSynced)
-            {
-                // the clock was not kept while the setting was off (no component, no pushes): build it from the Mobiles
-                Ecs.ResyncClocks();
-                _mobileClocksSynced = true;
-            }
-
-            bool check = WorldEcs.MobileUpdateCheck;
-
-            if (check)
-            {
-                Ecs.CheckClocks();
-            }
-
+            // T9 S8c: the clocks, timers and queues exist from each record's creation (nothing to build here)
+            _mobileClockStarted = true;
             _dueMobiles.Clear();
             long t0 = WorldEcs.MobileUpdateStats ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles);
@@ -620,8 +592,7 @@ namespace ClassicUO.Game
                 // T5b/S8b: every due mobile updates in the ECS, in table order, so the random draws keep their sequence
                 _animAdvance.TryRun(this, mob);
 
-                // the system's write-back rewrote the timers (and may have emptied the step queue or opened the handles); the
-                // push also writes the animation timer component
+                // the update may have opened or ended the handles (the timer and queue writes kept the rest of the clock)
                 Ecs.PushClock(mob);
             }
 

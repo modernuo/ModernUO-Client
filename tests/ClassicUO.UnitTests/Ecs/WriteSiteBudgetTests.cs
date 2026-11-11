@@ -545,8 +545,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             ["_graphic"] = "GameObject", ["_hue"] = "GameObject", ["_x"] = "GameObject", ["_y"] = "GameObject",
             ["_z"] = "GameObject", ["_offset"] = "Mobile",
-            ["_flags"] = "Entity", ["_serial"] = "Entity", ["_name"] = "Entity", ["_animIndex"] = "Entity",
-            ["_executeAnimation"] = "Entity", ["_lastAnimationChangeTime"] = "Entity", ["_lastStepTime"] = "Entity",
+            ["_flags"] = "Entity", ["_serial"] = "Entity", ["_name"] = "Entity", ["_animIndex"] = "Item",
+            ["_executeAnimation"] = "Item", ["_lastAnimationChangeTime"] = "Item", ["_lastStepTime"] = "Item",
             ["_amount"] = "Item", ["_container"] = "Item", ["_isDamageable"] = "Item", ["_layer"] = "Item",
             ["_lightID"] = "Item", ["_price"] = "Item", ["_usedLayer"] = "Item",
             ["_race"] = "Mobile", ["_speedMode"] = "Mobile", ["_stamina"] = "Mobile", ["_staminaMax"] = "Mobile",

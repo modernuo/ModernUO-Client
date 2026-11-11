@@ -93,9 +93,10 @@ namespace ClassicUO.Game
     {
         // CUO_ANIM_ADVANCE_CHECK=1: the component must equal the Item's fields before each advance (see Check); the unit tests
         // pass the check flag themselves, so Check stays compiled in release. T9 deleted world_item_anim_system's off path and
-        // with it the comparison with the legacy Item.ProcessAnimation computation.
+        // with it the comparison with the legacy Item.ProcessAnimation computation. T9 S8c: only the corpse half is left (a
+        // mobile's timer has no copy on the Mobile any more); it compares the Item's animation cache (survey 3.3).
 #if CUO_DEVTOOLS
-        public static readonly bool AdvanceCheck = MobileAnimationAdvanceSystem.AdvanceCheck;
+        public static readonly bool AdvanceCheck = Environment.GetEnvironmentVariable("CUO_ANIM_ADVANCE_CHECK") == "1";
 #else
         public const bool AdvanceCheck = false;
 #endif

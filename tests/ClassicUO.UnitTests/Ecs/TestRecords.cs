@@ -19,6 +19,22 @@ namespace ClassicUO.UnitTests.Ecs
     /// </summary>
     internal static class TestRecords
     {
+        // T9 S8c: the timer fields without a write of their own (the record's AnimationTimer; dropped without a record)
+        public static void TestSetFrameCount(this Mobile m, byte count)
+        {
+            ClassicUO.Ecs.AnimationTimer t = m.Timer;
+            t.FrameCount = count;
+            m.WriteTimer(in t);
+        }
+
+        public static void TestSetFromServer(this Mobile m, bool fromServer)
+        {
+            ClassicUO.Ecs.AnimationTimer t = m.Timer;
+            t.FromServer = fromServer;
+            m.WriteTimer(in t);
+        }
+
+        public static void TestSetTimer(this Mobile m, in ClassicUO.Ecs.AnimationTimer t) => m.WriteTimer(in t);
         public static void TestSetAmount(this Item item, ushort amount) => WriteItem(item, amount, item.Container, item.Layer);
 
         public static void TestSetContainer(this Item item, uint container) => WriteItem(item, item.Amount, container, item.Layer);

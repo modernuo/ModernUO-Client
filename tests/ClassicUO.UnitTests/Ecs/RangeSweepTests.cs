@@ -35,7 +35,6 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer player, PLAYER);
             var scene = new Scene { World = world, Player = player };
-            world.Ecs.ClockEnabled = true;
             world.RangeSize.X = centerX;
             world.RangeSize.Y = centerY;
             world.MapCallObserver = scene.MapCalls.Add;

@@ -1825,9 +1825,7 @@ namespace ClassicUO.Game
                 mobile.Z = v.Z;
                 mobile.DirectionCommitted(directionBefore);
                 mobile.IsRunning = run;
-                mobile.OffsetX = 0;
-                mobile.OffsetY = 0;
-                mobile.OffsetZ = 0;
+                mobile.SetOffset(0, 0, 0);
                 mobile.RemoveFirstStep();
                 mobile.CalculateRandomIdleTime();
 
@@ -1852,7 +1850,7 @@ namespace ClassicUO.Game
                         mobile.AddToTile();
                     }
 
-                    mobile.LastStepTime = stepTime;
+                    mobile.SetLastStepTime(stepTime);
                 }
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -2197,12 +2195,12 @@ namespace ClassicUO.Game
 
                 if (frame >= 0)
                 {
-                    mobile.AnimIndex = (byte)frame;
+                    mobile.SetFrame((byte)frame);
                 }
 
                 if (hold)
                 {
-                    mobile.ExecuteAnimation = false;
+                    mobile.SetExecuteAnimation(false);
                 }
 
                 _world.Ecs.CommitMobileClock(mobile);
@@ -2284,9 +2282,7 @@ namespace ClassicUO.Game
 
                 if (entity is Mobile mobile)
                 {
-                    mobile.OffsetX = 0;
-                    mobile.OffsetY = 0;
-                    mobile.OffsetZ = 0;
+                    mobile.SetOffset(0, 0, 0);
                 }
 
                 ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
@@ -2297,7 +2293,6 @@ namespace ClassicUO.Game
                 }
             }
 
-            _world.Ecs.PushSteps(entity); // T6c: a carried mobile's position and offset reach its Steps component
         }
 
         /// <summary>
@@ -2470,15 +2465,12 @@ namespace ClassicUO.Game
             {
                 if (entity is Mobile mobile)
                 {
-                    mobile.OffsetX = 0;
-                    mobile.OffsetY = 0;
-                    mobile.OffsetZ = 0;
+                    mobile.SetOffset(0, 0, 0);
                 }
 
                 ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
             }
 
-            _world.Ecs.PushSteps(entity); // T6c
         }
 
         // ---- funnel part 7, group 4: the per-frame offset interpolation between steps (Mobile.ProcessSteps,
@@ -2509,9 +2501,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, null))
             {
-                mobile.OffsetZ = z;
-                mobile.OffsetX = x;
-                mobile.OffsetY = y;
+                mobile.SetOffset(x, y, z);
             }
         }
 
@@ -2557,7 +2547,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
-        /// the boat's offset <paramref name="offset"/> (a mobile's on the Mobile and its Steps, an item's in its
+        /// the boat's offset <paramref name="offset"/> (a mobile's in its record's Steps, an item's in its
         /// <c>ItemOffset</c>, as every boat operation that writes an item's offset). Rejections as
         /// <see cref="MoveBoatPassenger"/>.
         /// </summary>
@@ -2572,13 +2562,11 @@ namespace ClassicUO.Game
             {
                 if (passenger is Mobile mobile)
                 {
-                    mobile.Offset = offset;
+                    mobile.SetOffset(offset);
                 }
 
                 ItemOffsets.Push(_world, passenger, offset);
             }
-
-            _world.Ecs.PushSteps(passenger); // T6c
         }
 
         /// <summary>
@@ -3093,7 +3081,7 @@ namespace ClassicUO.Game
 
             if (frameCount > 0)
             {
-                timer = mobile.AnimationTimerState;
+                timer = mobile.Timer;
                 delay = AnimationTiming.Advance(ref timer, frameCount, out advance);
                 remove = dead && advance == AnimationAdvance.Wrapped;
                 frame = timer.Frame;
@@ -3117,10 +3105,10 @@ namespace ClassicUO.Game
                 {
                     if (frame >= 0)
                     {
-                        mobile.AnimIndex = (byte)frame;
+                        mobile.SetFrame((byte)frame);
                     }
 
-                    mobile.LastAnimationChangeTime = due;
+                    mobile.SetAnimDue(due);
                 }
             }
 
@@ -3172,23 +3160,22 @@ namespace ClassicUO.Game
                 _world.CorpseManager.Remove(0, serial);
                 _world.RemoveMobile(serial);
 
+                // the old writes to the removed mobile; T9 S8c: its timer went with its record, so they are dropped
                 if (frame >= 0)
                 {
-                    mobile.AnimIndex = (byte)frame;
+                    mobile.SetFrame((byte)frame);
                 }
 
-                mobile.LastAnimationChangeTime = due;
+                mobile.SetAnimDue(due);
             }
         }
 
         /// <summary>
         /// T5b (<c>world_anim_system</c>): what <c>MobileAnimationAdvanceSystem</c> computed in the ECS for a due mobile without
-        /// steps (the idle animation and the frame advance over its <c>AnimationTimer</c>) written to the Mobile's fields, the
-        /// cache the views and the step path read (<c>Mobile.WriteAnimationTimer</c>); with <paramref name="remove"/> the frame
-        /// index and the due time are left out and the dying mobile is removed (<see cref="RemoveDeadMobile"/>, which writes
-        /// <paramref name="frame"/> and <paramref name="due"/> after the removal), as <see cref="AdvanceAnimation"/>'s caller
-        /// does. Unfolded and committing nothing: the update loop pushes the clock (and with it the component) after it, as it
-        /// does after <c>Mobile.Update</c>. Admission as <see cref="IdleAnimation"/>.
+        /// steps (the idle animation and the frame advance over its <c>AnimationTimer</c>) written to the record's timer
+        /// (<c>Mobile.WriteAnimationTimer</c>, which keeps its clock; T9 S8c: the only copy); with <paramref name="remove"/> the
+        /// frame index and the due time are left out and the dying mobile is removed (<see cref="RemoveDeadMobile"/>), as
+        /// <see cref="AdvanceAnimation"/>'s caller does. Unfolded. Admission as <see cref="IdleAnimation"/>.
         /// </summary>
         public void AdvanceAnimationFromEcs(Mobile mobile, in ClassicUO.Ecs.AnimationTimer timer, bool remove, int frame, long due)
         {

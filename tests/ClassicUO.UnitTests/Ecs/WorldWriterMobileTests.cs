@@ -63,7 +63,7 @@ namespace ClassicUO.UnitTests.Ecs
                     m.SetAnimation(0xFF);
                 }
 
-                m.LastStepTime = Time.Ticks;
+                m.SetLastStepTime(Time.Ticks);
             }
 
             Direction moveDir = DirectionHelper.CalculateDirection(endX, endY, x, y);
@@ -227,7 +227,6 @@ namespace ClassicUO.UnitTests.Ecs
             RandomHelper.Restore(Seed);
             Time.Ticks = NOW;
             var world = new World();
-            world.Ecs.ClockEnabled = true;
 
             // a bystander, so the entity ids of a created mobile are not the first
             Mobile other = world.GetOrCreateMobile(OTHER);
@@ -1247,7 +1246,8 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (walkingNow)
                 {
-                    a.LastStepTime = b.LastStepTime = NOW - 10;
+                    a.SetLastStepTime(NOW - 10);
+                    b.SetLastStepTime(NOW - 10);
                 }
 
                 foreach (var t in targets)

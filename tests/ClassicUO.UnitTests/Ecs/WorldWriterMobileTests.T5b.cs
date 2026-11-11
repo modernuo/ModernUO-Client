@@ -131,7 +131,7 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Ecs.Animation.Rebuild(e, in s, null, T5bTiles, T5bConv, false);
             }
 
-            bool ran = new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false);
+            bool ran = new MobileAnimationAdvanceSystem().TryRun(world, m, in src);
 
             if (!ran)
             {
@@ -161,7 +161,6 @@ namespace ClassicUO.UnitTests.Ecs
         private static World BuildT5b(T5bStart start, out uint serial)
         {
             World world = Build(Start.Standing);
-            world.Ecs.AnimTimerEnabled = true;
             Mobile m = world.Mobiles.Get(MOB);
             serial = MOB;
 
@@ -183,7 +182,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
                 case T5bStart.Walked:
-                    m.LastStepTime = NOW + 2000;
+                    m.SetLastStepTime(NOW + 2000);
                     world.Ecs.PushInputs(m);
 
                     break;
@@ -205,7 +204,6 @@ namespace ClassicUO.UnitTests.Ecs
                     break;
             }
 
-            world.Ecs.ResyncClocks();
 
             return world;
         }
@@ -258,7 +256,7 @@ namespace ClassicUO.UnitTests.Ecs
                     if (!b.IsDestroyed)
                     {
                         newWorld.Ecs.Mirror.TryGetEntity(b.Serial, out EcsEntity e).Should().BeTrue();
-                        MobileAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), b.FullAnimationTimer).Should().BeTrue("the push copies the Mobile into the component");
+                        MobileAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), b.Timer).Should().BeTrue("the push copies the Mobile into the component");
                     }
                 }
             }
@@ -277,7 +275,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        private static string Describe(Mobile m) => MobileAnimationAdvanceSystem.Describe(m.FullAnimationTimer) + $" destroyed {m.IsDestroyed}";
+        private static string Describe(Mobile m) => MobileAnimationAdvanceSystem.Describe(m.Timer) + $" destroyed {m.IsDestroyed}";
 
         [Fact]
         public void The_Ecs_Advance_Draws_The_Legacy_Random_Sequence_Over_Several_Mobiles_In_Table_Order()
@@ -386,8 +384,6 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 foreach (World w in new[] { oldWorld, newWorld })
                 {
-                    w.Ecs.StepsEnabled = true;
-                    w.Ecs.ResyncClocks();
                 }
 
                 newWorld.Writer.ThrowOnViolation = true;
@@ -437,13 +433,18 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.Mobiles.Get(MOB);
             FakeAdvanceSource src = T5bDataOf(T5bData.People);
             world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e).Should().BeTrue();
+            // T9 S8c: the timer is the record's only copy (every mobile record has it), so with it removed nothing is left to
+            // compare; the decline itself is what is checked (and the other components stay as they were)
+            AnimationTimer saved = e.GetComponent<AnimationTimer>();
             e.RemoveComponent<AnimationTimer>();
-            string before = Describe(m);
+            Steps steps = e.GetComponent<Steps>();
             long declined = MobileAnimationAdvanceSystem.Declined;
             Time.Ticks += 70_000;
 
-            new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false).Should().BeFalse();
-            Describe(m).Should().Be(before);
+            new MobileAnimationAdvanceSystem().TryRun(world, m, in src).Should().BeFalse();
+            e.GetComponent<Steps>().Count.Should().Be(steps.Count);
+            e.AddComponent(saved);
+            Describe(m).Should().Be(MobileAnimationAdvanceSystem.Describe(saved) + $" destroyed {m.IsDestroyed}");
             (MobileAnimationAdvanceSystem.Declined - declined).Should().BeGreaterThan(0);
         }
 

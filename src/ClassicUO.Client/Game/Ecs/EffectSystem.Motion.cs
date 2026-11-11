@@ -75,13 +75,13 @@ namespace ClassicUO.Game
             return r;
         }
 
-        // A live source's offset: a mobile's from its Steps while the step system keeps them (otherwise the Mobile World holds
+        // A live source's offset: a mobile's from its Steps (T9 S8c: every mobile record has them; else the Mobile World holds
         // under the serial), an item's (a boat passenger's) from its ItemOffset (absent = zero).
         private static Vector3 SourceOffset(GameEffect e, ref EffectState s, EcsRow row)
         {
             if ((s.Ends & EffectState.END_SOURCE_MOBILE) != 0)
             {
-                if (e.World.Ecs.StepsEnabled && row.TryGet(out Steps st))
+                if (row.TryGet(out Steps st))
                 {
                     return new Vector3(st.OffsetX, st.OffsetY, st.OffsetZ);
                 }

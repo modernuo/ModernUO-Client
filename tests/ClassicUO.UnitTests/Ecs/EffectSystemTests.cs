@@ -976,8 +976,6 @@ namespace ClassicUO.UnitTests.Ecs
         {
             foreach (World w in Worlds)
             {
-                w.Ecs.ClockEnabled = true;
-                w.Ecs.StepsEnabled = true;
                 AddMobile(w, CASTER, 1004, 1002);
                 AddItem(w, ITEM, 1005, 1003);
                 Create(w, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
@@ -987,8 +985,7 @@ namespace ClassicUO.UnitTests.Ecs
             Run(20, (w, i) =>
             {
                 Mobile m = w.Mobiles.Get(CASTER);
-                m.Offset = new Microsoft.Xna.Framework.Vector3(i, -i, i / 2);
-                w.Ecs.PushSteps(m);
+                m.SetOffset(new Microsoft.Xna.Framework.Vector3(i, -i, i / 2));
                 Item it = w.Items.Get(ITEM);
                 ItemOffsets.Push(w, it, new Microsoft.Xna.Framework.Vector3(2 * i, i, i % 3)); // the boat operations' ECS write
             });
@@ -1003,7 +1000,7 @@ namespace ClassicUO.UnitTests.Ecs
             _fx.Effects.Update();
             var fixedOnMobile = (GameEffect)_fx.Effects.Items;
             fixedOnMobile.ScreenOffset.X.Should().Be(77);
-            caster.OffsetX.Should().NotBe(77);
+            caster.OffsetX.Should().Be(77, "T9 S8c: the Mobile reads its record's Steps, the offset's only copy");
             ((GameEffect)fixedOnMobile.Next).ScreenOffset.Y.Should().Be(-5);
             _mismatches.Should().BeEmpty();
         }

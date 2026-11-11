@@ -152,7 +152,7 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            ref readonly Mobile.Step step = ref m.Steps.Front();
+            Mobile.Step step = m.Steps.Front();
             dir = step.Direction;
 
             if (step.Run)
