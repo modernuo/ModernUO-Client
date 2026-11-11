@@ -2,15 +2,8 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using ClassicUO.Utility.Logging;
-using System.Net.WebSockets;
 
 namespace ClassicUO.Network.Socket;
-
-public enum SocketWrapperType
-{
-    TcpSocket,
-    WebSocket
-}
 
 abstract class SocketWrapper : IDisposable
 {

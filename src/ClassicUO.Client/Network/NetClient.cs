@@ -7,7 +7,6 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Net.WebSockets;
 using System.Diagnostics;
 using System.Threading;
 using ClassicUO.Network.Socket;
@@ -53,7 +52,6 @@ namespace ClassicUO.Network
         /// <summary>Test seam, null in production: stands in for the plugins' outgoing hooks (<see cref="Plugin.ProcessSendPacket"/>).</summary>
         internal OutgoingHook TestOutgoingHook;
         private SocketWrapper _socket = null;
-        private SocketWrapperType? _socketType;
 
 
         public NetClient()
@@ -126,15 +124,6 @@ namespace ClassicUO.Network
         public event EventHandler Connected;
         public event EventHandler<SocketError> Disconnected;
 
-        private void SetupSocket(SocketWrapperType wrapperType)
-        {
-            AttachSocket(wrapperType switch
-            {
-                SocketWrapperType.TcpSocket => new TcpSocketWrapper(),
-                SocketWrapperType.WebSocket => new WebSocketWrapper(),
-                _ => throw new ArgumentOutOfRangeException(nameof(wrapperType), wrapperType, null)
-            });
-        }
 
         internal void AttachSocket(SocketWrapper socket)
         {
@@ -147,7 +136,7 @@ namespace ClassicUO.Network
                 Connected?.Invoke(this, EventArgs.Empty);
             };
 
-            // A close or error may be reported from any thread (a WebSocket's receive task). The callbacks only record it
+            // A close or error may be reported from any thread (a transport's own receive thread). The callbacks only record it
             // against the connection they belong to; Drain, on the update thread, reads that connection's data first and only
             // then runs Terminate. A connection already ended or replaced (Retired) ignores late callbacks, and the first
             // close wins, so two reports of one close (an exception and then the end of the receive loop) are one Terminate.
@@ -251,17 +240,14 @@ namespace ClassicUO.Network
             if (string.IsNullOrEmpty(ip))
                 throw new ArgumentNullException(nameof(ip));
 
-            var isWebsocketAddress = ip.ToLowerInvariant().Substring(0, 2) is "ws" or "wss";
-            var addr = $"{(isWebsocketAddress ? "" : "tcp://")}{ip}:{port}";
+            var addr = $"tcp://{ip}:{port}";
 
             if (!Uri.TryCreate(addr, UriKind.RelativeOrAbsolute, out var uri))
                 throw new UriFormatException($"NetClient::Connect() invalid Uri {addr}");
 
             Log.Trace($"Connecting to {uri}");
 
-            // First connected socket sets the type for any future sockets.
-            // This prevents the client from swapping from WS -> TCP on game server login
-            SetupSocket(_socketType ??= isWebsocketAddress ? SocketWrapperType.WebSocket : SocketWrapperType.TcpSocket);
+            AttachSocket(new TcpSocketWrapper());
             _socket.Connect(uri);
         }
 
