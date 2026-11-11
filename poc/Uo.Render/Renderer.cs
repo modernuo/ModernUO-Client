@@ -519,8 +519,8 @@ public sealed unsafe class Renderer : IDisposable
             },
             depth_stencil_state = new SDL_GPUDepthStencilState
             {
-                // geo: equal geometric depths (one plane) go to the later instance, as the key's rank bits did
-                compare_op = geo ? SDL_GPUCompareOp.SDL_GPU_COMPAREOP_LESS_OR_EQUAL : SDL_GPUCompareOp.SDL_GPU_COMPAREOP_LESS,
+                // geo too: a mobile's layers share one geometric depth and, as with their equal keys, the first emitted wins
+                compare_op = SDL_GPUCompareOp.SDL_GPU_COMPAREOP_LESS,
                 enable_depth_test = true,
                 enable_depth_write = !translucent,
             },

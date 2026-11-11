@@ -21,11 +21,15 @@ namespace Uo.Render;
 /// above the ground, the ground plane below the centre row (feet and hooves lie on the floor, so they beat it by the bias),
 /// capped by the own tile's front faces B + 1 − |s| (they lose to walls on the tile's front edges).</item>
 /// </list>
-/// Ties (one plane) are broken by a small bias: walls over mobiles over flats and boxes, then z.
+/// Ties (one plane) are broken by a small bias: walls over mobiles over flats and boxes, then z, then (baked land and
+/// statics) the key's rank. Within a mobile composite every layer has the same depth, so the depth test (LESS) keeps the
+/// first emitted layer, as the equal keys did.
 /// </summary>
 public static class GeoDepth
 {
-    public const float WallBias = 0.02f, MobileBias = 0.01f, ZBias = 2.5e-4f;
+    /// <summary>Tie biases in tile sums. The target depth resolves about 1.5e-4 (GeoScale 1/2500 near 0.5), so ZBias and
+    /// RankBias stay above it; RankBias · 7 stays under one ZBias step.</summary>
+    public const float WallBias = 0.02f, MobileBias = 0.01f, ZBias = 2e-3f, RankBias = 2.5e-4f;
 
     /// <summary>Tile sums flats (land, floors) sit behind their plane (sprite.hlsl FLAT_DROP).</summary>
     public const float FlatDrop = 1.5f;

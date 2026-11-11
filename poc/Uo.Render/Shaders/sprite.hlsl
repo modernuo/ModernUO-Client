@@ -72,6 +72,8 @@
 #define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land
 #define Z_GEOFLAT     32u
 #define FLAT_DROP     1.5     // flats sit FLAT_DROP tile sums back: a mobile's lower rows beat the floors they hang over
+#define GEO_ZBIAS     2e-3    // GeoDepth.ZBias: ties (one plane) go to the higher object
+#define GEO_RANKBIAS  2.5e-4  // GeoDepth.RankBias: baked land / statics, then the key's rank (insertion order at equal tile and z)
 #define COT_NONE      0u
 #define COT_HOLE      1u      // opaque pass: cut the circle out
 #define COT_RING      2u      // translucent pass, opaque instance: only the faded ring
@@ -381,12 +383,12 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             // each corner is a world point: its tile sum is exact, and the triangles are planar
             static const float CornerSum[4] = { 0, 1, 1, 2 };
             o.geoLin = (float)(inst.y - CamPx.y + 22) / 22.0 + CornerSum[c] + GeoOff - FLAT_DROP;
-            o.geoB.x = (z - 2) * 2.5e-4;
+            o.geoB.x = (z - 2) * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
         }
         else if (zTest && zLand)
         {
             o.geoLin = (wc.y + 22.0 + 4.0 * z) / 22.0 + GeoOff - FLAT_DROP;
-            o.geoB.x = (z - 2) * 2.5e-4;
+            o.geoB.x = (z - 2) * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
         }
         else if (zTest)
         {
@@ -404,7 +406,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             float ny = (float)((tx + ty) * 22 - 22 - 4 * z - CamPx.y);
             float sum = (ny + 22.0 + 4.0 * z) / 22.0 + GeoOff;
             o.geoP = float4(wall ? GEO_WALL : flat ? GEO_FLAT : GEO_BOX, nx, ny - 4.0 * height, sum);
-            o.geoB.x = (wall ? 0.02 : 0.0) + z * 2.5e-4;
+            o.geoB.x = (wall ? 0.02 : 0.0) + z * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
         }
         else if (geoMob)
         {
@@ -414,7 +416,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             float ax = (float)(inst.x + adx - CamPx.x);
             float cy = (float)(inst.y + ady - CamPx.y) + 3.0; // MobileView's anchor is posY + 19: 3 rows above the centre
             o.geoP = float4(GEO_MOBILE, ax, cy, (cy + 22.0 + 4.0 * mz) / 22.0 + GeoOff);
-            o.geoB.x = 0.01 + mz * 2.5e-4;
+            o.geoB.x = 0.01 + mz * GEO_ZBIAS;
         }
     }
     float2 ndc = world * Scale * 2.0 * InvViewport;
