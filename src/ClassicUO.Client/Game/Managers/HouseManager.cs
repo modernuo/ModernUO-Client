@@ -111,14 +111,22 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        /// <summary>
+        /// T9 S9 (Codex audit P2 #1): the house placement preview's serial (GameScene.CreatePlacementPreview), keying its house
+        /// here and its preview record in WorldEcs.Previews. Not a world serial, and not a preview gump's (0, 1,
+        /// 0x4000_0000 + layer): with 0 it took the race-change gump's mobile record when both were open.
+        /// </summary>
+        public const uint PLACEMENT_PREVIEW_SERIAL = 0xFFFF_FFFE;
+
         public void RemoveMultiTargetHouse()
         {
-            if (_houses.TryGetValue(0, out House house))
+            if (_houses.TryGetValue(PLACEMENT_PREVIEW_SERIAL, out House house))
             {
                 house.ClearComponents();
-                _houses.Remove(0);
+                _houses.Remove(PLACEMENT_PREVIEW_SERIAL);
             }
         }
+
 
         public bool Exists(uint serial)
         {

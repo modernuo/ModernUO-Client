@@ -2982,11 +2982,16 @@ namespace ClassicUO.Game
                 // once CommitRekey writes the mobile's record under the new serial a live lookup of an item worn under that
                 // serial (the shared case) answers none until the item is committed again; the tables answered the item
                 // throughout (operations do not nest: one list serves every re-key)
+                // T9 S9 (Codex audit P2 #2): and their values, for the same reason (the record is their only copy: a child
+                // worn under the new serial reads none once the mobile's record holds it)
                 _rekeyChildren.Clear();
+                _rekeyChildStates.Clear();
 
                 foreach (uint s in children.Serials)
                 {
-                    _rekeyChildren.Add(_world.FindItem(s));
+                    Item found = _world.FindItem(s);
+                    _rekeyChildren.Add(found);
+                    _rekeyChildStates.Add(found != null ? CurrentState(found) : default);
                 }
 
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
@@ -2998,7 +3003,7 @@ namespace ClassicUO.Game
 
                     if (_rekeyChildren[ci] is Item child)
                     {
-                        ItemState c = CurrentState(child);
+                        ItemState c = _rekeyChildStates[ci];
                         c.Container = serial;
 
                         // T9 slice B2: the record under the new serial is now the mobile's (no parent), so no re-attach can
@@ -3015,6 +3020,7 @@ namespace ClassicUO.Game
                 // then the table, in the old order (the children's Container is the record's: T9 S5)
                 _world.Mobiles.Remove(oldSerial);
                 _rekeyChildren.Clear();
+                _rekeyChildStates.Clear();
 
                 _world.Mobiles[serial] = mobile;
                 mobile.Serial = serial;
@@ -3028,6 +3034,8 @@ namespace ClassicUO.Game
 
         // RekeyDeadMobile: the dying mobile's children, resolved before the re-key
         private readonly List<Item> _rekeyChildren = new List<Item>();
+        private readonly List<ItemState> _rekeyChildStates = new List<ItemState>();
+
 
         /// <summary>An item's current values: the starting point of an operation that changes only some of them.</summary>
         private static ItemState CurrentState(Item item)
