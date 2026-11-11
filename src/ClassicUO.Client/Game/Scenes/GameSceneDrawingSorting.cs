@@ -73,7 +73,7 @@ namespace ClassicUO.Game.Scenes
             int oldMaxZ = _maxDrawZ.MaxZ;
 
             if (!_maxDrawZ.Update(map, Client.Game.UO.FileManager.TileData.StaticData, _world.Player.X, _world.Player.Y,
-                    _world.Player.Z, ProfileManager.CurrentProfile.DrawRoofs, force))
+                    _world.Player.Z, ProfileManager.CurrentProfile.DrawRoofs, force, Client.Game.UO.FileManager.Arts))
             {
                 return;
             }

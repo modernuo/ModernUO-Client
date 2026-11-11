@@ -453,12 +453,16 @@ namespace ClassicUO.Game.Scenes
             {
                 sbyte z5 = (sbyte)(obj.Z + 5);
 
+                ArtLoader arts = Client.Game.UO.FileManager.Arts;
+
                 for (GameObject o = tile; o != null; o = o.TNext)
                 {
+                    // a component without art (empty tiledata entry) is invisible: it cannot shade the light
                     if (
                         (!(o is Static s) || s.ItemData.IsTransparent)
                             && (!(o is Multi m) || m.ItemData.IsTransparent)
                         || !o.AllowedToDraw
+                        || !MaxDrawZState.HasDrawableArt(arts, o.Graphic)
                     )
                     {
                         continue;
