@@ -50,22 +50,23 @@ namespace ClassicUO.UnitTests.Ecs
         private static void CommitReady(World w) => w.ItemPool.Commit(Time.Ticks - ItemPool.QuarantineMs - 1);
 
         [Fact]
-        public void The_Setting_Defaults_Off()
+        public void The_Setting_Defaults_On()
         {
-            new ClassicUO.Configuration.Settings().ItemPool.Should().BeFalse();
+            new ClassicUO.Configuration.Settings().ItemPool.Should().BeTrue();
         }
 
         [Fact]
         public void Off_Nothing_Is_Pooled_And_A_New_Serial_Is_A_New_Object()
         {
             World w = Build(false);
+            bool createdBefore = w.ItemPoolCreated; // the test World may have been built with the setting's default (on)
             Item rock = AddItem(w, ROCK);
             Item coin = AddItem(w, COIN);
             w.RemoveItem(ROCK, true);
             w.RemoveItem(COIN);
             w.DropDestroyedItems();
             w.ReleasePools();
-            w.ItemPoolCreated.Should().BeFalse("with the switch off the World never creates its pool");
+            w.ItemPoolCreated.Should().Be(createdBefore, "with the switch off the World does not create its pool");
             CommitReady(w);
 
             w.ItemPool.Offered.Should().Be(0);

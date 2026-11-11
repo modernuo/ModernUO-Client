@@ -446,6 +446,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void Removed_Items_Are_Not_Kept_Reachable_By_Their_Entries(bool check)
         {
             Scene s = Build(check);
+            s.World.ItemPoolOverride = false; // item_pool holds removed items by design; this checks the entries only
             WeakReference[] removed = AddAndRemoveViaSwap(s);
             Collect();
             removed.Select(w => w.IsAlive).Should().Equal(new[] { false, false }, $"check {check}: a and c removed by the visit");
@@ -502,6 +503,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void Last_Slot_Removals_And_A_Grown_Table_Keep_No_Item_Reachable(bool check)
         {
             Scene s = Build(check);
+            s.World.ItemPoolOverride = false; // item_pool holds removed items by design; this checks the entries only
             WeakReference last = RemoveLastSlot(s);
             Collect();
             last.IsAlive.Should().BeFalse($"check {check}: the last slot's item");
