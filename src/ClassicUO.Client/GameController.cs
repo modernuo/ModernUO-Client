@@ -588,6 +588,7 @@ namespace ClassicUO
                 _totalElapsed = 0;
                 _suppressedDraw = true;
                 SuppressDraw();
+                (Scene as GameScene)?.OnDrawSkipped(gameTime.ElapsedGameTime.TotalMilliseconds);
 
                 if (!gameTime.IsRunningSlowly)
                 {

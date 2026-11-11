@@ -1206,6 +1206,18 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        // skip_draw_when_minimized: the frame's draw is not run. The settle hold's timeout stops counting (nothing streams meanwhile,
+        // so the restore must still wait for readiness), and the weather's wind timer and sounds, which live in Draw, keep going.
+        public void OnDrawSkipped(double elapsedMs)
+        {
+            _settle.SkipTime(elapsedMs);
+
+            if (_world.InGame)
+            {
+                _world.Weather.SimulateSkippedDraw();
+            }
+        }
+
         public override bool Draw(UltimaBatcher2D batcher, RenderTargets renderTargets)
         {
             if (!_world.InGame)
