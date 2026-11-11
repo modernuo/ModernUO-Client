@@ -458,7 +458,7 @@ namespace ClassicUO.Game
             }
         }
 
-        // 3.-5. steps (T6, still Mobile.Update), the mobile clock and advance (T5b), the range sweep and the world-map pass
+        // 3.-5. steps (T6c StepSystem, run by the T5b advance system), the mobile clock and advance (T5b), the range sweep and the world-map pass
         // (T5c). The E4 clock path keeps them in one method, so they are one stage here.
         private void StageMobiles(bool do_delete)
         {
@@ -510,10 +510,6 @@ namespace ClassicUO.Game
         private readonly List<uint> _dueMobiles = new List<uint>();
         private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
         private bool _mobileClocksSynced;
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_MOBILE_UPDATE_CHECK's frame stamp (Mobile.UpdateStamp)
-        private int _mobileUpdateStamp;
-#endif
 
         internal void OnMobileDestroyed(Mobile mobile)
         {
@@ -524,12 +520,12 @@ namespace ClassicUO.Game
             }
         }
 
-        // T5b: due mobiles without steps advance in the ECS (T9 deleted world_anim_system's off path)
+        // T5b: due mobiles update in the ECS (T9 deleted world_anim_system's off path; S8b deleted Mobile.Update)
         private readonly MobileAnimationAdvanceSystem _animAdvance = new MobileAnimationAdvanceSystem();
 
         // T6c: due mobiles process their steps in the ECS (T9 deleted world_step_system's off path)
 
-        /// <summary>T6c: Mobile.Update runs it instead of ProcessSteps while <see cref="WorldEcs.StepsEnabled"/>.</summary>
+        /// <summary>T6c: the step processing of a due mobile with queued steps (<see cref="MobileAnimationAdvanceSystem"/> runs it).</summary>
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
 
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
@@ -594,10 +590,6 @@ namespace ClassicUO.Game
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             }
 
-#if CUO_DEVTOOLS
-            _mobileUpdateStamp++;
-#endif
-
             if (WorldEcs.MobileUpdateStats)
             {
                 WorldEcs.ClockFrames++;
@@ -625,19 +617,11 @@ namespace ClassicUO.Game
             {
                 Mobile mob = _dueObjects[i];
 
-#if CUO_DEVTOOLS
-                mob.UpdateStamp = _mobileUpdateStamp;
-#endif
+                // T5b/S8b: every due mobile updates in the ECS, in table order, so the random draws keep their sequence
+                _animAdvance.TryRun(this, mob);
 
-                // T5b: a mobile without steps or a handles opening advances in the ECS; the others run Mobile.Update, in the
-                // same table order, so the random draws keep their sequence
-                if (!_animAdvance.TryRun(this, mob))
-                {
-                    mob.Update();
-                }
-
-                // Update (or the ECS advance's write-back) rewrote the timers (and may have emptied the step queue or opened
-                // the handles); the push also writes the animation timer component
+                // the system's write-back rewrote the timers (and may have emptied the step queue or opened the handles); the
+                // push also writes the animation timer component
                 Ecs.PushClock(mob);
             }
 
@@ -645,13 +629,6 @@ namespace ClassicUO.Game
             {
                 WorldEcs.ClockUpdateTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             }
-
-#if CUO_DEVTOOLS
-            if (check)
-            {
-                Ecs.CheckSkipped(Mobiles.Values, _mobileUpdateStamp);
-            }
-#endif
 
             if (do_delete)
             {

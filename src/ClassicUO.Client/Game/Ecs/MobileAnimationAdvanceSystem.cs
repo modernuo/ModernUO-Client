@@ -260,6 +260,13 @@ namespace ClassicUO.Game
         /// <paramref name="due"/> are for the caller to write after the removal.
         /// </summary>
         public static AnimAdvanceOutcome Advance<TAnims>(ref AnimationTimer t, in MobileInputs inp, in EquipmentSlots eq, uint serial, in TAnims animations, out int frame, out long due)
+            where TAnims : struct, IAnimationAdvanceSource =>
+            Advance(ref t, in inp, in eq, serial, in animations, inp.Facing, out frame, out due);
+
+        /// <summary><see cref="Advance{TAnims}(ref AnimationTimer, in MobileInputs, in EquipmentSlots, uint, in TAnims, out int, out long)"/>
+        /// in direction <paramref name="dir"/>: a stepping mobile advances in the direction the step processing returned (the
+        /// step it just completed), not the facing its inputs hold after the completion.</summary>
+        public static AnimAdvanceOutcome Advance<TAnims>(ref AnimationTimer t, in MobileInputs inp, in EquipmentSlots eq, uint serial, in TAnims animations, byte dir, out int frame, out long due)
             where TAnims : struct, IAnimationAdvanceSource
         {
             frame = -1;
@@ -276,7 +283,6 @@ namespace ClassicUO.Game
             AnimGroupInput input = InputOf(in t, in inp, in eq, Time.Ticks);
             byte action = AnimationGroupRules.Select(in input, id, true, animations);
 
-            byte dir = inp.Facing;
             bool mirror = false;
             animations.GetAnimDirection(ref dir, ref mirror);
             int frameCount = 0;
@@ -342,11 +348,13 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T5b: runs a due mobile's <c>Mobile.Update</c> in the ECS when it has no queued steps and no
-    /// handles opening (its <see cref="MobileClock"/> flags are clear): <see cref="AnimationAdvanceRules.Step{TAnims}"/> over
-    /// its <see cref="AnimationTimer"/>, then the results through the funnel (<c>WorldWriter.AdvanceAnimationFromEcs</c>:
-    /// the Mobile's cached fields, a dying mobile's removal). The caller runs the due mobiles in table order and calls
-    /// <c>Mobile.Update</c> for any this declines, so the random draws keep the legacy sequence.
+    /// T5b/T9 S8b: a due mobile's update, in the ECS (<c>Mobile.Update</c> is gone). Without queued steps or a handles opening
+    /// (its <see cref="MobileClock"/> flags are clear): <see cref="AnimationAdvanceRules.Step{TAnims}"/> over its
+    /// <see cref="AnimationTimer"/>. Otherwise the old Update's order: the handles opening (<c>Entity.Update</c>), the idle
+    /// animation, the step processing (<see cref="StepSystem"/>), the footstep sound, then the frame advance in the step's
+    /// direction. The results go through the funnel (<c>WorldWriter.IdleAnimation</c>, the step operations,
+    /// <c>WorldWriter.AdvanceAnimationFromEcs</c>: the Mobile's fields, a dying mobile's removal). The caller runs the due
+    /// mobiles in table order, so the random draws keep the legacy sequence.
     /// </summary>
     internal sealed class MobileAnimationAdvanceSystem
     {
@@ -358,14 +366,14 @@ namespace ClassicUO.Game
         public const bool AdvanceCheck = false;
 #endif
 
-        public static long Ran, Declined;
+        public static long Ran, RanStepping, Declined;
         public static long SyncChecks, SyncDiffs;
         private static int _logged;
 
         /// <summary>
-        /// Advances <paramref name="mob"/> in the ECS; false (nothing changed) when it is not eligible: destroyed, not
-        /// mirrored, without the components, or with steps or a handles opening by its clock. The caller then runs
-        /// <c>Mobile.Update</c>.
+        /// Updates <paramref name="mob"/> in the ECS; false (nothing changed) when it is destroyed (the old Update did nothing
+        /// either) or, which the due list cannot produce (it holds clock entities of held mobiles, and the clock, timer and step
+        /// components are written together from the first update on), not mirrored or without its components.
         /// </summary>
         public bool TryRun(World world, Mobile mob) =>
             TryRun(world, mob, new LiveAdvanceSource(Client.Game.UO.Animations), AdvanceCheck);
@@ -376,7 +384,7 @@ namespace ClassicUO.Game
         {
             if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
             {
-                Declined++;
+                Decline(mob, "destroyed or not mirrored");
 
                 return false;
             }
@@ -384,10 +392,10 @@ namespace ClassicUO.Game
             // one record read for the eligibility, the tag and the components (perf backlog: was up to 7 entity lookups)
             EcsRow row = EcsRead.Row(e);
 
-            if (row.IsNull || !row.TryGet(out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
+            if (row.IsNull || !row.TryGet(out MobileClock clock) ||
                 !row.Has<AnimationTimer>() || !row.Has<MobileInputs>() || !row.Has<EquipmentSlots>())
             {
-                Declined++;
+                Decline(mob, "without its clock, timer, inputs or slots");
 
                 return false;
             }
@@ -403,6 +411,14 @@ namespace ClassicUO.Game
             }
 
             Ran++;
+
+            if (clock.Flags != MobileClockFlags.None)
+            {
+                RunStepping(world, mob, e, in source, check);
+
+                return true;
+            }
+
             AnimationTimer t = row.Get<AnimationTimer>();
             MobileInputs inp = row.Get<MobileInputs>();
             EquipmentSlots eq = row.Get<EquipmentSlots>();
@@ -418,6 +434,65 @@ namespace ClassicUO.Game
             world.Writer.AdvanceAnimationFromEcs(mob, in t, outcome == AnimAdvanceOutcome.Remove, frame, due);
 
             return true;
+        }
+
+        // the old Mobile.Update of a mobile with queued steps or a handles opening, in its order
+        private static void RunStepping<TAnims>(World world, Mobile mob, EcsEntity e, in TAnims source, bool check)
+            where TAnims : struct, IAnimationAdvanceSource
+        {
+            RanStepping++;
+
+            // Entity.Update: the handles opening (the old Update's base call, first)
+            mob.Update();
+
+            EcsRow row = EcsRead.Row(e);
+            AnimationTimer t = row.Get<AnimationTimer>();
+
+#if CUO_DEVTOOLS
+            if (check)
+            {
+                Check(mob, in t);
+            }
+#endif
+
+            if (t.IdleDue < Time.Ticks)
+            {
+                AnimationAdvanceRules.PlanIdle(in t, in row.Get<MobileInputs>(), row.Get<EquipmentSlots>().Mounted, in source, out Mobile.IdlePlan plan);
+                world.Writer.IdleAnimation(mob, in plan);
+            }
+
+            if (!world.StepSystem.TryRun(world, mob, Time.Ticks, Mobile.StepFrameDelay, out byte dir))
+            {
+                // unreachable: a held, mirrored mobile with a clock has its Steps, Position and Facing (StepSystem.TryRun)
+                dir = EcsRead.Get<MobileInputs>(e).Facing;
+            }
+
+            StepSystem.FootstepSound(world, mob);
+
+            // the advance reads the timer and the inputs after the step operations (SetAnimation, CompleteStep)
+            world.Ecs.PushClock(mob);
+            row = EcsRead.Row(e);
+
+            if (row.IsNull)
+            {
+                return;
+            }
+
+            t = row.Get<AnimationTimer>();
+            MobileInputs inp = row.Get<MobileInputs>();
+            EquipmentSlots eq = row.Get<EquipmentSlots>();
+            AnimAdvanceOutcome outcome = AnimationAdvanceRules.Advance(ref t, in inp, in eq, mob.Serial, in source, dir, out int frame, out long due);
+            world.Writer.AdvanceAnimationFromEcs(mob, in t, outcome == AnimAdvanceOutcome.Remove, frame, due);
+        }
+
+        private static void Decline(Mobile mob, string why)
+        {
+            Declined++;
+
+            if (!mob.IsDestroyed && _logged++ < 25)
+            {
+                Log.Warn($"[mobile-update-declined] 0x{mob.Serial:X8} {why}: not updated");
+            }
         }
 
         // ---- the checker -------------------------------------------------------------------------------------------------
@@ -455,6 +530,6 @@ namespace ClassicUO.Game
 
         /// <summary>The checker and system counters for the periodic log line.</summary>
         internal static string Summary() =>
-            $"[anim-advance-check] ecs advances {Ran}, declined to Mobile.Update {Declined}; component syncs checked {SyncChecks}, {SyncDiffs} different";
+            $"[anim-advance-check] ecs advances {Ran} (stepping or handles {RanStepping}), declined {Declined}; component syncs checked {SyncChecks}, {SyncDiffs} different";
     }
 }

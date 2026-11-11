@@ -736,35 +736,6 @@ namespace ClassicUO.Game
             }
         }
 
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_MOBILE_UPDATE_CHECK
-        /// <summary>
-        /// E4 checker, after the system's updates: every mobile it skipped is updated the legacy way and must not change.
-        /// (Mobiles the system updated carry this frame's stamp; they ran the legacy Update, so they are equal by construction.)
-        /// </summary>
-        public void CheckSkipped(IEnumerable<Mobile> mobiles, int stamp)
-        {
-            foreach (Mobile m in mobiles)
-            {
-                if (m.IsDestroyed || m.UpdateStamp == stamp)
-                {
-                    continue;
-                }
-
-                SkippedChecks++;
-                int before = m.UpdateStateHash();
-                m.Update();
-
-                if (m.UpdateStateHash() != before)
-                {
-                    SkippedDiffs++;
-                    LogClockDiff($"skipped mobile 0x{m.Serial:X8} g=0x{m.Graphic:X4} changed in a legacy Update (anim {m.LastAnimationChangeTime}, idle {m.IdleDue}, steps {m.Steps.Count}, tick {Time.Ticks})");
-                    PushClock(m);
-                }
-            }
-        }
-#endif
-
         private void LogClockDiff(string message)
         {
             if (_clockLogged++ < MAX_LOGGED_MISMATCHES)

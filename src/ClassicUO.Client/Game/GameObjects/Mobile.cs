@@ -116,12 +116,6 @@ namespace ClassicUO.Game.GameObjects
 
         private long _lastAnimationIdleDelay;
 
-#if CUO_DEVTOOLS
-        // CLEANUP(release): only CUO_MOBILE_UPDATE_CHECK (WorldEcs.CheckSkipped) reads it
-        /// <summary>E4: the frame number of World.UpdateMobilesByClock that last updated this mobile (checker).</summary>
-        internal int UpdateStamp;
-#endif
-
         /// <summary>E10: this mobile's slot in <see cref="MobileTable"/> (its position in <c>World.Mobiles.Values</c>'s enumeration order), kept by the table on add and remove.</summary>
         internal int Ordinal;
 
@@ -394,7 +388,7 @@ namespace ClassicUO.Game.GameObjects
             PushClock();
         }
 
-        /// <summary>E4: the idle timer's due time (<c>Update</c> runs SetIdleAnimation when it is before the tick).</summary>
+        /// <summary>E4: the idle timer's due time (the mobile update plans the idle animation when it is before the tick).</summary>
         internal long IdleDue => _lastAnimationIdleDelay;
 
         /// <summary>E4: writes the due times and flags of <see cref="MobileClock"/> after a change to one.</summary>
@@ -403,7 +397,8 @@ namespace ClassicUO.Game.GameObjects
             World?.Ecs.PushClock(this);
         }
 
-        /// <summary>E4 checker: every field <see cref="Update"/> can change, so a skipped Update can be shown to be a no-op.</summary>
+        /// <summary>Tests: a hash of every field the mobile update can change (the update, the steps, the timers), to show an
+        /// operation changed nothing.</summary>
         internal int UpdateStateHash()
         {
             var h = new HashCode();
@@ -446,36 +441,7 @@ namespace ClassicUO.Game.GameObjects
             return h.ToHashCode();
         }
 
-        public override void Update()
-        {
-            if (IsDestroyed)
-            {
-                return;
-            }
-
-            base.Update();
-
-            if (_lastAnimationIdleDelay < Time.Ticks)
-            {
-                SetIdleAnimation();
-            }
-
-            // T1 (funnel part 7): ProcessAnimation split. The step processing runs first and on its own (its step completion is
-            // the CompleteStep operation), then the frame advance (AdvanceAnimation) and, for a finished corpse animation, the
-            // removal (RemoveDeadMobile): each its own operation, none nested in another
-            // T6c: the step processing as a system over the Steps component, at the same point
-            byte dir;
-
-            if (!World.Ecs.StepsEnabled || !World.StepSystem.TryRun(World, this, Time.Ticks, StepFrameDelay, out dir))
-            {
-                ProcessSteps(out dir, true);
-            }
-
-            ProcessFootstepsSound();
-            AdvanceFrame(dir);
-        }
-
-        /// <summary>Tests: the frame delay ProcessSteps subtracts (null: <c>Client.Game.FrameDelay[1]</c>).</summary>
+        /// <summary>Tests: the frame delay the step processing subtracts (null: <c>Client.Game.FrameDelay[1]</c>).</summary>
         internal static int? FrameDelayOverride;
 
         internal static int StepFrameDelay => FrameDelayOverride ?? (int)Client.Game.FrameDelay[1];
@@ -659,7 +625,7 @@ namespace ClassicUO.Game.GameObjects
         }
 
         /// <summary>
-        /// T1 (funnel part 8): what <see cref="SetIdleAnimation"/> does, computed before any write. The random draws come in
+        /// T1 (funnel part 8): what the idle animation does (<c>AnimationAdvanceRules.PlanIdle</c>), computed before any write. The random draws come in
         /// the old order: the idle delay first, then the group's (a gargoyle's flight, the idle pair); a
         /// <see cref="IdleGroup.SetAnimation"/> outcome draws its own idle delay inside <c>SetAnimation</c>, last, as before.
         /// </summary>
@@ -685,37 +651,8 @@ namespace ClassicUO.Game.GameObjects
             SetAnimation
         }
 
-        public void SetIdleAnimation()
-        {
-            // T1 (funnel part 8): the plan from the animation data, then its writes through the funnel
-            PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out IdlePlan plan);
-            World.Writer.IdleAnimation(this, in plan);
-        }
-
-        /// <summary>T1 (funnel part 8): the animation data <see cref="PlanIdleAnimation"/> reads (tests pass their own).</summary>
-        internal interface IIdleAnimationData
-        {
-            int MaxAnimationCount { get; }
-            AnimationGroupsType GetAnimType(ushort graphic);
-            AnimationFlags GetAnimFlags(ushort graphic);
-            bool AnimationExists(ushort graphic, byte group);
-            byte GetReplacedObjectAnimation(ushort graphic, ushort index);
-        }
-
-        private readonly struct LiveIdleAnimationData : IIdleAnimationData
-        {
-            private readonly ClassicUO.Renderer.Animations.Animations _animations;
-
-            public LiveIdleAnimationData(ClassicUO.Renderer.Animations.Animations animations) => _animations = animations;
-
-            public int MaxAnimationCount => _animations.MaxAnimationCount;
-            public AnimationGroupsType GetAnimType(ushort graphic) => _animations.GetAnimType(graphic);
-            public AnimationFlags GetAnimFlags(ushort graphic) => _animations.GetAnimFlags(graphic);
-            public bool AnimationExists(ushort graphic, byte group) => _animations.AnimationExists(graphic, group);
-            public byte GetReplacedObjectAnimation(ushort graphic, ushort index) => Mobile.GetReplacedObjectAnimation(graphic, index);
-        }
-
-        /// <summary>T1 (funnel part 8): the mutation half of <see cref="SetIdleAnimation"/>, in its old order.</summary>
+        /// <summary>T1 (funnel part 8): the mutation half of the idle animation (<c>AnimationAdvanceRules.PlanIdle</c>'s plan), in
+        /// its old order.</summary>
         internal void ApplyIdle(in IdlePlan plan)
         {
             SetIdleDue(plan.IdleDue);
@@ -742,236 +679,6 @@ namespace ClassicUO.Game.GameObjects
             else if (plan.Group == IdleGroup.SetAnimation)
             {
                 SetAnimation(plan.Value);
-            }
-        }
-
-        /// <summary>
-        /// T1 (funnel part 8): the pure half of <see cref="SetIdleAnimation"/>: reads the mobile and the animation data, draws
-        /// the random numbers, writes nothing. The old code read nothing it had written before these reads (the reset writes
-        /// the timer fields; the body, the flags and the group are read).
-        /// </summary>
-        internal void PlanIdleAnimation<TData>(in TData animations, out IdlePlan plan) where TData : struct, IIdleAnimationData
-        {
-            plan = default;
-            plan.IdleDue = NextIdleDue();
-
-            if (!IsMounted && !InWarMode && ExecuteAnimation)
-            {
-                plan.Resets = true;
-
-                ushort graphic = GetGraphicForAnimation();
-
-                if (graphic >= animations.MaxAnimationCount)
-                {
-                    return;
-                }
-
-                //byte action = 0;
-                //ushort hue = 0;
-
-                //Client.Game.UO.Animations.ReplaceAnimationValues(
-                //    ref graphic,
-                //    ref action,
-                //    ref hue,
-                //    out var useUOP
-                //);
-
-                AnimationGroupsType type = animations.GetAnimType(graphic);
-                AnimationFlags  flags = animations.GetAnimFlags(graphic);
-                AnimationGroups animGroup = AnimationGroups.None;
-
-                bool isLowExtended = false;
-
-                if ((flags & AnimationFlags.CalculateOffsetLowGroupExtended) != 0)
-                {
-                    isLowExtended = true;
-                    type = AnimationGroupsType.Monster;
-                }
-                else if ((flags & AnimationFlags.CalculateOffsetByLowGroup) != 0)
-                {
-                    type = AnimationGroupsType.Animal;
-                }
-
-                switch (type)
-                {
-                    case AnimationGroupsType.SeaMonster:
-                    case AnimationGroupsType.Monster:
-                        animGroup = AnimationGroups.High;
-
-                        break;
-
-                    case AnimationGroupsType.Animal:
-                        animGroup = AnimationGroups.Low;
-
-                        break;
-
-                    case AnimationGroupsType.Human:
-                    case AnimationGroupsType.Equipment:
-                        animGroup = AnimationGroups.People;
-
-                        break;
-                }
-
-                if (animGroup == 0)
-                {
-                    return;
-                }
-
-                plan.Group = IdleGroup.Set;
-
-                if ((flags & AnimationFlags.UseUopAnimation) != 0)
-                {
-                    if (animGroup != AnimationGroups.People)
-                    {
-                        plan.Value = (byte)(InWarMode ? 28 : 26);
-
-                        return;
-                    }
-
-                    if (IsGargoyle && IsFlying)
-                    {
-                        plan.Value = (byte)(RandomHelper.GetValue(0, 2) != 0 ? 66 : 67);
-
-                        return;
-                    }
-                }
-
-                int first_value = RandomHelper.GetValue(0, 2);
-
-                // the reset does not write the group, so this is the group before SetIdleAnimation, as the old read was
-                byte original_value = _animationGroup;
-
-                byte group = _animationIdle[(byte)animGroup - 1, first_value];
-
-                if (isLowExtended && group == 18)
-                {
-                    if (
-                        !animations.AnimationExists(graphic, 18)
-                        && animations.AnimationExists(graphic, 17)
-                    )
-                    {
-                        group = animations.GetReplacedObjectAnimation(graphic, 17);
-                    }
-                    else
-                    {
-                        group = 1;
-                    }
-                }
-
-                if (!animations.AnimationExists(graphic, group))
-                {
-                    if (first_value == 0)
-                    {
-                        first_value = 1;
-                    }
-                    else
-                    {
-                        first_value = 0;
-                    }
-
-                    group = _animationIdle[(byte)animGroup - 1, first_value];
-
-                    if (!animations.AnimationExists(graphic, group))
-                    {
-                        // SetAnimation overwrites the group the old code had written there: only its own writes remain
-                        plan.Group = IdleGroup.SetAnimation;
-                        group = original_value;
-                    }
-                }
-
-                plan.Value = group;
-            }
-        }
-
-        private bool NoIterateAnimIndex()
-        {
-            return !ExecuteAnimation
-                || (LastStepTime > Time.Ticks - Constants.WALKING_DELAY && Steps.Count == 0);
-        }
-
-        private void ProcessFootstepsSound()
-        {
-            if (
-                ProfileManager.CurrentProfile.EnableFootstepsSound
-                && IsHuman
-                && !IsHidden
-                && !IsDead
-                && !IsFlying
-            )
-            {
-                if (Steps.Count != 0 && LastStepSoundTime < Time.Ticks)
-                {
-                    ref readonly Step step = ref Steps.Back();
-
-                    // T1 (funnel part 8): the values first, then the two writes through the funnel (StepSound), then the
-                    // sound, which reads neither field (it played between the two writes before)
-                    int incID = StepSoundOffset;
-                    int soundID = 0x012B;
-                    int delaySound = 400;
-
-                    if (IsMounted)
-                    {
-                        if (step.Run)
-                        {
-                            soundID = 0x0129;
-                            delaySound = 150;
-                        }
-                        else
-                        {
-                            incID = 0;
-                            delaySound = 350;
-                        }
-                    }
-
-                    delaySound = delaySound * 13 / 10;
-
-                    soundID += incID;
-
-                    int stepX = step.X, stepY = step.Y;
-
-                    if (World.Writer.StepSound(this, (incID + 1) % 2, Time.Ticks + delaySound))
-                    {
-                        Client.Game.Audio.PlaySoundWithDistance(World, soundID, stepX, stepY);
-                    }
-                }
-            }
-        }
-
-        public override void ProcessAnimation(bool evalutate = false)
-        {
-            ProcessSteps(out var dir, evalutate);
-            ProcessFootstepsSound();
-            AdvanceFrame(dir);
-        }
-
-        // the frame advance (T1 funnel part 7): the frame count comes from the animation data here; the timer step, its writes
-        // and the frame's due time are the AdvanceAnimation operation, and a finished corpse animation (a death-rekeyed
-        // mobile whose animation wrapped, or that has none) is then removed by the RemoveDeadMobile operation, which writes
-        // the frame index and the due time after the removal, where the old code wrote them
-        private void AdvanceFrame(byte dir)
-        {
-            if (LastAnimationChangeTime >= Time.Ticks || NoIterateAnimIndex())
-            {
-                return;
-            }
-
-            var animations = Client.Game.UO.Animations;
-
-            ushort id = GetGraphicForAnimation();
-            byte action = GetGroupForAnimation(this, id, true);
-
-            bool mirror = false;
-            animations.GetAnimDirection(ref dir, ref mirror);
-            int frameCount = 0;
-
-            if (id < animations.MaxAnimationCount && dir < 5)
-            {
-                frameCount = animations.GetAnimationFrames(id, action, dir, out _, out _).Length;
-            }
-
-            if (World.Writer.AdvanceAnimation(this, frameCount, out int frame, out long due))
-            {
-                World.Writer.RemoveDeadMobile(this, frame, due);
             }
         }
 
@@ -1046,165 +753,20 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        public void ProcessSteps(out byte dir, bool evalutate = false)
+        /// <summary>
+        /// T9 S8b: the direction the old <c>ProcessSteps(out dir)</c> returned without evaluating (the pick and the sampled draw
+        /// path): the front step's (masked to 0..7 when it runs), else the facing masked to 0..7.
+        /// </summary>
+        internal byte StepFacing()
         {
-            dir = (byte)Direction;
-            dir &= 7;
-
-            if (Steps.Count != 0 && !IsDestroyed)
+            if (Steps.Count == 0 || IsDestroyed)
             {
-                ref readonly Step step = ref Steps.Front();
-                dir = step.Direction;
-
-                if (step.Run)
-                {
-                    dir &= 7;
-                }
-
-                if (evalutate)
-                {
-                    if (AnimationFromServer)
-                    {
-                        // T1 (funnel part 8): a step ends the server's animation through the funnel
-                        World.Writer.EndServerAnimation(this);
-                    }
-
-                    int delay = (int)Time.Ticks - (int)LastStepTime;
-                    bool mounted =
-                        IsMounted
-                        || SpeedMode == CharacterSpeedType.FastUnmount
-                        || SpeedMode == CharacterSpeedType.FastUnmountAndCantRun
-                        || IsFlying;
-                    bool run = step.Run;
-
-                    // Client auto movements sync.
-                    // When server sends more than 1 packet in an amount of time less than 100ms if mounted (or 200ms if walking mount)
-                    // we need to remove the "teleport" effect.
-                    // When delay == 0 means that we received multiple movement packets in a single frame, so the patch becomes quite useless.
-                    if (!mounted && Serial != World.Player && Steps.Count > 1 && delay > 0)
-                    {
-                        mounted =
-                            delay
-                            <= (
-                                run
-                                    ? MovementSpeed.STEP_DELAY_MOUNT_RUN
-                                    : MovementSpeed.STEP_DELAY_MOUNT_WALK
-                            );
-                    }
-
-                    int maxDelay =
-                        MovementSpeed.TimeToCompleteMovement(run, mounted)
-                        - StepFrameDelay;
-
-                    bool removeStep = delay >= maxDelay;
-                    bool directionChange = false;
-
-                    if (X != step.X || Y != step.Y)
-                    {
-                        bool badStep = false;
-
-                        if (Offset.X == 0 && Offset.Y == 0)
-                        {
-                            int absX = Math.Abs(X - step.X);
-                            int absY = Math.Abs(Y - step.Y);
-
-                            badStep = absX > 1 || absY > 1 || absX + absY == 0;
-
-                            if (!badStep)
-                            {
-                                absX = X;
-                                absY = Y;
-
-                               Pathfinder.GetNewXY((byte)(step.Direction & 7), ref absX, ref absY);
-
-                                badStep = absX != step.X || absY != step.Y;
-                            }
-                        }
-
-                        if (badStep)
-                        {
-                            removeStep = true;
-                        }
-                        else
-                        {
-                            float steps = maxDelay / (float)Constants.CHARACTER_ANIMATION_DELAY;
-                            float x = delay / (float)Constants.CHARACTER_ANIMATION_DELAY;
-                            float y = x;
-                            sbyte offsetZ = (sbyte)((step.Z - Z) * x * (4.0f / steps));
-                            MovementSpeed.GetPixelOffset(step.Direction, ref x, ref y, steps);
-
-                            // T1 (funnel part 7, group 4): the walk offset through the funnel
-                            World.Writer.InterpolateStep(this, (sbyte)x, (sbyte)y, offsetZ);
-                        }
-                    }
-                    else
-                    {
-                        directionChange = true;
-                        removeStep = true;
-                    }
-
-                    if (removeStep)
-                    {
-                        if (Serial == World.Player)
-                        {
-                            //if (Position.X != step.X || Position.Y != step.Y || Position.Z != step.Z)
-                            //{
-                            //}
-
-                            if (Z - step.Z >= 22)
-                            {
-                                // oUCH!!!!
-                                AddMessage(MessageType.Label, ResGeneral.Ouch, TextType.CLIENT);
-                            }
-
-                            if (
-                                World.Player.Walker.StepInfos[
-                                    World.Player.Walker.CurrentWalkSequence
-                                ].Accepted
-                            )
-                            {
-                                int sequence = World.Player.Walker.CurrentWalkSequence + 1;
-
-                                if (sequence < World.Player.Walker.StepsCount)
-                                {
-                                    int count = World.Player.Walker.StepsCount - sequence;
-
-                                    for (int i = 0; i < count; i++)
-                                    {
-                                        World.Player.Walker.StepInfos[sequence - 1] = World
-                                            .Player
-                                            .Walker
-                                            .StepInfos[sequence];
-
-                                        sequence++;
-                                    }
-                                }
-
-                                World.Player.Walker.StepsCount--;
-                            }
-                            else
-                            {
-                                World.Player.Walker.CurrentWalkSequence++;
-                            }
-                        }
-
-                        // T1 (funnel part 5): the position, direction, run state, offset, queue, idle timer, then (not for a
-                        // turn in place) the screen position, the player's ranged gumps, the tile and LastStepTime, through
-                        // the funnel. A copy of the step: the operation removes it from the queue.
-                        Step done = step;
-                        World.Writer.CompleteStep(this, in done, directionChange);
-
-                        if (directionChange)
-                        {
-                            ProcessSteps(out dir, evalutate);
-
-                            return;
-                        }
-                    }
-
-                    UpdateTextCoordsV();
-                }
+                return (byte)((byte)Direction & 7);
             }
+
+            ref readonly Step step = ref Steps.Front();
+
+            return step.Run ? (byte)(step.Direction & 7) : step.Direction;
         }
 
         public bool TryGetSittingInfo(out AnimationsLoader.SittingInfoData data)

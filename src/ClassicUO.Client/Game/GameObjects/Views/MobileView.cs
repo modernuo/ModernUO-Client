@@ -137,7 +137,7 @@ namespace ClassicUO.Game.GameObjects
 
             var animations = Client.Game.UO.Animations;
 
-            ProcessSteps(out byte dir);
+            byte dir = StepFacing();
             bool isFlipped = pickFlipped;
             animations.GetAnimDirection(ref dir, ref isFlipped);
 

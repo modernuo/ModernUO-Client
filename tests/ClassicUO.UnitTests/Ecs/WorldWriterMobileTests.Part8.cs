@@ -23,7 +23,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static readonly System.Reflection.FieldInfo FGroup = TimerField("_animationGroup"), FIdle = TimerField("_lastAnimationIdleDelay");
 
         /// <summary>The animation data the idle planner reads, as the tests set it.</summary>
-        internal struct FakeIdleData : Mobile.IIdleAnimationData
+        internal struct FakeIdleData : LegacyMobileUpdate.IIdleAnimationData
         {
             public int Max;
             public AnimationGroupsType Type;

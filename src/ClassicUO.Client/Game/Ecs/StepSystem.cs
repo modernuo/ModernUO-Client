@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using ClassicUO.Configuration;
 using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -122,10 +123,11 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T6c: <c>Mobile.ProcessSteps(evaluate: true)</c> as a system over the mobile's
-    /// <see cref="StepsComponent"/> and its <see cref="Position"/>/<see cref="Facing"/> record. Runs per due mobile in the
-    /// Mobiles stage, in table order, at the point <c>Mobile.Update</c> ran ProcessSteps, so footstep sounds, the frame
-    /// advance and the random draws keep their order. The results go through the funnel: <c>WorldWriter.InterpolateStep</c>
+    /// T6c: the old <c>Mobile.ProcessSteps(evaluate: true)</c> as a system over the mobile's
+    /// <see cref="StepsComponent"/> and its <see cref="Position"/>/<see cref="Facing"/> record (T9 S8b: the only step
+    /// path; ProcessSteps is deleted). Runs per due mobile in the Mobiles stage (<c>MobileAnimationAdvanceSystem</c>), in
+    /// table order, where the old Update ran ProcessSteps, so footstep sounds, the frame advance and the random draws keep
+    /// their order. The results go through the funnel: <c>WorldWriter.InterpolateStep</c>
     /// (the offset; the system writes the component's offset first), the player's walker bookkeeping (as before) and
     /// <c>WorldWriter.CompleteStep</c> (position, tile list and DynamicTileIndex via AddToTile, queue, idle timer, inputs;
     /// its commit rewrites the component through the clock push). The Mobile's queue, offset and LastStepTime stay the
@@ -257,8 +259,9 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// Runs <paramref name="mob"/>'s step processing in the ECS: false (nothing changed) when it is not eligible (the
-        /// system is off, the mobile is destroyed, not the one World holds, not mirrored, or without the components); the
-        /// caller then runs <c>Mobile.ProcessSteps</c>. <paramref name="dir"/> is ProcessSteps' direction out.
+        /// system is off, the mobile is destroyed, not the one World holds, not mirrored, or without the components). The
+        /// update loop runs only held, mirrored mobiles with a clock after the first update turned the system on, so it is
+        /// never declined there. <paramref name="dir"/> is the old ProcessSteps' direction out.
         /// </summary>
         public bool TryRun(World world, Mobile mob, uint ticks, int frameDelay, out byte dir)
         {
@@ -377,11 +380,9 @@ namespace ClassicUO.Game
                 {
                     Turns++;
 
-                    // ProcessSteps goes on with the next step (its recursion); CompleteStep's commit rewrote the component
-                    if (!TryRun(world, mob, ticks, frameDelay, out dir))
-                    {
-                        mob.ProcessSteps(out dir, true);
-                    }
+                    // the old ProcessSteps went on with the next step (its recursion); CompleteStep's commit rewrote the
+                    // component, and the record is the same one (an operation neither moves nor drops it)
+                    Run(world, mob, e, ticks, frameDelay, out dir);
 
                     return;
                 }
@@ -392,6 +393,53 @@ namespace ClassicUO.Game
             if (StepCheck)
             {
                 CheckSync(mob, e, "after");
+            }
+        }
+
+        /// <summary>
+        /// T9 S8b: the old <c>Mobile.ProcessFootstepsSound</c>, unchanged, after the step processing: a walking human's step
+        /// sound when due. The values first, then the two writes through the funnel (<c>WorldWriter.StepSound</c>), then the
+        /// sound, which reads neither field.
+        /// </summary>
+        internal static void FootstepSound(World world, Mobile m)
+        {
+            // no profile only in unit tests
+            if (ProfileManager.CurrentProfile?.EnableFootstepsSound != true ||!m.IsHuman || m.IsHidden || m.IsDead || m.IsFlying)
+            {
+                return;
+            }
+
+            if (m.Steps.Count == 0 || m.LastStepSoundTime >= Time.Ticks)
+            {
+                return;
+            }
+
+            ref readonly Mobile.Step step = ref m.Steps.Back();
+            int incID = m.StepSoundOffset;
+            int soundID = 0x012B;
+            int delaySound = 400;
+
+            if (m.IsMounted)
+            {
+                if (step.Run)
+                {
+                    soundID = 0x0129;
+                    delaySound = 150;
+                }
+                else
+                {
+                    incID = 0;
+                    delaySound = 350;
+                }
+            }
+
+            delaySound = delaySound * 13 / 10;
+            soundID += incID;
+            int stepX = step.X, stepY = step.Y;
+
+            if (world.Writer.StepSound(m, (incID + 1) % 2, Time.Ticks + delaySound))
+            {
+                Client.Game.Audio.PlaySoundWithDistance(world, soundID, stepX, stepY);
             }
         }
 
@@ -547,6 +595,6 @@ namespace ClassicUO.Game
 
         /// <summary>The checker and system counters for the periodic log line.</summary>
         internal static string Summary() =>
-            $"[step-check] ecs runs {Ran}, declined to ProcessSteps {Declined}; interpolated {Interpolated}, completed {Completed} (turns {Turns}); checked {Checks}, before-run differences {SyncDiffs}, decisions different {DecisionDiffs}, after-run differences {AfterDiffs}; component writes {WorldEcs.StepWrites}";
+            $"[step-check] ecs runs {Ran}, declined {Declined}; interpolated {Interpolated}, completed {Completed} (turns {Turns}); checked {Checks}, before-run differences {SyncDiffs}, decisions different {DecisionDiffs}, after-run differences {AfterDiffs}; component writes {WorldEcs.StepWrites}";
     }
 }

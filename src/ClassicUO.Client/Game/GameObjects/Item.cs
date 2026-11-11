@@ -565,7 +565,7 @@ namespace ClassicUO.Game.GameObjects
             UsedLayer = UsedLayer
         };
 
-        public override void ProcessAnimation(bool evalutate = false)
+        public void ProcessAnimation()
         {
             if (!IsCorpse)
             {

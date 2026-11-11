@@ -308,7 +308,7 @@ namespace ClassicUO.Game
             s.ServerGroup = m.AnimationGroupRaw;
             s.Frame = m.AnimIndex;
             s.NextFrameTime = (uint)m.LastAnimationChangeTime;
-            m.ProcessSteps(out s.Facing);
+            s.Facing = m.StepFacing();
 
             rs.Alpha = m.AlphaHue;
             rs.OffsetX = (short)(int)m.Offset.X;
