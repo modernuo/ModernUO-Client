@@ -789,7 +789,7 @@ namespace ClassicUO.Game.Scenes
 
                     break;
 
-                case TextObject msg when msg.Owner is Entity entity:
+                case TextObject msg when msg.LiveOwnerEntity is Entity entity:
                     result = true;
                     GameActions.DoubleClick(_world, entity);
 

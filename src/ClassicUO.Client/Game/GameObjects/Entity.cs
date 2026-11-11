@@ -327,6 +327,21 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary>item_pool (ItemPool.Take): the Entity fields back to the constructor's values. Serial goes to 0; the
+        /// caller sets the new one. The mirror handle cache goes, so a reused item never answers from its old record.</summary>
+        public override void ResetForReuse()
+        {
+            base.ResetForReuse();
+            EcsEntity = default;
+            EcsEntitySerial = 0;
+            EcsEntityEpoch = 0;
+            EcsEntityHeld = false;
+            HitsPercentage = 0;
+            IsClicked = false;
+            _serial = 0;
+            HitsRequest = HitsRequestStatus.None;
+        }
+
         public Item FindItem(ushort graphic, ushort hue = 0xFFFF) => FindItem(graphic, hue, Serial, 0);
 
         // T9 child-list slice B2: the walk does not come back to its root's serial below the root's own children (a mobile's

@@ -128,7 +128,7 @@ namespace ClassicUO.Game.GameObjects
         public OverheadDamage(World world, GameObject parent)
         {
             _world = world;
-            Parent = parent;
+            SetParent(parent);
             _messages = new Deque<TextObject>();
         }
 
@@ -136,9 +136,16 @@ namespace ClassicUO.Game.GameObjects
         public bool IsDestroyed { get; private set; }
         public bool IsEmpty => _messages.Count == 0;
 
+        // item_pool: the parent's Incarnation when it became the parent; an entity's changes only when the pool reuses it
+        private uint _parentIncarnation;
+
+        /// <summary>item_pool: the parent object was reused for another item since (WorldTextManager then sets the live one).</summary>
+        public bool ParentReused => Parent != null && Parent.Incarnation != _parentIncarnation;
+
         public void SetParent(GameObject parent)
         {
             Parent = parent;
+            _parentIncarnation = parent?.Incarnation ?? 0;
         }
 
         public void Add(int damage)

@@ -218,6 +218,7 @@ namespace ClassicUO.Game.Managers
                     );
 
                     msg.Owner = parent;
+                    msg.OwnerIncarnation = parent.Incarnation;
 
                     if (parent is Item it && !it.OnGround)
                     {
