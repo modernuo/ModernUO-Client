@@ -1,3 +1,5 @@
+// LegacyEcsParity is compiled only with CUO_DEVTOOLS.
+#if CUO_DEVTOOLS
 using ClassicUO.Assets;
 using ClassicUO.Game.Scenes;
 using FluentAssertions;
@@ -28,3 +30,4 @@ namespace ClassicUO.UnitTests.Ecs
         public void TwoViewLightsOnlyOneSlotLeft_DoesNotFit() => LegacyEcsParity.LightsFit(MAX - 2, MAX).Should().BeFalse();
     }
 }
+#endif
