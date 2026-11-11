@@ -571,10 +571,10 @@ namespace ClassicUO
                 _currentFpsTime = 0;
             }
 
-            bool inactive = !IsActive
-                && !DevBench.FrameStats
+            // FocusRule: an automated session counts as focused; the simulated `inactive on` forces this path
+            bool inactive = FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive)
                 && ProfileManager.CurrentProfile != null
-                && ProfileManager.CurrentProfile.ReduceFPSWhenInactive;
+                && (ProfileManager.CurrentProfile.ReduceFPSWhenInactive || FocusRule.ForceInactive);
             double x = _intervalFixedUpdate[inactive ? 1 : 0];
             _suppressedDraw = false;
             bool minimized = IsMinimizedForDrawSkip();
@@ -654,14 +654,15 @@ namespace ClassicUO
                 return false;
             }
 
+            bool forced = false;
 #if CUO_DEVTOOLS
-            if (DevForceMinimized)
-            {
-                return true;
-            }
+            forced = DevForceMinimized;
 #endif
             // polled, not event-driven: a plugin can consume the window events; Wayland sets no minimized flag (the switch does nothing there)
-            return (((SDL_WindowFlags)SDL_GetWindowFlags(Window.Handle)) & SDL_WindowFlags.SDL_WINDOW_MINIMIZED) != 0;
+            bool real = !forced && !FocusRule.Automation
+                && (((SDL_WindowFlags)SDL_GetWindowFlags(Window.Handle)) & SDL_WindowFlags.SDL_WINDOW_MINIMIZED) != 0;
+
+            return FocusRule.IsMinimized(real, FocusRule.Automation, forced);
         }
 
         protected override void Draw(GameTime gameTime)

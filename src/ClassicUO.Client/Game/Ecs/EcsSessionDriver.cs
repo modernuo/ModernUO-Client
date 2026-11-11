@@ -942,6 +942,21 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // inactive on|off: the window counts as unfocused (ReduceFPSWhenInactive and throttle_update_when_inactive apply, as for a
+                // really unfocused client; automation otherwise counts as focused, FocusRule)
+                case "inactive" when args.Length > 0:
+                    FocusRule.ForceInactive = args[0] == "on";
+                    Log.Info($"[ECS] driver: simulated inactive window {args[0]} (reduce_fps={ProfileManager.CurrentProfile?.ReduceFPSWhenInactive}, throttle_update={Settings.GlobalSettings.ThrottleUpdateWhenInactive})");
+
+                    return true;
+
+                // throttleupd on|off: throttle_update_when_inactive
+                case "throttleupd" when args.Length > 0:
+                    Settings.GlobalSettings.ThrottleUpdateWhenInactive = args[0] == "on";
+                    Log.Info($"[ECS] driver: throttle update when inactive {args[0]}");
+
+                    return true;
+
                 case "minimized" when args.Length > 0:
                     GameController.DevForceMinimized = args[0] == "on";
                     Log.Info($"[ECS] driver: simulated minimized window {args[0]} (skip_draw_when_minimized={Settings.GlobalSettings.SkipDrawWhenMinimized})");

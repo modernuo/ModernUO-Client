@@ -2010,6 +2010,16 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex].StartsWith("inactive:"))
+                    {
+                        FocusRule.ForceInactive = _plan[_planIndex] == "inactive:on";
+                        Log.Info($"[bench] simulated inactive window: {FocusRule.ForceInactive}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("skipmin:"))
                     {
                         Configuration.Settings.GlobalSettings.SkipDrawWhenMinimized = _plan[_planIndex] == "skipmin:on";
