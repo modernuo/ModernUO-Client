@@ -271,6 +271,12 @@ namespace ClassicUO.Game.GameObjects
             {
                 ObjectHandlesStatus = ObjectHandlesStatus.DISPLAYING;
 
+                if (this is Item)
+                {
+                    // pa-gpusig: handle state the Gpu item cache reads, changed outside the walk
+                    Scenes.GpuItemGen.Touch(this);
+                }
+
                 // TODO: Some servers may not want to receive this (causing original client to not send it),
                 //but all servers tested (latest POL, old POL, ServUO, Outlands) do.
                 if ( /*Client.Game.UO.Version > ClientVersion.CV_200 &&*/ SerialHelper.IsMobile(Serial))

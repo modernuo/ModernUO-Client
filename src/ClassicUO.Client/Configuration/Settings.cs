@@ -122,6 +122,12 @@ namespace ClassicUO.Configuration
         // in tile order. Off = a tile holding an effect is walked in full and every effect move re-extracts its chunk.
         [JsonPropertyName("gpu_prepare_item_cache_effects")] public bool GpuPrepareItemCacheEffects { get; set; } = true;
 
+        // pa-gpusig, with gpu_prepare_item_cache: a served tile's cached items are trusted while their chunk's render generation
+        // (GpuItemGen.Touch: the WorldWriter commits, text, boat offsets, object handles) is unchanged and the tile was served in
+        // every pass since it was checked; otherwise their signatures are compared as before. Off = every served item's
+        // signature is rebuilt and compared every frame. CUO_GPU_SIG_CHECK=1 compares both decisions at every use.
+        [JsonPropertyName("gpu_prepare_item_cache_gen")] public bool GpuPrepareItemCacheGen { get; set; }
+
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;

@@ -62,6 +62,9 @@ namespace ClassicUO.Game.Map
         public DynamicTileIndex Dynamic;
         public Scenes.GpuItemCache GpuItems;
         public bool GpuItemsDirty = true;
+        /// <summary>pa-gpusig (gpu_prepare_item_cache_gen, GpuItemGen): bumped when one of the chunk's items changes in place
+        /// in a way its cached sprites read (GpuItemGen.Touch); the cache keeps the value it was built at.</summary>
+        public uint GpuItemRenderGen;
         // tiles holding a mobile, and a mobile the walk's max Z stops at (rebuilt with the masks); a mobile on a cached
         // item tile is walked on its own
         public ulong GpuMobileMask, GpuMobileStopMask;

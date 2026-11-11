@@ -38,6 +38,9 @@ namespace ClassicUO.Game
                 {
                     e.RemoveComponent<ClassicUO.Ecs.ItemOffset>();
                     mirror.ItemOffsetCount--;
+                    // pa-gpusig: the Gpu item cache holds only items without an offset; a passenger is not the operation's
+                    // subject, so its chunk is told here
+                    ClassicUO.Game.Scenes.GpuItemGen.Touch(item);
 
                     return;
                 }
@@ -51,6 +54,7 @@ namespace ClassicUO.Game
             {
                 e.AddComponent(new ClassicUO.Ecs.ItemOffset { X = offset.X, Y = offset.Y, Z = offset.Z });
                 mirror.ItemOffsetCount++;
+                ClassicUO.Game.Scenes.GpuItemGen.Touch(item);
             }
         }
 
