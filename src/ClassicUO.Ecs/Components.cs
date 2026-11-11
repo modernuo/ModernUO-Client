@@ -592,8 +592,9 @@ namespace ClassicUO.Ecs
         public HandItem Hand1, Hand2;
 
         // Light items the view doesn't draw but lights at the body's anchor (MobileView: a human's light without an equip
-        // AnimID, any light on a non-human body), in paint order; serials. Drawn lights carry EquipSlotBits.Light.
-        public const int MAX_LIGHT_ONLY = 4;
+        // AnimID, any light on a non-human body), in paint order; serials. Drawn lights carry EquipSlotBits.Light. Sized for
+        // every layer the paint order can hold (one light per layer, as the view submits), so no eligible light is dropped.
+        public const int MAX_LIGHT_ONLY = MAX;
         public LightItemArray LightItems;
         public byte LightCount;
 
