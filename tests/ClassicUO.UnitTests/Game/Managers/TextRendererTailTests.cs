@@ -11,22 +11,25 @@ namespace ClassicUO.UnitTests.Game.Managers
     // text_tail_cache: the text list's tail (where the draw pass starts) is kept while links change and validated by
     // TextObject.LinkVersion. Every test runs with the switch off and on and, in developer builds, with CUO_TEXT_ORDER_CHECK's
     // checker on, which must report no mismatch for the link operations (add, UnlinkD, destroy, move-to-top, clear).
-    [Collection("TextRendererStatics")]
-    public sealed class TextRendererTailTests : IDisposable
+    // The cases run twice: with the checker off (the kept tail really serves the passes, so cache hits and invalidation are what
+    // is tested) and with it on (it rewrites the kept tail at each use, so it is the parity check that runs).
+    public abstract class TextRendererTailCases : IDisposable
     {
-        private sealed class Probe : TextRenderer
+        internal sealed class Probe : TextRenderer
         {
             public Probe(World world) : base(world) { }
 
             public TextObject Draw_Start => DrawPointer;
         }
 
-        private readonly List<string> _mismatches = new List<string>();
+        internal readonly List<string> _mismatches = new List<string>();
+        private readonly bool _check;
 
-        public TextRendererTailTests()
+        protected TextRendererTailCases(bool check)
         {
+            _check = check;
 #if CUO_DEVTOOLS
-            TextRenderer.CheckOverride = true;
+            TextRenderer.CheckOverride = check;
             TextRenderer.MismatchObserver = _mismatches.Add;
 #endif
         }
@@ -52,7 +55,7 @@ namespace ClassicUO.UnitTests.Game.Managers
             return t;
         }
 
-        private static (Probe, TextObject[]) Build(int count, bool on)
+        internal static (Probe, TextObject[]) Build(int count, bool on)
         {
             TextRenderer.OverrideForTests = on;
             var r = new Probe(new World());
@@ -67,7 +70,7 @@ namespace ClassicUO.UnitTests.Game.Managers
             return (r, objs);
         }
 
-        private static void AssertStart(Probe r)
+        internal static void AssertStart(Probe r)
         {
             r.Update();
             r.Draw_Start.Should().BeSameAs(WalkTail(r));
@@ -75,11 +78,14 @@ namespace ClassicUO.UnitTests.Game.Managers
             r.Draw_Start.Should().BeSameAs(WalkTail(r));
         }
 
-        private void AssertClean()
+        internal void AssertClean()
         {
             _mismatches.Should().BeEmpty();
 #if CUO_DEVTOOLS
-            TextRenderer.Checks.Should().BeGreaterThan(0);
+            if (_check)
+            {
+                TextRenderer.Checks.Should().BeGreaterThan(0);
+            }
 #endif
         }
 
@@ -303,6 +309,53 @@ namespace ClassicUO.UnitTests.Game.Managers
 
             AssertClean();
         }
+    }
+
+    [Collection("TextRendererStatics")]
+    public sealed class TextRendererTailCheckerOffTests : TextRendererTailCases
+    {
+        public TextRendererTailCheckerOffTests() : base(false) { }
+
+        [Fact]
+        public void With_The_Switch_On_A_Valid_Kept_Tail_Is_Not_Walked_Again()
+        {
+            var (r, objs) = Build(3, true);
+
+            AssertStart(r);
+
+            // a writer that skips LinkVersion: only a kept tail that is really served stays stale
+            var extra = TextObject.Create(null);
+            objs[0].DRight = extra;
+            extra.DLeft = objs[0];
+
+            r.Update();
+            r.Draw_Start.Should().BeSameAs(objs[0]);
+
+            TextObject.LinkVersion++; // any real link change invalidates it
+            r.Update();
+            r.Draw_Start.Should().BeSameAs(extra);
+        }
+
+        [Fact]
+        public void With_The_Switch_Off_Every_Pass_Walks()
+        {
+            var (r, objs) = Build(3, false);
+
+            AssertStart(r);
+
+            var extra = TextObject.Create(null);
+            objs[0].DRight = extra;
+            extra.DLeft = objs[0];
+
+            r.Update();
+            r.Draw_Start.Should().BeSameAs(extra);
+        }
+    }
+
+    [Collection("TextRendererStatics")]
+    public sealed class TextRendererTailCheckerOnTests : TextRendererTailCases
+    {
+        public TextRendererTailCheckerOnTests() : base(true) { }
 
 #if CUO_DEVTOOLS
         [Fact]
@@ -335,6 +388,21 @@ namespace ClassicUO.UnitTests.Game.Managers
 
             TextRenderer.Mismatches.Should().BeGreaterThan(before);
             _mismatches.Should().Contain(m => m.Contains("link order"));
+        }
+#endif
+
+#if CUO_DEVTOOLS
+        [Fact]
+        public void The_Checker_Reports_A_Forward_Cycle_Without_Hanging()
+        {
+            var (r, objs) = Build(3, true);
+            long before = TextRenderer.Mismatches;
+
+            objs[0].DRight = objs[2]; // 2 -> 1 -> 0 -> 2: the walk from the head never ends
+            r.Update();
+
+            TextRenderer.Mismatches.Should().BeGreaterThan(before);
+            _mismatches.Should().Contain(m => m.Contains("does not end"));
         }
 #endif
     }

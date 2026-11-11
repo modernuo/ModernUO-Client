@@ -210,7 +210,18 @@ namespace ClassicUO.Game.Managers
                 if (check)
                 {
                     TextObject kept = _tailValid && _tailVersion == LinkVersion ? _tail : null;
-                    TextObject walked = WalkToTail();
+                    TextObject walked = WalkToTailBounded();
+
+                    if (walked == null)
+                    {
+                        // a DRight cycle: report it and leave the pass without walking (the unbounded walk would not end)
+                        Checks++;
+                        Mismatch("link order: forward walk does not end (cycle)");
+                        _tailValid = false;
+                        DrawPointer = FirstNode;
+                        return;
+                    }
+
                     CheckOrder(kept, walked, cache);
                     _tail = walked;
                     _tailVersion = LinkVersion;
@@ -264,6 +275,24 @@ namespace ClassicUO.Game.Managers
         }
 
 #if CUO_DEVTOOLS
+        // CLEANUP(release): the checker's walk: null when it passes a million nodes (a cycle)
+        private TextObject WalkToTailBounded()
+        {
+            TextObject t = FirstNode;
+
+            for (int n = 0; t.DRight != null; n++)
+            {
+                if (n > 1_000_000)
+                {
+                    return null;
+                }
+
+                t = t.DRight;
+            }
+
+            return t;
+        }
+
         // CLEANUP(release): CUO_TEXT_ORDER_CHECK. kept is the tail kept from earlier uses (null: none valid, nothing to
         // compare); walked is the full walk's. The link order is checked in both directions.
         private void CheckOrder(TextObject kept, TextObject walked, bool cache)
