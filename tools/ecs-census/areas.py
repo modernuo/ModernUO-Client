@@ -1,6 +1,6 @@
 import re
 
-DEV_FILES = {"DevBench.cs", "Game/Ecs/EcsInspector.cs", "Game/Ecs/EcsSessionDriver.cs", "Game/Ecs/EcsParity.cs", "Game/Ecs/BenchEffects.cs", "Game/Scenes/PrepCheck.cs", "Game/Scenes/WorldSettleGate.cs"}
+DEV_FILES = {"DevBench.cs", "Game/Ecs/EcsInspector.cs", "Game/Ecs/EcsSessionDriver.cs", "Game/Ecs/BenchEffects.cs", "Game/Scenes/PrepCheck.cs", "Game/Scenes/WorldSettleGate.cs"}
 
 
 def area(path):

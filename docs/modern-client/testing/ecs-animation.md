@@ -40,6 +40,7 @@ Written 2026-10-25 by the W3 agent. It covers how the ECS mobile animation path 
 
 ## Since the extract became the source (2026-10-25)
 
+- *2026-11-10: `gpu_ecs_sprites` and `CUO_ECS_PARITY` are deleted (T9, poc-log "T9: gpu_ecs_sprites deleted"); the Gpu world always draws mobiles and items from the extracts. What follows describes builds before that.*
 - **`gpu_ecs_sprites`** (default on) draws mobiles and art items from the ECS extracts. On parity frames the view is still drawn under capture first as the reference, its side effects stand, and the ECS instances replace its instances after the diff. With the setting off, the parity harness runs as before (capture drawn, ECS compared).
 - **Always set `CUO_ANIM_SYNC=1` for parity.** Otherwise the view draws nothing for a body's first-seen direction until a worker decodes it, while the extract draws it at once; those first frames show up as capture-side count mismatches.
 - **More lines in the summary:**

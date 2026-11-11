@@ -509,7 +509,7 @@ namespace ClassicUO.Game.GameObjects
                 uint spriteIdx = graphic + 0x4000u;
 
                 // T7b part 2b: the offset the extract stored when it drew this graphic for this item last draw
-                // (legacy_ecs_sprites / gpu_ecs_sprites), else the art entry's
+                // (legacy_ecs_sprites, or the Gpu world's extracts), else the art entry's
                 bool records = Scenes.SpritePickTable.TryItemArt(this, graphic, in index, out int entryW, out int entryH);
 
                 if (!records)
@@ -615,7 +615,7 @@ namespace ClassicUO.Game.GameObjects
 
                 byte direction = (byte)((byte)Layer & 0x7F & 7);
 
-                // T7b part 2b: the mirror bit from the last draw's records (legacy_ecs_sprites / gpu_ecs_sprites). The pick
+                // T7b part 2b: the mirror bit from the last draw's records (legacy_ecs_sprites, or the Gpu world's extracts). The pick
                 // doesn't store it back: GetAnimDirection is idempotent for the corpse's fixed direction, so the draw that
                 // recorded it left the same bit. Without a record, the bit on the corpse, advanced as before.
                 if (Scenes.SpritePickTable.TryCorpse(this, out bool flipped))

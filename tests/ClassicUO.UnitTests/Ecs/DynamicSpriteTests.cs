@@ -17,8 +17,8 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // T7b part 1: the extract split into select (DynamicSprite) and the Gpu resolve. The resolve must give the instances the
     // extract wrote before the split, bit for bit (golden: the pre-split WriteFrame and art code below, verbatim but for the
-    // tables argument), and Emit must equal resolve(select). In the client, CUO_ECS_PARITY diffs the extract against the
-    // view capture and the shots job compares base and new frames.
+    // tables argument), and Emit must equal resolve(select). In the client, the golden captures (GoldenCapture) compare the
+    // extract's output of base and new builds, and the shots job their frames.
     public partial class DynamicSpriteTests
     {
         private const int HUE_COUNT = 3000;

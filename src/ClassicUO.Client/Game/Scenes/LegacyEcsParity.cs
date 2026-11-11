@@ -41,9 +41,19 @@ namespace ClassicUO.Game.Scenes
 
         internal static int ParseInterval(string v) => int.TryParse(v, out int n) && n > 0 ? n : 0;
 
-        /// <summary>Client load, before any scene Update (see EcsParity.ConfigureLoaders and bench-000231): a direction first
-        /// seen while a worker decodes it draws nothing in the view for a few frames, while the extract's FrameInfo already
-        /// has its size. The checker compares paths, not load timing, so animations load synchronously while it is on.</summary>
+        /// <summary>
+        /// The checker adds the sink's lights after the view's, so the list holds both at once. GameScene.AddLight stops at
+        /// <see cref="ClassicUO.Assets.LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT"/>, so near that cap the sink's lights are
+        /// refused only because the view's are still in the list (a checker artifact, not a path difference). False = the
+        /// doubled list would not fit, skip the comparison for this object.
+        /// </summary>
+        internal static bool LightsFit(int lightsBefore, int viewEnd) =>
+            viewEnd + (viewEnd - lightsBefore) <= ClassicUO.Assets.LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT;
+
+        /// <summary>Client load, before any scene Update (bench-000231, found by the deleted Gpu checker CUO_ECS_PARITY): a
+        /// direction first seen while a worker decodes it draws nothing in the view for a few frames, while the extract's
+        /// FrameInfo already has its size. The checker compares paths, not load timing, so animations load synchronously
+        /// while it is on.</summary>
         public static void ConfigureLoaders() => ConfigureLoaders(Environment.GetEnvironmentVariable("CUO_LEGACY_ECS_PARITY"));
 
         internal static void ConfigureLoaders(string parity)
@@ -199,7 +209,7 @@ namespace ClassicUO.Game.Scenes
                     problem += $" frameinfo view={viewFi} sink={extract.FrameInfo}";
                 }
 
-                if (scene != null && EcsParity.LightsFit(lightsBefore, lightsView))
+                if (scene != null && LightsFit(lightsBefore, lightsView))
                 {
                     LegacySpriteSink.AddMobileLights(mobile, extract);
                     problem = AddProblem(problem, CompareLights(scene, lightsBefore, lightsView));
@@ -221,7 +231,7 @@ namespace ClassicUO.Game.Scenes
                     problem += $" mirror view={viewFlip} sink={items.Flipped}";
                 }
 
-                if (scene != null && EcsParity.LightsFit(lightsBefore, lightsView))
+                if (scene != null && LightsFit(lightsBefore, lightsView))
                 {
                     if (items.Light)
                     {

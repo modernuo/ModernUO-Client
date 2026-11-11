@@ -22,11 +22,12 @@ namespace ClassicUO.Game.Scenes
     /// <summary>
     /// The world pass of Uo.Render (poc/Uo.Render) on FNA3D's SDL_GPU device, rendering into the world render target.
     /// Land and statics are baked from the pack's map regions; GameScene's list fill stays the authority for visibility,
-    /// alpha and picking and reports the differences as per-sprite overrides. Items, mobiles and multis are dynamic
-    /// sprites captured from their views' draw calls (<see cref="ISpriteCapture"/>), so the views' animation, hue and
-    /// layering logic is reused unchanged. Mobiles are the exception (W3, setting <c>gpu_ecs_sprites</c>): their sprites
-    /// come from the ECS (<see cref="MobileAnimationSystem"/> then <see cref="MobileSpriteExtract"/>), which also reproduces
-    /// what the view does besides drawing (FrameInfo, the mirror bit, lights, the aura). Off, they are captured too.
+    /// alpha and picking and reports the differences as per-sprite overrides. Mobiles and items are dynamic sprites from the
+    /// ECS extracts (W3: <see cref="MobileAnimationSystem"/> then <see cref="MobileSpriteExtract"/>, and
+    /// <see cref="ItemSpriteExtract"/>), which also reproduce what the views do besides drawing (FrameInfo, the mirror bit,
+    /// lights, the aura, picking records). Effects come from <see cref="EffectSpriteExtract"/>. What is left is captured
+    /// from its view's draw calls (<see cref="ISpriteCapture"/>): statics, multi components and shadow-only draws, a mobile
+    /// without a mirror record yet, a pack without animations, and the effects the effect extract leaves to their views.
     /// </summary>
     internal sealed class GpuWorldRenderer : ISpriteCapture, IDisposable
     {
@@ -49,7 +50,7 @@ namespace ClassicUO.Game.Scenes
         private int _failedFacet = -1;
         private static readonly bool GrowOnDemand = Environment.GetEnvironmentVariable("CUO_GPU_GROW") != "0";
         private Season _landSeason = (Season)0xFF;
-        private bool _ecsMobiles;
+        private bool _ecsSprites;
         private GameScene _scene;
 
         private GpuWorldRenderer(IntPtr device, PackSet pack)
@@ -277,18 +278,19 @@ namespace ClassicUO.Game.Scenes
             _object = null;
             CaptureFallbacks = 0;
             UpdateWaterWobble();
-            EcsParity.BeginFrame();
 #if CUO_DEVTOOLS
             GoldenCapture.BeginGpu();
 #endif
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
-            _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
+            // the extracts draw from the pack's animation tables (bodies, corpses); a pack without them leaves every
+            // mobile and item to its view's capture, as before gpu_ecs_sprites was deleted
+            _ecsSprites = _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
         }
 
-        /// <summary>Mobiles' sprites come from the ECS this frame (gpu_ecs_sprites), not from MobileView.Draw.</summary>
-        public bool EcsMobiles => _ecsMobiles;
+        /// <summary>Mobiles' and items' sprites come from the ECS extracts this frame, not from their views' capture.</summary>
+        public bool EcsSprites => _ecsSprites;
 
         /// <summary>GameScene's draw offset: world pixel = screen position + offset.</summary>
         public void SetOffset(int offsetX, int offsetY)
@@ -477,12 +479,12 @@ namespace ClassicUO.Game.Scenes
             }
 #endif
 
-            if (_ecsMobiles && obj is Mobile m && !shadowOnly && TryDrawMobileEcs(batcher, m, depth, out bool ecsDrawn))
+            if (_ecsSprites && obj is Mobile m && !shadowOnly && TryDrawMobileEcs(batcher, m, depth, out bool ecsDrawn))
             {
                 return ecsDrawn;
             }
 
-            if (_ecsMobiles && obj is Item it && !shadowOnly && ItemSpriteExtract.Handles(it))
+            if (_ecsSprites && obj is Item it && !shadowOnly && ItemSpriteExtract.Handles(it))
             {
                 return DrawItemEcs(batcher, it, depth);
             }
@@ -495,20 +497,6 @@ namespace ClassicUO.Game.Scenes
 
             try
             {
-                // W3 parity harness (CUO_ECS_PARITY): the ECS extract for the same mobile, diffed against this capture
-                if (EcsParity.Active && obj is Mobile mobile && !shadowOnly)
-                {
-                    int start = _dynamicCount;
-                    int lightsBefore = _scene?.LightCount ?? 0;
-                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                    bool drawn = obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
-                    long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
-                    EcsParity.OnCaptured(mobile, depth, _dynamic, start, _dynamicCount, _pack, _offsetX, _offsetY, ticks);
-                    EcsParity.CompareViewEffects(mobile, mobile.World.Ecs.MobileExtract, _scene, lightsBefore);
-
-                    return drawn;
-                }
-
                 return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
             }
             finally
@@ -518,58 +506,20 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        /// <summary>
-        /// W3: a mobile's dynamic sprites from the ECS, plus what MobileView.Draw does besides drawing (aura, FrameInfo,
-        /// IsFlipped, lights). On EcsParity frames the view is drawn under capture first as the reference (its side effects
-        /// stand) and its instances are replaced by the ECS ones after the diff. False = not mirrored: capture it instead.
-        /// </summary>
         private readonly ItemSpriteExtract _itemExtract = new ItemSpriteExtract();
 
         /// <summary>
-        /// W3: an art item's dynamic sprites from <see cref="ItemSpriteExtract"/> instead of ItemView.Draw, plus its light.
-        /// On EcsParity frames the view is drawn under capture first as the reference, as for mobiles.
+        /// W3: an item's dynamic sprites from <see cref="ItemSpriteExtract"/> instead of ItemView.Draw, plus its light and
+        /// picking record.
         /// </summary>
         private bool DrawItemEcs(UltimaBatcher2D batcher, Item item, float depth)
         {
             int posX = item.RealScreenPosition.X, posY = item.RealScreenPosition.Y;
-            int start = _dynamicCount;
-            bool drawn;
+            bool drawn = EmitItem(item, _offsetX, _offsetY, posX, posY, depth);
 
-            if (EcsParity.Active)
+            if (_itemExtract.Light)
             {
-                int lightsBefore = _scene?.LightCount ?? 0;
-                _object = item;
-                _shadowOnly = false;
-                _objectRank = RANK_ITEM;
-                _blend = InstanceBlend.Normal;
-                batcher.Capture = this;
-                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                bool viewDrawn;
-
-                try
-                {
-                    viewDrawn = item.Draw(batcher, posX, posY, depth);
-                }
-                finally
-                {
-                    batcher.Capture = null;
-                    _object = null;
-                }
-
-                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
-                drawn = EmitItem(item, _offsetX, _offsetY, posX, posY, depth);
-                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
-                EcsParity.OnItemCaptured(item, _dynamic, start, _dynamicCount, _itemExtract, viewDrawn, drawn, _scene, lightsBefore, t1 - t0, t2 - t1);
-                _dynamicCount = start;
-            }
-            else
-            {
-                drawn = EmitItem(item, _offsetX, _offsetY, posX, posY, depth);
-
-                if (_itemExtract.Light)
-                {
-                    _scene?.AddLight(item, item, _itemExtract.LightX, _itemExtract.LightY);
-                }
+                _scene?.AddLight(item, item, _itemExtract.LightX, _itemExtract.LightY);
             }
 
             if (!Probe)
@@ -642,91 +592,54 @@ namespace ClassicUO.Game.Scenes
 
             MobileSpriteExtract extract = ecs.MobileExtract;
             int posX = mobile.RealScreenPosition.X, posY = mobile.RealScreenPosition.Y;
-            int start = _dynamicCount;
 
-            if (EcsParity.Active)
+            // e was looked up above (mirrored, with AnimationState) and the mobile is not destroyed: Update(world, mobile)'s checks.
+            // E5: the update works on the entity's own state, which the extract then reads without more lookups.
+            // One record read serves the tag and both components (as ItemSpriteInput.ReadRecord); taking the tag moves the
+            // entity, which invalidates the row and every ref taken from it, so it is read again after a take.
+            ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
+            bool dirty = MobileAnimationSystem.TakeDirty(e, in data);
+
+            if (dirty)
             {
-                int lightsBefore = _scene?.LightCount ?? 0;
-                _object = mobile;
-                _shadowOnly = false;
-                _objectRank = RANK_MOBILE;
-                _blend = InstanceBlend.Normal;
-                batcher.Capture = this;
-
-                try
-                {
-                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                    drawn = mobile.Draw(batcher, posX, posY, depth);
-                    long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
-                    EcsParity.OnCaptured(mobile, depth, _dynamic, start, _dynamicCount, _pack, _offsetX, _offsetY, ticks);
-                }
-                finally
-                {
-                    batcher.Capture = null;
-                    _object = null;
-                }
-
-                EcsParity.CompareViewEffects(mobile, extract, _scene, lightsBefore);
-                _dynamicCount = start;
+                data = ClassicUO.Ecs.EcsRead.Row(e);
             }
-            else
+
+            ref ClassicUO.Ecs.AnimationState state = ref data.Get<ClassicUO.Ecs.AnimationState>();
+            ref ClassicUO.Ecs.MobileRenderState render = ref data.Get<ClassicUO.Ecs.MobileRenderState>();
+            ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);
+
+            mobile.DrawAura(batcher, posX, posY, depth);
+            extract.Begin(_pack, _offsetX, _offsetY);
+            extract.Emit(e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
+            drawn = true;
+
+            // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped
+            bool mirror = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
+            mobile.FrameInfo = extract.FrameInfo;
+            mobile.ViewFlipped = mirror;
+
+            if (!Probe)
             {
-                // e was looked up above (mirrored, with AnimationState) and the mobile is not destroyed: Update(world, mobile)'s checks.
-                // E5: the update works on the entity's own state, which the extract then reads without more lookups.
-                // One record read serves the tag and both components (as ItemSpriteInput.ReadRecord); taking the tag moves the
-                // entity, which invalidates the row and every ref taken from it, so it is read again after a take.
-                ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
-                bool dirty = MobileAnimationSystem.TakeDirty(e, in data);
+                // T7b part 2b: picking reads the same state from the records (the side effects above stay: other
+                // readers, the mirror history)
+                SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
+            }
 
-                if (dirty)
+            if (_scene != null)
+            {
+                foreach (ref readonly MobileSpriteExtract.LightRequest light in extract.Lights)
                 {
-                    data = ClassicUO.Ecs.EcsRead.Row(e);
-                }
+                    Item item = world.FindItem(light.Item);
 
-                ref ClassicUO.Ecs.AnimationState state = ref data.Get<ClassicUO.Ecs.AnimationState>();
-                ref ClassicUO.Ecs.MobileRenderState render = ref data.Get<ClassicUO.Ecs.MobileRenderState>();
-                ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);
-
-                mobile.DrawAura(batcher, posX, posY, depth);
-                extract.Begin(_pack, _offsetX, _offsetY);
-                extract.Emit(e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
-                drawn = true;
-
-                // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped
-                bool mirror = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
-                mobile.FrameInfo = extract.FrameInfo;
-                mobile.ViewFlipped = mirror;
-
-                if (!Probe)
-                {
-                    // T7b part 2b: picking reads the same state from the records (the side effects above stay: other
-                    // readers, the mirror history). EcsParity frames keep the view's and record nothing.
-                    SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
-                }
-
-                if (_scene != null)
-                {
-                    foreach (ref readonly MobileSpriteExtract.LightRequest light in extract.Lights)
+                    if (item != null)
                     {
-                        Item item = world.FindItem(light.Item);
-
-                        if (item != null)
-                        {
-                            _scene.AddLight(mobile, item, light.X, light.Y);
-                        }
+                        _scene.AddLight(mobile, item, light.X, light.Y);
                     }
                 }
             }
 
-            ReadOnlySpan<SpriteInstance> got = extract.Instances;
-
-            if (_dynamicCount + got.Length > _dynamic.Length)
-            {
-                Array.Resize(ref _dynamic, Math.Max(_dynamic.Length * 2, _dynamicCount + got.Length));
-            }
-
-            got.CopyTo(new Span<SpriteInstance>(_dynamic, _dynamicCount, got.Length));
-            _dynamicCount += got.Length;
+            AppendDynamic(extract.Instances);
 
             return true;
         }

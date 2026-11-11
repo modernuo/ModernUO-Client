@@ -18,7 +18,7 @@ namespace ClassicUO.Game.Scenes
 {
     /// <summary>
     /// CLEANUP(release) T9 golden captures (<c>CUO_GOLDEN_DIR=dir</c>, driver <c>golden &lt;name&gt; [frames]</c>): before T9
-    /// deletes the checkers that compare the ECS paths with the legacy views (CUO_ECS_PARITY's view capture,
+    /// deletes the checkers that compare the ECS paths with the legacy views (CUO_ECS_PARITY's view capture, deleted with gpu_ecs_sprites;
     /// CUO_LEGACY_ECS_PARITY), this saves what they compared as text, so a later build can be checked against references
     /// instead of the deleted code (measure/t9-golden/goldencmp.py compares two captures).
     /// Dev only and one instance per directory: the file names are the capture name (captures are compared by name across builds),
@@ -242,7 +242,9 @@ namespace ClassicUO.Game.Scenes
             var s = Configuration.Settings.GlobalSettings;
             w.Write($"golden {FORMAT}\n");
             w.Write($"name {_name} frame {_frameIndex} renderer {renderer}\n");
-            w.Write($"paths gpu_ecs_sprites={(s.GpuEcsSprites ? 1 : 0)} legacy_ecs_sprites={(LegacySpriteSink.On ? 1 : 0)} " +
+            // gpu_ecs_sprites and ecs_effect_sprites are deleted (always the extracts); kept in the header so captures of
+            // older builds compare and measure/t9-golden's path checks still read them
+            w.Write($"paths gpu_ecs_sprites=1 legacy_ecs_sprites={(LegacySpriteSink.On ? 1 : 0)} " +
                     $"ecs_effect_sprites=1 gpu_prepare_item_cache={(s.GpuPrepareItemCache ? 1 : 0)} " +
                     $"hide_mobiles={(HideMobiles ? 1 : 0)}\n");
 
