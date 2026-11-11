@@ -185,10 +185,12 @@ namespace ClassicUO.Game
                 {
                     MobileFrameCache.SelectHits++;
 
+#if CUO_DEVTOOLS
                     if (CacheCheck)
                     {
                         CheckSelect(m, in s, in eq, in cache.Selected);
                     }
+#endif
 
                     s = cache.Selected;
 
@@ -206,7 +208,8 @@ namespace ClassicUO.Game
             cache.SelectValid = cacheable && rolls == AnimationGroupRules.RandomRolls;
         }
 
-        // CUO_MOBILE_CACHE_CHECK=1: every reused selection and emission is compared with a fresh one (MobileFrameCache)
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_MOBILE_CACHE_CHECK=1: every reused selection and emission is compared with a fresh one (MobileFrameCache)
         public static readonly bool CacheCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_CACHE_CHECK") == "1";
         public static long CheckSelects, CheckSelectDiffs;
         private static int _checkLogged;
@@ -242,6 +245,8 @@ namespace ClassicUO.Game
                 }
             }
         }
+
+#endif
 
         /// <summary>Rebuilds every dirty <see cref="EquipmentSlots"/> (normally done lazily by <see cref="Update"/>).</summary>
         public void RebuildDirty()

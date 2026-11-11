@@ -569,10 +569,12 @@ namespace ClassicUO.Game
                 int start = _count;
                 Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, objX, baseX, baseY);
 
+#if CUO_DEVTOOLS
                 if (MobileAnimationSystem.CacheCheck)
                 {
                     CheckReplay(e, posX, posY, depth, start, lightStart);
                 }
+#endif
 
                 return;
             }
@@ -790,10 +792,12 @@ namespace ClassicUO.Game
 
                 ApplyLegacyEffects(cache, baseX, baseY);
 
+#if CUO_DEVTOOLS
                 if (MobileAnimationSystem.CacheCheck)
                 {
                     CheckLegacyReplay(src, e, in data, cache, posX, posY, depth, baseX, baseY);
                 }
+#endif
 
                 return;
             }
@@ -872,7 +876,8 @@ namespace ClassicUO.Game
             cache.LegacyValid = true;
         }
 
-        // entry i of the cache's Legacy calls at draw origin (baseX, baseY) and base depth: what the select + resolve give
+#if CUO_DEVTOOLS
+        // CLEANUP(release): entry i of the cache's Legacy calls at draw origin (baseX, baseY) and base depth: what the select + resolve give
         // there (integer positions; the depth is DepthOf's expression)
         private static LegacyDraw LegacyReplayed(MobileFrameCache cache, int i, int baseX, int baseY, float depth)
         {
@@ -890,6 +895,8 @@ namespace ClassicUO.Game
             };
         }
 
+#endif
+
         private void ApplyLegacyEffects(MobileFrameCache cache, int baseX, int baseY)
         {
             Rectangle fi = cache.LegacyFrameInfo;
@@ -906,6 +913,8 @@ namespace ClassicUO.Game
             }
         }
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the checker
         public static long CheckLegacyReplays, CheckLegacyReplayDiffs;
 
         // CUO_MOBILE_CACHE_CHECK: the replayed Legacy calls, FrameInfo and lights against a fresh select and resolve (not drawn);
@@ -995,9 +1004,11 @@ namespace ClassicUO.Game
         // fresh Emit (appended, compared, dropped)
         private void CheckReplay(EcsEntity e, int posX, int posY, float depth, int start, int lightStart)
         {
-            SpriteInstance[] replayed = _viewArr != null
-                ? new ReadOnlySpan<SpriteInstance>(_viewArr, 0, _viewCount).ToArray()
-                : new ReadOnlySpan<SpriteInstance>(_out, start, _count - start).ToArray();
+            // the replayed instances stay where they are: Emit appends after _count (a resize leaves the old array intact), so
+            // they are compared in place, with no copy
+            SpriteInstance[] replayedArr = _viewArr ?? _out;
+            int replayedStart = _viewArr != null ? 0 : start;
+            int replayedLen = _viewArr != null ? _viewCount : _count - start;
             SpriteInstance[] savedView = _viewArr;
             int savedViewCount = _viewCount, savedCount = _count;
             int replayLights = _lightCount;
@@ -1008,12 +1019,12 @@ namespace ClassicUO.Game
             CheckReplays++;
 
             int freshStart = savedCount;
-            bool same = _count - freshStart == replayed.Length && _lightCount - replayLights == replayLights - lightStart &&
+            bool same = _count - freshStart == replayedLen && _lightCount - replayLights == replayLights - lightStart &&
                         fx == _fiX && fy == _fiY && fw == _fiW && fh == _fiH;
 
-            for (int i = 0; same && i < replayed.Length; i++)
+            for (int i = 0; same && i < replayedLen; i++)
             {
-                same = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(replayed, i, 1))
+                same = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(replayedArr, replayedStart + i, 1))
                     .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(_out, freshStart + i, 1)));
             }
 
@@ -1030,7 +1041,7 @@ namespace ClassicUO.Game
                 if (_checkLogged++ < 20)
                 {
                     ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
-                    ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] instances differ 0x{e.GetComponent<Serial>().Value:X8}: replayed {replayed.Length} fresh {_count - freshStart}, lights {replayLights - lightStart}/{_lightCount - replayLights}, frameinfo {fx},{fy},{fw},{fh} vs {_fiX},{_fiY},{_fiW},{_fiH}; body {s.Body} group {s.Group} dir {s.Dir} frame {s.Frame}");
+                    ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] instances differ 0x{e.GetComponent<Serial>().Value:X8}: replayed {replayedLen} fresh {_count - freshStart}, lights {replayLights - lightStart}/{_lightCount - replayLights}, frameinfo {fx},{fy},{fw},{fh} vs {_fiX},{_fiY},{_fiW},{_fiH}; body {s.Body} group {s.Group} dir {s.Dir} frame {s.Frame}");
                 }
             }
 
@@ -1043,5 +1054,6 @@ namespace ClassicUO.Game
             _fiW = fw;
             _fiH = fh;
         }
+#endif
     }
 }

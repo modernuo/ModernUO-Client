@@ -965,11 +965,13 @@ namespace ClassicUO.Game
             // ecs_small_fields: CUO_SMALL_FIELDS_CHECK's 5 s summary
             SmallFields.LogSummary(_world);
 
+#if CUO_DEVTOOLS
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;
                 Log.Info($"[mobile-cache-check] selections reused {MobileFrameCache.SelectHits}, run {MobileFrameCache.SelectMisses}; checked {MobileAnimationSystem.CheckSelects}, {MobileAnimationSystem.CheckSelectDiffs} different | instances replayed {MobileFrameCache.EmitHits}, emitted {MobileFrameCache.EmitMisses}; checked {MobileSpriteExtract.CheckReplays}, {MobileSpriteExtract.CheckReplayDiffs} different | legacy calls replayed {MobileFrameCache.LegacyHits}, selected {MobileFrameCache.LegacyMisses}; checked {MobileSpriteExtract.CheckLegacyReplays}, {MobileSpriteExtract.CheckLegacyReplayDiffs} different");
             }
+#endif
 
             if (MobileUpdateStats && Time.Ticks >= _clockLogAt)
             {
