@@ -1998,6 +1998,9 @@ namespace ClassicUO.Game.UI.Gumps
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
                 Log.Error($"could not save the marker: {e.Message}");
+
+                // a marker that would vanish on reload is not shown either
+                return;
             }
 
             var mapMarker = new WMapMarker
