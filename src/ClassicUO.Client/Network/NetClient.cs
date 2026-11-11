@@ -129,6 +129,7 @@ namespace ClassicUO.Network
         {
             _socket?.Dispose();
             _socket = socket;
+            TransportVersion++;
 
             _socket.OnConnected += (o, e) =>
             {
@@ -177,6 +178,18 @@ namespace ClassicUO.Network
         }
 
         private Connection _connection;
+
+        /// <summary>event_loop: wakes the main loop's wait (null with the legacy loop).</summary>
+        internal static Action SendQueuedWake;
+
+        /// <summary>The main loop's thread: sends made there are flushed by the same Update and need no wake.</summary>
+        internal static int MainThreadId;
+
+        /// <summary>Bumped whenever a new socket is attached (the event loop binds each one to its wait once).</summary>
+        internal int TransportVersion { get; private set; }
+
+        /// <summary>event_loop (Windows): the current socket signals <paramref name="evt"/> when readable or closed.</summary>
+        internal bool TryEventSelect(IntPtr evt) => _socket != null && _socket.TryEventSelect(evt);
 
         /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
         public int ConnectionGeneration => Volatile.Read(ref _generation);
@@ -647,6 +660,12 @@ namespace ClassicUO.Network
                     _droppedOverflow++;
                     dropped = true;
                 }
+            }
+
+            if (!dropped && SendQueuedWake != null && Environment.CurrentManagedThreadId != MainThreadId)
+            {
+                // event_loop: a plugin thread's send is flushed by the main loop, so end its wait now
+                SendQueuedWake();
             }
 
             if (dropped)

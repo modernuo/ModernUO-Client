@@ -136,6 +136,19 @@ namespace ClassicUO.Configuration
         // sleep. Not measured yet, so default off.
         [JsonPropertyName("throttle_update_when_inactive")] public bool ThrottleUpdateWhenInactive { get; set; }
 
+        // evloop-1 arm A (Windows): between frames the main loop waits once, with MsgWaitForMultipleObjectsEx, for the socket
+        // (WSAEventSelect), window messages, a wake, or a high-resolution timer at the next deadline (draw, queued action,
+        // player step, or event_loop_max_wait_ms), instead of skipping the draw and sleeping 1 ms. Falls back to the legacy loop
+        // off Windows, when the wait probe fails, and while late wakes back it off. Not an ECS path: no CUO_*_CHECK checker;
+        // CUO_LOOP_STATS=1 measures both loops. Read every frame (CUO_EVENT_LOOP=1|0 overrides it in developer builds).
+        // Default off.
+        [JsonPropertyName("event_loop")] public bool EventLoop { get; set; }
+
+        // event_loop: the longest wait without an Update, for timers the loop does not track (plugin ticks, macros, audio
+        // streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients
+        // (CUO_EVENT_LOOP_MAX_WAIT_MS overrides it in developer builds).
+        [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.
