@@ -52,15 +52,19 @@ namespace ClassicUO.UnitTests.Ecs
 
         public AnimFrameCountTests()
         {
+#if CUO_DEVTOOLS
             AnimFrameCount.MismatchObserver = _mismatches.Add;
+#endif
             AnimFrameCount.GpuWorld = true;
         }
 
         public void Dispose()
         {
             AnimFrameCount.OnOverride = null;
+#if CUO_DEVTOOLS
             AnimFrameCount.CheckOverride = null;
             AnimFrameCount.MismatchObserver = null;
+#endif
             AnimFrameCount.GpuWorld = false;
         }
 
@@ -137,7 +141,9 @@ namespace ClassicUO.UnitTests.Ecs
             AnimationsLoader t = Tables();
             var calls = new Calls();
             AnimFrameCount.OnOverride = false;
+#if CUO_DEVTOOLS
             AnimFrameCount.CheckOverride = false;
+#endif
 
             AnimFrameCount.Get(t, new FakeLegacy(t, calls, skew: 2), HUMAN, 1, 3).Should().Be(AnimFrameCount.FromTables(t, HUMAN, 1, 3) + 2);
             calls.Count.Should().Be(1);
@@ -150,7 +156,9 @@ namespace ClassicUO.UnitTests.Ecs
             AnimationsLoader t = Tables();
             var calls = new Calls();
             AnimFrameCount.OnOverride = true;
+#if CUO_DEVTOOLS
             AnimFrameCount.CheckOverride = false;
+#endif
 
             for (byte action = 0; action < 35; action++)
             {
@@ -170,7 +178,9 @@ namespace ClassicUO.UnitTests.Ecs
             AnimationsLoader t = Tables();
             var calls = new Calls();
             AnimFrameCount.OnOverride = true;
+#if CUO_DEVTOOLS
             AnimFrameCount.CheckOverride = false;
+#endif
             AnimFrameCount.GpuWorld = false;
 
             AnimFrameCount.UseTables.Should().BeFalse();
@@ -183,6 +193,8 @@ namespace ClassicUO.UnitTests.Ecs
             calls.Count.Should().Be(1);
         }
 
+#if CUO_DEVTOOLS
+        // the checker exists only in developer builds
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -209,6 +221,7 @@ namespace ClassicUO.UnitTests.Ecs
             AnimFrameCount.TableReads.Should().Be(tableReads + (on ? 2 : 0));
             _mismatches.Should().ContainSingle().Which.Should().Be($"[anim-frame-count-check] body 0x0190 action 4 dir 2: tables {tables}, legacy {tables + 1}");
         }
+#endif
 
         [Theory]
         [InlineData(false)]
@@ -219,7 +232,9 @@ namespace ClassicUO.UnitTests.Ecs
             // counts (as the checker verifies in the client) the advance sees the same counts in both states
             AnimationsLoader t = Tables();
             var calls = new Calls();
+#if CUO_DEVTOOLS
             AnimFrameCount.CheckOverride = false;
+#endif
 
             AnimFrameCount.OnOverride = on;
             int count = 0;
