@@ -150,13 +150,6 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
 
 
-        // T9 (ecs-transition-plan.md §T9): World.Get answers from the mirror's serial index (each record keeps the Item or Mobile
-        // it was last written for), not from World.Items/World.Mobiles, which stay maintained. CUO_ENTITY_INDEX_CHECK=1 runs both
-        // lookups at every World.Get and logs mismatches. Read once at startup (CUO_ECS_WORLD_ENTITY_INDEX=1|0 overrides it in
-        // developer builds). Default on since 2026-11-09 (T9 slice 5); the off path, the tables' dictionaries for World's own
-        // bookkeeping and the checker stay for one phase.
-        [JsonPropertyName("world_entity_index")] public bool WorldEntityIndex { get; set; } = true;
-
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;

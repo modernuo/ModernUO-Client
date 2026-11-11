@@ -195,7 +195,7 @@ namespace ClassicUO.UnitTests.Ecs
             Scene s = Build();
             FillMobiles(s);
             // the removal the client makes (destroyed, its record gone, its slot freed): a bare Mobiles.Remove would leave a live
-            // mobile with a record, which world_entity_index's GetMobile still finds (the index, not the table, is the lookup)
+            // mobile with a record, which World.GetMobile still finds (the index, not the table, is the lookup)
             s.World.RemoveMobile(0x1002, forceRemove: true).Should().BeTrue();
             AddMobile(s, 0x1020, 1000 + 40, 1000); // takes the freed slot
 

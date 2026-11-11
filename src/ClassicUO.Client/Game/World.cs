@@ -31,7 +31,6 @@ namespace ClassicUO.Game
 
         public World()
         {
-            Items = new ItemTable(this);
             WMapManager = new WorldMapEntityManager(this);
             CorpseManager = new CorpseManager(this);
             Party = new PartyManager(this);
@@ -125,7 +124,7 @@ namespace ClassicUO.Game
 
         public InfoBarManager InfoBars { get; }
 
-        public ItemTable Items { get; }
+        public ItemTable Items { get; } = new ItemTable();
 
         public MobileTable Mobiles { get; } = new MobileTable();
 
@@ -502,12 +501,6 @@ namespace ClassicUO.Game
         {
             FrameStats.Begin(FramePhase.WorldEcs);
             Ecs.Update();
-
-            if (EntityIndexCheckOn)
-            {
-                CheckTableOrder();
-            }
-
             FrameStats.End(FramePhase.WorldEcs);
             FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
             FrameStats.Set(FrameCounter.Items, Items.Count);
@@ -1002,25 +995,13 @@ namespace ClassicUO.Game
         }
 
         /// <summary>Whether a live object is under <paramref name="serial"/>: <see cref="Get"/>'s answer, so a destroyed object
-        /// not yet swept does not count (T9, owner decision 2026-11-08; it used to). Follows <c>world_entity_index</c>.</summary>
+        /// not yet swept does not count (T9, owner decision 2026-11-08; it used to).</summary>
         public bool Contains(uint serial) => Get(serial) != null;
 
+        /// <summary>T9: the live object under <paramref name="serial"/> from the mirror's serial index (the record's handle;
+        /// null if none or destroyed). Where an item and a mobile share a serial (an item sent with a mobile-range serial,
+        /// which no sane server does) the mirror keeps one record, so this returns the kind written last.</summary>
         public Entity Get(uint serial)
-        {
-            if (EntityIndexCheckOn)
-            {
-                return CheckedGet(serial);
-            }
-
-            return EntityIndexOn ? GetIndexed(serial) : GetHeld(serial);
-        }
-
-        /// <summary>T9 (<c>world_entity_index</c>): the live object under <paramref name="serial"/> from the mirror's serial index
-        /// (the handle its record was last written with); null when there is no record or its object is destroyed.
-        /// Differs from <see cref="GetHeld"/> only where the tables hold an item and a mobile under one serial (an item sent
-        /// with a mobile-range serial, which no sane server does): the mirror keeps one record per serial, so this returns
-        /// the kind written last, the tables the serial's own kind. CUO_ENTITY_INDEX_CHECK reports it.</summary>
-        internal Entity GetIndexed(uint serial)
         {
             object handle = Ecs.Mirror.GetHandle(serial);
 
@@ -1033,38 +1014,6 @@ namespace ClassicUO.Game
             Entity ent = System.Runtime.CompilerServices.Unsafe.As<Entity>(handle);
 
             return ent.IsDestroyed ? null : ent;
-        }
-
-        /// <summary>The live object under <paramref name="serial"/> from the Items and Mobiles tables (the serial's kind first).</summary>
-        internal Entity GetHeld(uint serial)
-        {
-            Entity ent;
-
-            if (SerialHelper.IsMobile(serial))
-            {
-                ent = Mobiles.Get(serial);
-
-                if (ent == null)
-                {
-                    ent = Items.Get(serial);
-                }
-            }
-            else
-            {
-                ent = Items.Get(serial);
-
-                if (ent == null)
-                {
-                    ent = Mobiles.Get(serial);
-                }
-            }
-
-            if (ent != null && ent.IsDestroyed)
-            {
-                ent = null;
-            }
-
-            return ent;
         }
 
         public Item GetOrCreateItem(uint serial)
@@ -1083,8 +1032,8 @@ namespace ClassicUO.Game
         internal Item GetOrCreateItem(uint serial, out bool isNew)
         {
             // the table's own bookkeeping (T9 slice 3): a destroyed item not yet swept, or one created earlier in this
-            // operation and not committed, is found here and nowhere else (the index has no live record for either); goes
-            // with the dictionaries (slices 4-5)
+            // operation and not committed, is found here and nowhere else (the index has no live record for either): T9 keeps
+            // the serial dictionaries for this bookkeeping
             Item item = Items.Get(serial);
 
             if (item != null && item.IsDestroyed)
