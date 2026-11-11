@@ -139,7 +139,7 @@ namespace ClassicUO.Game
 
             if (check)
             {
-                Check(item, in t, in data);
+                Check(item, in t);
             }
 
             if (!CorpseAnimationRules.Advance(ref t, in data, in source, out int frame, out long due))
@@ -158,17 +158,17 @@ namespace ClassicUO.Game
 
         // ---- the checker -------------------------------------------------------------------------------------------------
 
-        /// <summary>CUO_ANIM_ADVANCE_CHECK: the timer component and the ItemData must equal the Item's fields (a missed push
-        /// otherwise).</summary>
-        private static void Check(Item item, in AnimationTimer component, in ItemData data)
+        /// <summary>CUO_ANIM_ADVANCE_CHECK: the timer component must equal the Item's animation fields (a missed push
+        /// otherwise). T9 S11: no Amount/Layer terms (the Item reads both from this record's ItemData since S5).</summary>
+        private static void Check(Item item, in AnimationTimer component)
         {
             AnimationTimer held = item.CorpseTimer;
             SyncChecks++;
 
-            if (!Same(in component, in held) || data.Amount != item.Amount || data.Layer != (byte)item.Layer)
+            if (!Same(in component, in held))
             {
                 SyncDiffs++;
-                Log1($"component of 0x{item.Serial:X8} differs from the Item: ecs {Describe(in component)} amount {data.Amount} layer {data.Layer} | item {Describe(in held)} amount {item.Amount} layer {(byte)item.Layer}");
+                Log1($"component of 0x{item.Serial:X8} differs from the Item: ecs {Describe(in component)} | item {Describe(in held)}");
             }
         }
 

@@ -211,15 +211,7 @@ namespace ClassicUO.Game.GameObjects
         public Rectangle? MultiInfo;
         public bool Opened;
 
-        public uint Price
-        {
-            get
-            {
-                ScalarReads.Count(ScalarField.Price);
-
-                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : 0;
-            }
-        }
+        public uint Price => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : 0;
 
         public bool UsedLayer => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.ItemBit(e, ClassicUO.Ecs.ItemTraitBits.UsedLayer);
 
