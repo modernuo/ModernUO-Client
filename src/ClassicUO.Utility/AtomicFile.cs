@@ -43,9 +43,11 @@ namespace ClassicUO.Utility
 
         /// <summary>
         /// Copies <paramref name="path"/> to <c>path.bak</c> (once: an existing backup is kept) before a save replaces a file
-        /// the client failed to load, so the user's data survives a failed load followed by a save of defaults. Best effort.
+        /// the client failed to load, so the user's data survives a failed load followed by a save of defaults.
+        /// Returns true when the data is preserved (copied now, already backed up, or no file); false when the copy
+        /// failed: the caller must not replace the file and should retry on its next save.
         /// </summary>
-        public static void KeepBackup(string path)
+        public static bool KeepBackup(string path)
         {
             try
             {
@@ -55,10 +57,14 @@ namespace ClassicUO.Utility
                 {
                     File.Copy(path, bak);
                 }
+
+                return true;
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
-                // nothing more to do; the save goes ahead
+                Log.Error($"could not back up {path}: {e.Message}; the file is left as it is");
+
+                return false;
             }
         }
 

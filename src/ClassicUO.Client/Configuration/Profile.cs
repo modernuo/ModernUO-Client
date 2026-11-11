@@ -377,8 +377,13 @@ namespace ClassicUO.Configuration
 
             if (_gumpsLoadFailed)
             {
-                AtomicFile.KeepBackup(gumpsXmlPath);
-                _gumpsLoadFailed = false;
+                if (!AtomicFile.KeepBackup(gumpsXmlPath))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _gumpsLoadFailed = false;
             }
 
             using var atomic = AtomicFile.OpenWrite(gumpsXmlPath);

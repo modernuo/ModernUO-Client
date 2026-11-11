@@ -128,8 +128,13 @@ namespace ClassicUO.Game.Managers
 
             if (_loadFailed)
             {
-                AtomicFile.KeepBackup(ignoreXmlPath);
-                _loadFailed = false;
+                if (!AtomicFile.KeepBackup(ignoreXmlPath))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
             }
 
             using var atomic = AtomicFile.OpenWrite(ignoreXmlPath);

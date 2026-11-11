@@ -83,6 +83,34 @@ namespace ClassicUO.UnitTests.Game
         }
 
         [Fact]
+        public void A_save_that_cannot_back_up_the_failed_file_leaves_it_alone_and_retries_the_backup_next_time()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return; // an exclusive lock only blocks readers on Windows
+            }
+
+            string path = Path.Combine(_dir, "skillsgroups.xml");
+            File.WriteAllText(path, Custom);
+
+            var manager = new SkillsGroupManager(null);
+
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                manager.Load(path);
+                manager.Save(path);
+            }
+
+            File.ReadAllText(path).Should().Be(Custom, "the save was skipped, the file was not preserved");
+            File.Exists(path + ".bak").Should().BeFalse();
+
+            manager.Save(path);
+
+            File.ReadAllText(path + ".bak").Should().Be(Custom, "the lock is gone: the next save backs the file up first");
+            File.ReadAllText(path).Should().NotBe(Custom);
+        }
+
+        [Fact]
         public void A_good_load_followed_by_a_save_makes_no_backup()
         {
             string path = Path.Combine(_dir, "skillsgroups.xml");
