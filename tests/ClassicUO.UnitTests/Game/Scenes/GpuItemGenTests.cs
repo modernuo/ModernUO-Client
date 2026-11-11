@@ -100,9 +100,17 @@ namespace ClassicUO.UnitTests.Game.Scenes
             chunk.GpuItemRenderGen++;
             GpuItemGen.Decide(true, chunk, cache, 9, false, 0).Should().Be(GpuItemGen.TileCheck.Fallback);
 
-            chunk.GpuItemRenderGen = cache.RenderGen;
+        }
+
+        [Fact]
+        public void Switch_On_Compares_Signatures_In_A_Chunk_Marked_Since_The_Prepare()
+        {
+            var world = new World();
+            (Chunk chunk, GpuItemCache cache) = Built(world, 0);
+
+            // a join, leave or another tile's fallback after the prepare
             chunk.GpuItemsDirty = true;
-            GpuItemGen.Decide(true, chunk, cache, 9, false, 0).Should().Be(GpuItemGen.TileCheck.Fallback);
+            GpuItemGen.Decide(true, chunk, cache, 9, false, 0).Should().Be(GpuItemGen.TileCheck.Signatures);
         }
 
         [Fact]

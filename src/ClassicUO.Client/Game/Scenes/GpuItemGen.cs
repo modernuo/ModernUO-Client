@@ -117,8 +117,9 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>
         /// The decision for served tile <paramref name="tile"/> of <paramref name="cache"/>: with the switch off always the
-        /// signatures; on, a fallback when the chunk's content or render generation moved after the build (a change after the
-        /// prepare), the signatures for a tile the walk may have had, a fallback when an entry's range bit flipped, else trust.
+        /// signatures; on, a fallback when the chunk's render generation moved after the build (a change after the prepare),
+        /// the signatures for a tile the walk may have had or a chunk marked for re-extraction since the prepare, a fallback
+        /// when an entry's range bit flipped, else trust.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static TileCheck Decide(bool on, Chunk chunk, GpuItemCache cache, int tile, bool rangeOn, ulong rangeKey)
@@ -128,12 +129,13 @@ namespace ClassicUO.Game.Scenes
                 return TileCheck.Signatures;
             }
 
-            if (chunk.GpuItemsDirty || cache.RenderGen != chunk.GpuItemRenderGen)
+            if (cache.RenderGen != chunk.GpuItemRenderGen)
             {
                 return TileCheck.Fallback;
             }
 
-            if ((cache.PollTiles & 1UL << tile) != 0)
+            // a join, leave or another tile's fallback after the prepare: this tile's signatures, as with the switch off
+            if (chunk.GpuItemsDirty || (cache.PollTiles & 1UL << tile) != 0)
             {
                 return TileCheck.Signatures;
             }
