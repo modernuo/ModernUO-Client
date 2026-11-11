@@ -88,17 +88,19 @@ namespace ClassicUO.UnitTests.Ecs
                     string at = $"frame {i} {e.GetType().Name} 0x{e.Graphic:X4}";
                     input.Kind.Should().Be(EffectSystem.KindOf(e), at);
                     input.Graphic.Should().Be(e.Graphic, at);
-                    input.AnimGraphic.Should().Be(e.AnimationGraphic, at);
+                    // T9 S7: the frame and angle live only in the state; the offset is the effect's ScreenOffset
+                    EffectState st = e.EcsEntity.GetComponent<EffectState>();
+                    input.AnimGraphic.Should().Be(st.AnimGraphic, at);
                     input.Hue.Should().Be(e.Hue, at);
                     input.Blend.Should().Be(e.Blend, at);
                     input.X.Should().Be(e.X, at);
-                    input.OffsetX.Should().Be(e.Offset.X, at);
-                    input.OffsetY.Should().Be(e.Offset.Y, at);
-                    input.OffsetZ.Should().Be(e.Offset.Z, at);
-                    input.Angle.Should().Be(e.AngleToTarget, at);
+                    input.OffsetX.Should().Be(e.ScreenOffset.X, at);
+                    input.OffsetY.Should().Be(e.ScreenOffset.Y, at);
+                    input.OffsetZ.Should().Be(e.ScreenOffset.Z, at);
+                    input.Angle.Should().Be(st.Angle, at);
                     input.Drawable.Should().Be(e.AllowedToDraw, at);
-                    // DragEffect.Draw reads its source only for a light
-                    input.Source.Should().BeSameAs(input.Kind != EffectState.KIND_DRAG || input.TileLight ? e.SourceObject : null, at);
+                    // DragEffect.Draw read its source only for a light, LightningEffectView.Draw never
+                    input.Source.Should().BeSameAs(input.Kind != EffectState.KIND_LIGHTNING && (input.Kind != EffectState.KIND_DRAG || input.TileLight) ? e.SourceObject : null, at);
 
                     if (input.Source != null)
                     {
@@ -121,7 +123,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void Once_Destroyed_The_View_Draws()
+        public void Once_Destroyed_Nothing_Draws()
         {
             World on = Build();
             Time.Ticks = T0;
@@ -133,21 +135,48 @@ namespace ClassicUO.UnitTests.Ecs
             EffectSpriteInput.Gather(e, out _).Should().BeFalse("a destroyed effect has no state");
         }
 
+        // T9 S8a: lightning is the extract's too (LightningEffectView.Draw deleted): one gump record at the render-list position
         [Fact]
-        public void The_Extract_Handles_Every_Kind_But_Lightning()
+        public void The_Extract_Selects_Lightning_As_One_Gump_At_The_List_Position()
         {
             World w = Build();
             Time.Ticks = T0;
             AddMobile(w, TARGET, 1010, 1004);
-            Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36E4, 1001, 1001, 0, 0, duration: 0);
-            Create(w, GraphicEffectType.FixedXYZ, 0, 0, 0x376A, 1005, 1006, 0, 0, duration: 3000);
-            Create(w, GraphicEffectType.Lightning, TARGET, 0, 0x4E20, 0, 0, 0, 0, duration: 3000);
+            Create(w, GraphicEffectType.Lightning, TARGET, 0, 0x4E20, 0, 0, 0, 0, hue: 0x0480, duration: 3000);
             w.Effects.Update();
 
-            foreach (GameEffect e in Live(w))
-            {
-                EffectSpriteExtract.Handles(e).Should().Be(e is not LightningEffect, e.GetType().Name);
-            }
+            List<GameEffect> live = Live(w);
+            live.Should().ContainSingle().Which.Should().BeOfType<LightningEffect>();
+            EffectSpriteInput.Gather(live[0], out EffectSpriteInput i).Should().BeTrue();
+            i.Drawable.Should().BeTrue();
+            i.Source.Should().BeNull("lightning reads no source (no depth, no light)");
+
+            var extract = new EffectSpriteExtract();
+            extract.Select(in i, 300, 400, 12.25f).Should().BeTrue();
+            extract.HasLightning.Should().BeTrue();
+            extract.HasSprite.Should().BeFalse();
+            extract.Light.Should().BeFalse();
+            extract.MissingArt.Should().BeFalse();
+
+            LightningSprite l = extract.Lightning;
+            l.Gump.Should().Be(i.AnimGraphic);
+            l.X.Should().Be(300);
+            l.Y.Should().Be(400);
+            l.Depth.Should().Be(12.75f);
+            Microsoft.Xna.Framework.Vector3 hue = ClassicUO.Renderer.ShaderHueTranslator.GetHueVector(i.Hue, false, 1);
+            l.Hue.X.Should().Be(hue.X);
+            l.Hue.Y.Should().Be(hue.X > 1f ? ClassicUO.Renderer.ShaderHueTranslator.SHADER_LIGHTS : ClassicUO.Renderer.ShaderHueTranslator.SHADER_NONE);
+            l.Hue.Z.Should().Be(hue.Z);
+
+            // the next select of another kind clears the lightning record
+            i.Kind = EffectState.KIND_FIXED;
+            i.AnimGraphic = 0xFFFF;
+            extract.Select(in i, 300, 400, 12.25f).Should().BeFalse();
+            extract.HasLightning.Should().BeFalse();
+
+            // a destroyed lightning has no state: not drawn
+            live[0].Destroy();
+            EffectSpriteInput.Gather(live[0], out _).Should().BeFalse();
         }
     }
 }

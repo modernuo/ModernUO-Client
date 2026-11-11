@@ -35,7 +35,7 @@ namespace ClassicUO.UnitTests.Ecs
                 it.Hue = (ushort)(i * 3);
                 it.X = (ushort)(1400 + i);
                 it.Y = (ushort)(1600 + i);
-                it.Flags = i % 4 == 0 ? Flags.Movable : Flags.None;
+                it.TestSetFlags(i % 4 == 0 ? Flags.Movable : Flags.None);
 
                 // every fifth item is not synced (its record, if any, keeps the creation values)
                 if (i % 5 != 0)
@@ -180,11 +180,11 @@ namespace ClassicUO.UnitTests.Ecs
                 Item it = world.GetOrCreateItem(ITEM0 + (uint)i);
                 it.Graphic = (ushort)(0x0100 + i * 7);
                 it.Hue = (ushort)(i * 3);
-                it.Amount = (ushort)(i % 3 == 0 ? 5 : 1);
+                it.TestSetAmount((ushort)(i % 3 == 0 ? 5 : 1));
                 it.X = (ushort)(1400 + i);
                 it.Y = (ushort)(1600 + i);
                 it.Z = (sbyte)(i % 20);
-                it.Flags = i % 4 == 0 ? Flags.Movable : Flags.None;
+                it.TestSetFlags(i % 4 == 0 ? Flags.Movable : Flags.None);
                 it.IsMulti = i % 11 == 10;
 
                 // every fifth item is not synced (its record keeps the creation values)

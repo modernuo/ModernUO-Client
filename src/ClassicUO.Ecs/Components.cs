@@ -405,10 +405,10 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// E4: when a mobile's <c>Mobile.Update</c> has something to do. The legacy Mobile
-    /// stays authoritative for the animation timer (interval, repeat state, group, frame) and writes the two due times
-    /// here whenever it changes them; <see cref="MobileClockSystem"/> reads only this component to pick the mobiles whose
-    /// Update is not a no-op this frame.
+    /// E4: when a mobile's update has something to do. T9 S8c: every write of the record's <see cref="AnimationTimer"/> (the
+    /// two due times) or <see cref="Steps"/> (the Stepping flag) writes it too, and the handles flag follows the Mobile's
+    /// status (<c>WorldEcs.PushClock</c>); <see cref="MobileClockSystem"/> reads only this component to pick the mobiles whose
+    /// update is not a no-op this frame. Every mobile record has it from its creation.
     /// </summary>
     public struct MobileClock : IComponent
     {
@@ -437,16 +437,25 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// T5b (world_anim_system): a mobile's animation timer, what <c>Mobile.Update</c>'s idle animation and frame advance read
-    /// and write. The first eight fields are the frame-advance state <c>AnimationTiming.Advance</c> steps (Mobile.AnimIndex,
+    /// T5b (world_anim_system): a mobile's animation timer, what its idle animation and frame advance read and write. The
+    /// first eight fields are the frame-advance state <c>AnimationTiming.Advance</c> steps (Mobile.AnimIndex,
     /// AnimationFrameCount, the interval, the repeat mode and count, repeat, forward, AnimationFromServer); then the animation
     /// group (the server's action, 0xFF = none), <c>ExecuteAnimation</c> and the two due times (<c>LastAnimationChangeTime</c>
-    /// and the idle delay). While the system runs, every write of these on the Mobile reaches the component with the clock
-    /// push (<c>WorldEcs.WriteClock</c>), and <c>MobileAnimationAdvanceSystem</c> reads only it and the pushed inputs for a
-    /// due mobile without steps.
+    /// and the idle delay). T9 S8c: a mobile's only copy (every mobile record has it from its creation,
+    /// <see cref="MobileDefault"/>): the Mobile's getters read it and WorldWriter's operations write it.
     /// </summary>
     public struct AnimationTimer : IComponent
     {
+        /// <summary>T9 S8c: a new mobile record's timer (the deleted Mobile fields' initial values): no action, repeat 1,
+        /// animating, both due times 0.</summary>
+        public static readonly AnimationTimer MobileDefault = new AnimationTimer
+        {
+            Group = 0xFF,
+            RepeatMode = 1,
+            RepeatModeCount = 1,
+            ExecuteAnimation = true
+        };
+
         public byte Frame;
         public byte FrameCount;
         public byte Interval;
@@ -484,10 +493,9 @@ namespace ClassicUO.Ecs
     /// <summary>
     /// T6c: a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
     /// <see cref="CAPACITY"/> steps (<c>Constants.MAX_STEP_COUNT</c> - 1 + 3; the front step is <c>Ring[Head]</c>), the time the
-    /// current step started (<c>Mobile.LastStepTime</c>) and the interpolated walk offset (<c>Mobile.Offset</c>). While the
-    /// system runs, the clock push writes it from the Mobile after every queue change and step completion (the same push
-    /// that keeps <see cref="MobileClock"/>'s Stepping flag), and the system writes the offset it interpolates. The Mobile's
-    /// queue and offset stay a write-through cache: views read them every frame.
+    /// current step started (<c>Mobile.LastStepTime</c>) and the interpolated walk offset (<c>Mobile.Offset</c>). T9 S8c: a
+    /// mobile's only copy (every mobile record has it from its creation): the Mobile's getters read it, WorldWriter's step
+    /// operations write it (the queue is kept from slot 0, so Head stays 0) and keep <see cref="MobileClock"/>'s Stepping flag.
     /// </summary>
     public struct Steps : IComponent
     {
@@ -654,7 +662,8 @@ namespace ClassicUO.Ecs
     /// <para>
     /// The kinds' motion is computed here too (<c>EffectSystem</c>'s motion step): position,
     /// offset (<see cref="OffsetZ"/> included), angle, the moving effect's target and the drag effect's next move time
-    /// (<see cref="MoveTime"/>); the object's fields are written from these values for the views.
+    /// (<see cref="MoveTime"/>). The object keeps only the position (its tile placement); the views read the frame, offset and
+    /// angle from here (T9 S7).
     /// </para>
     /// </summary>
     public struct EffectState : IComponent

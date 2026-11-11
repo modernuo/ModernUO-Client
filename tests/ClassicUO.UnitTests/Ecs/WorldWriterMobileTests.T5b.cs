@@ -131,7 +131,7 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Ecs.Animation.Rebuild(e, in s, null, T5bTiles, T5bConv, false);
             }
 
-            bool ran = new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false);
+            bool ran = new MobileAnimationAdvanceSystem().TryRun(world, m, in src);
 
             if (!ran)
             {
@@ -161,7 +161,6 @@ namespace ClassicUO.UnitTests.Ecs
         private static World BuildT5b(T5bStart start, out uint serial)
         {
             World world = Build(Start.Standing);
-            world.Ecs.AnimTimerEnabled = true;
             Mobile m = world.Mobiles.Get(MOB);
             serial = MOB;
 
@@ -178,12 +177,12 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
                 case T5bStart.WarMode:
-                    m.Flags |= Flags.WarMode;
+                    m.TestSetFlags(m.Flags | Flags.WarMode);
                     world.Ecs.Sync(m);
 
                     break;
                 case T5bStart.Walked:
-                    m.LastStepTime = NOW + 2000;
+                    m.SetLastStepTime(NOW + 2000);
                     world.Ecs.PushInputs(m);
 
                     break;
@@ -205,7 +204,6 @@ namespace ClassicUO.UnitTests.Ecs
                     break;
             }
 
-            world.Ecs.ResyncClocks();
 
             return world;
         }
@@ -258,7 +256,7 @@ namespace ClassicUO.UnitTests.Ecs
                     if (!b.IsDestroyed)
                     {
                         newWorld.Ecs.Mirror.TryGetEntity(b.Serial, out EcsEntity e).Should().BeTrue();
-                        MobileAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), b.FullAnimationTimer).Should().BeTrue("the push copies the Mobile into the component");
+                        MobileAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), b.Timer).Should().BeTrue("the push copies the Mobile into the component");
                     }
                 }
             }
@@ -277,7 +275,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        private static string Describe(Mobile m) => MobileAnimationAdvanceSystem.Describe(m.FullAnimationTimer) + $" destroyed {m.IsDestroyed}";
+        private static string Describe(Mobile m) => MobileAnimationAdvanceSystem.Describe(m.Timer) + $" destroyed {m.IsDestroyed}";
 
         [Fact]
         public void The_Ecs_Advance_Draws_The_Legacy_Random_Sequence_Over_Several_Mobiles_In_Table_Order()
@@ -322,25 +320,109 @@ namespace ClassicUO.UnitTests.Ecs
             AnimationGroupRules.RandomRolls.Should().BeGreaterThan(rolls, "the selection rolled");
         }
 
-        [Fact]
-        public void A_Mobile_With_Steps_Or_A_Handles_Opening_Is_Declined_And_Unchanged()
+        // T9 S8b: the deleted Mobile.Update of a mobile with queued steps (the handles opening is Entity.Update, the same call
+        // on both paths): the idle animation, the reference ProcessSteps (LegacyMobileUpdate), then AdvanceFrame in the
+        // direction ProcessSteps returned, then the loop's clock push
+        internal static void OldLoopStepStepping(World world, Mobile m, FakeAdvanceSource src)
         {
-            World world = BuildT5b(T5bStart.Standing, out _);
-            Mobile m = world.Mobiles.Get(MOB);
-            FakeAdvanceSource src = T5bDataOf(T5bData.People);
-            m.AddStep(new Mobile.Step { X = 1001, Y = 1000, Direction = 2 });
-            world.Ecs.PushInputs(m);
-            string before = Describe(m);
-            Time.Ticks += 70_000;
+            if (!m.IsDestroyed && world.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity e) && MobileAnimationSystem.TakeDirty(e))
+            {
+                AnimationState s = default;
+                s.Flags = e.GetComponent<MobileInputs>().Flags;
+                world.Ecs.Animation.Rebuild(e, in s, null, T5bTiles, T5bConv, false);
+            }
 
-            new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false).Should().BeFalse();
-            Describe(m).Should().Be(before);
+            if (m.IsDestroyed)
+            {
+                return;
+            }
 
-            m.ClearStepQueue();
-            m.ObjectHandlesStatus = ObjectHandlesStatus.OPEN;
+            if ((long)FIdle.GetValue(m) < Time.Ticks)
+            {
+                OldSetIdle(m, src.Idle);
+            }
+
+            m.ProcessSteps(out byte dir, true);
+
+            if (!(m.LastAnimationChangeTime >= Time.Ticks || !m.ExecuteAnimation || (m.LastStepTime > Time.Ticks - Constants.WALKING_DELAY && m.Steps.Count == 0)))
+            {
+                ushort id = m.GetGraphicForAnimation();
+                AnimGroupInput input = LegacyInput(m);
+                input.StepRun = m.Steps.Count != 0 && m.Steps.Front().Run;
+                byte action = AnimationGroupRules.Select(in input, id, true, src);
+                bool mirror = false;
+                src.GetAnimDirection(ref dir, ref mirror);
+                int frames = id < src.MaxAnimationCount && dir < 5 ? src.FrameCount(id, action, dir) : 0;
+                OldAdvance(m, frames);
+            }
+
             world.Ecs.PushClock(m);
-            new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false).Should().BeFalse();
-            Describe(m).Should().Be(before);
+        }
+
+        private static string DescribeWalk(Mobile m) =>
+            Describe(m) + $" at {m.X},{m.Y},{m.Z} facing {m.Direction} offset {m.Offset} steps {m.Steps.Count} last {m.LastStepTime}";
+
+        public static IEnumerable<object[]> SteppingCases()
+        {
+            foreach (T5bStart s in new[] { T5bStart.Standing, T5bStart.Repeating, T5bStart.Once, T5bStart.ServerFive, T5bStart.WarMode })
+            {
+                foreach (T5bData d in new[] { T5bData.People, T5bData.LowExtended, T5bData.NoFrames })
+                {
+                    yield return new object[] { s, d };
+                }
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(SteppingCases))]
+        public void A_Stepping_Mobile_Updates_As_The_Legacy_Update(T5bStart start, T5bData data)
+        {
+            World oldWorld = BuildT5b(start, out uint serial), newWorld = BuildT5b(start, out _);
+            Mobile.FrameDelayOverride = 16;
+
+            try
+            {
+                foreach (World w in new[] { oldWorld, newWorld })
+                {
+                }
+
+                newWorld.Writer.ThrowOnViolation = true;
+                Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
+                FakeAdvanceSource src = T5bDataOf(data);
+                long stepping = MobileAnimationAdvanceSystem.RanStepping;
+
+                for (int i = 1; i <= 260; i++)
+                {
+                    Time.Ticks += 37;
+
+                    if (i == 200)
+                    {
+                        Time.Ticks += 61_000;
+                    }
+
+                    // a walk east, a turn in place and a run south, queued between frames on both Worlds
+                    switch (i)
+                    {
+                        case 1: Pair(() => a.EnqueueStep(1001, 1000, 0, Direction.East, false), () => b.EnqueueStep(1001, 1000, 0, Direction.East, false)); break;
+                        case 3: Pair(() => a.EnqueueStep(1002, 1000, 0, Direction.East, false), () => b.EnqueueStep(1002, 1000, 0, Direction.East, false)); break;
+                        case 60: Pair(() => a.EnqueueStep(1002, 1000, 0, Direction.South, false), () => b.EnqueueStep(1002, 1000, 0, Direction.South, false)); break;
+                        case 90: Pair(() => a.EnqueueStep(1002, 1001, 0, Direction.South, true), () => b.EnqueueStep(1002, 1001, 0, Direction.South, true)); break;
+                        case 92: Pair(() => a.EnqueueStep(1002, 1002, 0, Direction.South, true), () => b.EnqueueStep(1002, 1002, 0, Direction.South, true)); break;
+                    }
+
+                    Pair(() => OldLoopStepStepping(oldWorld, a, src), () => NewUpdateNoSteps(newWorld, b, src).Should().BeTrue());
+                    DescribeWalk(b).Should().Be(DescribeWalk(a), "frame {0}", i);
+                }
+
+                a.X.Should().Be(1002);
+                a.Y.Should().Be(1002, "the walk ended");
+                (MobileAnimationAdvanceSystem.RanStepping - stepping).Should().BeGreaterThan(0);
+                AssertSameWorld(oldWorld, newWorld, serial);
+            }
+            finally
+            {
+                Mobile.FrameDelayOverride = null;
+            }
         }
 
         // ecs-hygiene: TryRun reads the eligibility from one record row; a mobile whose record lacks a component is declined
@@ -351,13 +433,18 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.Mobiles.Get(MOB);
             FakeAdvanceSource src = T5bDataOf(T5bData.People);
             world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e).Should().BeTrue();
+            // T9 S8c: the timer is the record's only copy (every mobile record has it), so with it removed nothing is left to
+            // compare; the decline itself is what is checked (and the other components stay as they were)
+            AnimationTimer saved = e.GetComponent<AnimationTimer>();
             e.RemoveComponent<AnimationTimer>();
-            string before = Describe(m);
+            Steps steps = e.GetComponent<Steps>();
             long declined = MobileAnimationAdvanceSystem.Declined;
             Time.Ticks += 70_000;
 
-            new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false).Should().BeFalse();
-            Describe(m).Should().Be(before);
+            new MobileAnimationAdvanceSystem().TryRun(world, m, in src).Should().BeFalse();
+            e.GetComponent<Steps>().Count.Should().Be(steps.Count);
+            e.AddComponent(saved);
+            Describe(m).Should().Be(MobileAnimationAdvanceSystem.Describe(saved) + $" destroyed {m.IsDestroyed}");
             (MobileAnimationAdvanceSystem.Declined - declined).Should().BeGreaterThan(0);
         }
 

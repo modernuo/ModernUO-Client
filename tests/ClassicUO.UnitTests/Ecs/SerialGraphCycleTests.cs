@@ -658,7 +658,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             // PACK > BAG > X > PACK, attached in the mirror (and in the cache, for RootContainer)
             world.Ecs.Mirror.UpsertItem(PACK, 0xE75, 0, 1, 1, 0, 0, 0, 1, X, 0, false, attach: true);
-            a.Container = X;
+            a.TestSetContainer(X);
             world.State.Contents(X).ToArray().Should().Equal(PACK);
 
             return world;

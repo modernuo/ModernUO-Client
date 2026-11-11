@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using ClassicUO.Configuration;
 using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -12,8 +13,7 @@ using StepsComponent = ClassicUO.Ecs.Steps;
 
 namespace ClassicUO.Game
 {
-    /// <summary>T6c: what <c>Mobile.ProcessSteps</c> reads for the front step (from the components, or from the Mobile for the
-    /// checker's shadow).</summary>
+    /// <summary>T6c: what the old <c>Mobile.ProcessSteps</c> read for the front step (from the record's components).</summary>
     internal struct StepInput
     {
         public StepEntry Front;
@@ -23,8 +23,8 @@ namespace ClassicUO.Game
         public int X, Y;
         public sbyte Z;
 
-        // IsMounted, the fast-unmount speed modes, IsFlying: the ECS's (StepSystem.MountedFromEcs; the Mobile's for the
-        // checker's shadow or without the components)
+        // IsMounted, the fast-unmount speed modes, IsFlying: the ECS's (StepSystem.MountedFromEcs; the Mobile's without the
+        // components)
         public bool Mounted;
         public bool IsPlayer;
     }
@@ -122,74 +122,26 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T6c: <c>Mobile.ProcessSteps(evaluate: true)</c> as a system over the mobile's
-    /// <see cref="StepsComponent"/> and its <see cref="Position"/>/<see cref="Facing"/> record. Runs per due mobile in the
-    /// Mobiles stage, in table order, at the point <c>Mobile.Update</c> ran ProcessSteps, so footstep sounds, the frame
-    /// advance and the random draws keep their order. The results go through the funnel: <c>WorldWriter.InterpolateStep</c>
+    /// T6c: the old <c>Mobile.ProcessSteps(evaluate: true)</c> as a system over the mobile's
+    /// <see cref="StepsComponent"/> and its <see cref="Position"/>/<see cref="Facing"/> record (T9 S8b: the only step
+    /// path; ProcessSteps is deleted). Runs per due mobile in the Mobiles stage (<c>MobileAnimationAdvanceSystem</c>), in
+    /// table order, where the old Update ran ProcessSteps, so footstep sounds, the frame advance and the random draws keep
+    /// their order. The results go through the funnel: <c>WorldWriter.InterpolateStep</c>
     /// (the offset; the system writes the component's offset first), the player's walker bookkeeping (as before) and
-    /// <c>WorldWriter.CompleteStep</c> (position, tile list and DynamicTileIndex via AddToTile, queue, idle timer, inputs;
-    /// its commit rewrites the component through the clock push). The Mobile's queue, offset and LastStepTime stay the
-    /// write-through cache the views read every frame.
+    /// <c>WorldWriter.CompleteStep</c> (position, tile list and DynamicTileIndex via AddToTile, queue, idle timer, inputs).
+    /// T9 S8c: the component is the queue's only copy (the Mobile's Steps, Offset and LastStepTime read it), so the checkers
+    /// that compared it with the Mobile (CUO_STEP_CHECK) and the mounted pace with the record-backed getters
+    /// (CUO_STEP_MOUNT_CHECK) are gone.
     /// </summary>
     internal sealed class StepSystem
     {
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_STEP_CHECK=1: before each run the component equals the Mobile's step state, the decision from
-        // the component equals the decision from the Mobile's fields, and after it the component equals the Mobile again
-        public static readonly bool StepCheck = Environment.GetEnvironmentVariable("CUO_STEP_CHECK") == "1";
-#else
-        public const bool StepCheck = false;
-#endif
-
         public static long Ran, Declined, Interpolated, Completed, Turns;
-        public static long Checks, SyncDiffs, DecisionDiffs, AfterDiffs;
-        private static int _logged;
 
-#if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_STEP_MOUNT_CHECK=1: at every step decision the mounted pace from the ECS is compared with the
-        // Mobile's (IsMounted, SpeedMode, IsFlying), which the views still read
-        public static readonly bool StepMountCheck = Environment.GetEnvironmentVariable("CUO_STEP_MOUNT_CHECK") == "1";
-#else
-        public const bool StepMountCheck = false;
-#endif
-
-        public static long MountEcsReads, MountFallbacks, MountSlotRebuilds, MountChecks, MountDiffs;
-        private static int _mountLogged;
+        public static long MountEcsReads, MountFallbacks, MountSlotRebuilds;
 
         /// <summary>Tests: rebuilds a dirty mobile's <see cref="EquipmentSlots"/> in place of the client's tiledata
         /// (<c>MobileAnimationSystem.Rebuild</c>'s seam); null in the client.</summary>
         internal Action<EcsEntity, AnimationState, Mobile> RebuildSlotsOverride;
-
-        /// <summary>Tests: <see cref="StepMountCheck"/> for this instance (null: the environment).</summary>
-        internal bool? MountCheckOverride;
-
-        private bool MountCheck => MountCheckOverride ?? StepMountCheck;
-
-        /// <summary>Copies the Mobile's walk queue, <c>LastStepTime</c> and walk offset into <paramref name="s"/>.</summary>
-        internal static void CopyFrom(Mobile m, ref StepsComponent s)
-        {
-            Mobile.StepQueue q = m.Steps;
-            int n = Math.Min(q.Count, StepsComponent.CAPACITY);
-
-            // the ring is rewritten from slot 0 (the copy is the queue's order; Head moves only in the system's own reads)
-            for (int k = 0; k < n; k++)
-            {
-                Mobile.Step st = q[k];
-                s.Ring[k] = new StepEntry { X = st.X, Y = st.Y, Z = st.Z, Direction = st.Direction, Run = st.Run };
-            }
-
-            for (int k = n; k < StepsComponent.CAPACITY; k++)
-            {
-                s.Ring[k] = default;
-            }
-
-            s.Head = 0;
-            s.Count = (byte)n;
-            s.LastStepTime = m.LastStepTime;
-            s.OffsetX = m.Offset.X;
-            s.OffsetY = m.Offset.Y;
-            s.OffsetZ = m.Offset.Z;
-        }
 
         internal static bool Mounted(Mobile m) =>
             m.IsMounted
@@ -230,16 +182,11 @@ namespace ClassicUO.Game
         }
 
         // the mounted pace the decision uses: from the ECS (the Mobile's when the components are missing; T9 deleted
-        // ecs_step_mount_inputs' off path); CUO_STEP_MOUNT_CHECK compares it with the Mobile's
-        private bool MountedInput(Mobile mob, EcsEntity e, in EcsRow row)
+        // ecs_step_mount_inputs' off path)
+        private static bool MountedInput(Mobile mob, in EcsRow row)
         {
             bool have = row.Has<MobileInputs>() && row.Has<EquipmentSlots>();
             bool ecs = have && MountedFromEcs(in row.Get<MobileInputs>(), in row.Get<EquipmentSlots>());
-
-            if (MountCheck)
-            {
-                CheckMount(mob, e, have, ecs);
-            }
 
             if (!have)
             {
@@ -257,14 +204,15 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// Runs <paramref name="mob"/>'s step processing in the ECS: false (nothing changed) when it is not eligible (the
-        /// system is off, the mobile is destroyed, not the one World holds, not mirrored, or without the components); the
-        /// caller then runs <c>Mobile.ProcessSteps</c>. <paramref name="dir"/> is ProcessSteps' direction out.
+        /// mobile is destroyed, not the one World holds, not mirrored, or without the components). The update loop runs only
+        /// held, mirrored mobiles with a clock, so it is never declined there. <paramref name="dir"/> is the old ProcessSteps'
+        /// direction out.
         /// </summary>
         public bool TryRun(World world, Mobile mob, uint ticks, int frameDelay, out byte dir)
         {
             dir = 0;
 
-            if (!world.Ecs.StepsEnabled || mob.IsDestroyed || !world.Holds(mob) ||
+            if (mob.IsDestroyed || !world.Holds(mob) ||
                 !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
             {
                 Declined++;
@@ -293,11 +241,6 @@ namespace ClassicUO.Game
 
         private void Run(World world, Mobile mob, EcsEntity e, uint ticks, int frameDelay, out byte dir)
         {
-            if (StepCheck)
-            {
-                CheckSync(mob, e, "before");
-            }
-
             // read after FreshenSlots (its tag removal moves the entity)
             EcsRow row = EcsRead.Row(e);
             ref readonly StepsComponent s = ref row.Get<StepsComponent>();
@@ -324,7 +267,7 @@ namespace ClassicUO.Game
             inp.OffsetX = s.OffsetX;
             inp.OffsetY = s.OffsetY;
 
-            if (mob.AnimationFromServer)
+            if (row.Get<AnimationTimer>().FromServer)
             {
                 // a step ends the server's animation through the funnel (as ProcessSteps)
                 world.Writer.EndServerAnimation(mob);
@@ -335,23 +278,14 @@ namespace ClassicUO.Game
             inp.X = p.X;
             inp.Y = p.Y;
             inp.Z = p.Z;
-            inp.Mounted = MountedInput(mob, e, in row);
+            inp.Mounted = MountedInput(mob, in row);
             inp.IsPlayer = IsPlayer(world, mob);
 
             StepRules.Decide(in inp, ticks, frameDelay, out StepDecision d);
 
-            if (StepCheck)
-            {
-                CheckDecision(mob, in inp, in d, ticks, frameDelay);
-            }
-
             if (d.Interpolate)
             {
                 Interpolated++;
-                ref StepsComponent sw = ref row.Get<StepsComponent>();
-                sw.OffsetZ = d.Z;
-                sw.OffsetX = d.X;
-                sw.OffsetY = d.Y;
                 world.Writer.InterpolateStep(mob, d.X, d.Y, d.Z);
             }
 
@@ -370,28 +304,70 @@ namespace ClassicUO.Game
 
                 Completed++;
                 Mobile.Step done = new Mobile.Step { X = front.X, Y = front.Y, Z = front.Z, Direction = front.Direction, Run = front.Run };
-                // its input commit (CommitMobileInputs, through the clock push) rewrites the component from the Mobile
+                // the queue, step time, offset, idle timer and inputs in the record (the funnel)
                 world.Writer.CompleteStep(mob, in done, d.DirectionChange);
 
                 if (d.DirectionChange)
                 {
                     Turns++;
 
-                    // ProcessSteps goes on with the next step (its recursion); CompleteStep's commit rewrote the component
-                    if (!TryRun(world, mob, ticks, frameDelay, out dir))
-                    {
-                        mob.ProcessSteps(out dir, true);
-                    }
+                    // the old ProcessSteps went on with the next step (its recursion); the record is the same one (an
+                    // operation neither moves nor drops it)
+                    Run(world, mob, e, ticks, frameDelay, out dir);
 
                     return;
                 }
             }
 
             mob.UpdateTextCoordsV();
+        }
 
-            if (StepCheck)
+        /// <summary>
+        /// T9 S8b: the old <c>Mobile.ProcessFootstepsSound</c>, unchanged, after the step processing: a walking human's step
+        /// sound when due. The values first, then the two writes through the funnel (<c>WorldWriter.StepSound</c>), then the
+        /// sound, which reads neither field.
+        /// </summary>
+        internal static void FootstepSound(World world, Mobile m)
+        {
+            // no profile only in unit tests
+            if (ProfileManager.CurrentProfile?.EnableFootstepsSound != true ||!m.IsHuman || m.IsHidden || m.IsDead || m.IsFlying)
             {
-                CheckSync(mob, e, "after");
+                return;
+            }
+
+            Mobile.StepQueue steps = m.Steps;
+
+            if (steps.Count == 0 || m.LastStepSoundTime >= Time.Ticks)
+            {
+                return;
+            }
+
+            Mobile.Step step = steps.Back();
+            int incID = m.StepSoundOffset;
+            int soundID = 0x012B;
+            int delaySound = 400;
+
+            if (m.IsMounted)
+            {
+                if (step.Run)
+                {
+                    soundID = 0x0129;
+                    delaySound = 150;
+                }
+                else
+                {
+                    incID = 0;
+                    delaySound = 350;
+                }
+            }
+
+            delaySound = delaySound * 13 / 10;
+            soundID += incID;
+            int stepX = step.X, stepY = step.Y;
+
+            if (world.Writer.StepSound(m, (incID + 1) % 2, Time.Ticks + delaySound))
+            {
+                Client.Game.Audio.PlaySoundWithDistance(world, soundID, stepX, stepY);
             }
         }
 
@@ -422,135 +398,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // ---- CUO_STEP_CHECK
-
-        /// <summary>Differences between the component (and the record's position and facing) and the Mobile; null when equal.</summary>
-        internal static string Diff(Mobile m, EcsEntity e)
-        {
-            ref readonly StepsComponent s = ref EcsRead.Get<StepsComponent>(e);
-            Mobile.StepQueue q = m.Steps;
-
-            if (s.Count != q.Count)
-            {
-                return $"count {s.Count} vs {q.Count}";
-            }
-
-            for (int k = 0; k < q.Count; k++)
-            {
-                StepEntry a = s.Ring[(s.Head + k) % StepsComponent.CAPACITY];
-                Mobile.Step b = q[k];
-
-                if (a.X != b.X || a.Y != b.Y || a.Z != b.Z || a.Direction != b.Direction || a.Run != b.Run)
-                {
-                    return $"step {k}: ({a.X},{a.Y},{a.Z},{a.Direction},{a.Run}) vs ({b.X},{b.Y},{b.Z},{b.Direction},{b.Run})";
-                }
-            }
-
-            if (s.LastStepTime != m.LastStepTime)
-            {
-                return $"last step time {s.LastStepTime} vs {m.LastStepTime}";
-            }
-
-            if (s.OffsetX != m.Offset.X || s.OffsetY != m.Offset.Y || s.OffsetZ != m.Offset.Z)
-            {
-                return $"offset ({s.OffsetX},{s.OffsetY},{s.OffsetZ}) vs {m.Offset}";
-            }
-
-            Position p = EcsRead.Get<Position>(e);
-
-            if (p.X != m.X || p.Y != m.Y || p.Z != m.Z)
-            {
-                return $"position ({p.X},{p.Y},{p.Z}) vs ({m.X},{m.Y},{m.Z})";
-            }
-
-            if ((EcsRead.Get<Facing>(e).Value & 7) != ((byte)m.Direction & 7))
-            {
-                return $"facing {e.GetComponent<Facing>().Value} vs {m.Direction}";
-            }
-
-            return null;
-        }
-
-        private static void CheckSync(Mobile m, EcsEntity e, string when)
-        {
-            Checks++;
-            string diff = Diff(m, e);
-
-            if (diff != null)
-            {
-                if (when == "before") SyncDiffs++; else AfterDiffs++;
-                LogDiff($"0x{m.Serial:X8} {when} the run: {diff} (tick {Time.Ticks})");
-            }
-        }
-
-        // the shadow: ProcessSteps' inputs read from the Mobile, as the legacy code reads them
-        private static void CheckDecision(Mobile m, in StepInput fromEcs, in StepDecision d, uint ticks, int frameDelay)
-        {
-            if (m.Steps.Count == 0)
-            {
-                DecisionDiffs++;
-                LogDiff($"0x{m.Serial:X8}: the component has {fromEcs.Count} steps, the Mobile none");
-
-                return;
-            }
-
-            Mobile.Step f = m.Steps.Front();
-            StepInput legacy = fromEcs;
-            legacy.Front = new StepEntry { X = f.X, Y = f.Y, Z = f.Z, Direction = f.Direction, Run = f.Run };
-            legacy.Count = m.Steps.Count;
-            legacy.LastStepTime = m.LastStepTime;
-            legacy.OffsetX = m.Offset.X;
-            legacy.OffsetY = m.Offset.Y;
-            legacy.X = m.X;
-            legacy.Y = m.Y;
-            legacy.Z = m.Z;
-            legacy.Mounted = Mounted(m);
-            StepRules.Decide(in legacy, ticks, frameDelay, out StepDecision ld);
-
-            if (!ld.Equals(in d))
-            {
-                DecisionDiffs++;
-                LogDiff($"0x{m.Serial:X8} decision: ecs {d} | mobile {ld}");
-            }
-        }
-
-        // ---- CUO_STEP_MOUNT_CHECK
-
-        private static void CheckMount(Mobile m, EcsEntity e, bool have, bool ecs)
-        {
-            MountChecks++;
-            bool mobile = Mounted(m);
-
-            if (have && ecs == mobile)
-            {
-                return;
-            }
-
-            MountDiffs++;
-
-            if (_mountLogged++ < 10)
-            {
-                string from = have
-                    ? $"slots {e.GetComponent<EquipmentSlots>().Mounted} (dirty {e.Tags.Has<EquipmentDirty>()}), speed {(CharacterSpeedType)e.GetComponent<MobileInputs>().SpeedMode}, flying {(e.GetComponent<MobileInputs>().Flags & AnimStateFlags.Flying) != 0}"
-                    : "no MobileInputs/EquipmentSlots";
-                Log.Warn($"[step-mount-check] 0x{m.Serial:X8} g=0x{m.Graphic:X4}: ecs {ecs} ({from}) | mobile {mobile} (mounted {m.IsMounted}, speed {m.SpeedMode}, flying {m.IsFlying}) (tick {Time.Ticks})");
-            }
-        }
-
-        /// <summary>The mount-input counters for the periodic log line.</summary>
-        internal static string MountSummary() =>
-            $"[step-mount-check] ecs reads {MountEcsReads}, fallbacks to the Mobile {MountFallbacks}, slot rebuilds {MountSlotRebuilds}; checked {MountChecks}, different {MountDiffs}";
-
-        private static void LogDiff(string message)
-        {
-            if (_logged++ < 10)
-            {
-                Log.Warn($"[step-check] {message}");
-            }
-        }
-
-        /// <summary>The checker and system counters for the periodic log line.</summary>
+        /// <summary>The system counters for the periodic log line.</summary>
         internal static string Summary() =>
-            $"[step-check] ecs runs {Ran}, declined to ProcessSteps {Declined}; interpolated {Interpolated}, completed {Completed} (turns {Turns}); checked {Checks}, before-run differences {SyncDiffs}, decisions different {DecisionDiffs}, after-run differences {AfterDiffs}; component writes {WorldEcs.StepWrites}";
+            $"[step-check] ecs runs {Ran}, declined {Declined}; interpolated {Interpolated}, completed {Completed} (turns {Turns}); mounted pace from the ECS {MountEcsReads}, from the Mobile {MountFallbacks}, slot rebuilds {MountSlotRebuilds}";
     }
 }

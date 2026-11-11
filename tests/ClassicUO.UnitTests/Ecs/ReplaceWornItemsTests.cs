@@ -128,8 +128,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item orphan = world.GetOrCreateItem(ORPHAN);
             orphan.Graphic = 0x1408;
-            orphan.Layer = Layer.Helmet;
-            orphan.Container = MOB;
+            orphan.TestSetLayer(Layer.Helmet);
+            orphan.TestSetContainer(MOB);
             world.Ecs.Sync(orphan);
 
             Wear(world, world.Mobiles.Get(OTHER), O1, 0x1515, Layer.Tunic);

@@ -38,7 +38,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
             else
             {
-                i.Container = container;
+                i.TestSetContainer(container);
             }
 
             w.Ecs.Sync(i);

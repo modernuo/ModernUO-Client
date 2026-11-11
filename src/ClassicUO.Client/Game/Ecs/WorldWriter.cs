@@ -437,10 +437,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.Damageable, type == 3);
                 }
 
-                if (unlink)
-                {
-                    item.Container = v.Container;
-                }
 
                 if (multi)
                 {
@@ -450,7 +446,6 @@ namespace ClassicUO.Game
                 }
                 else
                 {
-                    item.IsDamageable = type == 3;
                     item.IsMulti = false;
                     item.Graphic = v.Graphic;
                 }
@@ -458,23 +453,14 @@ namespace ClassicUO.Game
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
-                item.LightID = (byte)direction;
 
-                if (graphic == 0x2006 || corpse)
-                {
-                    item.Layer = v.Layer;
-                }
 
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
-                item.Flags = v.Flags;
-                item.Direction = v.Direction;
 
                 if (corpse)
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
                 }
@@ -701,18 +687,14 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
-                    item.Direction = v.Direction;
-                    item.Layer = v.Layer;
                 }
 
                 // 4. derived state where the old CheckGraphicChange ran it: before the amount, hue and position writes (a
                 // multi's load sees the old position, as before T1; for every other item it reads Graphic only)
                 item.RefreshGraphicState();
 
-                item.Amount = v.Amount;
                 item.Hue = v.Hue;
                 item.X = v.X;
                 item.Y = v.Y;
@@ -722,7 +704,6 @@ namespace ClassicUO.Game
                 {
                     // the old parent's gump and the tile; the Container is written from v
                     _world.UnlinkFromContainer(item, oldContainer);
-                    item.Container = v.Container;
                 }
             }
 
@@ -939,9 +920,6 @@ namespace ClassicUO.Game
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
-                item.Flags = v.Flags;
-                item.Layer = layer;
                 item.X = v.X;
                 item.Y = v.Y;
                 item.Z = v.Z;
@@ -950,11 +928,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
-                    item.Direction = v.Direction;
-                    item.Layer = v.Layer;
                 }
 
                 // 4. derived state where CheckGraphicChange ran it
@@ -965,7 +940,6 @@ namespace ClassicUO.Game
                 {
                     case HeldItemReturn.Paperdoll:
                         _world.UnlinkFromContainer(item, oldContainer);
-                        item.Container = v.Container;
 
                         break;
 
@@ -976,10 +950,6 @@ namespace ClassicUO.Game
                         // serial (GetOrCreateItem above), as World.RemoveItem(serial) required
                         _world.UnlinkFromContainer(item, oldContainer);
 
-                        if (oldContainer != v.Container)
-                        {
-                            item.Container = v.Container;
-                        }
 
                         _world.RemoveDetachedItem(item, true);
 
@@ -988,10 +958,6 @@ namespace ClassicUO.Game
                     default:
                         _world.UnlinkFromContainer(item, oldContainer);
 
-                        if (oldContainer != v.Container)
-                        {
-                            item.Container = v.Container;
-                        }
 
                         item.SetInWorldTile(v.X, v.Y, v.Z);
 
@@ -1083,10 +1049,7 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
                 item.Graphic = v.Graphic;
-                item.Layer = v.Layer;
-                item.Container = v.Container;
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
             }
 
             return item;
@@ -1240,28 +1203,17 @@ namespace ClassicUO.Game
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
-                item.Amount = v.Amount;
 
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
-                item.Container = v.Container;
-                item.Layer = layer;
 
                 if (corpse)
                 {
                     item.AnimIndex = 99;
                     _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
-                    item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
-
-                    if (usedLayer)
-                    {
-                        item.Direction = v.Direction;
-                    }
-
-                    item.Layer = v.Layer;
                 }
 
                 // 4. derived state where CheckGraphicChange ran it
@@ -1449,6 +1401,8 @@ namespace ClassicUO.Game
             // an earlier placement of this mobile is superseded: this upsert issues its own
             CancelPlacements(mobile);
 
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, mobile))
             {
                 // 3. write: the ECS, then the cache from v in the old order
@@ -1462,14 +1416,12 @@ namespace ClassicUO.Game
                     {
                         _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
                         _world.Ecs.CommitRace(mobile, race);
-                        mobile.IsFemale = isFemale;
-                        mobile.Race = race;
                     }
                 }
 
                 if (created || reset)
                 {
-                    mobile.Direction = v.Direction;
+                    mobile.DirectionCommitted(directionBefore);
                     mobile.X = v.X;
                     mobile.Y = v.Y;
                     mobile.Z = v.Z;
@@ -1487,7 +1439,6 @@ namespace ClassicUO.Game
 
                 mobile.Graphic = v.Graphic;
                 mobile.Hue = v.Hue;
-                mobile.Flags = v.Flags;
 
                 // 4. derived state: the inputs and the clock, from the values written above
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -1586,7 +1537,8 @@ namespace ClassicUO.Game
         /// (0x77/0x78 ignore the packet's; 0x20 moves the player with <see cref="MoveMobile"/> after its other work). The
         /// player's direction change runs its door check inside the operation, as the setter did before T1. A mobile this
         /// World does not hold is a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c> (removed
-        /// under its serial while World.Player stays), which is written as before T1 (nothing of it reaches the ECS).
+        /// under its serial while World.Player stays), which is written as before T1 (nothing of it reaches the ECS; since T9 S6
+        /// its direction and flags are not kept either, as its name and traits: the record was their only copy).
         /// </summary>
         public void SetMobileBody(Mobile mobile, ushort graphic, ushort hue, Flags flags, bool checkBody, bool setDirection, Direction direction)
         {
@@ -1620,6 +1572,8 @@ namespace ClassicUO.Game
 
             // the detached player is not folded: nothing of it reaches the ECS (every commit, Sync and push ignores an
             // instance World does not hold), so its writes are the pre-T1 path's
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, detached ? null : mobile))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
@@ -1630,17 +1584,14 @@ namespace ClassicUO.Game
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
                     _world.Ecs.CommitRace(mobile, race);
-                    mobile.IsFemale = isFemale;
-                    mobile.Race = race;
                 }
 
                 if (setDirection)
                 {
-                    mobile.Direction = v.Direction;
+                    mobile.DirectionCommitted(directionBefore);
                 }
 
                 mobile.Hue = v.Hue;
-                mobile.Flags = v.Flags;
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
@@ -1735,8 +1686,6 @@ namespace ClassicUO.Game
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
                     _world.Ecs.CommitRace(mobile, race);
-                    mobile.IsFemale = isFemale;
-                    mobile.Race = race;
                 }
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -1745,8 +1694,9 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// 0x1B (EnterWorld) and 0x21 (DenyWalk): the player's direction from the packet. The record is committed with the new
-        /// direction first, then the setter runs <b>unfolded</b>: the player's direction change runs its door check, which can
-        /// send a packet (plugin send hooks run synchronously), so the setter's Sync publishes as before T1. Then the derived
+        /// direction first, then <c>Entity.DirectionCommitted</c> (the old setter's tail, T9 S6) runs <b>unfolded</b>: the player's
+        /// direction change runs its door check, which can send a packet (plugin send hooks run synchronously), so its Sync
+        /// publishes as before T1. Then the derived
         /// inputs. A mobile this World does not hold is a violation, rejected (no pre-T1 path), except the detached
         /// <c>World.Player</c>, written as before T1.
         /// </summary>
@@ -1775,10 +1725,12 @@ namespace ClassicUO.Game
             v.Flags = mobile.Flags;
             v.IsPlayer = ReferenceEquals(mobile, _world.Player);
 
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, null))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
-                mobile.Direction = v.Direction;
+                mobile.DirectionCommitted(directionBefore);
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
         }
@@ -1862,6 +1814,8 @@ namespace ClassicUO.Game
             bool run = step.Run;
             uint stepTime = Time.Ticks;
 
+            Direction directionBefore = mobile.Direction;
+
             using (Open(mobile, fold ? mobile : null))
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
@@ -1869,11 +1823,9 @@ namespace ClassicUO.Game
                 mobile.X = v.X;
                 mobile.Y = v.Y;
                 mobile.Z = v.Z;
-                mobile.Direction = v.Direction;
+                mobile.DirectionCommitted(directionBefore);
                 mobile.IsRunning = run;
-                mobile.OffsetX = 0;
-                mobile.OffsetY = 0;
-                mobile.OffsetZ = 0;
+                mobile.SetOffset(0, 0, 0);
                 mobile.RemoveFirstStep();
                 mobile.CalculateRandomIdleTime();
 
@@ -1898,7 +1850,7 @@ namespace ClassicUO.Game
                         mobile.AddToTile();
                     }
 
-                    mobile.LastStepTime = stepTime;
+                    mobile.SetLastStepTime(stepTime);
                 }
 
                 _world.Ecs.CommitMobileInputs(mobile, e);
@@ -2115,12 +2067,10 @@ namespace ClassicUO.Game
             using (Open(mobile, detached ? null : mobile))
             {
                 _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Renamable, renamable); // ecs_small_fields
-                mobile.IsRenamable = renamable;
 
                 if (setFemale)
                 {
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, female);
-                    mobile.IsFemale = female;
                     _world.Ecs.CommitMobileInputs(mobile);
                 }
             }
@@ -2175,7 +2125,6 @@ namespace ClassicUO.Game
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitRace(mobile, race); // ecs_small_fields
-                mobile.Race = race;
             }
         }
 
@@ -2215,7 +2164,6 @@ namespace ClassicUO.Game
                     mobile.SetSAPoison(saPoison);
                 }
 
-                mobile.Flags = v.Flags;
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
         }
@@ -2247,12 +2195,12 @@ namespace ClassicUO.Game
 
                 if (frame >= 0)
                 {
-                    mobile.AnimIndex = (byte)frame;
+                    mobile.SetFrame((byte)frame);
                 }
 
                 if (hold)
                 {
-                    mobile.ExecuteAnimation = false;
+                    mobile.SetExecuteAnimation(false);
                 }
 
                 _world.Ecs.CommitMobileClock(mobile);
@@ -2283,9 +2231,6 @@ namespace ClassicUO.Game
                 boat.Z = z;
                 boat.UpdateScreenPosition();
 
-                boat.OffsetX = 0;
-                boat.OffsetY = 0;
-                boat.OffsetZ = 0;
                 ItemOffsets.Push(_world, boat, Microsoft.Xna.Framework.Vector3.Zero);
 
                 if (boat.IsPlaced)
@@ -2335,9 +2280,11 @@ namespace ClassicUO.Game
                 entity.Z = z;
                 entity.UpdateScreenPosition();
 
-                entity.OffsetX = 0;
-                entity.OffsetY = 0;
-                entity.OffsetZ = 0;
+                if (entity is Mobile mobile)
+                {
+                    mobile.SetOffset(0, 0, 0);
+                }
+
                 ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
 
                 if (entity.IsPlaced)
@@ -2346,7 +2293,6 @@ namespace ClassicUO.Game
                 }
             }
 
-            _world.Ecs.PushSteps(entity); // T6c: a carried mobile's position and offset reach its Steps component
         }
 
         /// <summary>
@@ -2517,13 +2463,14 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
-                entity.OffsetX = 0;
-                entity.OffsetY = 0;
-                entity.OffsetZ = 0;
+                if (entity is Mobile mobile)
+                {
+                    mobile.SetOffset(0, 0, 0);
+                }
+
                 ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
             }
 
-            _world.Ecs.PushSteps(entity); // T6c
         }
 
         // ---- funnel part 7, group 4: the per-frame offset interpolation between steps (Mobile.ProcessSteps,
@@ -2554,15 +2501,13 @@ namespace ClassicUO.Game
 
             using (Open(mobile, null))
             {
-                mobile.OffsetZ = z;
-                mobile.OffsetX = x;
-                mobile.OffsetY = y;
+                mobile.SetOffset(x, y, z);
             }
         }
 
         /// <summary>
-        /// <c>BoatMovingManager.Update</c> between two boat steps: the boat's offset toward the front step, <c>OffsetZ</c>,
-        /// then <c>OffsetX</c> and <c>OffsetY</c>. Rejections as <see cref="CompleteBoatStep"/>.
+        /// <c>BoatMovingManager.Update</c> between two boat steps: the boat's offset toward the front step, into its
+        /// <c>ItemOffset</c> (T9 S7: the item keeps no copy). Rejections as <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void InterpolateBoat(Item boat, sbyte x, sbyte y, sbyte z)
         {
@@ -2573,9 +2518,6 @@ namespace ClassicUO.Game
 
             using (Open(boat, null))
             {
-                boat.OffsetZ = z;
-                boat.OffsetX = x;
-                boat.OffsetY = y;
                 ItemOffsets.Push(_world, boat, new Microsoft.Xna.Framework.Vector3(x, y, z));
             }
         }
@@ -2594,17 +2536,20 @@ namespace ClassicUO.Game
 
             using (Open(boat, null))
             {
+                Microsoft.Xna.Framework.Vector3 offset = ItemOffsets.Read(boat);
+
                 foreach (Multi c in house.Components)
                 {
-                    c.Offset = boat.Offset;
+                    c.Offset = offset;
                 }
             }
         }
 
         /// <summary>
         /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
-        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too, as every boat
-        /// operation that writes an item's offset). Rejections as <see cref="MoveBoatPassenger"/>.
+        /// the boat's offset <paramref name="offset"/> (a mobile's in its record's Steps, an item's in its
+        /// <c>ItemOffset</c>, as every boat operation that writes an item's offset). Rejections as
+        /// <see cref="MoveBoatPassenger"/>.
         /// </summary>
         public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)
         {
@@ -2615,11 +2560,13 @@ namespace ClassicUO.Game
 
             using (Open(passenger, null))
             {
-                passenger.Offset = offset;
+                if (passenger is Mobile mobile)
+                {
+                    mobile.SetOffset(offset);
+                }
+
                 ItemOffsets.Push(_world, passenger, offset);
             }
-
-            _world.Ecs.PushSteps(passenger); // T6c
         }
 
         /// <summary>
@@ -2677,8 +2624,6 @@ namespace ClassicUO.Game
                             Item spellItem = Item.Create(_world, cc);
                             spellItem.Serial = cc;
                             spellItem.Graphic = 0x1F2E;
-                            spellItem.Amount = cc;
-                            spellItem.Container = spellbook;
                             _spellEntries.Add(spellItem);
                         }
                     }
@@ -2797,7 +2742,6 @@ namespace ClassicUO.Game
             using (Open(mobile, detached ? null : mobile))
             {
                 _world.Ecs.CommitSpeedMode(mobile, mode); // ecs_small_fields
-                mobile.SpeedMode = mode;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
         }
@@ -2825,7 +2769,6 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.WarMode, warMode);
                 }
 
-                mobile.InWarMode = warMode;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
         }
@@ -2916,8 +2859,6 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitItem(item, in detached);
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
-                item.Container = v.Container;
-                item.Layer = v.Layer;
             }
 
             return item;
@@ -3054,17 +2995,8 @@ namespace ClassicUO.Game
                     }
                 }
 
-                // then the cache, in the old order
+                // then the table, in the old order (the children's Container is the record's: T9 S5)
                 _world.Mobiles.Remove(oldSerial);
-
-                for (int ci = 0; ci < _rekeyChildren.Count; ci++)
-                {
-                    if (_rekeyChildren[ci] is Item child)
-                    {
-                        child.Container = serial;
-                    }
-                }
-
                 _rekeyChildren.Clear();
 
                 _world.Mobiles[serial] = mobile;
@@ -3149,7 +3081,7 @@ namespace ClassicUO.Game
 
             if (frameCount > 0)
             {
-                timer = mobile.AnimationTimerState;
+                timer = mobile.Timer;
                 delay = AnimationTiming.Advance(ref timer, frameCount, out advance);
                 remove = dead && advance == AnimationAdvance.Wrapped;
                 frame = timer.Frame;
@@ -3173,10 +3105,10 @@ namespace ClassicUO.Game
                 {
                     if (frame >= 0)
                     {
-                        mobile.AnimIndex = (byte)frame;
+                        mobile.SetFrame((byte)frame);
                     }
 
-                    mobile.LastAnimationChangeTime = due;
+                    mobile.SetAnimDue(due);
                 }
             }
 
@@ -3228,23 +3160,22 @@ namespace ClassicUO.Game
                 _world.CorpseManager.Remove(0, serial);
                 _world.RemoveMobile(serial);
 
+                // the old writes to the removed mobile; T9 S8c: its timer went with its record, so they are dropped
                 if (frame >= 0)
                 {
-                    mobile.AnimIndex = (byte)frame;
+                    mobile.SetFrame((byte)frame);
                 }
 
-                mobile.LastAnimationChangeTime = due;
+                mobile.SetAnimDue(due);
             }
         }
 
         /// <summary>
         /// T5b (<c>world_anim_system</c>): what <c>MobileAnimationAdvanceSystem</c> computed in the ECS for a due mobile without
-        /// steps (the idle animation and the frame advance over its <c>AnimationTimer</c>) written to the Mobile's fields, the
-        /// cache the views and the step path read (<c>Mobile.WriteAnimationTimer</c>); with <paramref name="remove"/> the frame
-        /// index and the due time are left out and the dying mobile is removed (<see cref="RemoveDeadMobile"/>, which writes
-        /// <paramref name="frame"/> and <paramref name="due"/> after the removal), as <see cref="AdvanceAnimation"/>'s caller
-        /// does. Unfolded and committing nothing: the update loop pushes the clock (and with it the component) after it, as it
-        /// does after <c>Mobile.Update</c>. Admission as <see cref="IdleAnimation"/>.
+        /// steps (the idle animation and the frame advance over its <c>AnimationTimer</c>) written to the record's timer
+        /// (<c>Mobile.WriteAnimationTimer</c>, which keeps its clock; T9 S8c: the only copy); with <paramref name="remove"/> the
+        /// frame index and the due time are left out and the dying mobile is removed (<see cref="RemoveDeadMobile"/>), as
+        /// <see cref="AdvanceAnimation"/>'s caller does. Unfolded. Admission as <see cref="IdleAnimation"/>.
         /// </summary>
         public void AdvanceAnimationFromEcs(Mobile mobile, in ClassicUO.Ecs.AnimationTimer timer, bool remove, int frame, long due)
         {
@@ -3404,7 +3335,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>PlayerMobile.Walk</c>'s coalesced turn (three unconfirmed requests: the direction alone, no step): as
-        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then the setter unfolded for the door
+        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then DirectionCommitted unfolded for the door
         /// check, whose Sync writes the inputs: the old turn's one push), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
         /// World; anything else is a violation, rejected. False: rejected, nothing changed (Walk then returns false and keeps
         /// its cooldown).
@@ -3434,12 +3365,14 @@ namespace ClassicUO.Game
             v.Flags = player.Flags;
             v.IsPlayer = true;
 
-            // the setter's Sync (unfolded) writes the inputs from the new direction, the one push the old turn made; no
+            // DirectionCommitted's Sync (unfolded) writes the inputs from the new direction, the one push the old turn made; no
             // second inputs commit (unlike SetMobileDirection, whose 0x1B/0x21 callers it keeps as they were)
+            Direction directionBefore = player.Direction;
+
             using (joined ? default : Open(player, null))
             {
                 _world.Ecs.CommitMobile(player, in v);
-                player.Direction = v.Direction;
+                player.DirectionCommitted(directionBefore);
             }
 
             return true;
@@ -3475,8 +3408,8 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// The character-creation and race-change gumps' preview mobile: its body, race and sex (the gump's sex and race
-        /// buttons). The record in <see cref="WorldEcs.Previews"/> first, then the cache: Race, IsFemale, the Female flag and
-        /// Graphic, as the gumps wrote them before (the hue is <see cref="SetPreviewHue"/>'s). The mobile must be detached
+        /// buttons). The record in <see cref="WorldEcs.Previews"/> first (Race and IsFemale live only there: T9 S5), then the
+        /// cache: the Female flag and Graphic, as the gumps wrote them before (the hue is <see cref="SetPreviewHue"/>'s). The mobile must be detached
         /// (a World object is rejected as <see cref="Violation.NotDetached"/>; nothing changes). <paramref name="owner"/> is the
         /// gump: <see cref="WorldEcs.ReleasePreviews"/> releases the records of what it committed when it closes.
         /// </summary>
@@ -3497,16 +3430,13 @@ namespace ClassicUO.Game
             v.Direction = mobile.Direction;
             v.Flags = female ? mobile.Flags | Flags.Female : mobile.Flags & ~Flags.Female;
             v.IsPlayer = false;
-            ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
+            ClassicUO.Ecs.MobileTraits traits = RecordTraits(mobile);
             traits.Race = (byte)race;
             traits.Bits = female ? traits.Bits | ClassicUO.Ecs.MobileTraitBits.Female : traits.Bits & ~ClassicUO.Ecs.MobileTraitBits.Female;
 
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
-                mobile.Race = race;
-                mobile.IsFemale = female;
-                mobile.Flags = v.Flags;
                 mobile.Graphic = graphic;
             }
         }
@@ -3543,8 +3473,6 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitPreviewItem(owner, item, in v);
                 item.Graphic = graphic;
                 item.Hue = hue;
-                item.Layer = layer;
-                item.Container = container;
             }
         }
 
@@ -3590,13 +3518,17 @@ namespace ClassicUO.Game
                     v.Direction = mobile.Direction;
                     v.Flags = mobile.Flags;
                     v.IsPlayer = false;
-                    ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
+                    ClassicUO.Ecs.MobileTraits traits = RecordTraits(mobile);
                     _world.Ecs.CommitPreviewMobile(owner, mobile, in v, in traits);
                 }
 
                 entity.Hue = hue;
             }
         }
+
+        // T9 S5: the traits the preview's record holds (the record is their only copy); none before its first commit
+        private static ClassicUO.Ecs.MobileTraits RecordTraits(Mobile mobile) =>
+            mobile.TryRecord(out EcsEntity e) && ClassicUO.Ecs.EcsRead.TryGet(e, out ClassicUO.Ecs.MobileTraits t) ? t : default;
 
         // a preview is an object of this World that the World does not hold (the gumps build it with new PlayerMobile and
         // Item.Create and never add it); a held object is a caller bug, rejected (no pre-T1 path: the gumps have none)

@@ -21,20 +21,8 @@ namespace ClassicUO.Game.GameObjects
             Pathfinder = new Pathfinder(world);
         }
 
-        private bool _inWarMode;
-
-        // the record's MobileTraits WarMode bit (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
-        public override bool InWarMode
-        {
-            get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.InWarMode, ClassicUO.Ecs.MobileTraitBits.WarMode, _inWarMode) : _inWarMode;
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.InWarMode);
-                _inWarMode = value;
-                PushInputs();
-            }
-        }
-        internal override bool CachedWarMode => _inWarMode;
+        // T9 S5: the record's MobileTraits WarMode bit (0x72; WorldWriter.SetWarMode commits it)
+        public override bool InWarMode => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.MobileBit(e, ClassicUO.Ecs.MobileTraitBits.WarMode);
 
         protected override bool IsWalking => LastStepTime > Time.Ticks - Constants.PLAYER_WALKING_DELAY;
 
@@ -640,7 +628,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (!emptyStack)
             {
-                ref readonly Step walkStep = ref Steps.Back();
+                Step walkStep = Steps.Back();
                 x = walkStep.X;
                 y = walkStep.Y;
                 z = walkStep.Z;

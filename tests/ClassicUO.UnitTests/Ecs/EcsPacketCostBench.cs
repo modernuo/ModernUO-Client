@@ -49,8 +49,8 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     Item it = s.World.GetOrCreateItem(ITEM0 + (uint)(i * WORN + k));
                     it.Graphic = (ushort)(0x1515 + k);
-                    it.Layer = layers[k];
-                    it.Container = m.Serial;
+                    it.TestSetLayer(layers[k]);
+                    it.TestSetContainer(m.Serial);
                     m.PushToBack(it);
                     s.World.Ecs.Sync(it);
                     s.Worn[i * WORN + k] = it;
@@ -107,7 +107,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Mobile m = s.Mobiles[i % n];
                 m.X = (ushort)(m.X + 1);
-                m.Direction = (Direction)(i & 7);
+                m.TestSetDirection((Direction)(i & 7));
                 ecs.Sync(m);
             })));
 
@@ -148,7 +148,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 int idx = (i >> 1) % itemCount;
                 Item it = s.Worn[idx];
-                it.Container = (i & 1) == 0 ? s.Backpack.Serial : s.Mobiles[idx / WORN].Serial;
+                it.TestSetContainer((i & 1) == 0 ? s.Backpack.Serial : s.Mobiles[idx / WORN].Serial);
                 ecs.Sync(it);
             })));
 
@@ -317,7 +317,7 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     Item it = s.World.GetOrCreateItem(ser);
                     it.Graphic = 0xF7A;
-                    it.Container = s.Backpack.Serial;
+                    it.TestSetContainer(s.Backpack.Serial);
                     ecs.Sync(it);
                 }
                 else
@@ -403,7 +403,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.Graphic = (ushort)((i & 1) == 0 ? 0x191 : 0x190);
                 WorldWriterMobileTests.OldCheckGraphicChange(m);
                 m.FixHue((ushort)(i & 63));
-                m.Flags = (ClassicUO.Game.Data.Flags)(i & 0x40);
+                m.TestSetFlags((ClassicUO.Game.Data.Flags)(i & 0x40));
                 ecs.Sync(m);
             })));
 
@@ -446,7 +446,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Mobile m = s.Mobiles[i % n];
                 m.SetSAPoison((i & 2) != 0);
-                m.Flags = (i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar;
+                m.TestSetFlags((i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar);
                 ecs.Sync(m);
             })));
 
@@ -456,8 +456,8 @@ namespace ClassicUO.UnitTests.Ecs
                 s.World.Writer.SetHealthbar(m, (i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar, true, (i & 2) != 0);
             })));
 
-            rows.Add(("T1 animation probe: bare cache write (Race)", Measure(packets, i =>
-                s.Mobiles[i % n].Race = (RaceType)(1 + (i & 1)))));
+            rows.Add(("T1 animation probe: bare record write (Race)", Measure(packets, i =>
+                s.Mobiles[i % n].TestSetRace((RaceType)(1 + (i & 1))))));
 
             rows.Add(("T1 animation probe: the same through the funnel (SetRace)", Measure(packets, i =>
                 s.World.Writer.SetRace(s.Mobiles[i % n], (RaceType)(1 + (i & 1))))));

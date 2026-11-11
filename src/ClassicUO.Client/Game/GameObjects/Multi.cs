@@ -38,6 +38,10 @@ namespace ClassicUO.Game.GameObjects
         public int MultiOffsetY;
         public int MultiOffsetZ;
         public bool IsMovable;
+
+        /// <summary>A boat component's offset while its boat steps (WorldWriter.FollowBoatComponents); components are not
+        /// world objects, so it stays on the object (T9 S7 moved it here from GameObject).</summary>
+        public Vector3 Offset;
         public CUSTOM_HOUSE_MULTI_OBJECT_FLAGS State = 0;
 
 

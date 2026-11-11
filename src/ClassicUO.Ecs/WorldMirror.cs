@@ -78,6 +78,12 @@ namespace ClassicUO.Ecs
 
         public int ItemCount { get; private set; }
 
+        /// <summary>
+        /// T9 S7: the records with an <see cref="ItemOffset"/> component (the client adds it for a non-zero boat offset and
+        /// removes it at zero; a removed record takes it along). Zero lets the per-frame offset readers skip the lookup.
+        /// </summary>
+        public int ItemOffsetCount;
+
         public Dictionary<uint, Entity>.KeyCollection Serials => _bySerial.Keys;
 
         public static bool IsMobileSerial(uint serial) => serial > 0 && serial < 0x4000_0000;
@@ -157,8 +163,13 @@ namespace ClassicUO.Ecs
             _bySerial.TryGetValue(serial, out entity) && entity.Tags.Has<MobileTag>() == mobile;
 
         /// <summary>Creates or updates a mobile's entity and returns it (the caller pushes <see cref="MobileInputs"/>).</summary>
+        /// <summary>T9 S8c: the last <see cref="UpsertMobile"/> created the record (its timer, queue and clock are new).</summary>
+        public bool LastMobileCreated { get; private set; }
+
         public Entity UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer, object handle = null)
         {
+            LastMobileCreated = false;
+
             if (!_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<MobileTag>())
             {
                 if (!e.IsNull)
@@ -180,6 +191,11 @@ namespace ClassicUO.Ecs
                     new MobileInputs(),
                     isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
                 );
+
+                // T9 S8c: the animation timer, the walk queue and the clock are the record's from its creation (their only
+                // copy; CreateEntity takes 10 components at most)
+                e.Add(AnimationTimer.MobileDefault, new Steps(), new MobileClock());
+                LastMobileCreated = true;
 
                 _bySerial[serial] = e;
                 MobileCount++;
@@ -451,6 +467,12 @@ namespace ClassicUO.Ecs
 
             Epoch++;
             ClearHandle(e);
+
+            if (ItemOffsetCount != 0 && e.HasComponent<ItemOffset>())
+            {
+                ItemOffsetCount--;
+            }
+
             e.DeleteEntity();
 
             return true;
@@ -511,6 +533,7 @@ namespace ClassicUO.Ecs
             _scratch.Clear();
             _bySerial.Clear();
             Array.Clear(_handles);
+            ItemOffsetCount = 0;
             MobileCount = 0;
             _mobileEpoch++;
             _batchWearer = 0;

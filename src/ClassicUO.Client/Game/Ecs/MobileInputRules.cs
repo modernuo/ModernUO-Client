@@ -132,7 +132,7 @@ namespace ClassicUO.Game
 
             if (src.HasSteps)
             {
-                ref readonly Mobile.Step step = ref m.Steps.Front();
+                Mobile.Step step = m.Steps.Front();
                 src.StepDirection = step.Direction;
                 src.StepRun = step.Run;
             }

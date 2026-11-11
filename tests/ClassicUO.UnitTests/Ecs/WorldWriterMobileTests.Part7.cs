@@ -47,8 +47,8 @@ namespace ClassicUO.UnitTests.Ecs
             Item item = world.GetOrCreateItem(serial);
 
             world.RemoveItemFromContainer(item);
-            item.Container = corpse.Serial;
-            item.Layer = layer;
+            item.TestSetContainer(corpse.Serial);
+            item.TestSetLayer(layer);
             corpse.PushToBack(item);
             world.Ecs.Sync(item);
             WorldWriterTests.AttachLists(world);
@@ -81,12 +81,12 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint serial in new[] { MOB, OTHER })
             {
                 Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
-                Pair(() => { a.SpeedMode = CharacterSpeedType.FastUnmount; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmount));
+                Pair(() => { a.TestSetSpeedMode(CharacterSpeedType.FastUnmount); oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmount));
                 Pair(() => a.IsDead = true, () => newWorld.Writer.SetDead(b, true));
                 AssertSameWorld(oldWorld, newWorld);
                 Pair(() => a.IsDead = false, () => newWorld.Writer.SetDead(b, false));
                 // war mode on another mobile: the setter is empty (war mode is a flag), the inputs are committed as pushed
-                Pair(() => a.InWarMode = true, () => newWorld.Writer.SetWarMode(b, true));
+                Pair(() => a.TestSetInWarMode(true), () => newWorld.Writer.SetWarMode(b, true));
                 AssertSameWorld(oldWorld, newWorld);
             }
 
@@ -120,11 +120,11 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (bool war in new[] { true, true, false })
             {
-                Pair(() => a.InWarMode = war, () => newWorld.Writer.SetWarMode(b, war));
+                Pair(() => a.TestSetInWarMode(war), () => newWorld.Writer.SetWarMode(b, war));
                 AssertSameWorld(oldWorld, newWorld);
             }
 
-            Pair(() => { a.SpeedMode = CharacterSpeedType.CantRun; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
+            Pair(() => { a.TestSetSpeedMode(CharacterSpeedType.CantRun); oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
             Pair(() => OldScalarWrites.Name(a, "Avatar"), () => newWorld.Writer.SetName(b, "Avatar"));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
@@ -139,8 +139,8 @@ namespace ClassicUO.UnitTests.Ecs
             corpse.SetInWorldTile(1002, 1000, 0);
             Item loot = world.GetOrCreateItem(CLOOT);
             loot.Graphic = 0x1F03;
-            loot.Container = CORPSE;
-            loot.Layer = Layer.Robe;
+            loot.TestSetContainer(CORPSE);
+            loot.TestSetLayer(Layer.Robe);
             corpse.PushToBack(loot);
             world.Ecs.Sync(loot);
             WorldWriterTests.AttachLists(world);
@@ -188,7 +188,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceCorpseEquipment(world.Get(CORPSE), ITEM, Layer.Pants);
             world.Ecs.CommitObserver = null;
 
-            seen.Should().Equal((0xFFFF_FFFFu, Layer.Shirt, MOB), (CORPSE, Layer.Pants, MOB));
+            // T9 S5: the getter is the record, so the final commit sees the detached one's Container
+            seen.Should().Equal((0xFFFF_FFFFu, Layer.Shirt, MOB), (CORPSE, Layer.Pants, 0xFFFF_FFFFu));
         }
 
         [Fact]
@@ -269,7 +270,8 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.SetDead(player, true);
 
                 world.Writer.Violations.Should().Be(0);
-                MiscOf(player).Should().Be("speed FastUnmount dead True war True");
+                // T9 S5: the speed and war modes are the record's only, so they are not kept either
+                MiscOf(player).Should().Be("speed Normal dead True war False");
                 // T9: the detached player has no record, so the name is accepted but not kept (a misconfigured server's case)
                 player.Name.Should().BeNull();
             }
@@ -423,15 +425,60 @@ namespace ClassicUO.UnitTests.Ecs
         // ---- group 3: the per-frame frame advance and the end of a corpse animation (ProcessAnimation split). The animation
         // data is not loaded in the tests: the caller's frame count is a parameter of both paths (the old body from the data
         // lookup on). The oracle reads and writes the timer's private fields itself, as the base revision (0b388a043) did,
-        // not through AnimationTimerState/ApplyAnimationTimer, which the operation uses (Codex audit of part 7, P3 #1)
+        // not through AnimationTimerState/ApplyAnimationTimer, which the operation uses (Codex audit of part 7, P3 #1).
+        // T9 S8c: the Mobile's private timer fields are gone (the record's AnimationTimer is the only copy): the oracle's
+        // field reads and writes go to the component's fields through TimerAccess, by the old fields' names
 
-        private static readonly System.Reflection.FieldInfo FInterval = TimerField("_animationInterval"),
+        private static readonly TimerAccess FInterval = TimerField("_animationInterval"),
             FRepeatMode = TimerField("_animationRepeateMode"), FRepeatModeCount = TimerField("_animationRepeatModeCount"),
             FRepeat = TimerField("_animationRepeat"), FForward = TimerField("_isAnimationForwardDirection");
 
-        private static System.Reflection.FieldInfo TimerField(string name) =>
-            typeof(Mobile).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?? throw new InvalidOperationException($"Mobile.{name} not found");
+        private static TimerAccess TimerField(string name) => new TimerAccess(name);
+
+        /// <summary>T9 S8c: a deleted private timer field of the Mobile, read and written in its record's AnimationTimer
+        /// (the old FieldInfo's GetValue/SetValue shape, boxed values of the old field types).</summary>
+        internal sealed class TimerAccess
+        {
+            private readonly string _name;
+
+            public TimerAccess(string name) => _name = name;
+
+            public object GetValue(Mobile m)
+            {
+                AnimationTimer t = m.Timer;
+
+                return _name switch
+                {
+                    "_animationInterval" => t.Interval,
+                    "_animationRepeateMode" => t.RepeatMode,
+                    "_animationRepeatModeCount" => t.RepeatModeCount,
+                    "_animationRepeat" => t.Repeat,
+                    "_isAnimationForwardDirection" => t.Forward,
+                    "_animationGroup" => t.Group,
+                    "_lastAnimationIdleDelay" => t.IdleDue,
+                    _ => throw new InvalidOperationException($"Mobile.{_name} not found")
+                };
+            }
+
+            public void SetValue(Mobile m, object value)
+            {
+                AnimationTimer t = m.Timer;
+
+                switch (_name)
+                {
+                    case "_animationInterval": t.Interval = (byte)value; break;
+                    case "_animationRepeateMode": t.RepeatMode = (ushort)value; break;
+                    case "_animationRepeatModeCount": t.RepeatModeCount = (ushort)value; break;
+                    case "_animationRepeat": t.Repeat = (bool)value; break;
+                    case "_isAnimationForwardDirection": t.Forward = (bool)value; break;
+                    case "_animationGroup": t.Group = (byte)value; break;
+                    case "_lastAnimationIdleDelay": t.IdleDue = (long)value; break;
+                    default: throw new InvalidOperationException($"Mobile.{_name} not found");
+                }
+
+                m.TestSetTimer(in t);
+            }
+        }
 
         // the private timer fields: interval, repeat mode, repeat mode count, repeat, forward
         internal static (byte Interval, ushort Mode, ushort ModeCount, bool Repeat, bool Forward) TimerFieldsOf(Mobile m) =>
@@ -469,7 +516,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 currentDelay = AnimationTiming.Advance(ref timer, frames, out AnimationAdvance advance);
 
-                m.AnimationFrameCount = timer.FrameCount;
+                m.TestSetFrameCount(timer.FrameCount);
                 FRepeatMode.SetValue(m, timer.RepeatMode);
                 FRepeatModeCount.SetValue(m, timer.RepeatModeCount);
                 FRepeat.SetValue(m, timer.Repeat);
@@ -484,7 +531,7 @@ namespace ClassicUO.UnitTests.Ecs
                     m.World.RemoveMobile(m.Serial);
                 }
 
-                m.AnimIndex = timer.Frame;
+                m.SetFrame(timer.Frame);
             }
             else if ((m.Serial & 0x80000000) != 0)
             {
@@ -492,7 +539,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.World.RemoveMobile(m.Serial);
             }
 
-            m.LastAnimationChangeTime = Time.Ticks + currentDelay;
+            m.SetAnimDue(Time.Ticks + currentDelay);
         }
 
         internal static void NewAdvance(World world, Mobile m, int frames)
@@ -575,9 +622,9 @@ namespace ClassicUO.UnitTests.Ecs
 
         internal static void OldInterpolateStep(Mobile m, sbyte x, sbyte y, sbyte z)
         {
-            m.OffsetZ = z;
-            m.OffsetX = x;
-            m.OffsetY = y;
+            m.SetOffset(m.OffsetX, m.OffsetY, z);
+            m.SetOffset(x, m.OffsetY, m.OffsetZ);
+            m.SetOffset(m.OffsetX, y, m.OffsetZ);
         }
 
         [Theory]
@@ -595,7 +642,9 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Pair(() => OldInterpolateStep(a, x, y, z), () => newWorld.Writer.InterpolateStep(b, x, y, z));
                 AssertSameWorld(oldWorld, newWorld);
-                (b.OffsetX, b.OffsetY, b.OffsetZ).Should().Be(((float)x, (float)y, (float)z));
+
+                // T9 S8c: a destroyed mobile has no record, so the offset is dropped (it reads zero)
+                (b.OffsetX, b.OffsetY, b.OffsetZ).Should().Be(b.IsDestroyed ? (0f, 0f, 0f) : ((float)x, (float)y, (float)z));
                 b.Offset.Should().Be(a.Offset);
             }
 
@@ -655,7 +704,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Both(o => o.Update(BOAT), n => n.Update(), NOW + t);
             }
 
-            Microsoft.Xna.Framework.Vector3 mid = newWorld.Items.Get(BOAT).Offset;
+            Microsoft.Xna.Framework.Vector3 mid = newWorld.Items.Get(BOAT).ScreenOffset;
             mid.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "mid-step");
             newHouse.Components.Should().OnlyContain(c => c.Offset == mid);
             newWorld.Mobiles.Get(MOB).Offset.Should().Be(mid);
@@ -711,10 +760,10 @@ namespace ClassicUO.UnitTests.Ecs
                 World world = BuildBoat(Start.Standing), other = BuildBoat(Start.Standing);
                 world.Writer.ThrowOnViolation = throws;
 
-                // ProcessSteps passes what the update loops iterate: a stale instance of this World is written as before T1
+                // a stale instance of this World is admitted (no violation); T9 S8c: without a record the write is dropped
                 Mobile stale = Mobile.Create(world, MOB);
                 world.Writer.InterpolateStep(stale, 3, 4, 5);
-                stale.Offset.Should().Be(new Microsoft.Xna.Framework.Vector3(3, 4, 5));
+                stale.Offset.Should().Be(Microsoft.Xna.Framework.Vector3.Zero);
                 world.Writer.Violations.Should().Be(0);
 
                 Mobile foreign = other.Mobiles.Get(MOB);
@@ -741,7 +790,7 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                 }
 
-                (foreign.Offset, foreignBoat.Offset, strangerOnDeck.Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)));
+                (foreign.Offset, foreignBoat.ScreenOffset, strangerOnDeck.Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)));
                 foreignHouse.Components.Select(c => c.Offset.X).Should().Equal(0f, 1f, 2f);
                 world.Writer.Violations.Should().Be(5);
             }
@@ -752,7 +801,7 @@ namespace ClassicUO.UnitTests.Ecs
             w.Writer.InterpolateStep(w.Mobiles.Get(MOB), 1, 1, 1);
             w.Writer.InterpolateBoat(w.Items.Get(BOAT), 1, 1, 1);
             w.Ecs.EndFold(w.Mobiles.Get(OTHER));
-            (w.Mobiles.Get(MOB).Offset, w.Items.Get(BOAT).Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)), "a nested call is rejected");
+            (w.Mobiles.Get(MOB).Offset, w.Items.Get(BOAT).ScreenOffset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)), "a nested call is rejected");
             w.Writer.Violations.Should().Be(2);
         }
 
@@ -767,12 +816,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (bool flip in new[] { false, true })
             {
-                m.AnimIndex = (byte)(flip ? 6 : 3);
-                m.AnimationFrameCount = (byte)(flip ? 2 : 7);
-                m.AnimationFromServer = !flip;
+                m.SetFrame((byte)(flip ? 6 : 3));
+                m.TestSetFrameCount((byte)(flip ? 2 : 7));
+                m.TestSetFromServer(!flip);
                 SetTimerFields(m, (byte)(flip ? 0 : 2), (ushort)(flip ? 9 : 4), (ushort)(flip ? 1 : 5), repeat: !flip, forward: flip);
 
-                AnimationTimer t = m.AnimationTimerState;
+                AnimationTimer t = m.Timer;
 
                 (t.Frame, t.FrameCount, t.Interval, t.RepeatMode, t.RepeatModeCount, t.Repeat, t.Forward, t.FromServer).Should().Be(
                     flip
@@ -789,9 +838,9 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (bool flip in new[] { false, true })
             {
-                m.AnimIndex = 3;
-                m.AnimationFrameCount = 7;
-                m.AnimationFromServer = true;
+                m.SetFrame(3);
+                m.TestSetFrameCount(7);
+                m.TestSetFromServer(true);
                 SetTimerFields(m, 2, 4, 5, repeat: flip, forward: false);
                 var timer = new AnimationTimer
                 {
@@ -880,7 +929,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.AdvanceAnimation(m, 4, out _, out _).Should().BeFalse();
             Time.Ticks = NOW;
 
-            (world.Ecs.ClockWrites - writes).Should().Be(0, "the update loops push the clock after Update, as before T1");
+            // T9 S8c: the timer writes keep the clock themselves (the count of clock writes is no longer the old pushes)
             m.LastAnimationChangeTime.Should().BeGreaterThan(NOW + 500);
         }
 
@@ -917,14 +966,15 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.Violations.Should().Be(3);
             }
 
-            // a stale instance of this World (not held): written as before T1, unfolded, no violation
+            // a stale instance of this World (not held): admitted, unfolded, no violation. T9 S8c: it has no record, so its
+            // timer reads a new mobile's and the writes are dropped (the S5/S6 rule for record-less objects)
             World w = BuildAdvance(AdvanceStart.Repeating);
             w.Writer.ThrowOnViolation = true;
             Mobile stale = Mobile.Create(w, MOB);
             Time.Ticks = NOW + 300;
             w.Writer.AdvanceAnimation(stale, 3, out _, out _).Should().BeFalse();
             Time.Ticks = NOW;
-            stale.LastAnimationChangeTime.Should().BeGreaterThan(NOW);
+            stale.LastAnimationChangeTime.Should().Be(0);
             w.Writer.Violations.Should().Be(0);
         }
 
@@ -1000,8 +1050,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.RemoveDeadMobile(m, f0, d0);
             m.IsDestroyed.Should().BeTrue();
 
-            // the removed mobile has no record left, so its name reads null (T9: no cache)
-            (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(((string)null, "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
+            // the removed mobile has no record left, so its name and speed mode read the defaults (T9, S5: no cache)
+            (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(((string)null, "bag", 5u, CharacterSpeedType.Normal, true, 0x4000_7302u));
             FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key, the frame advance and the corpse animation's end");
         }
 
@@ -1028,10 +1078,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.InterpolateStep(m, 5, -5, 1);
             world.Writer.InterpolateBoat(boat, 2, 3, 0);
             world.Writer.FollowBoatComponents(boat, house);
-            world.Writer.FollowBoat(m, boat.Offset);
+            world.Writer.FollowBoat(m, boat.ScreenOffset);
             world.Writer.JumpBoat(boat, 1002, 1000, 0);
 
-            (m.Offset, house.Components[0].Offset).Should().Be((boat.Offset, boat.Offset));
+            (m.Offset, house.Components[0].Offset).Should().Be((boat.ScreenOffset, boat.ScreenOffset));
             FunnelCheck.Total.Should().Be(0, "ProcessSteps' walk offset, the boat's offset, its components' and its passengers', 0xF6's jump");
         }
     }

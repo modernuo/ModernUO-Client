@@ -657,10 +657,11 @@ namespace ClassicUO.Game.UI.Gumps
 
                 var bounds = Client.Game.UO.Arts.GetRealArtBounds(item.Graphic);
 
-                x = item.RealScreenPosition.X + (int)item.Offset.X + 22 + 5;
+                Vector3 offset = ItemOffsets.Read(item);
+                x = item.RealScreenPosition.X + (int)offset.X + 22 + 5;
                 y =
                     item.RealScreenPosition.Y
-                    + (int)(item.Offset.Y - item.Offset.Z)
+                    + (int)(offset.Y - offset.Z)
                     + (bounds.Height >> 1);
             }
 

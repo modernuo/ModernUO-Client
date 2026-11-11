@@ -25,7 +25,7 @@ namespace ClassicUO.UnitTests.Ecs
             m.Graphic = graphic;
             OldCheckGraphicChange(m);
             m.SetInWorldTile(x, y, z);
-            m.Direction = dir;
+            m.TestSetDirection(dir);
         }
 
         private static void NewEnterWorld(World world, Mobile m, ushort graphic, ushort x, ushort y, sbyte z, Direction dir)
@@ -83,7 +83,6 @@ namespace ClassicUO.UnitTests.Ecs
             b.OnMoved.Should().BeNull("the position callback ran");
             b.OnTurned.Should().BeNull("the direction callback ran");
             b.Direction.Should().Be(Direction.South);
-            OracleTraits.Sync(oldWorld); // the old path wrote the small fields' caches only
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
@@ -119,7 +118,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.SetInWorldTile((ushort)x, (ushort)y, z);
             }
 
-            m.Direction = dir;
+            m.TestSetDirection(dir);
         }
 
         private static void NewDenyWalk(World world, Mobile m, int x, int y, sbyte z, Direction dir)
@@ -146,8 +145,10 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
             // an offset mid-step, which the clear zeroes
-            a.OffsetX = b.OffsetX = 7;
-            a.OffsetZ = b.OffsetZ = -2;
+            a.SetOffset(7, a.OffsetY, a.OffsetZ);
+            b.SetOffset(7, b.OffsetY, b.OffsetZ);
+            a.SetOffset(a.OffsetX, a.OffsetY, -2);
+            b.SetOffset(b.OffsetX, b.OffsetY, -2);
 
             var denies = new (int X, int Y, sbyte Z, Direction Dir)[] { (998, 1001, 2, Direction.Left), (-1, -1, -1, Direction.North), (1000, 1000, 0, Direction.East) };
 
@@ -164,7 +165,8 @@ namespace ClassicUO.UnitTests.Ecs
 
                 // the next step queued again, so the following deny clears a queue
                 Pair(() => OldEnqueueStep(a, a.X + 1, a.Y, a.Z, Direction.East, false), () => OldEnqueueStep(b, b.X + 1, b.Y, b.Z, Direction.East, false));
-                a.OffsetY = b.OffsetY = 3;
+                a.SetOffset(a.OffsetX, 3, a.OffsetZ);
+                b.SetOffset(b.OffsetX, 3, b.OffsetZ);
             }
 
             newWorld.Writer.Violations.Should().Be(0);
@@ -181,7 +183,8 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.ThrowOnViolation = true;
             GiveWalker(b);
             Pair(() => OldEnqueueStep(a, 1001, 1000, 0, Direction.East, true), () => OldEnqueueStep(b, 1001, 1000, 0, Direction.East, true));
-            a.OffsetX = b.OffsetX = 5;
+            a.SetOffset(5, a.OffsetY, a.OffsetZ);
+            b.SetOffset(5, b.OffsetY, b.OffsetZ);
 
             // the position callback walks again (RequestMove): the move is not folded
             a.OnMoved = StandInWalk(Direction.West);
@@ -209,11 +212,11 @@ namespace ClassicUO.UnitTests.Ecs
             m.X = (ushort)step.X;
             m.Y = (ushort)step.Y;
             m.Z = step.Z;
-            m.Direction = (Direction)step.Direction;
+            m.TestSetDirection((Direction)step.Direction);
             m.IsRunning = step.Run;
-            m.OffsetX = 0;
-            m.OffsetY = 0;
-            m.OffsetZ = 0;
+            m.SetOffset(0, m.OffsetY, m.OffsetZ);
+            m.SetOffset(m.OffsetX, 0, m.OffsetZ);
+            m.SetOffset(m.OffsetX, m.OffsetY, 0);
             m.RemoveFirstStep();
             m.CalculateRandomIdleTime();
             m.World.Ecs.PushInputs(m);
@@ -235,7 +238,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.AddToTile();
             }
 
-            m.LastStepTime = Time.Ticks;
+            m.SetLastStepTime(Time.Ticks);
             m.World.Ecs.PushInputs(m);
         }
 
@@ -273,9 +276,12 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Time.Ticks += 150;
                 // mid-step offsets, as the per-frame interpolation leaves them
-                a.OffsetX = b.OffsetX = 11;
-                a.OffsetY = b.OffsetY = -6;
-                a.OffsetZ = b.OffsetZ = 1;
+                a.SetOffset(11, a.OffsetY, a.OffsetZ);
+                b.SetOffset(11, b.OffsetY, b.OffsetZ);
+                a.SetOffset(a.OffsetX, -6, a.OffsetZ);
+                b.SetOffset(b.OffsetX, -6, b.OffsetZ);
+                a.SetOffset(a.OffsetX, a.OffsetY, 1);
+                b.SetOffset(b.OffsetX, b.OffsetY, 1);
                 a.UpdateRealScreenPositionOnly(0, 0);
                 b.UpdateRealScreenPositionOnly(0, 0);
                 a.PendingBlock = b.PendingBlock = placed ? 0 : -1;
@@ -355,8 +361,10 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World oldWorld = Build(start), newWorld = Build(start);
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
-                a.Direction = b.Direction = Direction.Left;
-                a.Flags = b.Flags = Flags.WarMode;
+                a.TestSetDirection(Direction.Left);
+                b.TestSetDirection(Direction.Left);
+                a.TestSetFlags(Flags.WarMode);
+                b.TestSetFlags(Flags.WarMode);
                 oldWorld.Ecs.Sync(a);
                 newWorld.Ecs.Sync(b);
 
@@ -397,7 +405,7 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (Mobile s in new[] { a, b })
             {
                 s.Graphic = 0x190;
-                s.Direction = Direction.East;
+                s.TestSetDirection(Direction.East);
                 s.X = 1000;
                 s.Y = 1000;
             }
@@ -481,7 +489,7 @@ namespace ClassicUO.UnitTests.Ecs
             chest.Graphic = 0xE40;
             chest.SetInWorldTile(1003, 1000, 0);
             Item coin = world.Writer.UpsertWorldItem(COIN, 0xEED, 0, 5, 1003, 1000, 0, 0, 0, 0, 0, out _, out coinPlacement);
-            coin.Container = CHEST;
+            coin.TestSetContainer(CHEST);
             chest.PushToBack(coin);
             world.Ecs.Sync(coin);
             WorldWriterTests.AttachLists(world);
@@ -617,7 +625,9 @@ namespace ClassicUO.UnitTests.Ecs
             Pair(() => OldDenyWalk(a, 1000, 1000, 0, Direction.West), () => NewDenyWalk(newWorld, b, 1000, 1000, 0, Direction.West));
             Pair(() => a.NotorietyFlag = NotorietyFlag.Murderer, () => newWorld.Writer.SetNotoriety(b, NotorietyFlag.Murderer));
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
-            (b.Graphic, b.IsFemale, b.X, b.Direction, b.NotorietyFlag, b.Steps.Count).Should().Be(((ushort)0x25E, true, (ushort)1000, Direction.West, NotorietyFlag.Murderer, 0));
+            // (T9 S5: the detached player has no record, so the body's sex is not kept: a misconfigured server's case; T9 S6:
+            // nor its direction)
+            (b.Graphic, b.IsFemale, b.X, b.Direction, b.NotorietyFlag, b.Steps.Count).Should().Be(((ushort)0x25E, false, (ushort)1000, Direction.North, NotorietyFlag.Murderer, 0));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
 
@@ -701,7 +711,7 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Total.Should().Be(0, "ProcessSteps' step completion");
 
             // 0x21 / 0x22
-            m.OffsetX = 4;
+            m.SetOffset(4, m.OffsetY, m.OffsetZ);
             FunnelCheck.Reset();
             world.Writer.StopMobile(m);
             world.Writer.SetMobileDirection(m, Direction.West);
@@ -710,13 +720,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             // the range sweep: a walking mobile wearing an item, a ground bag holding an item
             Item worn = world.GetOrCreateItem(0x4000_7210);
-            worn.Layer = Layer.Shirt;
-            worn.Container = m.Serial;
+            worn.TestSetLayer(Layer.Shirt);
+            worn.TestSetContainer(m.Serial);
             m.PushToBack(worn);
             Item bag = world.GetOrCreateItem(0x4000_7211);
             bag.SetInWorldTile(1005, 1005, 0);
             Item inside = world.GetOrCreateItem(0x4000_7212);
-            inside.Container = bag.Serial;
+            inside.TestSetContainer(bag.Serial);
             bag.PushToBack(inside);
             WorldWriterTests.AttachLists(world);
             world.Writer.UpsertMobile(m, m.Serial, 0x190, 0, (ushort)(m.X + 1), m.Y, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p2);

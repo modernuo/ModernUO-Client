@@ -15,12 +15,13 @@ namespace ClassicUO.Game.Scenes
     /// through MobileAnimationSystem + <see cref="MobileSpriteExtract.Select"/>, the item through
     /// <see cref="ItemSpriteInput.Gather"/> + <see cref="ItemSpriteExtract.Select"/>, each record through
     /// <see cref="LegacySpriteResolve"/>. What the views did besides drawing comes from the extract's side outputs, as on the
-    /// Gpu path (GpuWorldRenderer.TryDrawMobileEcs/EmitItem): the mobile's FrameInfo and mirror bit, the corpse's mirror bit,
+    /// Gpu path (GpuWorldRenderer.DrawMobileEcs/EmitItem): the mobile's FrameInfo and mirror bit, the corpse's mirror bit,
     /// the item art entry's picking offset (written by the select), the aura, and the lights. Picking reads the same pick
     /// state from <see cref="SpritePickTable"/> (2b), which the sink records from the select. Effects have their own sink
-    /// (EffectSpriteSink). A mobile without a mirror entity falls back to its view (MobileView.Draw), as do objects that are
-    /// neither mobiles nor items. T9 deleted the switch <c>legacy_ecs_sprites</c> (its off path drew every mobile and item
-    /// through its view) and the checker CUO_LEGACY_ECS_PARITY.
+    /// (EffectSpriteSink), also when a translucent one is in the transparent list. T9 deleted the switch <c>legacy_ecs_sprites</c>
+    /// (its off path drew every mobile and item through its view) and the checker CUO_LEGACY_ECS_PARITY; T9 S8a deleted the view
+    /// bodies: a mobile without a mirror record is not drawn (<see cref="NoteMobileWithoutRecord"/>), and only Land, Static and
+    /// Multi still draw through their views.
     /// </summary>
     internal static class LegacySpriteSink
     {
@@ -48,7 +49,7 @@ namespace ClassicUO.Game.Scenes
             SpritePickTable.Commit();
         }
 
-        /// <summary>The render list's draw of one object: the sink for mobiles and items, the view for the rest.</summary>
+        /// <summary>The render list's draw of one object: the sinks for mobiles, items and effects, the view for the rest.</summary>
         public static bool Draw(UltimaBatcher2D batcher, GameObject obj, float depth)
         {
             // items first: most of the list, and Item is sealed (one type compare)
@@ -59,7 +60,13 @@ namespace ClassicUO.Game.Scenes
 
             if (obj is Mobile)
             {
-                return DrawMobileOrView(batcher, Unsafe.As<Mobile>(obj), depth);
+                return DrawMobileOrSkip(batcher, Unsafe.As<Mobile>(obj), depth);
+            }
+
+            // a translucent effect fades into the transparent list (GameScene's ProcessAlpha)
+            if (obj is GameEffect)
+            {
+                return EffectSpriteSink.DrawLegacy(batcher, Unsafe.As<GameEffect>(obj), depth);
             }
 
             return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
@@ -172,22 +179,78 @@ namespace ClassicUO.Game.Scenes
             public byte Data;
         }
 
-        private static bool DrawMobileOrView(UltimaBatcher2D batcher, Mobile mobile, float depth)
+        private static bool DrawMobileOrSkip(UltimaBatcher2D batcher, Mobile mobile, float depth)
         {
             if (!TryMobileEntity(mobile, out Friflo.Engine.ECS.Entity e))
             {
-                if (mobile.IsDestroyed || !mobile.AllowedToDraw)
+                if (!mobile.IsDestroyed && mobile.AllowedToDraw)
                 {
-                    return false;
+                    NoteMobileWithoutRecord(mobile);
                 }
 
-                return mobile.Draw(batcher, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth);
+                return false;
             }
 
             return DrawMobile(batcher, mobile, e, depth);
         }
 
-        // E5 (shared with GpuWorldRenderer.TryDrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
+#if CUO_DEVTOOLS
+        // CLEANUP(release): how many listed mobiles had no mirror record with an AnimationState (not drawn)
+        internal static long MobilesWithoutRecord;
+#endif
+
+        // the serials [mobile-no-record] already logged (dev only; created at the first miss, bounded: after
+        // NO_RECORD_LOG_MAX serials nothing more is logged, so mobiles drawn every frame never log or allocate per frame)
+        private const int NO_RECORD_LOG_MAX = 64;
+        private static System.Collections.Generic.HashSet<uint> _noRecordLogged;
+
+        /// <summary>Whether <paramref name="serial"/> is a record-less mobile not logged yet (and room is left): true once per serial.</summary>
+        internal static bool FirstNoRecord(uint serial)
+        {
+            _noRecordLogged ??= new System.Collections.Generic.HashSet<uint>();
+
+            return _noRecordLogged.Count < NO_RECORD_LOG_MAX && _noRecordLogged.Add(serial);
+        }
+
+        /// <summary>Tests: forgets the logged serials.</summary>
+        internal static void ResetNoRecordLog() => _noRecordLogged?.Clear();
+
+        /// <summary>
+        /// T9 S8a (case M1 of the view-fallback inventory): a live, drawable mobile in a render list with no mirror record that
+        /// has an AnimationState is not drawn (MobileView.Draw, which drew it, is deleted). Reachable only for an instance the
+        /// World no longer holds under its serial: the detached player (a 0x25 under the player's serial, a misconfigured
+        /// server; RemoveMobile also takes it off its tile, so it is normally not listed), or a serial reused by an item
+        /// between a death re-key and the sweep. Shared by both worlds; dev builds count it and log each new serial.
+        /// </summary>
+        internal static void NoteMobileWithoutRecord(Mobile mobile)
+        {
+#if CUO_DEVTOOLS
+            MobilesWithoutRecord++;
+
+            if (FirstNoRecord(mobile.Serial))
+            {
+                ClassicUO.Utility.Logging.Log.Warn($"[mobile-no-record] mobile 0x{mobile.Serial:X8} has no mirror record: not drawn ({MobilesWithoutRecord} so far)");
+            }
+#endif
+        }
+
+        /// <summary>GameScene's house placement preview (a record-less multi item, not in a render list): the item extract, with
+        /// its light, as ItemView.Draw drew it (T9 S8a). Not recorded for picking (the preview was never picked).</summary>
+        public static bool DrawPreview(UltimaBatcher2D batcher, Item item, float depth)
+        {
+            ItemSpriteInput.Gather(item, out ItemSpriteInput input);
+            bool drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, item.RealScreenPosition.X,
+                item.RealScreenPosition.Y, depth);
+
+            if (_items.Light)
+            {
+                Client.Game.GetScene<GameScene>()?.AddLight(item, item, _items.LightX, _items.LightY);
+            }
+
+            return drawn;
+        }
+
+        // E5 (shared with GpuWorldRenderer.DrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
         private static bool TryMobileEntity(Mobile mobile, out Friflo.Engine.ECS.Entity e)
         {
             if (mobile.IsDestroyed || !mobile.AllowedToDraw)

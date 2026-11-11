@@ -246,7 +246,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
                 else if (item != null)
                 {
-                    _world.Writer.FollowBoat(entity, item.Offset);
+                    _world.Writer.FollowBoat(entity, item.ScreenOffset);
                 }
             }
         }

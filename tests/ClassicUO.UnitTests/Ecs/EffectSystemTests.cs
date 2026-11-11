@@ -91,6 +91,9 @@ namespace ClassicUO.UnitTests.Ecs
             return e;
         }
 
+        // the effect's state (default once destroyed: the views draw nothing then)
+        private static EffectState St(GameEffect f) => f.EcsEntity.IsNull ? default : f.EcsEntity.GetComponent<EffectState>();
+
         private static string Snap(World w)
         {
             var sb = new System.Text.StringBuilder();
@@ -98,9 +101,9 @@ namespace ClassicUO.UnitTests.Ecs
             for (GameEffect f = (GameEffect)w.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
                 sb.Append(f.GetType().Name).Append('|').Append(f.X).Append(',').Append(f.Y).Append(',').Append(f.Z)
-                    .Append("|o").Append(f.OffsetX.ToString("R")).Append(',').Append(f.OffsetY.ToString("R")).Append("|a").Append(f.AngleToTarget.ToString("R"))
-                    .Append("|g").Append(f.Graphic.ToString("X")).Append("|f").Append(f.AnimationGraphic.ToString("X")).Append(" i").Append(f.AnimIndex)
-                    .Append(" n").Append(f.NextChangeFrameTime).Append(" d").Append(f.Duration).Append(" b").Append((int)f.Blend)
+                    .Append("|o").Append(St(f).OffsetX.ToString("R")).Append(',').Append(St(f).OffsetY.ToString("R")).Append("|a").Append(St(f).Angle.ToString("R"))
+                    .Append("|g").Append(f.Graphic.ToString("X")).Append("|f").Append(St(f).AnimGraphic.ToString("X")).Append(" i").Append(St(f).AnimIndex)
+                    .Append(" n").Append(St(f).NextChange).Append(" d").Append(f.Duration).Append(" b").Append((int)f.Blend)
                     .Append(" dead").Append(f.IsDestroyed).Append('\n');
             }
 
@@ -164,22 +167,16 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        // every live effect's state is what its object shows (the object is the state's write-through cache), and it holds no
-        // endpoint objects
+        // every live effect's position is its object's (the object keeps it for its tile placement; T9 S7 deleted its frame,
+        // offset and angle copies), its screen offset is the state's, and it holds no endpoint objects
         private static void StateEqualsObjects(World w, int frame)
         {
             for (GameEffect f = (GameEffect)w.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
                 ref readonly EffectState s = ref f.EcsEntity.GetComponent<EffectState>();
                 (s.X, s.Y, s.Z).Should().Be((f.X, f.Y, f.Z), $"position after frame {frame}");
-                new Vector3(s.OffsetX, s.OffsetY, s.OffsetZ).Should().Be(f.Offset, $"offset after frame {frame}");
-                s.Angle.Should().Be(f.AngleToTarget);
+                f.ScreenOffset.Should().Be(new Vector3(s.OffsetX, s.OffsetY, s.OffsetZ), $"offset after frame {frame}");
                 (f.Source, f.Target).Should().Be((null, null), "the state references the endpoints");
-
-                if (f is DragEffect d)
-                {
-                    s.MoveTime.Should().Be(d.LastMoveTime);
-                }
             }
         }
 
@@ -228,9 +225,9 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     Source = EndpointObject(_fx, (s.Ends & EffectState.END_SOURCE) != 0, (s.Ends & EffectState.END_SOURCE_MOBILE) != 0, s.SourceSerial),
                     Target = EndpointObject(_fx, (s.Ends & EffectState.END_TARGET) != 0, (s.Ends & EffectState.END_TARGET_MOBILE) != 0, s.TargetSerial),
-                    AnimIndex = f.AnimIndex,
-                    AnimGraphic = f.AnimationGraphic,
-                    Next = f.NextChangeFrameTime
+                    AnimIndex = St(f).AnimIndex,
+                    AnimGraphic = St(f).AnimGraphic,
+                    Next = St(f).NextChange
                 };
                 _legacy.Add(f, r);
             }
@@ -254,11 +251,11 @@ namespace ClassicUO.UnitTests.Ecs
                 r.X = f.X;
                 r.Y = f.Y;
                 r.Z = f.Z;
-                r.Offset = f.Offset;
-                r.Angle = f.AngleToTarget;
-                r.MoveTime = f is DragEffect d0 ? d0.LastMoveTime : 0;
+                r.Offset = f.ScreenOffset;
+                r.Angle = St(f).Angle;
+                r.MoveTime = f is DragEffect ? St(f).MoveTime : 0;
                 r.SourceEnds = r.Arrived = r.Destroys = false;
-                r.FrameSteps = !(f is DragEffect d1 && d1.LastMoveTime > Time.Ticks);
+                r.FrameSteps = !(f is DragEffect && St(f).MoveTime > Time.Ticks);
 
                 switch (f)
                 {
@@ -307,7 +304,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                         if (!r.SourceEnds && !r.Destroys && r.Source != null)
                         {
-                            r.Offset = r.Source.Offset;
+                            r.Offset = r.Source.ScreenOffset;
                             (r.X, r.Y, r.Z) = (r.Source.X, r.Source.Y, r.Source.Z);
                         }
 
@@ -338,16 +335,16 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (r.FrameSteps)
                 {
-                    (f.AnimIndex, f.AnimationGraphic, f.NextChangeFrameTime).Should().Be((r.AnimIndex, r.AnimGraphic, r.Next), $"{at}: the frame");
+                    (St(f).AnimIndex, St(f).AnimGraphic, St(f).NextChange).Should().Be((r.AnimIndex, r.AnimGraphic, r.Next), $"{at}: the frame");
                 }
 
                 (f.X, f.Y, f.Z).Should().Be((r.X, r.Y, r.Z), $"{at}: the position");
-                f.Offset.Should().Be(r.Offset, $"{at}: the offset");
-                f.AngleToTarget.Should().Be(r.Angle, $"{at}: the angle");
+                f.ScreenOffset.Should().Be(r.Offset, $"{at}: the offset");
+                St(f).Angle.Should().Be(r.Angle, $"{at}: the angle");
 
-                if (f is DragEffect d)
+                if (f is DragEffect)
                 {
-                    d.LastMoveTime.Should().Be(r.MoveTime, $"{at}: the next move time");
+                    St(f).MoveTime.Should().Be(r.MoveTime, $"{at}: the next move time");
                 }
 
                 _legacyCompared++;
@@ -443,8 +440,8 @@ namespace ClassicUO.UnitTests.Ecs
             int offsetTargetZ = tZ - playerZ;
 
             Vector2 source = new Vector2((offsetSourceX - offsetSourceY) * 22, (offsetSourceX + offsetSourceY) * 22 - offsetSourceZ * 4);
-            source.X += e.Offset.X;
-            source.Y += e.Offset.Y;
+            source.X += r.Offset.X;
+            source.Y += r.Offset.Y;
 
             Vector2 target = new Vector2((offsetTargetX - offsetTargetY) * 22, (offsetTargetX + offsetTargetY) * 22 - offsetTargetZ * 4);
 
@@ -542,7 +539,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             Run(30);
             _fx.Effects.Items.Should().NotBeNull();
-            ((GameEffect)_fx.Effects.Items).AnimIndex.Should().BeLessThan(2);
+            St((GameEffect)_fx.Effects.Items).AnimIndex.Should().BeLessThan(2);
         }
 
         [Fact]
@@ -682,7 +679,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Run(5);
 
-            // a state that drifted from the object (a missed publish) and a missing entity are both reported
+            // a position that drifted from the object's (a missed tile placement) is reported; the frame, offset and angle live
+            // only in the state (T9 S7), so a changed frame is no mismatch
             var fx = (GameEffect)_fx.Effects.Items;
             fx.EcsEntity.GetComponent<EffectState>().X = 5;
             EffectSystem.Check(_fx, _fx.Effects);
@@ -692,8 +690,7 @@ namespace ClassicUO.UnitTests.Ecs
             fx.EcsEntity.GetComponent<EffectState>().X = fx.X;
             fx.EcsEntity.GetComponent<EffectState>().AnimIndex = 9;
             EffectSystem.Check(_fx, _fx.Effects);
-            _mismatches.Should().Contain(m => m.Contains("frame"));
-            _mismatches.Clear();
+            _mismatches.Should().BeEmpty();
         }
 
         // ---- T8 ownership (ecs_effect_endpoints)
@@ -979,8 +976,6 @@ namespace ClassicUO.UnitTests.Ecs
         {
             foreach (World w in Worlds)
             {
-                w.Ecs.ClockEnabled = true;
-                w.Ecs.StepsEnabled = true;
                 AddMobile(w, CASTER, 1004, 1002);
                 AddItem(w, ITEM, 1005, 1003);
                 Create(w, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
@@ -990,11 +985,9 @@ namespace ClassicUO.UnitTests.Ecs
             Run(20, (w, i) =>
             {
                 Mobile m = w.Mobiles.Get(CASTER);
-                m.Offset = new Microsoft.Xna.Framework.Vector3(i, -i, i / 2);
-                w.Ecs.PushSteps(m);
+                m.SetOffset(new Microsoft.Xna.Framework.Vector3(i, -i, i / 2));
                 Item it = w.Items.Get(ITEM);
-                it.Offset = new Microsoft.Xna.Framework.Vector3(2 * i, i, i % 3);
-                ItemOffsets.Push(w, it, it.Offset); // the boat operations' ECS write (ecs_item_offset: the motion world)
+                ItemOffsets.Push(w, it, new Microsoft.Xna.Framework.Vector3(2 * i, i, i % 3)); // the boat operations' ECS write
             });
 
             // the offsets are read from the ECS, not from the objects: the mobile's Steps, and with item offsets from the ECS
@@ -1006,10 +999,9 @@ namespace ClassicUO.UnitTests.Ecs
             itemRec.GetComponent<ClassicUO.Ecs.ItemOffset>().Y = -5;
             _fx.Effects.Update();
             var fixedOnMobile = (GameEffect)_fx.Effects.Items;
-            fixedOnMobile.OffsetX.Should().Be(77);
-            caster.OffsetX.Should().NotBe(77);
-            ((GameEffect)fixedOnMobile.Next).OffsetY.Should().Be(-5);
-            _fx.Items.Get(ITEM).OffsetY.Should().NotBe(-5);
+            fixedOnMobile.ScreenOffset.X.Should().Be(77);
+            caster.OffsetX.Should().Be(77, "T9 S8c: the Mobile reads its record's Steps, the offset's only copy");
+            ((GameEffect)fixedOnMobile.Next).ScreenOffset.Y.Should().Be(-5);
             _mismatches.Should().BeEmpty();
         }
 

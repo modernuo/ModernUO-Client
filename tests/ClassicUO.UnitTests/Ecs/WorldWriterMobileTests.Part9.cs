@@ -89,12 +89,12 @@ namespace ClassicUO.UnitTests.Ecs
             Item bank = OpenBank(world, p);
             Item vault = world.GetOrCreateItem(VAULT);
             vault.Graphic = 0xE7D;
-            vault.Container = BANK;
+            vault.TestSetContainer(BANK);
             bank.PushToBack(vault);
             Item coin = world.GetOrCreateItem(COIN9);
             coin.Graphic = 0xEED;
-            coin.Amount = 7;
-            coin.Container = VAULT;
+            coin.TestSetAmount(7);
+            coin.TestSetContainer(VAULT);
             vault.PushToBack(coin);
             world.Ecs.Sync(vault);
             world.Ecs.Sync(coin);
@@ -103,12 +103,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item pack = world.GetOrCreateItem(PACK9);
             pack.Graphic = 0xE75;
-            pack.Layer = Layer.Backpack;
-            pack.Container = p.Serial;
+            pack.TestSetLayer(Layer.Backpack);
+            pack.TestSetContainer(p.Serial);
             p.PushToBack(pack);
             Item kept = world.GetOrCreateItem(KEPT);
             kept.Graphic = 0xF0E;
-            kept.Container = PACK9;
+            kept.TestSetContainer(PACK9);
             pack.PushToBack(kept);
             world.Ecs.Sync(pack);
             world.Ecs.Sync(kept);
@@ -118,7 +118,7 @@ namespace ClassicUO.UnitTests.Ecs
             ground.SetInWorldTile(1003, 1000, 0);
             Item loot = world.GetOrCreateItem(LOOT9);
             loot.Graphic = 0x1F15;
-            loot.Container = BAG;
+            loot.TestSetContainer(BAG);
             world.Items.Get(BAG).PushToBack(loot);
             world.Ecs.Sync(loot);
             WorldWriterTests.AttachLists(world);
@@ -130,7 +130,7 @@ namespace ClassicUO.UnitTests.Ecs
         private static WorldWriter.Placement PendingIn9(World world, uint parent)
         {
             Item it = world.Writer.UpsertWorldItem(PENDING, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
-            it.Container = parent;
+            it.TestSetContainer(parent);
             world.Get(parent).PushToBack(it);
             WorldWriterTests.AttachLists(world);
 

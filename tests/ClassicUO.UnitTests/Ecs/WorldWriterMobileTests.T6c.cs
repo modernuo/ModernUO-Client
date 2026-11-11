@@ -64,7 +64,7 @@ namespace ClassicUO.UnitTests.Ecs
                 case StepScenario.AcrossChunks:
                 case StepScenario.Parked:
                     m.SetInWorldTile(1006, 1000, 0);
-                    m.Direction = Direction.East;
+                    m.TestSetDirection(Direction.East);
                     world.Ecs.Sync(m);
                     Time.Ticks = NOW - 100;
 
@@ -85,7 +85,7 @@ namespace ClassicUO.UnitTests.Ecs
                     if (sc == StepScenario.BadStepCarried)
                     {
                         // the step started just now, so it is not overdue: only the bad-step test can end it at once
-                        m.LastStepTime = NOW;
+                        m.SetLastStepTime(NOW);
                     }
 
                     world.Ecs.PushInputs(m);
@@ -136,11 +136,6 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.AnimateMobile(m, 12, interval: 5, frameCount: 4, repeatCount: 1, forward: true, fromServer: true);
             }
 
-            if (system)
-            {
-                world.Ecs.StepsEnabled = true;
-                world.Ecs.ResyncClocks();
-            }
 
             return world;
         }
@@ -165,10 +160,6 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(oldWorld, newWorld);
             b.Offset.Should().Be(a.Offset);
 
-            if (expectSystem)
-            {
-                StepSystem.Diff(b, StepEntity(newWorld, b)).Should().BeNull("the component follows the Mobile without a re-push");
-            }
         }
 
         public static IEnumerable<object[]> StepCases()
@@ -248,7 +239,6 @@ namespace ClassicUO.UnitTests.Ecs
                     }
 
                     // what CUO_STEP_CHECK's before-run check sees: the component follows every write outside the system
-                    StepSystem.Diff(b, StepEntity(newWorld, b)).Should().BeNull("before frame {0}", f);
 
                     StepFrame(oldWorld, newWorld, a, b);
                 }
@@ -293,11 +283,6 @@ namespace ClassicUO.UnitTests.Ecs
                 w.StepInfos[i].Accepted = ws == WalkerStart.AllAccepted || (ws == WalkerStart.Mixed && i % 2 == 0);
             }
 
-            if (system)
-            {
-                world.Ecs.StepsEnabled = true;
-                world.Ecs.ResyncClocks();
-            }
 
             return world;
         }
@@ -341,7 +326,6 @@ namespace ClassicUO.UnitTests.Ecs
                         b.Walker.StepInfos[i].Sequence.Should().Be(a.Walker.StepInfos[i].Sequence);
                     }
 
-                    StepSystem.Diff(b, StepEntity(newWorld, b)).Should().BeNull();
                     b.PositionCallbacks.Should().Be(a.PositionCallbacks);
                 }
 
@@ -356,23 +340,22 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Step_System_Declines_When_Off_Or_Not_Held()
+        public void The_Step_System_Declines_Another_Worlds_Or_A_Destroyed_Mobile()
         {
+            // T9 S8c: no switch any more: every mobile record has its Steps from its creation
             World world = BuildSteps(StepScenario.Walking, false);
             Mobile m = world.Mobiles.Get(MOB);
             long declined = StepSystem.Declined;
-
-            world.StepSystem.TryRun(world, m, Time.Ticks, FRAME_DELAY, out _).Should().BeFalse("the component is not kept with the switch off");
             world.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity e);
-            e.HasComponent<StepsComponent>().Should().BeFalse();
-
-            world.Ecs.StepsEnabled = true;
-            world.Ecs.ResyncClocks();
             e.HasComponent<StepsComponent>().Should().BeTrue();
 
             // another World's instance under the same serial
             World other = BuildSteps(StepScenario.Walking, true);
             other.StepSystem.TryRun(other, m, Time.Ticks, FRAME_DELAY, out _).Should().BeFalse();
+
+            // a stale instance of this World
+            Mobile stale = Mobile.Create(world, MOB);
+            world.StepSystem.TryRun(world, stale, Time.Ticks, FRAME_DELAY, out _).Should().BeFalse();
             StepSystem.Declined.Should().BeGreaterOrEqualTo(declined + 2);
         }
 
@@ -392,7 +375,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Component_Copies_The_Queue_In_Order_And_The_Diff_Sees_Every_Field()
+        public void The_Component_Holds_The_Queue_In_Order_And_The_Mobile_Reads_It()
         {
             World world = BuildSteps(StepScenario.FullQueue, true);
             Mobile m = world.Mobiles.Get(MOB);
@@ -406,26 +389,18 @@ namespace ClassicUO.UnitTests.Ecs
                 s.Ring[k].X.Should().Be(m.Steps[k].X);
             }
 
-            StepSystem.Diff(m, e).Should().BeNull();
-
-            StepsComponent saved = s;
+            // T9 S8c: the component is the queue's only copy; the Mobile's getters read it
+            s.Head.Should().Be(0);
             s.Ring[2].Direction ^= 1;
-            StepSystem.Diff(m, e).Should().Contain("step 2");
-            s = saved;
+            m.Steps[2].Direction.Should().Be(s.Ring[2].Direction);
             s.Ring[4].Run = !s.Ring[4].Run;
-            StepSystem.Diff(m, e).Should().Contain("step 4");
-            s = saved;
+            m.Steps[4].Run.Should().Be(s.Ring[4].Run);
             s.LastStepTime++;
-            StepSystem.Diff(m, e).Should().Contain("last step time");
-            s = saved;
+            m.LastStepTime.Should().Be(s.LastStepTime);
             s.OffsetZ = 3;
-            StepSystem.Diff(m, e).Should().Contain("offset");
-            s = saved;
+            m.Offset.Z.Should().Be(3);
             s.Count--;
-            StepSystem.Diff(m, e).Should().Contain("count");
-            s = saved;
-            e.GetComponent<Position>().Z++;
-            StepSystem.Diff(m, e).Should().Contain("position");
+            m.Steps.Count.Should().Be(s.Count);
         }
 
         [Fact]

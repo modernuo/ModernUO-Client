@@ -12,17 +12,16 @@ using Flags = ClassicUO.Game.Data.Flags;
 namespace ClassicUO.UnitTests.Ecs
 {
     // Wave 1C: WorldWriter's operations commit the small cold fields (Item LightID, IsDamageable, UsedLayer; Mobile Race,
-    // SpeedMode, IsFemale, IsRenamable; the player's InWarMode) to the record's ItemTraits/MobileTraits before their cache
-    // writes, and the getters read the record (an instance without a held record reads its cache; T9 deleted
-    // ecs_small_fields' off path); CUO_SMALL_FIELDS_CHECK (here World.SmallFieldsCheckOverride) compares the two at every read.
+    // SpeedMode, IsFemale, IsRenamable; the player's InWarMode) to the record's ItemTraits/MobileTraits. T9 S5: the record is
+    // their only copy (the caches, their seed of a re-created record and CUO_SMALL_FIELDS_CHECK are gone); an instance
+    // without a record reads the defaults.
     public partial class WorldWriterMobileTests
     {
         private const uint LAMP = 0x4000_7A01, BARREL = 0x4000_7A02, HOUSE = 0x4000_7A03, BODY = 0x4000_7A04;
 
-        private static World BuildSmall(bool check = true)
+        private static World BuildSmall()
         {
             World world = Build(Start.Standing);
-            world.SmallFieldsCheckOverride = check;
             world.Writer.ThrowOnViolation = true;
 
             return world;
@@ -31,7 +30,6 @@ namespace ClassicUO.UnitTests.Ecs
         private static World BuildSmallPlayer(out TestPlayer player)
         {
             World world = BuildPlayer(out player);
-            world.SmallFieldsCheckOverride = true;
             world.Writer.ThrowOnViolation = true;
 
             return world;
@@ -58,22 +56,18 @@ namespace ClassicUO.UnitTests.Ecs
             return t;
         }
 
-        // every held item and mobile: the record holds the cache's values, the getters return them, the checker finds nothing
+        // every held item and mobile: the getters return the record's values; only the player keeps a war mode bit
         private static void AssertSmallFields(World world, string because)
         {
-            long diffs = SmallFields.Diffs;
-
             foreach (Item it in world.Items.Values)
             {
                 ItemTraits t = ItemRecord(world, it.Serial);
-                t.Should().Be(it.CachedTraits, $"0x{it.Serial:X8} record ({because})");
-                (it.LightID, it.IsDamageable, it.UsedLayer).Should().Be((it.CachedTraits.LightId, (t.Bits & ItemTraitBits.Damageable) != 0, (t.Bits & ItemTraitBits.UsedLayer) != 0), because);
+                (it.LightID, it.IsDamageable, it.UsedLayer).Should().Be((t.LightId, (t.Bits & ItemTraitBits.Damageable) != 0, (t.Bits & ItemTraitBits.UsedLayer) != 0), because);
             }
 
             foreach (Mobile m in world.Mobiles.Values)
             {
                 MobileTraits t = MobileRecord(world, m.Serial);
-                t.Should().Be(m.CachedTraits, $"0x{m.Serial:X8} record ({because})");
                 (m.Race, m.SpeedMode, m.IsFemale, m.IsRenamable).Should().Be(
                     ((RaceType)t.Race, (CharacterSpeedType)t.SpeedMode, (t.Bits & MobileTraitBits.Female) != 0, (t.Bits & MobileTraitBits.Renamable) != 0), because);
 
@@ -86,15 +80,12 @@ namespace ClassicUO.UnitTests.Ecs
                     (t.Bits & MobileTraitBits.WarMode).Should().Be(MobileTraitBits.None, $"only the player keeps a war mode ({because})");
                 }
             }
-
-            SmallFields.Diffs.Should().Be(diffs, because);
         }
 
         [Fact]
         public void The_Item_Operations_Commit_Light_Damageable_And_UsedLayer()
         {
             World world = BuildSmall();
-            long reads = SmallFields.Reads;
 
             // 0x1A/0xF3: a light source (the direction byte is its light id), a damageable barrel (type 3), a multi (type 2
             // keeps IsDamageable), then the barrel as a plain item again
@@ -145,8 +136,6 @@ namespace ClassicUO.UnitTests.Ecs
             world.Items.Get(0x4000_7A05).UsedLayer.Should().BeTrue();
             world.Items.Get(0x4000_7A06).UsedLayer.Should().BeTrue();
             AssertSmallFields(world, "returned and worn corpses");
-
-            (SmallFields.Reads > reads).Should().BeTrue("the getters asked the record");
             world.Writer.Violations.Should().Be(0);
         }
 
@@ -207,7 +196,7 @@ namespace ClassicUO.UnitTests.Ecs
             (e.GetComponent<MobileInputs>().Flags & AnimStateFlags.WarMode).Should().NotBe((AnimStateFlags)0);
         }
 
-        // a write that bypasses the funnel (the cache only): the getter returns the record, the checker reports it
+        // the getters are the record: a write to it (here the fixtures' direct one) is what they return
         [Fact]
         public void The_Getters_Read_The_Record()
         {
@@ -221,91 +210,69 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSmallFields(world, "committed");
 
             Item lamp = world.Items.Get(LAMP), body = world.Items.Get(BODY);
-            lamp.LightID = 0x05;
-            lamp.IsDamageable = false;
-            body.UsedLayer = false;
-            player.Race = RaceType.GARGOYLE;
-            player.SpeedMode = CharacterSpeedType.Normal;
-            player.IsFemale = false;
-            player.IsRenamable = false;
-            player.InWarMode = false;
+            lamp.TestSetLightID(0x05);
+            lamp.TestSetIsDamageable(false);
+            body.TestSetUsedLayer(false);
+            player.TestSetRace(RaceType.GARGOYLE);
+            player.TestSetSpeedMode(CharacterSpeedType.Normal);
+            player.TestSetIsFemale(false);
+            player.TestSetIsRenamable(false);
+            player.TestSetInWarMode(false);
 
-            long diffs = SmallFields.Diffs;
-            lamp.LightID.Should().Be((byte)0x1E);
-            lamp.IsDamageable.Should().BeTrue();
-            body.UsedLayer.Should().BeTrue();
-            player.Race.Should().Be(RaceType.ELF);
-            player.SpeedMode.Should().Be(CharacterSpeedType.CantRun);
-            player.IsFemale.Should().BeTrue();
-            player.IsRenamable.Should().BeTrue();
-            player.InWarMode.Should().BeTrue();
-            (SmallFields.Diffs - diffs).Should().Be(8, "the checker reports each stale field");
-
-            // the checker off: no comparison
-            world.SmallFieldsCheckOverride = false;
-            long reads = SmallFields.Reads;
-            diffs = SmallFields.Diffs;
-            player.Race.Should().Be(RaceType.ELF);
-            lamp.LightID.Should().Be((byte)0x1E);
-            SmallFields.Diffs.Should().Be(diffs, "no check");
-            SmallFields.Reads.Should().Be(reads + 2);
+            lamp.LightID.Should().Be((byte)0x05);
+            lamp.IsDamageable.Should().BeFalse();
+            body.UsedLayer.Should().BeFalse();
+            player.Race.Should().Be(RaceType.GARGOYLE);
+            player.SpeedMode.Should().Be(CharacterSpeedType.Normal);
+            player.IsFemale.Should().BeFalse();
+            player.IsRenamable.Should().BeFalse();
+            player.InWarMode.Should().BeFalse();
+            AssertSmallFields(world, "written");
         }
 
-        // an instance without a held record (a preview, the detached player, a destroyed instance) reads its cache
+        // an instance without a record (one not committed yet, the house placement preview, the detached player) reads the
+        // defaults: the record is the only copy
         [Fact]
-        public void Without_A_Held_Record_The_Getters_Read_The_Cache()
+        public void Without_A_Record_The_Getters_Read_The_Defaults()
         {
             World world = BuildSmallPlayer(out TestPlayer player);
-            long fallbacks = SmallFields.Fallbacks;
 
-            var preview = new Item(world) { LightID = 7, IsDamageable = true, UsedLayer = true };
-            (preview.LightID, preview.IsDamageable, preview.UsedLayer).Should().Be(((byte)7, true, true));
+            var detached = Item.Create(world, 0);
+            (detached.LightID, detached.IsDamageable, detached.UsedLayer).Should().Be(((byte)0, false, false));
+            (detached.Amount, detached.Container, detached.Layer).Should().Be(((ushort)0, 0xFFFF_FFFFu, Layer.Invalid));
+            detached.OnGround.Should().BeTrue();
 
-            var fake = new Mobile(world, 0) { Race = RaceType.GARGOYLE, IsFemale = true, IsRenamable = true, SpeedMode = CharacterSpeedType.CantRun };
-            (fake.Race, fake.IsFemale, fake.IsRenamable, fake.SpeedMode).Should().Be((RaceType.GARGOYLE, true, true, CharacterSpeedType.CantRun));
-            (SmallFields.Fallbacks - fallbacks).Should().BeGreaterThanOrEqualTo(7);
+            var fake = new Mobile(world, 0);
+            (fake.Race, fake.IsFemale, fake.IsRenamable, fake.SpeedMode).Should().Be(((RaceType)0, false, false, CharacterSpeedType.Normal));
 
-            // the detached player (removed under its serial while World.Player stays) is written as before T1, cache only
+            // the detached player (a misconfigured server's 0x25 under its serial removes it while World.Player stays): its
+            // record went, so its war mode and speed mode are not kept (the server's next 0x72/0xBF.26 brings them back)
+            world.Writer.SetWarMode(player, true);
             world.Writer.PlaceInContainer(MOB, 0xE76, 1, 10, 10, 0, BAG, out _).Should().NotBeNull();
             world.Mobiles.Get(MOB).Should().BeNull();
             world.Writer.SetWarMode(player, true);
             world.Writer.SetSpeedMode(player, CharacterSpeedType.FastUnmount);
-            (player.InWarMode, player.SpeedMode).Should().Be((true, CharacterSpeedType.FastUnmount));
+            (player.InWarMode, player.SpeedMode).Should().Be((false, CharacterSpeedType.Normal));
             world.Writer.Violations.Should().Be(0);
         }
 
-        // a record created while the instance already holds values (a held instance whose record went, a record of the other
-        // kind replaced under its serial) starts from the cache
+        // a record created for an instance that already had one (a held instance whose record went) starts without traits
         [Fact]
-        public void A_Record_Created_Later_Is_Seeded_From_The_Cache()
+        public void A_Record_Created_Later_Starts_Without_Traits()
         {
             World world = BuildSmallPlayer(out TestPlayer player);
             world.Writer.SetWarMode(player, true);
-            world.Writer.SetSpeedMode(player, CharacterSpeedType.FastUnmount);
-            world.Writer.SetMobileStatus(player, true, true, true);
             world.Writer.SetRace(player, RaceType.ELF);
             Upsert(world, LAMP, 0xA22, 0x1E, 3);
             world.Ecs.Mirror.Remove(MOB).Should().BeTrue();
             world.Ecs.Mirror.Remove(LAMP).Should().BeTrue();
 
-            long seeds = world.Ecs.TraitSeeds;
             world.Ecs.Sync(player);
             world.Ecs.Sync(world.Items.Get(LAMP));
-            (world.Ecs.TraitSeeds - seeds).Should().Be(2);
-            ItemRecord(world, LAMP).Should().Be(new ItemTraits { LightId = 0x1E, Bits = ItemTraitBits.Damageable });
-            MobileRecord(world, MOB).Should().Be(new MobileTraits
-            {
-                Race = (byte)RaceType.ELF,
-                SpeedMode = (byte)CharacterSpeedType.FastUnmount,
-                Bits = MobileTraitBits.Female | MobileTraitBits.Renamable | MobileTraitBits.WarMode
-            });
+            ItemRecord(world, LAMP).Should().Be(default(ItemTraits));
+            MobileRecord(world, MOB).Should().Be(default(MobileTraits));
+            (player.InWarMode, player.Race, world.Items.Get(LAMP).LightID).Should().Be((false, (RaceType)0, (byte)0));
             AssertSmallFields(world, "records re-created");
-
-            // an update of an existing record seeds nothing
-            seeds = world.Ecs.TraitSeeds;
-            world.Ecs.Sync(player);
-            world.Ecs.Sync(world.Mobiles.Get(OTHER));
-            world.Ecs.TraitSeeds.Should().Be(seeds);
         }
 
         // 0xAF: the record moves to serial | 0x80000000 and keeps the traits
@@ -327,24 +294,25 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or an item's record under the
-        // mobile's own serial) the re-key carries the traits from the caches, not the item record's defaults
+        // mobile's own serial) the re-key carries no item record's values. T9 S5: the record was the traits' only copy, so the
+        // re-keyed mobile has none (a misconfigured server's case)
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
-        public void The_Death_Rekey_Carries_The_Traits_Without_A_Mobile_Source_Record(bool itemRecord)
+        public void The_Death_Rekey_Without_A_Mobile_Source_Record_Carries_No_Traits(bool itemRecord)
         {
             World world = BuildSmall();
             Mobile m = world.Mobiles.Get(MOB);
             world.Writer.SetMobileStatus(m, true, true, true);
             world.Writer.SetRace(m, RaceType.GARGOYLE);
             world.Writer.SetSpeedMode(m, CharacterSpeedType.CantRun);
-            MobileTraits before = MobileRecord(world, MOB);
 
             world.Ecs.Mirror.Remove(MOB);
 
             if (itemRecord)
             {
                 world.Ecs.Mirror.UpsertItem(MOB, 0xA22, 0, 1, 1, 0, 0, 0, 1, WorldMirror.NO_CONTAINER, 0, false);
+                world.Ecs.Mirror.SetItemBit(MOB, ItemTraitBits.Damageable, true);
                 world.Ecs.Mirror.TryGetEntity(MOB, false, out _).Should().BeTrue();
             }
             else
@@ -354,9 +322,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             uint dead = world.Writer.RekeyDeadMobile(m);
             dead.Should().Be(MOB | 0x8000_0000);
-            MobileRecord(world, dead).Should().Be(before);
-            (m.Race, m.IsFemale, m.IsRenamable, m.SpeedMode).Should().Be((RaceType.GARGOYLE, true, true, CharacterSpeedType.CantRun));
-            AssertSmallFields(world, "re-keyed without a mobile source record");
+            MobileRecord(world, dead).Should().Be(default(MobileTraits));
+            (m.Race, m.IsFemale, m.IsRenamable, m.SpeedMode).Should().Be(((RaceType)0, false, false, CharacterSpeedType.Normal));
         }
 
         [Fact]

@@ -22,7 +22,6 @@ namespace ClassicUO.Game.GameObjects
     internal abstract class Entity : GameObject, IEquatable<Entity>
     {
         private static readonly RenderedText[] _hitsPercText = new RenderedText[101];
-        private Direction _direction;
 
 
         protected Entity(World world, uint serial) : base(world)
@@ -56,6 +55,41 @@ namespace ClassicUO.Game.GameObjects
             return EcsEntityHeld && EcsEntitySerial == _serial && EcsEntityEpoch == World.Ecs.Mirror.Epoch && !IsDestroyed || FindScalarEntity(out e);
         }
 
+        /// <summary>
+        /// T9 S5: the record the record-only getters read: <see cref="TryScalarEntity"/>'s world record or, for a detached
+        /// preview object (the character-creation and race-change gumps'), its preview record (<c>WorldEcs.Previews</c>).
+        /// Only the getters use it: the systems and extracts that call <see cref="TryScalarEntity"/> stay world-only.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool TryRecord(out Friflo.Engine.ECS.Entity e) => TryScalarEntity(out e) || FindPreviewRecord(out e);
+
+        /// <summary>
+        /// T9 S8c: the record the Mobile's timer and step writes go to: the world record only when its handle is this instance
+        /// (checked, not the cached handle: a replaced instance's cache can still name the record its successor took over
+        /// without an epoch change), else its preview record. Writes are rare next to the reads; the reads use
+        /// <see cref="TryRecord"/>.
+        /// </summary>
+        internal bool TryOwnRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            if (IsDestroyed || World?.Ecs == null)
+            {
+                return false;
+            }
+
+            return _serial != 0 && World.TryGetLiveRecord(this, _serial, out e) || FindPreviewRecord(out e);
+        }
+
+        // previews are rare: no handle caching (the preview mirror has its own epoch)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool FindPreviewRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            return !IsDestroyed && World?.Ecs != null && World.Ecs.TryGetPreviewRecord(this, out e);
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool FindScalarEntity(out Friflo.Engine.ECS.Entity e)
         {
@@ -79,14 +113,15 @@ namespace ClassicUO.Game.GameObjects
             return true;
         }
 
-        private byte _animIndex;
-        private bool _executeAnimation = true;
-        private long _lastAnimationChangeTime;
-        private Flags _flags;
-        public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
-        public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
-        internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
-        public Flags Flags { get { ScalarReads.Count(ScalarField.Flags); return _flags; } set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
+        // T9 S6: Flags and Direction live only in the record (Flags, Facing: every record has both); WorldWriter's operations
+        // commit them. Without one (an item before its first commit, the house placement preview, a destroyed or stale
+        // instance, the detached player): None and North, the values a new object had
+        public Flags Flags
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Flags)EcsScalars.FlagBits(e) : Flags.None;
+        }
+
         public byte HitsPercentage;
 
         // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
@@ -111,8 +146,7 @@ namespace ClassicUO.Game.GameObjects
             }
         }
         public bool IsClicked;
-        private uint _lastStepTime, _serial;
-        public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
+        private uint _serial;
         public string Name
         {
             get
@@ -131,24 +165,24 @@ namespace ClassicUO.Game.GameObjects
 
         public Direction Direction
         {
-            get
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Direction)EcsScalars.Facing(e) : Direction.North;
+        }
+
+        /// <summary>
+        /// T9 S6: what the removed Direction setter did after its field write, for <see cref="WorldWriter"/>'s operations to
+        /// call where they wrote it, after committing the record: the direction-change hook (the player's door check) when the
+        /// committed direction differs from <paramref name="before"/>, then the Sync (folded inside a folding operation;
+        /// for an unfolded mobile it publishes the inputs, as the setter's Sync did).
+        /// </summary>
+        internal void DirectionCommitted(Direction before)
+        {
+            if (Direction != before)
             {
-                ScalarReads.Count(ScalarField.Direction);
-
-                return _direction;
+                OnDirectionChanged();
             }
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.Direction);
 
-                if (_direction != value)
-                {
-                    _direction = value;
-                    OnDirectionChanged();
-                }
-
-                World.Ecs.Sync(this);
-            }
+            World.Ecs.Sync(this);
         }
 
         public bool Exists => World.Contains(Serial);
@@ -267,8 +301,13 @@ namespace ClassicUO.Game.GameObjects
 
             GameActions.SendCloseStatus(World, Serial, HitsRequest >= HitsRequestStatus.Pending);
 
-            AnimIndex = 0;
-            LastAnimationChangeTime = 0;
+            // T9 S8c: a mobile's timer goes with its record (OnDestroyed); an item's frame stays on the Item
+            if (this is Item destroyed)
+            {
+                destroyed.AnimIndex = 0;
+                destroyed.LastAnimationChangeTime = 0;
+            }
+
             World.Ecs.OnDestroyed(this);
 
             if (this is Item item)
@@ -432,7 +471,6 @@ namespace ClassicUO.Game.GameObjects
             return (int) Serial;
         }
 
-        public abstract void ProcessAnimation(bool evalutate = false);
 
         public abstract ushort GetGraphicForAnimation();
     }
