@@ -40,6 +40,10 @@ namespace ClassicUO.Game.GameObjects
         public byte Alpha;
         public TextObject DLeft, DRight;
 
+        /// <summary>Counts changes to any DLeft/DRight link (text_tail_cache: a renderer's kept tail is valid while it is
+        /// unchanged). Every writer of those links bumps it; all of them are on the main thread.</summary>
+        internal static uint LinkVersion;
+
         /// <summary>Links in the owner's <see cref="TextContainer"/>.</summary>
         public TextObject Next, Previous;
         public ushort Hue;
@@ -88,6 +92,11 @@ namespace ClassicUO.Game.GameObjects
 
         public void UnlinkD()
         {
+            if (DRight != null || DLeft != null)
+            {
+                LinkVersion++;
+            }
+
             if (DRight != null)
             {
                 DRight.DLeft = DLeft;

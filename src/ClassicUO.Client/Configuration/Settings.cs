@@ -144,6 +144,12 @@ namespace ClassicUO.Configuration
         // B/frame -24..34 %); off = a new Item for every item entering range.
         [JsonPropertyName("item_pool")] public bool ItemPool { get; set; } = true;
 
+        // perf-audit #2: the world text list keeps its tail (where the draw pass starts) while its links change, validated by a
+        // link-version counter, instead of walking every DRight link in each of the three passes per frame. Read at every use
+        // (CUO_TEXT_TAIL=1|0 overrides it and CUO_TEXT_ORDER_CHECK=1 compares the kept tail and the link order with the full
+        // walk, in developer builds). Default off; off = the walk in every pass.
+        [JsonPropertyName("text_tail_cache")] public bool TextTailCache { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

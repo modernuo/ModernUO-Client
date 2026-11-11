@@ -4,7 +4,9 @@ using ClassicUO.Configuration;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Input;
 using ClassicUO.Renderer;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
+using System;
 using System.Collections.Generic;
 
 namespace ClassicUO.Game.Managers
@@ -21,6 +23,57 @@ namespace ClassicUO.Game.Managers
         protected TextObject FirstNode;
         protected TextObject DrawPointer;
 
+        // text_tail_cache: the last node reached from FirstNode through DRight, valid while no link changed since it was
+        // taken (TextObject.LinkVersion)
+        private TextObject _tail;
+        private uint _tailVersion;
+        private bool _tailValid;
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_TEXT_TAIL=1|0) and the checker
+        private static readonly bool? s_env = Environment.GetEnvironmentVariable("CUO_TEXT_TAIL") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+
+        private static readonly bool s_check = Environment.GetEnvironmentVariable("CUO_TEXT_ORDER_CHECK") == "1";
+
+        /// <summary>Tests: the checker for every renderer (null: <c>CUO_TEXT_ORDER_CHECK=1</c>).</summary>
+        internal static bool? CheckOverride;
+
+        /// <summary>Checker counts over the session: uses compared with the full walk, differences found.</summary>
+        public static long Checks, Mismatches;
+
+        /// <summary>Tests: sees each mismatch line.</summary>
+        internal static Action<string> MismatchObserver;
+
+        private uint _nextLog;
+#endif
+
+        /// <summary>Tests: the switch (null: the setting).</summary>
+        internal static bool? OverrideForTests;
+
+        public static bool TailCacheOn
+        {
+            get
+            {
+                if (OverrideForTests.HasValue)
+                {
+                    return OverrideForTests.Value;
+                }
+
+#if CUO_DEVTOOLS
+                if (s_env.HasValue)
+                {
+                    return s_env.Value;
+                }
+#endif
+                return Settings.GlobalSettings != null && Settings.GlobalSettings.TextTailCache;
+            }
+        }
+
         public override void Destroy()
         {
             //Clear();
@@ -29,6 +82,34 @@ namespace ClassicUO.Game.Managers
         public virtual void Update()
         {
             ProcessWorldText(false);
+        }
+
+        /// <summary>The last node of the list; the cached one while no link changed since it was taken.</summary>
+        internal TextObject Tail
+        {
+            get
+            {
+                if (!_tailValid || _tailVersion != LinkVersion)
+                {
+                    _tail = WalkToTail();
+                    _tailVersion = LinkVersion;
+                    _tailValid = true;
+                }
+
+                return _tail;
+            }
+        }
+
+        private TextObject WalkToTail()
+        {
+            TextObject t = FirstNode;
+
+            while (t.DRight != null)
+            {
+                t = t.DRight;
+            }
+
+            return t;
         }
 
         public virtual void Draw(UltimaBatcher2D batcher, int startX, int startY, float layerDepth, bool isGump = false)
@@ -98,6 +179,7 @@ namespace ClassicUO.Game.Managers
             }
 
             obj.UnlinkD();
+            LinkVersion++;
 
             TextObject next = FirstNode.DRight;
             FirstNode.DRight = obj;
@@ -117,6 +199,30 @@ namespace ClassicUO.Game.Managers
                 if (_bounds.Count != 0)
                 {
                     _bounds.Clear();
+                }
+            }
+            else
+            {
+                bool cache = TailCacheOn;
+#if CUO_DEVTOOLS
+                bool check = CheckOverride ?? s_check;
+
+                if (check)
+                {
+                    TextObject kept = _tailValid && _tailVersion == LinkVersion ? _tail : null;
+                    TextObject walked = WalkToTail();
+                    CheckOrder(kept, walked, cache);
+                    _tail = walked;
+                    _tailVersion = LinkVersion;
+                    _tailValid = true;
+                    DrawPointer = cache ? Tail : walked;
+                    return;
+                }
+#endif
+                if (cache)
+                {
+                    DrawPointer = Tail;
+                    return;
                 }
             }
 
@@ -141,7 +247,97 @@ namespace ClassicUO.Game.Managers
                     break;
                 }
             }
+
+            if (doit)
+            {
+                // the full walk just reached the real tail: refresh the kept one from it
+#if CUO_DEVTOOLS
+                if (CheckOverride ?? s_check)
+                {
+                    CheckOrder(_tailValid && _tailVersion == LinkVersion ? _tail : null, DrawPointer, TailCacheOn);
+                }
+#endif
+                _tail = DrawPointer;
+                _tailVersion = LinkVersion;
+                _tailValid = true;
+            }
         }
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_TEXT_ORDER_CHECK. kept is the tail kept from earlier uses (null: none valid, nothing to
+        // compare); walked is the full walk's. The link order is checked in both directions.
+        private void CheckOrder(TextObject kept, TextObject walked, bool cache)
+        {
+            Checks++;
+
+            if (kept != null && !ReferenceEquals(kept, walked))
+            {
+                Mismatch($"kept tail differs from the walked tail (kept {Describe(kept)}, walked {Describe(walked)})");
+            }
+
+            int forward = 0;
+            TextObject last = FirstNode;
+
+            for (TextObject t = FirstNode; t != null; t = t.DRight)
+            {
+                forward++;
+                last = t;
+
+                if (t.DRight != null && !ReferenceEquals(t.DRight.DLeft, t))
+                {
+                    Mismatch($"link order: {Describe(t.DRight)}.DLeft is not its DRight owner");
+                }
+
+                if (forward > 1_000_000)
+                {
+                    Mismatch("link order: forward walk does not end (cycle)");
+
+                    return;
+                }
+            }
+
+            if (!ReferenceEquals(last, walked))
+            {
+                Mismatch("walked tail is not the forward walk's last node");
+            }
+
+            int backward = 0;
+
+            for (TextObject t = walked; t != null && backward <= forward; t = t.DLeft)
+            {
+                backward++;
+            }
+
+            if (backward != forward)
+            {
+                Mismatch($"link order: {forward} nodes forward from the head, {backward} backward from the tail");
+            }
+
+            uint now = (uint)ClassicUO.Time.Ticks;
+
+            if (now >= _nextLog)
+            {
+                _nextLog = now + 5000;
+                Log.Info($"[text-order-check] text_tail_cache={(cache ? "on" : "off")}, checks {Checks}, mismatches {Mismatches}");
+            }
+        }
+
+        private static string Describe(TextObject o)
+        {
+            return o == null ? "null" : $"#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o)}";
+        }
+
+        private static void Mismatch(string what)
+        {
+            Mismatches++;
+            MismatchObserver?.Invoke(what);
+
+            if (Mismatches <= 20)
+            {
+                Log.Warn($"[text-order-check] mismatch: {what}");
+            }
+        }
+#endif
 
         private void CalculateAlpha(TextObject msg)
         {
@@ -209,6 +405,7 @@ namespace ClassicUO.Game.Managers
             }
 
             obj.UnlinkD();
+            LinkVersion++;
 
             TextObject item = FirstNode;
 
@@ -277,6 +474,7 @@ namespace ClassicUO.Game.Managers
             FirstNode.DLeft = null;
             FirstNode.DRight = null;
             DrawPointer = null;
+            LinkVersion++;
         }
     }
 }
