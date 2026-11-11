@@ -581,7 +581,20 @@ namespace ClassicUO
             ];
             _suppressedDraw = false;
 
-            if (x <= 0)
+            if (IsMinimizedForDrawSkip())
+            {
+                // skip_draw_when_minimized: nothing to show, so no world prepare, draw or present; packets, update and audio above
+                // and below keep running. The first frame after a restore draws in full (the world target preserves its contents).
+                _totalElapsed = 0;
+                _suppressedDraw = true;
+                SuppressDraw();
+
+                if (!gameTime.IsRunningSlowly)
+                {
+                    Thread.Sleep(1);
+                }
+            }
+            else if (x <= 0)
             {
                 _totalElapsed = 0;
             }
@@ -624,6 +637,28 @@ namespace ClassicUO
             base.Update(gameTime);
 
             FrameStats.End(FramePhase.Update);
+        }
+
+#if CUO_DEVTOOLS
+        // DevBench plan entry minimized:on|off: stands in for a minimized window (no OS window state is touched)
+        internal static bool DevForceMinimized;
+#endif
+
+        private bool IsMinimizedForDrawSkip()
+        {
+            if (!Settings.GlobalSettings.SkipDrawWhenMinimized)
+            {
+                return false;
+            }
+
+#if CUO_DEVTOOLS
+            if (DevForceMinimized)
+            {
+                return true;
+            }
+#endif
+            // polled, not event-driven: a plugin can consume the window events; Wayland sets no minimized flag (the switch does nothing there)
+            return (((SDL_WindowFlags)SDL_GetWindowFlags(Window.Handle)) & SDL_WindowFlags.SDL_WINDOW_MINIMIZED) != 0;
         }
 
         protected override void Draw(GameTime gameTime)

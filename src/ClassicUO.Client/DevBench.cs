@@ -41,6 +41,7 @@ namespace ClassicUO
     //   plan entry minimap opens the minimap gump
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
+    //   plan entries skipmin:on|off switch skip_draw_when_minimized, minimized:on|off simulate a minimized window (no OS call); FrameStats frames stop while it is on
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
     //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache), itemmixed:on|off its mixed tiles (gpu_prepare_item_cache_mixed, E7), fxserve:on|off its tiles holding effects (gpu_prepare_item_cache_effects, E6); effects:N:graphic[:blend[:radius[:z[:f|m|l]]]] spawns N client-side effects (fixed endless, moving, lightning) round the player, effects:0 removes every effect; name:lsreinit is reinit in the large-scale scene
     //   plan entries w5:on|off switch the W5 shortcut that still has a switch (textskip)
@@ -1993,6 +1994,26 @@ namespace ClassicUO
                     {
                         Configuration.Settings.GlobalSettings.TextSkipExpired = _plan[_planIndex] == "textskip:on";
                         Log.Info($"[bench] overhead text pass skips expired texts: {Configuration.Settings.GlobalSettings.TextSkipExpired}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("minimized:"))
+                    {
+                        GameController.DevForceMinimized = _plan[_planIndex] == "minimized:on";
+                        Log.Info($"[bench] simulated minimized window (skip_draw_when_minimized={Configuration.Settings.GlobalSettings.SkipDrawWhenMinimized}): {GameController.DevForceMinimized}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("skipmin:"))
+                    {
+                        Configuration.Settings.GlobalSettings.SkipDrawWhenMinimized = _plan[_planIndex] == "skipmin:on";
+                        Log.Info($"[bench] skip draw when minimized: {Configuration.Settings.GlobalSettings.SkipDrawWhenMinimized}");
                         _planIndex++;
                         _stepAt = now + sec;
 
