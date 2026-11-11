@@ -195,11 +195,25 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): how many listed mobiles had no mirror record with an AnimationState (not drawn), and the last
-        // serial logged
+        // CLEANUP(release): how many listed mobiles had no mirror record with an AnimationState (not drawn)
         internal static long MobilesWithoutRecord;
-        private static uint _lastNoRecordSerial;
 #endif
+
+        // the serials [mobile-no-record] already logged (dev only; created at the first miss, bounded: after
+        // NO_RECORD_LOG_MAX serials nothing more is logged, so mobiles drawn every frame never log or allocate per frame)
+        private const int NO_RECORD_LOG_MAX = 64;
+        private static System.Collections.Generic.HashSet<uint> _noRecordLogged;
+
+        /// <summary>Whether <paramref name="serial"/> is a record-less mobile not logged yet (and room is left): true once per serial.</summary>
+        internal static bool FirstNoRecord(uint serial)
+        {
+            _noRecordLogged ??= new System.Collections.Generic.HashSet<uint>();
+
+            return _noRecordLogged.Count < NO_RECORD_LOG_MAX && _noRecordLogged.Add(serial);
+        }
+
+        /// <summary>Tests: forgets the logged serials.</summary>
+        internal static void ResetNoRecordLog() => _noRecordLogged?.Clear();
 
         /// <summary>
         /// T9 S8a (case M1 of the view-fallback inventory): a live, drawable mobile in a render list with no mirror record that
@@ -213,9 +227,8 @@ namespace ClassicUO.Game.Scenes
 #if CUO_DEVTOOLS
             MobilesWithoutRecord++;
 
-            if (mobile.Serial != _lastNoRecordSerial)
+            if (FirstNoRecord(mobile.Serial))
             {
-                _lastNoRecordSerial = mobile.Serial;
                 ClassicUO.Utility.Logging.Log.Warn($"[mobile-no-record] mobile 0x{mobile.Serial:X8} has no mirror record: not drawn ({MobilesWithoutRecord} so far)");
             }
 #endif
