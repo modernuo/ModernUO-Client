@@ -1200,6 +1200,7 @@ namespace ClassicUO.Game
                     ReleaseMouse();
                     world.Ecs.RunCheck(true);
                     Scenes.SpritePickTable.Summary();
+                    Network.OplDebounceCheck.LogSummary(Network.OplRequestQueue.Budget, "exit");
                     Client.Game.Exit();
 
                     return true;

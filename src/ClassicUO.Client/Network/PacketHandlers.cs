@@ -443,6 +443,14 @@ namespace ClassicUO.Network
                                 OplSpreadCheck.Sent(Handler._clilocRequests[i], Time.Ticks);
                             }
                         }
+
+                        if (OplDebounceCheck.On)
+                        {
+                            for (int i = 0; i < n; i++)
+                            {
+                                OplDebounceCheck.Sent(Handler._clilocRequests[i], Time.Ticks);
+                            }
+                        }
 #endif
                         s_oplFrameSerials += n;
                         s_oplFramePackets++;
@@ -456,6 +464,11 @@ namespace ClassicUO.Network
                             if (OplSpreadCheck.On)
                             {
                                 OplSpreadCheck.Sent(serial, Time.Ticks);
+                            }
+
+                            if (OplDebounceCheck.On)
+                            {
+                                OplDebounceCheck.Sent(serial, Time.Ticks);
                             }
 #endif
                             NetClient.Socket.Send_MegaClilocRequest_Old(serial);
@@ -473,6 +486,8 @@ namespace ClassicUO.Network
             {
                 OplSpreadCheck.FrameEnd(Time.Ticks, s_oplFramePackets, s_oplFrameSerials, world.ClientFeatures.TooltipsEnabled, budget);
             }
+
+            OplDebounceCheck.Tick(Time.Ticks, budget);
 #endif
 
             if (Handler._customHouseRequests.Count > 0)
@@ -512,6 +527,14 @@ namespace ClassicUO.Network
                 foreach (uint serial in serials)
                 {
                     OplSpreadCheck.Sent(serial, Time.Ticks);
+                }
+            }
+
+            if (OplDebounceCheck.On)
+            {
+                foreach (uint serial in serials)
+                {
+                    OplDebounceCheck.Sent(serial, Time.Ticks);
                 }
             }
 #endif
@@ -570,6 +593,11 @@ namespace ClassicUO.Network
             {
                 OplSpreadCheck.Removed(serial);
             }
+
+            if (OplDebounceCheck.On)
+            {
+                OplDebounceCheck.Removed(serial);
+            }
 #endif
         }
 
@@ -581,6 +609,11 @@ namespace ClassicUO.Network
             if (OplSpreadCheck.On)
             {
                 OplSpreadCheck.Cleared();
+            }
+
+            if (OplDebounceCheck.On)
+            {
+                OplDebounceCheck.Cleared();
             }
 #endif
         }
@@ -5110,6 +5143,11 @@ namespace ClassicUO.Network
             {
                 OplSpreadCheck.Answered(serial, revision);
             }
+
+            if (OplDebounceCheck.On)
+            {
+                OplDebounceCheck.Answered(serial);
+            }
 #endif
 
             Entity entity = world.FindMobile(serial);
@@ -5550,8 +5588,15 @@ namespace ClassicUO.Network
             {
                 uint serial = p.ReadUInt32BE();
                 uint revision = p.ReadUInt32BE();
+                bool held = world.OPL.IsRevisionEquals(serial, revision);
+#if CUO_DEVTOOLS
+                if (OplDebounceCheck.On)
+                {
+                    OplDebounceCheck.Notice(serial, revision, held);
+                }
+#endif
 
-                if (!world.OPL.IsRevisionEquals(serial, revision))
+                if (!held)
                 {
                     AddMegaClilocRequest(serial, OplRequestKind.Revision, revision);
                 }

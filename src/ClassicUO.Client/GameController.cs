@@ -179,6 +179,10 @@ namespace ClassicUO
             Settings.GlobalSettings.Save();
             Plugin.OnClosing();
 
+#if CUO_DEVTOOLS
+            Network.OplDebounceCheck.LogSummary(Network.OplRequestQueue.Budget, "exit");
+#endif
+
             UO.Unload();
 
             _gpuWorld?.Dispose();
