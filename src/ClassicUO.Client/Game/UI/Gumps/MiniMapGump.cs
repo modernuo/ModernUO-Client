@@ -139,6 +139,20 @@ namespace ClassicUO.Game.UI.Gumps
                         return false;
                     }
 
+                    // Drawn before its first Update (or before the player exists): the blank pixel buffers are built in CreateMap,
+                    // which Update has not run yet. Build them now, or draw the empty frame only.
+                    if (_blankGumpsPixels[_useLargeMap ? 1 : 0] == null)
+                    {
+                        if (!World.InGame || World.Player == null)
+                        {
+                            batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
+
+                            return true;
+                        }
+
+                        CreateMap();
+                    }
+
                     batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
 
                     CreateMiniMapTexture(gumpInfo.Texture, gumpInfo.UV);
