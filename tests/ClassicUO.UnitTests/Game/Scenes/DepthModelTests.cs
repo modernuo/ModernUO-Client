@@ -13,6 +13,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
     /// NW edge) and the corner 1454 1669; the player stands inside at 1453 1668 z 10, its frame reaching 4 rows below the
     /// anchor (mounted: 11 rows, 66 px wide).
     /// </summary>
+    [CollectionDefinition(nameof(DepthModelSwitchCollection), DisableParallelization = true)]
+    public class DepthModelSwitchCollection
+    {
+    }
+
+    // DepthModel.OverrideForTests is global: the extract reads it at Begin, so the tests that flip it run alone
+    [Collection(nameof(DepthModelSwitchCollection))]
     public class DepthModelTests
     {
         private const int PX = 1453, PY = 1668, Z = 10;

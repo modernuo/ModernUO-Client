@@ -115,6 +115,7 @@ namespace ClassicUO.Game
         private void BeginCore(int offsetX, int offsetY)
         {
             _atlas = null;
+            _geo = Scenes.DepthModel.On;
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
@@ -502,12 +503,17 @@ namespace ClassicUO.Game
                 Hue = hue,
                 Depth = DepthOf(baseDepth, kind, add),
                 ObjX = _objX,
-                SitMod = sitMod,
-                GeoAx = (short)Math.Clamp(_geoAnchorX - px, short.MinValue, short.MaxValue),
-                GeoAy = (short)Math.Clamp(_geoAnchorY - py, short.MinValue, short.MaxValue),
-                GeoZ = _objZ,
-                Geo = true
+                SitMod = sitMod
             };
+
+            // clip-2: only with depth_model on, so the default path's records and instances stay as before the switch existed
+            if (_geo)
+            {
+                sprite.GeoAx = (short)Math.Clamp(_geoAnchorX - px, short.MinValue, short.MaxValue);
+                sprite.GeoAy = (short)Math.Clamp(_geoAnchorY - py, short.MinValue, short.MaxValue);
+                sprite.GeoZ = _objZ;
+                sprite.Geo = true;
+            }
 
             if (_selectOnly)
             {
@@ -548,6 +554,9 @@ namespace ClassicUO.Game
         // clip-2 depth model: the current Layer's anchor and the mobile's z (DynamicSprite.GeoAx/GeoAy/GeoZ)
         private int _geoAnchorX, _geoAnchorY;
         private sbyte _objZ;
+
+        // clip-2: depth_model (DepthModel.On) at Begin; MobileFrameCache.Geo keys recorded instances on it
+        private bool _geo;
         private ushort _selBody;
         private byte _selGroup, _selDir, _selFrame;
         private bool _selEquip;
@@ -597,7 +606,7 @@ namespace ClassicUO.Game
             int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
 
             if (cache.EmitValid && cache.EmitSelectGen == cache.SelectGen && cache.Alpha == rs.Alpha && cache.OverrideHue == rs.OverrideHue &&
-                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack)
+                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo
 #if CUO_DEVTOOLS
                 && !Scenes.ClipDump.Active // clip-1: the dump reads the layers as Layer draws them
 #endif
@@ -673,6 +682,7 @@ namespace ClassicUO.Game
             cache.OverrideHue = rs.OverrideHue;
             cache.BodyHue = bodyHue;
             cache.Pack = _pack;
+            cache.Geo = _geo;
             cache.EmitValid = true;
         }
 

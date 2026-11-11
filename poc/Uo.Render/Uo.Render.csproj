@@ -29,19 +29,21 @@
 
   <!-- HLSL -> DXIL at build time with the Windows SDK dxc. The DXIL is embedded as a resource
        (works for NativeAOT publish too). SDL_GPU register conventions are documented in sprite.hlsl. -->
-  <Target Name="CompileShaders" BeforeTargets="BeforeBuild" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.dxil;$(ShaderOut)sprite.ps.dxil;$(ShaderOut)sprite.psgeo.dxil">
+  <Target Name="CompileShaders" BeforeTargets="BeforeBuild" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.dxil;$(ShaderOut)sprite.ps.dxil;$(ShaderOut)sprite.vsgeo.dxil;$(ShaderOut)sprite.psgeo.dxil">
     <MakeDir Directories="$(ShaderOut)" />
     <Exec Command="&quot;$(Dxc)&quot; -nologo -T vs_6_0 -E VSMain -O3 -Fo &quot;$(ShaderOut)sprite.vs.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
     <Exec Command="&quot;$(Dxc)&quot; -nologo -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
-    <Exec Command="&quot;$(Dxc)&quot; -nologo -T ps_6_0 -E PSMainGeo -O3 -Fo &quot;$(ShaderOut)sprite.psgeo.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
+    <Exec Command="&quot;$(Dxc)&quot; -nologo -T vs_6_0 -E VSMain -D GEO=1 -O3 -Fo &quot;$(ShaderOut)sprite.vsgeo.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
+    <Exec Command="&quot;$(Dxc)&quot; -nologo -T ps_6_0 -E PSMainGeo -D GEO=1 -O3 -Fo &quot;$(ShaderOut)sprite.psgeo.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
   </Target>
 
   <!-- HLSL -> SPIR-V (Vulkan) with the same source; SDL_GPU's SPIR-V set/binding conventions are in sprite.hlsl. -->
-  <Target Name="CompileShadersSpirv" BeforeTargets="BeforeBuild" Condition="Exists('$(DxcSpirv)')" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.spv;$(ShaderOut)sprite.ps.spv;$(ShaderOut)sprite.psgeo.spv">
+  <Target Name="CompileShadersSpirv" BeforeTargets="BeforeBuild" Condition="Exists('$(DxcSpirv)')" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.spv;$(ShaderOut)sprite.ps.spv;$(ShaderOut)sprite.vsgeo.spv;$(ShaderOut)sprite.psgeo.spv">
     <MakeDir Directories="$(ShaderOut)" />
     <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T vs_6_0 -E VSMain -O3 -Fo &quot;$(ShaderOut)sprite.vs.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
     <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
-    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T ps_6_0 -E PSMainGeo -O3 -Fo &quot;$(ShaderOut)sprite.psgeo.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T vs_6_0 -E VSMain -D GEO=1 -O3 -Fo &quot;$(ShaderOut)sprite.vsgeo.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T ps_6_0 -E PSMainGeo -D GEO=1 -O3 -Fo &quot;$(ShaderOut)sprite.psgeo.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
   </Target>
 
   <Target Name="EmbedShaders" AfterTargets="CompileShaders;CompileShadersSpirv" BeforeTargets="BeforeBuild">
@@ -49,9 +51,11 @@
     <ItemGroup>
       <EmbeddedResource Include="$(ShaderOut)sprite.vs.dxil" LogicalName="sprite_vs.dxil" WithCulture="false" />
       <EmbeddedResource Include="$(ShaderOut)sprite.ps.dxil" LogicalName="sprite_ps.dxil" WithCulture="false" />
+      <EmbeddedResource Include="$(ShaderOut)sprite.vsgeo.dxil" LogicalName="sprite_vsgeo.dxil" WithCulture="false" />
       <EmbeddedResource Include="$(ShaderOut)sprite.psgeo.dxil" LogicalName="sprite_psgeo.dxil" WithCulture="false" />
       <EmbeddedResource Include="$(ShaderOut)sprite.vs.spv" LogicalName="sprite_vs.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
       <EmbeddedResource Include="$(ShaderOut)sprite.ps.spv" LogicalName="sprite_ps.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
+      <EmbeddedResource Include="$(ShaderOut)sprite.vsgeo.spv" LogicalName="sprite_vsgeo.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
       <EmbeddedResource Include="$(ShaderOut)sprite.psgeo.spv" LogicalName="sprite_psgeo.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
     </ItemGroup>
   </Target>

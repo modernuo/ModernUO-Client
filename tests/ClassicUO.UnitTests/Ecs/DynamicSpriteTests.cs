@@ -99,7 +99,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         private const ushort HUMAN = 400, HORSE = 200, ROBE = 0x01F0, LANTERN = 0x01F5, MISSING_ART = 0x0E77;
 
-        private static (AnimationsLoader Anims, GpuSpriteTables Tables) AnimFixture(int seed)
+        internal static (AnimationsLoader Anims, GpuSpriteTables Tables) AnimFixture(int seed)
         {
             var rnd = new Random(seed);
             var bodies = new AnimBodyEntry[1024];
@@ -163,7 +163,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         public static TheoryData<string> MobileCases => new TheoryData<string> { "plain", "hued", "flipped", "mounted", "sitting", "equipped", "lights-mixed", "translucent" };
 
-        private static EcsEntity MobileCase(WorldMirror mirror, string name)
+        internal static EcsEntity MobileCase(WorldMirror mirror, string name)
         {
             var eq = new EquipmentSlots();
             AnimationState s = Standing(AnimStateFlags.Shadow);

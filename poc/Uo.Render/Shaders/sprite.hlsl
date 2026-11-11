@@ -160,13 +160,15 @@ struct VSOut
     nointerpolation float grayTol : TEXCOORD4;
     nointerpolation float4 cot : TEXCOORD5; // centre (target px), radius, COT_* mode
     nointerpolation float4 rect : TEXCOORD6; // FLAG_TILE: the sprite's atlas rect in texels (x0, y0, x1, y1)
-    // clip-2 depth model (PSMainGeo only): camera-relative world pixel, the per-vertex depth of GEO_LINEAR, and the class
+#ifdef GEO
+    // clip-2 depth model (GEO variant only): camera-relative world pixel, the per-vertex depth of GEO_LINEAR, and the class
     // parameters (x = class, y/z/w as GeoDepth: north vertex column / top-diamond north row / tile sum, or anchor column /
     // centre row / billboard sum), bias and scale
     float2 geoW : TEXCOORD7;
     float  geoLin : TEXCOORD8;
     nointerpolation float4 geoP : TEXCOORD9;
     nointerpolation float2 geoB : TEXCOORD10; // x = bias, y = GeoScale
+#endif
 };
 
 // Must match the linear sampler's max_lod (Renderer.cs _samplerLinear).
@@ -189,7 +191,9 @@ VSOut Collapsed()
     VSOut o;
     o.pos = float4(-2, -2, 0, 1);
     o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0; o.cot = 0; o.rect = 0;
+#ifdef GEO
     o.geoW = 0; o.geoLin = 0; o.geoP = 0; o.geoB = 0;
+#endif
     return o;
 }
 
@@ -223,10 +227,13 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // premultiplied blend, the others get their own pipeline (the host splits the sorted list into runs)
     uint blendLo = lit ? 0u : (inst.light >> 10) & 0x3u;
     uint lbits = lit ? 0u : inst.light & 0xF000u;
-    // clip-2: a mobile layer's anchor rides in the ROTATED | WOBBLE combination; it is neither
+#ifdef GEO
+    // clip-2: a mobile layer's anchor rides in the ROTATED | WOBBLE combination; it is neither. The host stamps it only
+    // with depth_model on, when this variant draws.
     bool geoMob = (lbits & LIGHT_GEOMOB) == LIGHT_GEOMOB;
     if (geoMob)
         lbits &= ~LIGHT_GEOMOB;
+#endif
     bool forceShow = false;
     bool highlighted = false;
     if (OverrideMask != 0)
@@ -369,8 +376,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     bool indexed = (flags & FLAG_INDEXED) != 0;
 
     float2 world = float2(int2(inst.x, inst.y) - CamPx) - CamFrac + local;
-    o.geoW = 0; o.geoLin = 0; o.geoP = 0; o.geoB = 0;
-    if (DepthModel != 0)
+#ifdef GEO
     {
         // clip-2 geometric depth: X + Y of the visible 3D surface point (bigger = nearer); see GeoDepth.cs
         float2 wc = float2(int2(inst.x, inst.y) - CamPx) + local;
@@ -419,6 +425,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             o.geoB.x = 0.01 + mz * GEO_ZBIAS;
         }
     }
+#endif
     float2 ndc = world * Scale * 2.0 * InvViewport;
     float depth = 0.5 - (float)(int)(inst.depth - CamDepth) * DepthScale;
 
@@ -577,6 +584,7 @@ float4 SampleTile(VSOut i, uint flags)
     return c;
 }
 
+#ifdef GEO
 // clip-2 depth model: the tile-sum depth of the visible surface at world pixel w (GeoDepth.cs is the same maths).
 float GeoDepth(VSOut i)
 {
@@ -603,6 +611,7 @@ float GeoDepth(VSOut i)
     }
     return i.geoLin;
 }
+#endif
 
 float4 PSMain(VSOut i) : SV_Target
 {
@@ -656,10 +665,12 @@ float4 PSMain(VSOut i) : SV_Target
     return Finish(c.rgb, flags, cotAlpha);
 }
 
-// clip-2 depth model (switch depth_model): the same fragment with the geometric depth. A separate entry point and
-// pipelines, so the default path keeps early depth testing.
+#ifdef GEO
+// clip-2 depth model (switch depth_model): the same fragment with the geometric depth, compiled with GEO (sprite_vsgeo /
+// sprite_psgeo) and drawn by its own pipelines, so the default path keeps early depth testing and its interpolants.
 float4 PSMainGeo(VSOut i, out float depthOut : SV_Depth) : SV_Target
 {
     depthOut = saturate(0.5 - (GeoDepth(i) + i.geoB.x) * i.geoB.y);
     return PSMain(i);
 }
+#endif

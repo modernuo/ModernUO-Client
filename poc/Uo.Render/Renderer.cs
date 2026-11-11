@@ -33,7 +33,7 @@ public sealed unsafe class Renderer : IDisposable
     /// <summary>Swapchain / offscreen format, or the external target's format at creation (pipelines for other target
     /// formats are built on first use).</summary>
     public readonly SDL_GPUTextureFormat ColorFormat;
-    IntPtr _vs, _ps, _psGeo;
+    IntPtr _vs, _ps, _vsGeo, _psGeo;
     readonly List<(SDL_GPUTextureFormat Format, bool Geo, IntPtr Opaque, IntPtr Translucent)> _pipelines = new(2);
     // translucent-pass pipelines for the effect blends other than Normal/Screen, built on first use
     readonly List<(SDL_GPUTextureFormat Format, bool Geo, InstanceBlend Blend, IntPtr Pipeline)> _blendPipelines = new();
@@ -162,7 +162,8 @@ public sealed unsafe class Renderer : IDisposable
 
             _vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
             _ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
-            // clip-2 depth model (FrameUniforms.DepthModel): the same fragment shader writing the geometric depth
+            // clip-2 depth model (FrameUniforms.DepthModel): sprite.hlsl compiled with GEO, the fragment writing the geometric depth
+            _vsGeo = CreateShader("sprite_vsgeo", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
             _psGeo = CreateShader("sprite_psgeo", "PSMainGeo", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
 
             _samplerPoint = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
@@ -507,7 +508,7 @@ public sealed unsafe class Renderer : IDisposable
         }
         var ci = new SDL_GPUGraphicsPipelineCreateInfo
         {
-            vertex_shader = _vs,
+            vertex_shader = geo ? _vsGeo : _vs,
             fragment_shader = geo ? _psGeo : _ps,
             primitive_type = SDL_GPUPrimitiveType.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
             // Depth clip, not clamp: SDL maps enable_depth_clip=false to Vulkan depthClampEnable, which needs the depthClamp
@@ -1095,6 +1096,7 @@ public sealed unsafe class Renderer : IDisposable
         foreach (var p in _blendPipelines) Pipe(Device, p.Pipeline);
         Shd(Device, _vs);
         Shd(Device, _ps);
+        Shd(Device, _vsGeo);
         Shd(Device, _psGeo);
         if (_windowClaimed) SDL_ReleaseWindowFromGPUDevice(Device, Window);
         if (OwnsDevice) SDL_DestroyGPUDevice(Device);
