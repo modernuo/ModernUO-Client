@@ -162,7 +162,8 @@ namespace ClassicUO.Renderer.Animations
             out bool useUOP,
             bool isEquip = false,
             bool isCorpse = false,
-            bool forceUOP = false
+            bool forceUOP = false,
+            bool sync = false
         )
         {
             hue = 0;
@@ -198,10 +199,20 @@ namespace ClassicUO.Renderer.Animations
 
             if (sprites == null)
             {
-                sprites = LoadDirection(id, action, dir);
+                sprites = LoadDirection(id, action, dir, sync);
             }
 
             return sprites;
+        }
+
+        /// <summary>Uploads the directions the workers finished (within the drain budget), as every GetAnimationFrames call
+        /// does first: for callers that no longer call it every frame (anim_frame_count_tables).</summary>
+        public void DrainFinished()
+        {
+            if (_queue.HasReady)
+            {
+                DrainReady();
+            }
         }
 
         /// <summary>
@@ -218,7 +229,7 @@ namespace ClassicUO.Renderer.Animations
         /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
         public int PendingDirections => Volatile.Read(ref _pendingJobs);
 
-        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir)
+        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies
             if (!_animationLoader.TryGetDirection(body, action, dir + 3, out var entry))
@@ -235,7 +246,7 @@ namespace ClassicUO.Renderer.Animations
             // an empty frame. Once a body has a direction uploaded, later directions and actions stay synchronous, so a
             // visible mobile never blinks when it turns or changes action; the worker prefetches the chunks of the other
             // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
-            if (AsyncFirstSight && !_bodyDrawn[body] && !IsResident(entry))
+            if (AsyncFirstSight && !sync && !_bodyDrawn[body] && !IsResident(entry))
             {
                 long heldBytes = 0;
 

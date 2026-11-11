@@ -143,6 +143,13 @@ namespace ClassicUO.Configuration
         // new one). Default off.
         [JsonPropertyName("item_pool")] public bool ItemPool { get; set; }
 
+        // anim-count: while the Gpu world renderer draws, the animation advance reads a mobile's frame count from the pack's
+        // animation tables (AnimFrameCount) instead of the Legacy frame cache, which decodes and uploads the direction into the
+        // RGBA8 anim atlas that the Gpu world never samples (Legacy keeps the cache read). Read once at startup
+        // (CUO_ANIM_FRAME_COUNT_TABLES=1|0 overrides it in developer builds; CUO_ANIM_FRAME_COUNT_CHECK=1 compares both counts
+        // at every call). Default off.
+        [JsonPropertyName("anim_frame_count_tables")] public bool AnimFrameCountTables { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

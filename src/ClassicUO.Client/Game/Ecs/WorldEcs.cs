@@ -941,6 +941,8 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
             // CUO_LAYER_CACHE_CHECK's 5 s summary
             Data.LayerCacheCheck.LogSummary();
+            // CUO_ANIM_FRAME_COUNT_CHECK's 5 s summary
+            AnimFrameCount.LogSummary();
 #endif
 
 #if CUO_DEVTOOLS

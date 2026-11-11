@@ -29,8 +29,13 @@ namespace ClassicUO.Game
     internal readonly struct LiveAdvanceSource : IAnimationAdvanceSource
     {
         private readonly Animations _animations;
+        private readonly AnimationsLoader _tables;
 
-        public LiveAdvanceSource(Animations animations) => _animations = animations;
+        public LiveAdvanceSource(Animations animations, AnimationsLoader tables)
+        {
+            _animations = animations;
+            _tables = tables;
+        }
 
         public int MaxAnimationCount => _animations.MaxAnimationCount;
         public AnimationGroupsType GetAnimType(ushort graphic) => _animations.GetAnimType(graphic);
@@ -40,7 +45,8 @@ namespace ClassicUO.Game
         public bool IsReplacedObjectAnimation(byte family, ushort group) => Mobile.IsReplacedObjectAnimation(family, group);
         public byte GetReplacedObjectAnimation(ushort graphic, ushort index) => Mobile.GetReplacedObjectAnimation(graphic, index);
         public void GetAnimDirection(ref byte dir, ref bool mirror) => _animations.GetAnimDirection(ref dir, ref mirror);
-        public int FrameCount(ushort body, byte action, byte dir) => _animations.GetAnimationFrames(body, action, dir, out _, out _).Length;
+        public int FrameCount(ushort body, byte action, byte dir) =>
+            AnimFrameCount.Get(_tables, new LegacyFrameCount(_animations), body, action, dir);
     }
 
     internal enum AnimAdvanceOutcome : byte
@@ -369,7 +375,7 @@ namespace ClassicUO.Game
         /// components are written together from the first update on), not mirrored or without its components.
         /// </summary>
         public bool TryRun(World world, Mobile mob) =>
-            TryRun(world, mob, new LiveAdvanceSource(Client.Game.UO.Animations));
+            TryRun(world, mob, new LiveAdvanceSource(Client.Game.UO.Animations, Client.Game.UO.FileManager.Animations));
 
         /// <summary><see cref="TryRun(World, Mobile)"/> over any animation data (the unit tests pass a stub).</summary>
         internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source) where TAnims : struct, IAnimationAdvanceSource
