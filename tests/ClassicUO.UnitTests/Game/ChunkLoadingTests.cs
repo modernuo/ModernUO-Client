@@ -280,9 +280,22 @@ namespace ClassicUO.UnitTests.Game
             }
 
             q.Drain(0, 0, 1, 100, read, notReady); // warm up the scratch arrays
+
+            // Run the measured request/drain pattern itself until it is warm: its first passes JIT and grow state on this
+            // thread, which a loaded run saw as a nonzero delta. The measured frames then repeat it unchanged.
+            for (uint f = 1; f < 4; f++)
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    q.Request(i, i, f);
+                }
+
+                q.Drain(0, 0, f, 100, read, notReady);
+            }
+
             long before = GC.GetAllocatedBytesForCurrentThread();
 
-            for (uint f = 1; f < 3; f++)
+            for (uint f = 4; f < 6; f++)
             {
                 for (int i = 0; i < 100; i++)
                 {
