@@ -275,7 +275,7 @@ namespace ClassicUO.Game
             }
 
             // T5d: a listed item's tag follows its list membership whenever its record is written (a replaced record starts
-            // without the tag, and ActiveItemList.Add returns early for an item already listed)
+            // without the tag, and ActiveItemStore.Add returns early for an item already listed)
             if (entity is Item listed && _world.IsItemListed(listed)
                 && Mirror.TryGetEntity(listed.Serial, false, out EcsEntity tagged) && !tagged.Tags.Has<ItemActive>())
             {

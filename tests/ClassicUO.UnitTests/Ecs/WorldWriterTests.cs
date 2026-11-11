@@ -1236,7 +1236,7 @@ namespace ClassicUO.UnitTests.Ecs
             y.AllowedToDraw.Should().Be(x.AllowedToDraw);
             y.WantUpdateMulti.Should().Be(x.WantUpdateMulti);
             y.IsDestroyed.Should().Be(x.IsDestroyed);
-            y.InUpdateList.Should().Be(x.InUpdateList);
+            y.World.IsItemListed(y).Should().Be(x.World.IsItemListed(x));
             y.IsPositionChanged.Should().Be(x.IsPositionChanged);
             if (WorldMirror.IsWearerSerial(y.Serial))
             {

@@ -23,7 +23,8 @@ namespace ClassicUO.UnitTests.Ecs
             "ecs_step_mount_inputs",
             "ecs_item_offset",
             "ecs_boat_steps",
-            "ecs_small_fields"
+            "ecs_small_fields",
+            "ecs_active_items_source"
         };
 
         [Fact]

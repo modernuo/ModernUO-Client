@@ -157,14 +157,6 @@ namespace ClassicUO.Configuration
         // the off path, the shadow list and CUO_TILE_ORDER_CHECK stay for one phase.
         [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; } = true;
 
-        // T9 (ecs-transition-plan.md §T5d): the ECS is the source of the per-frame item update list: one ActiveItemEntry entity per
-        // listed item holds the item and its visiting slot (append, swap-remove), and the active item stage visits the order
-        // rebuilt from those entities each frame. Off: World's ActiveItemList holds membership and order. CUO_ACTIVE_ITEMS_SOURCE_CHECK=1
-        // keeps the list as a shadow and compares membership and order every frame. Read once at startup
-        // (CUO_ECS_ACTIVE_ITEMS_SOURCE=1|0 overrides it in developer builds). Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
-        // checker stay for one phase.
-        [JsonPropertyName("ecs_active_items_source")] public bool EcsActiveItemsSource { get; set; } = true;
-
         // T9 (ecs-transition-plan.md §T9): World.Get answers from the mirror's serial index (each record keeps the Item or Mobile
         // it was last written for), not from World.Items/World.Mobiles, which stay maintained. CUO_ENTITY_INDEX_CHECK=1 runs both
         // lookups at every World.Get and logs mismatches. Read once at startup (CUO_ECS_WORLD_ENTITY_INDEX=1|0 overrides it in
