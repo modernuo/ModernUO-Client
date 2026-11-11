@@ -558,6 +558,12 @@ namespace ClassicUO.Ecs
         private uint _e;
     }
 
+    [InlineArray(EquipmentSlots.MAX_LIGHT_ONLY)]
+    public struct LightBeforeArray
+    {
+        private byte _e;
+    }
+
     /// <summary>
     /// A mobile's drawn equipment, compacted and in paint order (PaperdollOrder table and reorder rules; covered layers,
     /// light-only items and a dead mobile's hair removed). Rebuilt only when equipment changes (<see cref="EquipmentDirty"/>);
@@ -592,9 +598,14 @@ namespace ClassicUO.Ecs
         public HandItem Hand1, Hand2;
 
         // Light items the view doesn't draw but lights at the body's anchor (MobileView: a human's light without an equip
-        // AnimID, any light on a non-human body), in paint order; serials. Drawn lights carry EquipSlotBits.Light.
-        public const int MAX_LIGHT_ONLY = 4;
+        // AnimID, any light on a non-human body), in paint order; serials. Drawn lights carry EquipSlotBits.Light. Sized for
+        // every layer the paint order can hold (one light per layer, as the view submits), so no eligible light is dropped.
+        public const int MAX_LIGHT_ONLY = MAX;
         public LightItemArray LightItems;
+
+        // per light-only item, the number of drawn slots (rebuild order) before it: the extract submits it just ahead of that
+        // slot, so lights come in the view's layer order when the scene's light limit cuts the list
+        public LightBeforeArray LightBefore;
         public byte LightCount;
 
         // set on every rebuild from a counter shared by all mobiles, so a version never repeats (W5's MobileFrameCache
