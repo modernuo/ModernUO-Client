@@ -1,329 +1,114 @@
-# Performance Opportunities (backlog)
+# Performance opportunities (backlog)
 
-Costs that were accepted (not opportunities) are listed in [accepted-costs.md](accepted-costs.md) for the final audit.
+Open items only, one line each: what, where, estimated benefit, status. Done items are in the compact list at the bottom. Accepted costs are in [accepted-costs.md](accepted-costs.md). New items come from agent reports ("Perf opportunities"); we take them one at a time as small, measured changes. Per-phase numbers: classicuo-perf-baseline.md (1080p JIT: Update ~0.012 ms, Draw 0.2-1.2 ms, Present 0.12 ms; at 4K Present plus composite ~0.57 ms, zoomed out 5.7 ms/frame).
 
-This is a living list. Add to it whenever work turns up a likely performance win. We tackle these **after** the PoC is proven, measuring each one with the per-phase timing hooks (integration plan step 7b) to see whether it moves FPS.
+"Goes with T9" marks items the T9 deletions (hot caches, `World` tables, GpuItemCache signatures, off paths) remove: do not fix them separately.
 
-Format: **what**, where (file:line), why it should help, evidence or estimate, and source.
+## Frame loop and UI
 
-**Measured (step 7b, 2026-10-24):** classicuo-perf-baseline.md has the per-phase numbers. At 1920×1080 JIT on the sparse local shard, Update ≈ 0.012 ms, Draw 0.20–1.20 ms (world prepare plus draw dominates) and Present 0.12 ms p50. At 4K, Present plus composite reach about 0.57 ms, and zoomed out at 4K reaches 5.7 ms per frame. "(measured: …)" notes below come from that doc.
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| UIManager.Update sorts and recursively updates every control each frame | UIManager.cs:335, Control.cs:259 | update only dirty controls, hit-test cache | open |
+| UI pass walk + vertex generation (~50 us with static UI) | batcher UI pass | needs dirty tracking; draw-time side effects (`HealthBarGump`, `ContainerGump` set `SelectedObject`) block it | open |
+| `Control.InvokeMouseOver/Enter/Exit` allocate `MouseEventArgs` before checking listeners | Control.cs | ~32-40 B/frame while hovering | open |
+| `UIManager.SortControlsByInfo` allocates a list node per Over gump (`AddFirst(c)`) | UIManager | use `AddFirst(first)` | open |
+| `HandleKeyboardInput` walks every gump every frame | UIManager | CPU | open |
+| `ItemGump` calls `World.Items.Get` per container item per frame; `ItemGumpFixed` per paperdoll slot | ItemGump.cs ~188/236, PaperdollGump.cs ~866 | use `EntityRef` | open; the lookup goes with T9 tables |
+| Container/paperdoll item art decodes on the main thread when a gump first opens | request in `WorldWriter.PlaceInContainer` | ~20-50 us per sprite, first-open hitch | open |
+| `HealthLinesManager` with `ShowMobilesHP` on still walks every mobile; hoist `HitsTexture`/`CurrentProfile` | HealthLinesManager.cs | CPU | open |
+| `NameOverHeadManager.TypeAllowed` reads `CurrentProfile` per object per frame | NameOverHeadManager.cs:35 | tiny | open |
+| `Party.Contains` per guild entity per frame (world map); `RequestServerPartyGuildInfo` builds a buffer every 250 ms (unverified); `HouseCustomizationGump` LINQ | perf-alloc-4 | low | open |
+| Season change reads the race per object | Map.cs:338, World.cs:324 | minor, rare | open |
+| Blocking main-thread waits (Present, limiter sleep) lose their quantum under load | frame limiter | 2 ms wait ~500 ms under 40 busy loops; ~4 ms with raised priority | decided 2026-11-08 (raise only around sleep/Present, lower when minimized); not started, needs timing under load |
+| `FirstSightDecoder.RequestAndWait` overshoots its stall slice on a loaded machine | FirstSightDecoder.cs:217, DecodeQueue.cs ~136 | 2 ms slice measured 1.2-3.5 s with starved workers | open, check the `ManualResetEventSlim` spin and worker priority |
+| Pause FAudio mixing while minimized | audio | CPU | open, with the minimized-priority work |
 
-## Frame loop / Update
+## Allocation (per-frame and scene-scaling)
 
-- **Done (W5, 2026-10-25, `world_update_active_items`): World.Update walked every mobile and every item, including items inside containers, every frame** (World.cs; `Entity.Update` → `UpdateHits`, `Item.ProcessAnimation`). Now only items whose `Update` does something (corpses, items whose handles just opened) are visited per frame, plus the 50 ms range sweep. Large-scale scene: 0.28–0.33 → 0.015–0.02 ms for 25,120 items. (In that scene 19,476 of them are ground items, not worn or packed: what made the loop cheap to cut is that `Item.Update` is a no-op for almost every item.) Source: cuo-2.0-perf-comparison.md.
-- **ClassicUO update-path findings** (ECS agent, 2026-10-24), **W5 verdicts (2026-10-25):**
-  - **Done:** `WMapManager.AddOrUpdate` ran its early-outs (including a UI gump search) for every ally or party mobile every frame; World.Update now asks `AcceptsLocalUpdates` once per frame.
-  - **Not a real problem:** `RootContainer` on map change is O(n · depth) with depth 1–3, once per facet change; the removal of every item dominates that frame.
-  - **Done:** LINQ `Reverse()` allocated on every FindNext; scratch lists now (per keypress, not per frame).
-  - **Left, not per frame:** every 0x78 destroys and re-creates all non-backpack equipment as new `Item`s (PacketHandlers.cs `UpdateObject`). Reusing them would keep OPL and other per-item state the destroy clears, a behaviour change, for a cost paid once per packet.
-  - **Left, not per frame:** ConfirmWalk calls `Player.AddToTile()` (unlink plus a sorted re-insert) per step. Skipping it can change the order among equal-priority objects on the player's tile (the painter order), for about a microsecond per step.
-  - **Done:** the HP percentage is computed in the `Hits`/`HitsMax` setters instead of every frame (Entity.cs).
-  - Done (E11): the ECS mirror's `Sync` ran twice per SetInWorldTile; the first (inside UpdateScreenPosition) is gone, AddToTile always ends in one. Mobile SetInWorldTile cost 0.12-0.22 us before, 0.07-0.10 us after (poc-log "E11").
-- **Done (W5, `gpu_mobile_frame_cache`): a mobile's action selection and sprite extract ran every frame although most mobiles change frame only every 80–100 ms.** `MobileFrameCache` reuses both while the inputs are the same. Scene: 0.71 → 0.35–0.37 ms for 1,611 mobiles. What remains (about 0.22 µs per mobile) is mostly `Sample` reading the legacy Mobile: `IsMounted` walks the equipment list twice and looks up the mount table, plus the override-hue inputs and steps. Fix: the mirror's change funnel pushes these into the ECS (W5's next step).
-- **Done (W5, `text_skip_expired`): expired overhead texts stay in an entity's text container, so every mobile that ever showed text (incoming names) was laid out every frame**, an animation-dimensions lookup and two mount lookups each, for nothing. Scene: 0.18 → 0.04 ms for 1,985 mobiles.
-- **Done for the Gpu walk (2026-10-25, large-scale agent):** a camera generation replaces the per-frame recompute of walked objects (`forcePosition`). Original finding: **screen position recomputed for every object every frame** in `FillGameObjectList`. Fix: recompute only when the world position changes, via an ECS change query. Source: impl/ecs 827e54185.
-- **UIManager.Update sorts and recursively updates every gump control every frame** (UIManager.cs:335, Control.cs:259). Fix: update only dirty controls; add a hit-test cache. Source: 2.0 `UiPickCachePlugin`, `GumpPositionCachePlugin`.
-- **Done (B1–B5, `poc/batcher-ui-alloc`): about 17–28 KB allocated per frame is now about 0.1–0.25 KB, with no gen0 GCs in steady state.** Measured with paperdoll, backpack, journal and status open: 27.6 KB → 70–250 B per frame, gen0 1.6–2.2/s → 0, JIT and NativeAOT. What remains is asset streaming (animation frame decode in `PackPages.DecodeChunk` and `PackSprites.DecodeIndexed` when a mobile shows a new direction) and the FrameStats report string every 5 s.
-  - Original finding: about 17–18 KB allocated per frame, roughly 4 gen0 GCs every 5 s (the step-2 NativeAOT baseline of 2026-10-24). Fix: hunt allocations down to zero, and keep allocation and flush probes permanently in the build. Source: 2.0 `EcPerfProbe`, `BatcherProbe`.
-  - Measured: 17.7 KB per frame at idle and 21 KB while travelling; GC pause 0.3–1.5 ms/s. AllocationTick sampling puts about 90% in the UI draw path; the three quick wins follow.
-- **Done (B3):** **`Control.DrawDebug` allocates a closure display class on every call, even with debug off** (Control.cs:328). C# hoists the captured-variable class to method entry, so every visible control allocates one per frame: about 20% of all per-frame allocation. Fix: early-return before the lambda, or move the lambda into a separate method. Trivial. Source: step 7b allocation trace.
-- **Done (B2; `GumpCommand` structs plus `IGumpDeferredDraw`, which also covers ScrollBar, ScrollFlag, BorderControl, JournalGump, SystemChatControl, TextContainerGump, Checkbox, HitBox, Line, ItemGump and AlphaBlendControl):** **UI controls allocate a `Func<UltimaBatcher2D,bool>` plus a display class per draw per frame** (`GumpPic`/`GumpPicTiled`/`Button`/`HtmlControl.AddToRenderLists` → `RenderLists.AddGumpWithAtlas/NoAtlas`). This is about 60% of per-frame allocation. Fix: a struct command (texture, rects, hue, depth) in a pooled list instead of closures. Source: step 7b allocation trace.
-- **Done (B4, HtmlControl too):** **`ResizePic` and `StbTextBox` render lambdas create a new `RenderLists` (seven `List<>`s) every frame** (ResizePic.cs:249). Fix: reuse a cached instance per control. Source: step 7b allocation trace.
-- **Done (B5):** **`PaperDollGump.EquipmentSlot.Update` builds `$"{Layer} slot"` and calls SetTooltip every frame for each empty slot** (PaperDollGump.cs:743). Fix: set it only when the slot becomes empty. Source: step 7b allocation trace.
-- **Done (step 7b): the 250 FPS cap is removed.** `fps: 0` (uncapped, no Sleep limiter) is now the default, with a VSync setting and options-gump checkbox mapped to `PresentationInterval` at runtime. "Reduce FPS when inactive" defaults off and is forced off under `CUO_FRAMESTATS`.
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| Pool `Item`s entering range | `World.GetOrCreateItem` (280 B each) | ~4.3 MB per 15 s of ls_walk | open |
+| Measure text without rasterizing for the `RenderedText` atlas path | RenderedText / FontsLoader | part of ~40 % of ls_walk allocation | open |
+| Presize or pool `GpuItemCache` arrays | `Array.Resize` | ~1 MB per 15 s Gpu ls_walk | open (signatures go with T9) |
+| Cache `ClilocLoader.Translate` + `CapitalizeAllWords` for empty args | ClilocLoader | ~2.2 MB per 15 s ls_walk | open |
+| Create the journal `RenderedText` for `DisplayClilocString` lazily | journal | part of text allocation | open |
+| One-off ~677 KB allocation once per Legacy run, 20-30 s after login | unknown | 1 frame; raised town_walk tipon avg to 92 B/frame | open; not reproduced in 3 JIT runs, likely NativeAOT-only (lazy static init/type loader), needs an AOT-side method |
+| Name-gump creation ~600 B/frame for first windows of the handles walk | ui_update | one-time per new mobile | open (low) |
+| Remaining NativeAOT per-frame floor and scene-scaling allocations | FrameStats alloc/frame | keep flat per mobile, gump, text line | check on every branch (alloc jobs) |
 
-## Rendering
+## Rendering (Gpu world, FNA, Uo.Render)
 
-- **World prepare plus draw is about 0.35 ms at Britain, zoom 1** (more when busy or zoomed out). Replaced by Uo.Render: chunks baked once on the GPU, one draw call. Integration plan step 8.
-  - Measured: 0.22 ms at Britain at 1080p, 1.09 ms zoomed out (12k render-list entries, 326 draw calls) and 5.2 ms zoomed out at 4K (40k entries, 1,041 draw calls). The top cost in every heavy scene.
-- **Done (B8): the UI targets are left untouched when the UI pass records the same draws as last frame** (setting `ui_render_cache`; poc-log.md, "B8 and B9"). UI pass 97–104 → 51–61 µs with paperdoll, backpack, journal, status and 4 health bars. Original finding: the UI render target is cleared and redrawn every frame (GameController.cs:528-549).
-  - **What's left of the UI pass (about 50 µs) is the gump tree walk plus vertex generation,** mostly text glyphs. Skipping it needs real dirty tracking: every control's state, and draw-time side effects (`HealthBarGump` and `ContainerGump` set `SelectedObject` while drawing). It's not done; per-control caches would be the next step.
-  - **Not worth it (B9):** regrouping UI sprites by texture costs more than the 3 draw calls it saves (branch `poc/b9-batch-sort-experiment`).
-  - **Health bar gumps allocate:** main-thread `alloc_bytes` goes from about 340 to 1,100–1,700 B per frame with 4 health bars open, in both cache modes. Not looked into.
-- **FNA per-draw overhead:** C# state application, MojoShader uniforms and several FNA3D calls per batch flush. Fix if significant: a record-then-submit command-list device, which is also the WASM and WebGPU path. Source: 2.0 `IGpuDevice`.
-  - Measured: 16–18 flushes plus 46–1,041 draw calls per frame. Time inside FNA calls is 0.08–0.11 ms at zoom 1, 0.29 ms zoomed out and 1.07 ms zoomed out at 4K. In CPU samples, `Effect.INTERNAL_applyEffect` is 9.4% and `ApplyStates` 8.1%.
-- **Done (B1): `Pass.Apply()` drops from about 16 to 3 per frame in Gpu mode at Britain; DevBench logs applies per frame.** Original finding: **`ApplyStates` re-sends the full matrix and viewport uniforms and calls `Pass.Apply()` on every flush, and `DrawDirectIndexed` calls `Pass.Apply()` once per mesh run** (Batcher2D.cs `ApplyStates`, `DrawDirectIndexed`). Fix: dirty-track the matrices and the viewport and apply the pass once per state change; draw each chunk layer's runs with one apply. Cheap, and it helps until Uo.Render replaces the world path. Source: step 7b CPU samples.
-- **The faux backbuffer blit plus the RT composite at window size** (FNA3D_Driver_SDL.c:1119-1215, RenderTargets.cs:94-147). Fix: render the world straight into the swapchain image and skip the composite. Needs another FNA3D patch.
-  - Measured: Present p50 0.12 ms plus composite 0.04 ms at 1080p, against 0.45 + 0.12 ms at 3840×2054. About 0.4 ms per frame to win at 4K.
-- **Present stalls 4–5 ms on about 4% of frames above ~1,000 fps** (SDL_GPU frames in flight and windowed IMMEDIATE present back-pressure); there are none at ≤750 fps. Not CPU work, but it makes frame avg and p99 misleading at very high FPS. Compare CPU work with Update + Draw or frame p50. If it matters later, try `FNA3D_VULKAN_FORCE_MAILBOX_VSYNC`-style present modes or more frames in flight. Source: step 7b.
-- **Ground-item chunk baking:** bake rarely-changing ground items into chunk buffers and re-bake on ECS changes. Only if the dynamic extract or upload shows up in busy scenes. Source: 2.0 `BakeChunkDynamics`. **It does (2026-10-25):** in the large-scale scene (19,476 ground items) the items cost about 1.0 of the 1.9 ms world prepare (walk share plus extract). See world-prepare-ecs-plan.md W4.
-- **Measured at scale (2026-10-25):** `World.Update`'s item loop is 0.20 ms for 25,100 items (about 8 ns each); the per-mobile ECS sample + select + extract is about 0.36 µs. Both are W5's. **W5 (same day):** item loop about 0.02 ms, mobiles about 0.22 µs each (see "Frame loop / Update").
-- **NativeAOT instruction set:** done (step 7b). `IlcInstructionSet=x86-64-v3` (note the spelling; `x86-x64-v3` is rejected) is set for win-x64. Measured: no difference from the default ISA.
-- **AOT vs JIT gap: re-measured 2026-10-25, static PGO and `OptimizationPreference=Speed` don't help.**
-  - **The gap is now small:** total Draw is within noise (Britain p50 0.43 vs 0.40 ms; bank and zoomed out, AOT equal or ahead). What remains is UI draw (+20–25%, 0.095 vs 0.076 ms) and composite (+20%, 0.060 vs 0.050 ms). That is about 0.03 ms per frame.
-  - **The remainder is native time inside FNA calls,** not managed codegen: `batcher_fna` is +0.015 ms per frame with identical draw and flush counts.
-  - **The AOT profile shows 4–5% of render-thread samples in `RtlWalkFrameChain`** (stack captures under the GPU driver), against about 2% in JIT. The likely source is an injected GPU tool on this machine (nv-aftermath-monitor running, `InProcessClient64.dll` loaded). A plausible reason it costs AOT more: the walk unwinds through every AOT frame (static .pdata) but stops at JIT frames. Re-measure on a machine without GPU tools before chasing it.
-  - **Not done:** `<DirectPInvoke>` for FNA3D and SDL3 (needs generated import libraries).
-  - **Static PGO is opt-in** via `-p:CuoMibcPath=` (tools/pgo/collect_mibc.py). Details: testing/aot-performance.md and the 2026-10-25 poc-log entry.
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| FNA per-draw overhead (C# state apply, MojoShader uniforms, FNA3D calls per flush) | FNA | 0.08-0.11 ms at zoom 1, 1.07 ms zoomed out at 4K; `applyEffect` 9.4 %, `ApplyStates` 8.1 % | open; fix is a record-then-submit command-list device (also the WASM/WebGPU path) |
+| Faux backbuffer blit + RT composite at window size | FNA3D_Driver_SDL.c:1119-1215, RenderTargets.cs:94-147 | ~0.4 ms/frame at 4K | open, needs an FNA3D patch |
+| Present stalls 4-5 ms on ~4 % of frames above ~1000 fps | SDL_GPU frames in flight | misleading avg/p99 at high fps | open; try mailbox-style present or more frames in flight; compare p50 meanwhile |
+| NativeAOT `DirectPInvoke` for FNA3D/SDL3 | build | not measured | open, needs generated import libraries |
+| AOT `RtlWalkFrameChain` 4-5 % of render-thread samples (likely GPU tool injection) | profiling | ~0.03 ms/frame | re-measure on a machine without GPU tools |
+| List fill is the world's main Gpu cost (walks a square tile range, tests every object): walk the screen's diamond, cache per-tile decisions | GameScene fill | 0.5 ms zoomed out 1080p, 2.9 ms at 4K | open |
+| `Static.CheckMouseSelection` for every static every frame (reject by art rect first) | StaticView.cs:95, GameSceneDrawingSorting.cs:940 | ~3.7 % of main-thread samples zoomed out; helps Legacy | open |
+| Chunk meshes still built in Gpu mode (picker parity) and art atlases still filled for the picker | GameScene.cs:648 | CPU and VRAM per dirty chunk | open; picker-only path once Legacy is removed |
+| `CollectGpuHidden` second walk over each tile; remaining zoomed-out overrides (182) are the fill's skips | WorldRenderer | 0.03-0.1 ms zoomed out | open; disappears with the diamond walk |
+| Circle-of-transparency ring scans chunks every frame | `WorldRenderer.BuildFrame` | 8 ring instances at zoom 1, cheap | open; cache per player tile and chunk generation |
+| Season change rebakes by `ChunkStore.EvictAll` (view re-streams a few frames) | ChunkStore | - | open; double-buffered slots if it matters |
+| Three entity lookups per mobile in the Uo.Client extract; 23 equipment layers walked per human per frame | RenderExtract.cs:119, Animation.cs:240 | - | open (Uo.Client only) |
+| All 37.9k palettes (18.5 MiB VRAM) + 4 MB FramePalette load at startup | PackSet.cs:92 | stream per body | open |
+| Vertex shader runs the chunk-table binary search on all 6 vertices of each quad | sprite.hlsl VSMain | indexed 4-vertex quad, ~1/3 less vertex work | open |
+| Decoder + worker threads oversubscribe small CPUs (2x8 + 8) | Uo.Render | size by core count | open |
+| Dynamic-sprite page requests run twice; dynamic instances re-upload every frame (~400 KB at 5000 mobiles) | `WorldRenderer.BuildFrame`, Renderer.cs:314 | - | open; ties in with ground-item baking |
+| Expanding 16-bit pages to RGBA8 costs 3-5 ms per page (suspect write-combined memory) | renderer | only the WebGPU RGBA8 fallback | open |
+| Co-occurrence page packing v2 | pack-format-v0.md | fewer pages per screen | open |
+| TextureAtlas holds RGBA8 and never evicts | TextureAtlas | moot once Gpu is the only path | open |
+| GPU device-lost recovery (recreate device, reload textures) instead of exit 0xDEAD | GpuDeviceLost | robustness | open |
+| Visible body changing to an action it never showed decodes synchronously (~3 ms, 15 in a 20 s bodies run) | Animation | avoids a blink | open |
 
-## Assets / streaming
+## Streaming, GC and loading
 
-- **Expanding 16-bit pages to RGBA8 costs 3–5 ms per page in the renderer, against 1.2 ms in a microbenchmark.** The suspect is writes into write-combined upload memory. Fix: expand into cached scratch memory, then memcpy, or let the GPU expand with a compute shader. Only matters on the RGBA8 fallback path (WebGPU).
-- **Co-occurrence page packing (v2).** Fewer pages touched per screen. Method in pack-format-v0.md.
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| Collections remaining after login warm-up (one gen0 ~+31-36 s while teleporting 3.5-5 ms, then one every few minutes) | art/texmap decode pool misses, bake arrays, `Map._usedIndices` node per chunk load, statics mesh growth, LOH region buffers | options: pooled decode/region buffers, a node per chunk | open; `DOTNET_GCgen0size` is ignored by NativeAOT |
+| `Dictionary<UInt64,Int32>.FindValue` 1.8 % of Legacy britain_z samples | caller not traced | an array may replace it | open |
+| Server update range: bound the walk by range (18, 24 for houses), stream assets by range, warn about huge viewports, read range from 0xC8 | whole world path | scales with viewport tiles | deferred; edge reconciliation (known-issues "ghost mobiles") comes first; rule meanwhile: no per-frame Gpu work that scales with viewport tiles if it can be per chunk or per change |
+| Equip update for a mobile the client no longer holds (0x2E from ModernUO `Item.ProcessDelta`, Item.cs:1540-1573) | client attach path | must attach on arrival or drop, never half-apply | open; ModernUO audit: should `ProcessDelta` respect `IsSentTo`? |
+| Gump tooltips for objects the client never saw (0xD6 after an `itemproperty` gump) | `ObjectPropertiesListManager` keys by serial; server request handler may refuse unsent serials | owner requirement | repro first |
+| `World.Update` mobile loop as a system over animating mobiles; animation clock into the ECS | World.cs | 0.035-0.06 ms at 2,000 mobiles today; scales with non-vanilla features | deferred, E4 covers the due-time schedule |
+| Network: ModernUO-style double-mapped pipe (no `CircularBuffer`, no staging copy); audit string-allocating handlers | NetClient | removes one copy per packet | deferred, HIGH RISK, own project (parity tests, soak) |
+| Startup: time each loader, then defer (L6); tile names decoded on first access (L8); entry views in the converter (L9) | loaders | mostly moot now that gumps/fonts/cliloc/sounds are in the pack | optional |
 
-## Server update range vs. large viewports (owner, 2026-10-25; deferred)
+## ECS, extract and Legacy sprites
 
-The server sends dynamic objects (mobiles, items, effects) only within its update range: usually 18 tiles, and 24 for houses/multis. Players with large monitors who enlarge the game viewport often don't realise the fps cost, which grows quickly with activity on screen. **Deferred to a later iteration** unless it would change the current milestone's architecture (assessed below: it doesn't).
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| `ItemOffsets.ReadEcs` runs for every item every frame | ItemOffsets | 2.5-3.1 % of the large scene; a "has offset" flag on the item | open |
+| `MobileAnimationSystem.UpdateInPlace` -> `SamplePushed`/`SelectCached` build and compare a ~15-field `SelectKey` per drawn mobile per frame | MobileAnimationSystem.cs:121-207 | 0.1-0.3 us/mobile, 1.5 % of profile; dirty bit + `NextFrameTime` check | open |
+| `GpuWorldRenderer.TryDrawMobileEcs` finds the dirty flag through a second lookup (as fixed in 37237a511); `TakeDirty` reads tags before the record | GpuWorldRenderer.cs:729, ~611 | one lookup per drawn mobile | open |
+| Mobile replay builds a ~80 B draw struct per entry | MobileSpriteExtract.cs:770 | 2.2 % of profile | open |
+| `ItemSpriteInput` `i = default` zero-fill ~90 B/item; `HueInput` copied in `Run`; `ArtLoader.GetEntry` twice in `Art()` (~0.5 %); `new GpuSpriteTables(pack)` per item in `Emit`; `EmitCorpse` re-reads loaders; corpse-strip interface dispatch | ItemSpriteExtract.cs (~272 for tables) | small each | open |
+| Corpse layer: equipment conversion looked up twice per layer; destroyed items held until reused (memory) | ItemSpriteExtract.CorpseLayer ~540; WorldState.Equipment.cs ~198 | - | open |
+| Legacy sink: `GetAnimationFrames` once per strip and again per layer | LegacySpriteResolve.cs:87, `MobileSpriteExtract.Layer` | 3-5 lookups per mobile layer | open |
+| Mobile pixel check redoes texture/layer/equip lookups once the rect hits | MobileView.CheckMouseSelection ~1060-1270 | use the draw records | open |
+| `Mobile.IsMounted` walks the equipment list twice | Mobile.cs:206-227 | check whether `ecs_step_mount_inputs` covered it | verify |
+| `EffectSystem.Animate` + `Publish` do two `EcsRead.Get` per effect per frame | EffectSystem.cs ~130 | small | open |
+| `Entity.TryScalarEntity` ~4.5 ns/call (World->Ecs->Mirror->Epoch chain); `WorldEcs` per-frame pushes call `GetComponent` (2-4 ns, unconfirmed) | Entity.cs:52, WorldEcs.cs ~453/522/570 | per-frame epoch snapshot | open |
+| `Chunk.Tiles` is a 2-D array (flat `[64]` like `_heads`); second head walk in the Gpu item cache | Chunk.cs:27; GameSceneGpuItemCache.cs ~357/401 | two bounds checks + multiply per anchor read | open (item-cache walk goes with T9 signatures) |
+| Gpu ecs sprites: `TakeDirty` row overload; worn-light `FindItem` per draw | Codex audit gpu-ecs-sprites | small | open, in the parity fix slice |
+| `BoatStepSystem._order` snapshot list copy per frame | BoatStepSystem | small | open |
+| Due mobiles from the clock's handles instead of a serial lookup; `WorldState` children via a handle snapshot | World.cs:709, WorldState.cs:338 | small | open |
+| `Item.RootContainer` lookup per level; `HouseManager` looks the house up twice | Item.cs, HouseManager | small | open |
+| Tab scan copies all items (keypress only); ordered item table's free list as `Stack<int>` | `World.FindNextCore` | trivial | open |
+| Attach-time walks (`WouldCycle`, `SubtreeDeeperThan`, `ParentOf`) | WorldWriter, WorldMirror | packets only | open (negligible) |
+| FrameStats 8 ms slow-frame log line skews benches near 8 ms | FrameStats.cs:666 | bench accuracy | open: raise or disable under bench |
+| Dev only: `Extract.Run` every frame while `-ecscheck` > 0; `BenchEffects.Tick` walks effects every 200 ms | WorldEcs.cs ~972 | dev builds | open |
+| `MobileInputs` Female/WarMode/SpeedMode copies of `MobileTraits` | MobileInputs | - | goes with T9 (derive from the record once caches go) |
+| `World.GetHeld` falls back to the other table on a miss; `World.Holds` item branch via `Items.Holds`; `FindScalarEntity`/`HoldsEntity` look the serial up twice (use `Mirror.GetHandle(serial) == this`) | World.cs ~1161, Entity.cs:60, WorldEcs.cs:255 | a dictionary lookup each | goes with T9 (world index slice 5) |
+| One dictionary lookup too many per corpse per frame (`world.Items.Get`) | ItemAnimationAdvanceSystem.TryRun ~125 | - | goes with T9 tables |
+| `DynamicTileIndex.Holds` three type tests per placement (kind byte); `(Maintain \|\| ListDropped)` conditions | Chunk.cs:379, TileOrder.cs:302/384 | trivial | goes with T9 (A3 deleted the off path: verify ListDropped is gone) |
 
-- **Bound the per-frame walk by the update range, not just the viewport.** Beyond the range the server sends no dynamic objects, so the outer ring of a large viewport holds only land, statics and multis (the multi range is larger). The Gpu path already draws settled land and statics from baked chunks (W1) and ground items from per-chunk caches (W4), so the outer ring should cost close to nothing per frame. Today the shared list fill still walks every tile in the view (about 92k tiles at the 3840×2054 large spot). Combine this with the "walk only the screen's diamond / per-tile decision cache" item in "GPU world in ClassicUO": walk tile by tile inside the range, and draw outside it from the bake only. Check that objects the client retains past the range (stale until the server removes them, houses) still behave correctly.
-- **Stream assets by update range.** Knowing the range gives a residency radius: chunk bakes, item caches, animation pages and art pages for anything beyond the range plus the viewport (plus a margin in the walk direction) can be evicted or deprioritised, and prefetch can target the ring the player is walking into. This ties into the ChunkStore eviction and the pack-loading worker decode.
-- **Tell the player.** Show or log the fps cost of a viewport beyond the range (or a soft cap/warning in options), and measure it: an FPS-test spot with a busy scene at max viewport (the large scene at 3840×2054 already covers part of this).
-- **Read the range from the server.** Use ClassicUO's `ClientViewRange` (packet 0xC8) and, later, our own protocol announcing the range and the multi range. Don't hard-code 18/24.
-- **Edge reconciliation comes first (owner, 2026-10-25).** At the update-range edge the server and client don't always agree, especially on older RunUO-based servers and with houses and boats (a larger range). A house can stream in without its door, for example. That's acceptable visually for now; network or protocol upgrades come later. What isn't acceptable is losing a mobile at the edge that should still be there, or missing a stream-out deletion, which leaves "ghost" mobiles or items standing idle forever although they no longer exist for the player. This is already a known rare issue (known-issues.md, "Ghost mobiles and items at the update-range edge"). Range-based viewport streaming requires: (1) a repro, for example walking along and across the range edge in the large scene, at house and multi range, with teleports and mounts; (2) an audit of ModernUO's edge handling: when it sends creates and removes as the player or object moves, multis versus their contents, removes on map change and teleport; fix server bugs on our ModernUO branch; (3) client cleanup: creates, updates and deletes applied in the correct order, nothing deleted too early, and a defined rule for objects outside the range that the server never removed (ClassicUO already drops some out-of-range objects itself; check that it matches the server's range). Client-side asset eviction must never be confused with world-object removal.
-- **Who-knows-what, found by the W5 audit (2026-10-25).** ModernUO sends a worn-item update (0x2E) to every client that can see the item and is in range (`Item.ProcessDelta`, Server/Items/Item.cs:1540-1573), without checking that the client still holds the parent mobile. ClassicUO drops out-of-range objects on its own, so if the two ranges differ by a tile, equipment can arrive for a mobile the client doesn't have. ClassicUO keeps such an item mirrored under the parent serial but never attaches it when the parent arrives later (World.cs, 0x78 creation). The normal order is fine (0x78 carries the mount and goes out during the move; deltas go out at the end of the tick), so this isn't a ModernUO ordering bug, but the client must handle an equip update with an unknown parent cleanly: attach it when the parent arrives, or drop it, never half-apply it. For the ModernUO audit: ModernUO already tracks what it sent to a client (the lift-reject path checks `item.IsSentTo`, Mobile.cs ~5205); check whether `ProcessDelta` should respect it for worn items.
-- **Gump tooltips for objects the client hasn't seen (owner requirement, 2026-10-25).** A gump can reference an item by serial for its tooltip (the gump's `itemproperty` entry), and the server must be able to send that tooltip (0xD6) after the gump, without the item ever having been sent as a world or container object. Ignoring tooltips for unknown entities is correct elsewhere, but this case must work. The owner works around it on the server today; it should be supported without the workaround. What the client does today (read 2026-10-25, not tested): `itemproperty` calls `SetTooltip(serial)` and requests the tooltip if none is stored; the 0xD6 handler stores properties by serial even when no entity exists (the entity is only used for the name and the shop check), and `ObjectPropertiesListManager` keys by serial alone. So the client side may already work, and the gap may be on the server (its tooltip-request handler refusing serials it never sent) or in client cleanup that drops tooltips of unknown serials. To do: a repro (a gump with an `itemproperty` for an unsent item, with and without a pushed 0xD6), fix whichever side fails, and keep it working when entity creation, deletion and tooltip storage are reworked for streaming.
-- **Architecture check (2026-10-25):** nothing in the current milestone (ECS world prepare W0–W5, per-chunk bakes and caches, startup renderer selection) assumes the viewport fits inside the range, and per-chunk caching is what range-based streaming would build on. One rule to keep until then: don't add per-frame work that scales with viewport tiles in the Gpu path when it could be per-chunk or per-change.
+## Done (commit ids)
 
-## World update as ECS systems (owner, 2026-10-25; deferred, not dropped)
-
-- **`World.Update`'s mobile loop as a system over animating mobiles.** W5 left it alone: it costs 0.035–0.06 ms at 2,000 mobiles today, and a due-time schedule needs a push from every `LastAnimationChangeTime` and idle-timer write (`SetAnimation` from many packet handlers, `SetIdleAnimation`, `ProcessAnimation`) plus mobiles with steps or handles, for at most about 0.03 ms. **Keep it on the list:** as the networking is upgraded and non-vanilla features arrive (more mobiles, more animation state, server-driven effects), the per-mobile update cost will grow, and a schedule that visits only due mobiles scales where the loop doesn't. Also still read from the Mobile per frame: the animation clock (server action, frame, frame time, from-server); moving it to the ECS goes with this item.
-
-## Uo.Render / slice (reported by the renderer agent, 2026-10-24)
-
-- **The global `ChunkedBrotliDecoder` lock serialises Kind 2 page jobs** (PageResidency.cs:110), causing 13–17 ms waits in bursts. Fix: a decoder per staging slot with fewer threads, or chunk jobs on the WorkerPool.
-- **The Indexed8 shader always does 4 index loads plus 4 palette loads** (sprite.hlsl:181). Fix: a single-tap branch when the sample is sharp and the fraction is 0, as at zoom 1.
-- **Three entity lookups per mobile in the extract** (Flags, Serial, Equipment; Uo.Client RenderExtract.cs:119). Fix: a query over those components, iterating chunk spans.
-- **The extract walks 23 equipment layers per human per frame** (Animation.cs:240). Fix: cache a compacted, ordered slot list when equipment changes.
-- **Done (pack-hitch agent):** `ReadHeader` on Kind 2 decoded all of chunk 0 (1 MiB) per page at startup (PackSet.cs:65,83). `AtlasPage.ReadHeader` now decodes only the 16 header bytes: 2.8–4.6 → 0.36–0.39 ms per page (PackSet reads 36 headers at startup, so about 100–160 ms → 14 ms).
-- **All 37.9k palettes (18.5 MiB VRAM) plus a 4 MB FramePalette table load at startup** (PackSet.cs:92). Fix: stream them per body.
-- **Done (c18e96a6b):** per-worker Kind 2 decoders, which removed the global lock (anim pages 390 → 2590 pages/s), and an Indexed8 single-tap fast path (GPU 0.565 → 0.50 ms at 4K with 4000 mobiles).
-- **The vertex shader runs the chunk-table binary search on all 6 vertices of each quad** (sprite.hlsl VSMain). An indexed 4-vertex quad would cut vertex work by about a third.
-- **Done (pack-hitch agent):** the Kind 2 branch read the ChunkedHeader twice (PageResidency.cs). `ChunkedBrotliDecoder.Decode` has an overload that takes the header already read.
-- **Decoder and worker threads can oversubscribe small CPUs** (2×8 decoder threads plus 8 workers). Size the pools by core count.
-- **Dynamic-sprite page requests run twice** when the extract already requests them (`WorldRenderer.BuildFrame` and Uo.Client's extract).
-- **Roof hiding through per-sprite overrides can mean thousands of overrides.** A max-Z uniform plus a per-instance z test would be cheaper. **Done in step 9** (see below).
-- **Dynamic instances re-upload every frame** (Renderer.cs:314), about 400 KB at 5000 mobiles. Fine for now; ties in with ground-item chunk baking.
-
-## ClassicUO pack-loading path (pack-assets agent, 2026-10-24)
-
-**Done (pack-hitch agent, 2026-10-24; numbers and method in poc-log.md and [testing/pack-loading.md](testing/pack-loading.md)):**
-- **Chunk decode buffers pooled** (PackAssets.cs `PackPages`): evicted 1 MiB buffers are reused and the compressed chunk is rented. Allocation per chunk decode 1.27 MB → about 60 KB; decode now runs outside the lock, so workers decode in parallel.
-- **Picker masks and real-art bounds from the trim rect** (`PixelPicker.SetTrimmed`, `PixelPicker.VisibleBounds`): only the trim rect is scanned, the picker with a Vector256/128 zero test (scalar fallback, parity tests). Picker 4.7 → 3.2 µs per sprite (scalar trimmed 4.7, so SIMD kept); bounds 4.8 → 0.4–1.0 µs. The untrimmed RGBA image is still built because the legacy atlas uploads it, but into a pooled buffer.
-- **First sight of a body decodes on a worker** (Animation.cs): until a body has a direction uploaded, a direction whose chunks are not cached is decoded on the thread pool and drawn as nothing until ready; uploads are budgeted (2 ms per 8 ms). Main-thread cost of a first sight 3.4–4 ms (max 11–14 ms) → 0.2 µs; `bodies` test Update+Draw max 24–25 → 4.3–8.2 ms, frames over 8 ms 43–76 → 0–1, allocation 57–122 → 19 KB per frame. `AnimationExists` no longer decodes. `CUO_ANIM_SYNC=1` restores the old behaviour.
-- **Region loads decode into pooled buffers** (`RegionFile.DecompressInto`, MapLoader buffer recycling): 4.0–4.2 → 3.0–3.3 ms and 3.9 → 1.1 MB per region on average over 60 loads (0 once the pool is warm).
-- **Stretch lookups cache the last block** (`MapLoader.GetLandZ`): 110–180 → 12 ns per lookup.
-- **Palette cache is an LRU** (`LruCache`, evicted arrays reused).
-
-- **Teleport frame split up (teleport agent, 2026-10-25):**
-  - Regions decode on the thread pool. They are prefetched on 0x1B/0x20 and every frame within 104 tiles of the player.
-  - Chunks load over several frames, nearest the player first, with a 2 ms budget per frame that covers the load and the mesh build.
-  - The draw walk and `AddToTile` no longer load chunks. Game-logic lookups still do.
-  - `travel` Update+Draw max went from 36–40 ms to 10–14 ms, and frames over 16 ms from 4–14 to 0. Numbers are in poc-log.md.
-
-- **First-sight chunk art on worker threads (teleport art agent, 2026-10-26):**
-  - A queued chunk loads only once the land, texmap and static art of its map block is in the atlases. Missing art is decoded on the thread pool (`FirstSightDecoder`, the animation path's pattern) and uploaded inside the chunk budget.
-  - `chunk_mesh_us` max went from 6.7–11.5 ms to 0.3–0.9 ms (one 2.8 ms window). `glide` Update+Draw max went from 10.8–12.5 ms to 3.7–4.5 ms, with 0 frames over 8 ms. Numbers are in poc-log.md.
-
-- **Chunk loads without allocation (chunk-alloc agent, 2026-10-26):**
-  - Evicted chunks' `Land` and `Static` objects are reused by later loads (`MapObjectRecycler`: FIFO with a 1 s quarantine, every field reset, selection holders scrubbed; lifetime invariants in its header and in poc-log.md). Two per-frame closures went too (the region prefetch check, paperdoll item slots).
-  - A chunk load allocated about 25 KB, all of it surviving; now 0 once warm. In a 13-minute travel/glide/walk session, collections went from 39 (142 ms of pauses) to 6 (25 ms); paired 55 s teleport series after login went from 5–7 collections to 1–2 (the remaining ones are login warm-up). Numbers are in poc-log.md.
-
-**Still open in this path:**
-- **Done (`poc/login-warmup-gc`): the login warm-up collections.** `MapWarmup` fills the chunk pool (300 chunks, statics mesh pre-sized to 256 sprites) and the recycler (19,200 lands, 16,800 statics) when the first map is created: 22–31 ms and 32 MB at login, a deliberate trade. It then runs two induced gen1s (4–12 ms) in the last held frame of the login settle hold (Legacy: the first world frame).
-  - Paired NativeAOT runs: collections in the first 60 s after login went from 4 (quiet runs; gen1s promoting 21–28 MB each) to 0–1, plus the 2 induced ones. No chunk or mesh array is allocated after login. The later compacting gen1 that hit `glide` (8.3 ms) is gone.
-  - 13-minute session: 4 collections after login, max pause 4.6 ms; memory flat at about 2,190 MB. `CUO_WARMUP=0` restores the old behaviour. Details in poc-log.md.
-- **Collections that still remain:** one gen0 at about +31–36 s after login while teleporting (3.5–5 ms, about 10 MB promoted), then one every few minutes (2.6–4.6 ms).
-  - What still allocates: buffers rented from the art and texmap decode pools on first sight (`SharedArrayPool` misses on the workers), Uo.Render bake arrays (`SpriteInstance[]`), the server's objects, a `LinkedListNode` per chunk load (`Map._usedIndices`), and statics mesh layers of the busiest blocks growing past 256.
-  - Large-object-heap churn (region decompression `byte[]` in `MapLoader.LoadRegion` and Uo.Render `Region.Parse`, about 20 MB per teleport to a new area) only drives background gen2s.
-  - Options: pooled decode and region buffers, and a node per chunk instead of per load. A collection in a teleport hold has no honest trigger, because .NET can't tell how full gen0 is. `DOTNET_GCgen0size` is ignored by NativeAOT.
-- **The server's packet burst** was 1.1–1.3 ms in the 2026-10-26 runs, not 8 ms (the 8 ms frames on 2026-10-25 probably also contained a GC). Not map loading.
-- **First-sight art outside chunk loads** still decodes on the main thread, in the draw walk (`world_prepare`): objects that aren't map statics, such as ground items and multis (`art_sync` 11–25 per `travel` run, 2.6–3.0 ms in one window; meshes built by the loader had 0 art time). Fix: request that art when the object arrives (0x1A, 0xF3) the same way.
-- **A chunk now appears a few frames later on a new glide column** (art latency). Walking-unsettled frames with "client chunks queued in view" went from 198 to 338 over three glide runs, at about 1,500 fps. In the Gpu world this only delays ground items and mobiles on edge chunks; Legacy has no hold. Fix if it matters: request art for a ring of chunks beyond the draw range.
-- **A visible body changing to an action it has never shown** still decodes synchronously (about 3 ms, 15 in a 20 s bodies run), to avoid a blink. Prefetch covers its other directions and actions 0–4.
-- **Unattributed 250–750 ms frames** with every phase under 1 ms show up in both builds while other clients run; not pack loading.
-- **The atlases hold RGBA8 and never evict** (TextureAtlas, which predates this work). Fix: 16-bit (`Bgra5551`) atlases at half the memory, plus eviction. Becomes moot for the world once the GPU renderer is the default.
-
-## Pipelining
-
-- **No evidence ClassicUO 2.0 pipelines,** apart from a host upload worker. Revisit a render thread, or overlapping the next update with submission, only if Present or submit is still ≥30% of the frame after the items above.
-
-## GPU world in ClassicUO (step 8, 2026-10-24)
-
-- **ClassicUO's list fill is now the world's main cost in Gpu mode:** 0.5 ms zoomed out at 1080p and 2.9 ms at 4K (classicuo-perf-baseline.md, "Step 8"). It walks a square tile range much larger than the screen, tests every object and pixel-checks every static for the mouse. In Gpu mode it only has to produce exceptions (hidden, alpha, tint) and the selection. Fixes: walk only the screen's diamond; cache per-tile decisions and redo them only when the player's max-Z, the alpha timer or the tile change; run the selection test only for tiles under the mouse.
-- **`Static.CheckMouseSelection` runs for every static on screen every frame** (StaticView.cs:95, called from `TrySelectObject`, GameSceneDrawingSorting.cs:940), with a `PixelPicker` dictionary lookup each time. About 3.7% of main-thread samples zoomed out. Fix: reject by the art rectangle first. This helps Legacy as well.
-- **Done (step 9): roof hiding as per-sprite overrides:** 478 overrides at the bank at zoom 1 and 3235 zoomed out. Each one is a `ChunkStore.FindObject` binary search on the main thread (WorldRenderer.cs:315), and the whole 16k-slot hash (128 KB) is uploaded whenever any override exists (Renderer.cs:409). Crowd zoomed out: 0.27 ms of world draw. Fix: a max-Z (and roof-flag) uniform with a per-instance z test in the shader, as noted for the slice.
-- **Item and mobile capture costs what drawing them through FNA did** (120 mobiles: world prepare +0.2 ms), because the views' logic (frame selection, layer order, hue rules) runs either way. Fix: feed dynamics from the ECS `DynamicSpriteExtract` (`GpuWorldRenderer.DynamicBuffer` is the seam) or cache each mobile's sprite list until its animation frame changes.
-- **Chunk meshes are still built in Gpu mode** (GameScene.cs:648), only for `InChunkMesh`/picking parity. That is a CPU and VRAM cost per dirty chunk; the art atlases are also still filled for the picker. Fix: build a picker-only path once the Legacy renderer is removed.
-- **The override collection is a second walk over each tile** (`CollectGpuHidden`). It is cheap after skipping tiles beside the view (about 0.03–0.1 ms zoomed out), but it could disappear if the fill reported skipped objects itself.
-
-## GPU world parity (step 9, 2026-10-24)
-
-- **Measured result of the shader max-Z/roof test:** steady-state overrides went 478 → 39 at the bank, 129 → 71 at Britain and 232 → 182 zoomed out. Bank world draw went 0.082 → 0.057 ms. Most of the remainder had been hidden-land overrides for tiles outside the view (`GpuLandVisible` had 108/64 px slack); the tight 44×44 test removed them.
-- **Done (2026-10-25): translucent statics no longer need an override per sprite per frame.** The bake stores tiledata Translucent statics at alpha 178 (ClassicUO's settled value), and each chunk keeps the translucent pass's sort keys of its translucent instances, set at upload (`ChunkStore.TranslucentKeys`); `BuildFrame` copies the visible chunks' keys into the sorted list with no per-instance work. An override's alpha now replaces the baked one, so fades still use overrides. The Gpu prepare skip no longer walks their tiles every frame. In practice these statics are rare (blood, webs, spilled flour; no windows or water in this tiledata): the blood pool at Trammel 956,700 went 132 → 15 overrides per frame. See poc-log 2026-10-25 "Per-sprite override cut".
-- **Done (2026-10-25): the out-of-range tint (`NoColorObjectsOutOfRange`) is a uniform** (`RangeTintRow`, `RangeX/Y`, `RangeDist`), tested per baked instance in the shader. Land derives its tile from X/Y and z; statics carry their tile's low bytes in Light bits 16-31. With the option on, overrides per frame went 331 → 49 at Britain, 8,141 (2,500+ more dropped, so zoomed-out water and trees were drawn untinted) → 112 zoomed out, and 8,094 → 108 at the large window; the Gpu prepare skip now stays on with the option.
-- **The remaining zoomed-out overrides (182) are the fill's other skips,** mostly land at the view edges (the top strip that `_minPixel` culls when zoomed out). They disappear with the "walk only the screen's diamond / per-tile decision cache" item above.
-- **The circle-of-transparency ring is a CPU scan of the chunks inside the circle's box every frame** (`WorldRenderer.BuildFrame`), 8 ring instances at zoom 1. It is cheap, but it could be cached per player tile and chunk generation.
-- **A season change rebakes by evicting every chunk** (`ChunkStore.EvictAll`), so the view re-streams for a few frames. Fix if it matters: rebake into a second range and swap when ready (double-buffered slots).
-- **Done (2026-10-25, override-cut audit fix): the translucent list grows on demand** (the CPU list and the GPU frame table, up to `Renderer.TranslucentLimit` = 262,144 entries). Baked translucents are listed only when shown; drops past the limit are counted and logged. The text below is the earlier state.
-- **The translucent list held at most 8,192 entries per frame** (`WorldOptions.MaxTranslucent`; overflow is dropped and counted in `OverridesDropped`). Since the 2026-10-25 parity work, effects (all of them, for painter order), seated sections of translucent mobiles and the circle-of-transparency ring share it with translucent statics (since the override cut, listed from the visible chunks' sub-lists) and overrides; a busy scene with many translucent or seated mobiles could truncate. Fix if it shows up: size it from the dynamic count, or grow it on overflow.
-- **Effects now go through the capture path** (their views run in world prepare). Measured: FNA draw calls in Gpu mode went 24–27 → 23, and Britain world draw 0.086 → 0.059 ms.
-
-## Robustness
-
-- **Done (2026-10-24): after a GPU device reset the client now exits cleanly instead of running away on memory.** SDL 3.4's Vulkan backend never cleans a command buffer after `VK_ERROR_DEVICE_LOST`, and FNA3D ignores the failures, so each frame allocated new transfer, uniform and command buffers (50 GB in 3 s in the owner's run). `GpuDeviceLost` detects the loss from SDL's error text after every present, from a failed Uo.Render submit, or from FNA3D's log hook. It then saves, shows a message box and exits with code 0xDEAD, so at most a frame or two leak. Root cause and code references: [device-lost-leak.md](device-lost-leak.md).
-  - Remains: **recovery** (recreate the device and reload every texture instead of exiting). Also the cause of the 2026-10-24 21:36:29 GPU page fault, which was in FNA3D's frame submit and points at SDL's defragmenter moving Uo.Render's page atlas; it is not yet reproduced on demand.
-
-## Allocation follow-ups (after B1–B5, 2026-10-24)
-
-- **The NativeAOT remainder of about 250–270 B per frame (JIT: 69–125 B).** Not worth chasing on its own: about one gen0 GC every few tens of seconds at 1,000 fps, and none were seen in the measurement windows. Trace it once on a quiet machine to tell real AOT allocations (boxing, generic paths) from background asset-streaming allocations counted across all threads. Low priority.
-- **What matters is allocation that scales with the scene:** bytes per mobile, per gump, per overhead text line. Check that allocation per frame stays flat in the large-scale test (about 2,000 mobiles and 20,000 items). The FPS test's allocation row guards against regressions.
-
-## MUL/UOP runtime loaders and networking, learned from `legacy-main` (review 2026-10-30)
-
-From the review of Max Kellermann's `legacy-main` branch ([legacy-main-review.md](legacy-main-review.md), which has the themes, evidence, and rejected items). The pack replaces his work for art, maps, anims and tiledata. These items apply to what still reads MUL/UOP at runtime (gumps, fonts, cliloc, sounds, multimap, professions) and to the network read. Estimates aren't measured yet. Suggested order: L1, L2, L3, L7 first; then L5, L6; then L4a; L4b and L8 only if measured.
-
-- **L1. TCP receive: drain the socket and detect a server close** (Sonnet). `TcpSocketWrapper.Read` doesn't notice a peer close while the client is idle (the stuck "Verifying Account" screen), and reads at most 4 KB per frame (about 240 KB/s at 60 Hz VSync, est.). Port Uo.Net's non-blocking `Poll` loop: `NetClient.CollectAvailableData` in 4 KB slices (Huffman output is capped at 64 KB), with a per-frame cap, and plugin packet order kept. Measure `Available` after a teleport into the large scene first. **Done 2026-10-30 (poc/net-drain, poc-log "L1"):** `NetClient.Drain` reads 4 KB slices until the socket is empty or a per-frame cap (128 KB, 1500 packets, 4 ms) is reached, and `TcpSocketWrapper.Read` polls readability so an idle server close raises `Disconnected` at once. Teleport into the large scene: 1.38 MB, 91k packets; all arrived in 3.7 s before (4 KB per frame at 60 Hz VSync) and in 0.8-1.0 s now, with no more frames over 8 ms than before. The login itself is only 6 KB, so login-to-ready is unchanged.
-- **L2. Unicode fonts without the 21 MB table** (Sonnet). `FontsLoader.cs` allocates every font's 65,536-glyph row at startup. Allocate on first use, cache missing glyphs, and dispose fonts.mul after the ASCII copy. Saves 21 MB at startup. Low risk.
-- **L3. UOP index without a string per entry; right-sized arrays; gump sizes on demand** (Sonnet). `UOFileUop.cs` and `GumpsLoader.cs`:
-  - hash a stack-formatted name instead of making about 246k `string.Format` calls (about 20 MB of startup garbage, 30–60 ms, est.);
-  - size `Entries` to the loader's maximum instead of 81,919 (about 4 MB);
-  - read each gump's width and height on first decode, so startup stops touching 3,542 pages of the 144 MB gump UOP.
-
-  Needs a test over every index for hash parity, and a check that gump.def aliases keep the right size and hue.
-- **L4a. Gump decode without copies** (Sonnet). Decode from a bounds-checked view of the entry with pooled buffers, keeping zlib/BWT for flagged entries, and switch the gump picker to art's trimmed path. Removes the 3–4 allocations per first-sight gump. Add a parity test over every gump id.
-- **L4b. Gump art prefetched on a worker when its packet arrives** (Opus), using the `FirstSightDecoder` pattern. Measure frames that open a gump first, and skip this if gumps move into the pack soon.
-- **L5. Cliloc: one read, strings created on demand** (Sonnet). `ClilocLoader.cs` makes 920 reads of 4 KB and creates 117,725 strings at startup (about 8–9 MB plus a 3 MB dictionary, est.). Keep the UTF-8 blob and an index instead. The lazy cache must be thread-safe for plugins.
-- **L6. Startup: time each loader, then defer** (Sonnet, after L3). Sounds load on a background task after login, multimap when the world map first opens, professions at character creation.
-- **L7. Pack pages: keep file handles open** (Sonnet). `PackPages.DecodeChunk` opens and closes its page file for every chunk; keep a small handle cache (`PackAssets.cs`, and check Uo.Render's `PageResidency` for the same pattern). That saves 2 system calls and one antivirus-filtered open per chunk (est. 20–100 µs). The trade-off is that the open handles block replacing page files while the client runs. **Measured 2026-10-30: negligible, not done.** Open plus close costs 20–28 µs against 2.1–2.9 ms per chunk decode (about 1%, below run-to-run noise; poc-log "L7"), and `PageResidency` and the other readers open once per whole page or file, not per chunk. A handle cache would also block replacing page files while the client runs.
-- **L8. Tile names decoded on first access** (optional, Sonnet). Avoids about 80k strings at startup, but changes two widely used structs.
-- **L9. The same entry views in the converter** (optional, after L4a). Drops `WorkerReaders`. Mainly simpler code; the converter already runs in about 4 s.
-- **Rejected from `legacy-main`:**
-  - raw memory-mapped pointers as the main read path: page faults on the render thread, no bounds checks, use-after-free risk, and mapped files locked against patching;
-  - removing verdata, dif and UOP support: the converter applies verdata for shards on purpose;
-  - compile-time feature flags, and the refactors.
-- **Max's "300/600 MB saved"** figures are mapped virtual size, not resident memory; the fork point already memory-mapped every file.
-
-## Networking: ModernUO-style pipe (owner, 2026-10-31; deferred, HIGH RISK)
-Today the client parses incoming packets in place (`StackDataReader` over fixed receive buffers) and builds outgoing ones with `StackDataWriter` (an `ArrayPool` rental), then copies them through a `CircularBuffer` and a fixed send buffer. Steady state allocates nothing, but every packet is copied at least once more than it needs to be.
-
-**Idea:** use ModernUO's network architecture.
-- A pipe buffer whose memory is mapped twice back to back in virtual memory, so a read or write that wraps the end is still one contiguous span. That removes the `CircularBuffer` and the wrap handling.
-- Packets are written straight into the pipe's free space and parsed straight from its filled space, with no `ArrayPool` rental and no staging copy.
-
-**References:** `C:/Repositories/IORingGroup` (its CLAUDE.md, README, TestClient and TestServer) and ModernUO's networking code in `C:/Repositories/ModernUO`.
-
-**Risk: high.** This touches every packet, the login and relay sequence, compression (Huffman on receive), encryption, plugins that hook send and receive, and the multi-instance requirement (each client needs its own mapping). Do it as a focused project of its own, not alongside other work:
-- byte-for-byte parity tests of send and receive against the current path, including wrap-around at every offset;
-- fragmented and coalesced reads;
-- a long soak run, and the gate scripts on all clients.
-
-**Smaller, low priority:** an audit of the handlers that allocate strings (names, speech, cliloc arguments) with per-handler byte counts from the E2 bench, caching where the text repeats.
-
-## Found during tile-index profiling (2026-11-02)
-
-- Done (tile-head, 1150d9b3a): **`TileWalk.First` / `Chunk.GetHeadObject` walk the `TPrevious` chain from the anchor to the list head for every tile** (DynamicTileIndex.cs `First`; Chunk.cs:240). This is 7–8 % of the Legacy britain_z samples even with `world_tile_index` off. A per-tile head, or keeping the anchor at the head, could remove most of it. Source: tile-index-prof (bench-000212). Not measured.
-- **`Dictionary<UInt64,Int32>.FindValue` is 1.8 % of the Legacy britain_z samples in both arms.** The caller isn't traced yet; it may be a per-frame lookup that an array could replace. Source: tile-index-prof (bench-000212).
-- Done (EcsRead, 02c0ef387): **Friflo `GetComponent` costs about 25 ns per call** (non-inlined, cast check, virtual call; 4.0.0-preview.2). It is paid by every per-entity ECS read: `ItemSpriteExtract.ReadRecord` and the systems. Upgrading Friflo or adding a direct array-access helper cut a probe from 27 to 15 ns per item. Source: t7b1-gather. Owner question 2 of 2026-11-02.
-- **`Entity.TryScalarEntity` (Entity.cs:52) costs about 4.5 ns per call** (the World→Ecs→Mirror→Epoch chain). Passing a per-frame epoch snapshot into the extract would remove it. Source: t7b1-gather.
-- **`Mobile.IsMounted` walks the equipment list twice** (`FindItemByLayer`, then again via `IsDrivingBoat`; Mobile.cs:206-227), on every step decision and footstep check. Source: t6c-mount-inputs.
-- **Container and paperdoll item art decodes on the main thread when a gump first opens.** Requesting the art in `WorldWriter.PlaceInContainer` while the container is open would remove first-open hitches (about 20–50 µs per sprite). Source: perf-3.
-- **Gpu multi components draw through `Multi.Draw`, so pending art for them decodes on the main thread.** Feeding them through the item extract would fix it. This is rare. Source: perf-3.
-- **Stale entry:** the "request item art at first sight on 0x1A/0xF3" item is already done (2170394b6, 2026-10-26: `travel` art_sync 48–56 → 0). perf-3 added tests and the `CUO_PLACED_ART_SYNC=1` diagnostic.
-- Done (perf-6): **`ItemGump` decodes art only to get its size** (ItemGump.cs:48). Taking the size from the pack's size table (as `Gump.TryGetSize` does) and decoding at first draw would remove these main-thread decodes everywhere. Source: perf-4.
-- Done (perf-5): **`Art.Get` ignores finished worker decodes** (Art.cs Get): it decodes again even when the worker's result is ready. Gump lookups already use the worker result. Source: perf-4.
-- Done (perf-8 control reuse; frame-control reuse left): **Every container content change rebuilds the whole window** (ContainerGump.cs:502): each 0x25 clears and rebuilds every item control. Adding only the new item would cut the churn and its allocations. Source: perf-4.
-- Done (perf-12-ui, b221d00eb): **Paperdoll slot lookups every frame** (PaperDollGump.cs ~755): about 14 `FindItemByLayer` calls per frame. Cache per equipment change. Source: perf-4.
-- Done (perf-5): **Missing-art error log every frame** (ClassicUO.Renderer/Arts/Art.cs:205): the placeholder isn't cached, so each such item allocates and logs a string every frame. Caching the placeholder fixes it. Source: t7b2a fix round.
-- **Legacy sink: repeated frame lookups** (LegacySpriteResolve.cs:87, MobileSpriteExtract.Layer): `GetAnimationFrames` runs once per strip and again per layer. Caching the last (body, group, dir, equip) would save about 3–5 lookups per mobile layer. Source: t7b2a.
-- Done (perf-7/perf-8): **Targeted take for gumps** (`Gump.GetGump`, src/ClassicUO.Renderer/Gumps/Gump.cs ~290): it drains the whole ready queue to reach one gump, uploading unrelated sprites outside the frame allowance. A `TryTakeReady` would upload only the needed gump. Source: perf-5.
-- **Mobile pixel check from records** (MobileView.CheckMouseSelection ~1060–1270): once the rect hits, it redoes the texture, layer and equip lookups per layer, although the draw records already hold body, group, direction, frame, flip and position. Source: t7b2b.
-- **Done (perf-11, one record read per mobile per frame): One component read per mobile** (TryDrawMobileEcs, LegacySpriteSink.DrawMobile): `AnimationState` and `MobileRenderState` are looked up separately. One `e.Data` read, as `ItemSpriteInput.ReadRecord` does, saves one lookup per mobile per frame. Source: t7b2b.
-- **Done (perf-9/earlier: slots use `EntityRef`): Paperdoll slots look up two dictionaries per slot per frame** (PaperDollGump.cs ~758, `EquipmentSlot.Update`): `World.Items.Get` and `World.Mobiles.Get` for 14 slots. Caching the mobile reference saves about 28 lookups per frame per open paperdoll. Source: perf-7.
-- Done (perf-8): **`Gump.Prefetch` uploads unrelated finished decodes while it waits** (Gump.cs ~215). Taking only the batch's decodes keeps other uploads within `DrainReady`'s 1 ms budget. Source: perf-7.
-- **Done (perf-10): `MobileInputs` copied per mobile per frame** (MobileAnimationSystem.cs `UpdateInPlace`, `TryGetComponent(out inp)`). Reading it by reference saves the struct copy. Source: t9-slice2.
-- **Done (perf-10, the frame-wide half is taken once per frame): Hue inputs rebuilt per mobile per frame** (`SelectOverrideHue` rebuilds a ~20-field input from the profile). Take the profile flags once per frame. Source: t9-slice2.
-- **Done (perf-10, Legacy large scene 40,950 → 10,055 checks per frame): 25 `WornCache` checks per mobile per frame on Legacy** (MobileView's layer loop calls `FindItemByLayer` per layer). Fetch the cache once per mobile; E2 measured 0.07 µs per mobile. Source: t9-slice2.
-- **ItemGump calls `World.Items.Get` per container item per frame** (ItemGump.cs ~188/236, AddToRenderLists and Contains), and ItemGumpFixed per paperdoll slot (PaperdollGump.cs ~866). The perf-8 `EntityRef` would remove these lookups. Source: perf-8.
-- Done (perf-9): **`Gump.AwaitBatch` busy-waits with Yield** (Gump.cs). `DecodeQueue.WaitPublished` would block instead, as Art does. Source: perf-8.
-- Done (perf-9): **The `Control.Parent` setter scans the child list on every re-add** (Control.cs:135), which is quadratic for large containers. Source: perf-8.
-- **Done (perf-10, one `RemoveRange` per run): Disposed-child removal in `Control.Update` is O(n²)** (Control.cs ~291, `Children.RemoveAt(i--)` inside the loop). A full container rebuild disposes n controls. A single compaction pass would make it O(n). Source: perf-9.
-- **Dropped (perf-10: no per-frame caller; only constructors, clicks and Save): `FindControls` allocates on every call** (Control.cs ~503, `OfType().Where().ToArray()`). Source: perf-9.
-- **Dev builds only: `Extract.Run` runs every frame whenever `-ecscheck` > 0, even between checks** (WorldEcs.cs ~972). Source: perf-9.
-- **Dropped (perf-11: perf-10's worn view already serves each layer from the validated cache): Store each layer's item or serial in `LayerDecision`** (MobileView.cs draw loop): the loop still does one `FindItemByLayer` per layer after a cache hit, about 10–20 lookups per drawn mobile per frame. Source: t9-slice3.
-- **Dropped (perf-11: a fast path already exists; a non-book costs one dictionary miss): Spell-entry lookup on every `Children` call** (WorldState.cs `Children` → `SpellEntries`): a mirror Spellbook lookup per parent per call; gumps call it every frame. A fast path for non-books skips it. Source: t9-childlist-b.
-- **Done (perf-11, per-corpse layer tables): Corpse layer reads** (WorldState.Equipment.cs `ChildByLayer`): an `Items.Get` per child per layer; CorpseOrder reads many layers per corpse per frame. A per-corpse layer table makes it O(1); shows only in corpse-heavy scenes. Source: t9-childlist-b.
-- Done (linked-object, eb0f70ed0): **`LinkedObject` fields on Item/Mobile are now unused** (24 B per object via `BaseGameObject`, about 2–5 MB per client): move `LinkedObject` off `BaseGameObject`. Memory, not frame time. Source: t9-childlist-b.
-- **Attach-time walks** (WorldWriter `WouldCycle`, `SubtreeDeeperThan`; WorldMirror `ParentOf` probes up to three components per level): a cached parent and subtree height per record would make them O(depth). Packets only; negligible. Source: t9-childlist-b2/b3.
-- **`TakeDirty` reads the entity's tags before the record read** (GpuWorldRenderer.cs ~611, LegacySpriteSink.cs ~148): read `e.Data` first and test its tags; saves one entity lookup per drawn mobile per frame. Source: perf-11.
-- Done (perf-12-ui, b221d00eb): **Paperdoll slots validate the worn cache once per slot** (PaperDollGump.cs ~790, `FindItemByLayer` in 14 slots): one `WornView` per gump update. Only with a paperdoll open. Source: perf-11.
-- **Corpse layers look up the equipment conversion twice** (ItemSpriteExtract.CorpseLayer ~540): two dictionary lookups per drawn corpse layer per frame; cache with the corpse table. Source: perf-11.
-- **Corpse layer tables hold destroyed items until reused** (WorldState.Equipment.cs ~198, Codex P3): bounded by 8 tables; clear on destroy or cache serials. Memory only. Source: perf-11.
-- Done (perf-12-ui, b221d00eb): **Texmaps fill a picker nobody reads** (Texmap.cs:13,54,124 call `_picker.Set` on every load; nothing calls `Get` on it): removing it saves the per-pixel scan on each load and the picker's memory (the array starts at 256 KB). Source: picker-first-pixel.
-- Rejected (perf-12-ui: a flat index costs up to ~12 MB per client, and frames shared across bodies would change picking): **Animation picks use the dictionary path** (Animation.cs:61,68: a dictionary lookup plus two varint reads before the size check; art and gumps use the flat table): a flat index for animations. Small. Source: picker-first-pixel.
-- Done (ecs-hygiene, 66cf4b8e7): **Animation-advance and step systems: up to 7 entity lookups per entity per frame for eligibility** (MobileAnimationAdvanceSystem.TryRun ~372, ItemAnimationAdvanceSystem.TryRun ~118, StepSystem ~208/239): one `EcsRead.Row` after `TakeDirty` makes it one (bench 12.6 vs 16 ns). Source: ecs-read-helper.
-- Done (ecs-hygiene, 66cf4b8e7): **`StepSystem.Run` copies the whole `Steps` component by value** (~303): `ref readonly`. Small. Source: ecs-read-helper.
-- **`WorldEcs` per-frame pushes still call `GetComponent`** (~453, ~522, ~570): about 2–4 ns each, if per frame (unconfirmed). Source: ecs-read-helper.
-- Done (ecs-hygiene, 66cf4b8e7): **`EcsRow` passed by value to the non-inlined `Emit`/`Select`** (24 B per call): pass `in`. Tiny. Source: ecs-read-helper.
-
-## Found on 2026-11-07
-
-- Done (perf-13-steps, 9bd1ac059: the door check reads the destination tile): **`PlayerMobile.TryOpenDoors` scans every item with a LINQ closure on every step and turn** (PlayerMobile.cs ~302): one allocation plus a full scan per step; a lookup of the destination tile would do. Source: player-state.
-- Done (perf-13-steps, 9bd1ac059: auto-open reads the active item list): **`PlayerMobile.TryOpenCorpses` scans every item on every step when auto-open is on** (PlayerMobile.cs ~277): a corpse list or tag would make it O(corpses). Source: player-state.
-- **Blocking main-thread waits other than decode lose their quantum under load** (Present/vsync, the frame limiter's sleep): decode-stall measured a 2 ms wait taking ~500 ms with 40 busy loops; raising priority around the wait gave ~4 ms. Measure a client under load first. Source: decode-stall. Owner question.
-- **Item offset read again in Gather** (ItemSpriteExtract `ReadRecord` already holds the row; `ItemOffsets.Read` looks the handle up again): ~2-3 ns per drawn item with `ecs_item_offset` on. Source: ecs-item-offset.
-- **One dictionary lookup too many per corpse per frame** (ItemAnimationAdvanceSystem.TryRun ~125, `world.Items.Get`). Source: ecs-hygiene.
-- **`Chunk.Tiles` is a 2-D array** (Chunk.cs:27): a flat `[64]` like `_heads` saves two bounds checks and a multiply per anchor read. Small. Source: tile-head.
-- **Second head walk in the Gpu item cache** (GameSceneGpuItemCache.cs ~357/401): reuse the first loop's head. Source: tile-index-2.
-
-## Found on 2026-11-08
-
-- **`FirstSightDecoder.RequestAndWait` overshoots its stall slice on a loaded machine** (FirstSightDecoder.cs:217, DecodeQueue.cs ~136): a 2 ms slice measured 1.2–3.5 s with the BelowNormal decode workers starved. A main-thread hitch risk with several clients; check the `ManualResetEventSlim` spin and the worker priority. Source: flaky-decode-tests.
-- Mostly done (perf-14, d85a12570: removed or moved to `Log.Trace`; left on purpose: Plugin.cs:233/239, PluginHost.cs:233, Bootstrap's CuoInternal.cs and Program.cs, which are the plugin host contract, and ContainerManager.cs:321, a one-off load parse error): **Leftover synchronous `Console.WriteLine` calls** (PacketHandlers.cs:1694/1734/1743/1748 "=== DENY ===", :1813 "ITEM DROP OK", :6066 "ADD ITEM TO CONTAINER"; MainScene.cs:59/65; GameController.cs:828/833 "AUDIO ADDED/REMOVED"; Plugin.cs:233/239; PluginHost.cs:233; AnchorManager.cs:490–508; CuoInternal.cs, 11× "Invoked by reflection"): console I/O plus formatting on packet and event paths. Rare; free to remove. Source: small-fixes-1108 (which removed the per-packet one in `BoatMovingManager.AddStep`).
-- Done (perf-14, 9a6bb9a98: tail pointer): **`EffectManager.PushToBack` walks the whole effect list on every add** (EffectManager.cs:301): O(n²) bursts. A tail pointer makes it O(1). Matters only with hundreds of live effects. Source: linked-object-2.
-- **Walking the large-scale scene allocates about 11–14 MB per FrameStats window on the main thread** (site not found yet; likely chunk or map loading while walking): main-thread p95 up to ~12 KB per frame, single frames 0.73–1.7 MB, about 2.4 MB/s, time-driven. Present in every arm including base B 34fec0e52, so pre-existing. Find the allocating site with an allocation-tick trace. Source: alloc-regress-1108 (bench-000361/362). **Sites found and partly done (perf-alloc-sites-2, 5c6b682a7):** about 1.9 MB/s is server content entering range: text bitmaps ~40 %, MegaCliloc ~20 %, new Items ~15 %, Gpu `GpuItemCache` resizes; the text buffer and MegaCliloc fixes about halved ls_walk on both renderers. The rest is listed below.
-- **A one-off ~677 KB allocation once per Legacy run** (site not found yet), about 20–30 s after login, in every arm since B: it alone raised the Legacy town_walk tipon average to 92 B per frame. Find it with an allocation-tick trace (array or buffer growth?) and presize it. Source: alloc-regress-1108b. Not reproduced in 3 JIT traced runs (bench-000382): likely NativeAOT-only (lazy static init or the type loader); needs an AOT-side method.
-- **`MobileInputs` keeps Female/WarMode/SpeedMode copies of `MobileTraits`**: derive them from the record once the caches go (T9). Source: ecs-wave1c.
-- Done (perf-15, 8a16a5b55): **`NameOverHeadManager.IsAllowed` called `CanBeDrawn` per item per frame with overheads on** (a race read each). Source: perf-14.
-- **Season change reads the race per object** (Map.cs:338, World.cs:324): read once per pass. Minor (season changes are rare). Source: perf-14.
-- **`BenchEffects.Tick` walks the effect list every 200 ms** (dev only): keep a counter. Source: perf-14.
-- **Pool `Item`s entering range** (`World.GetOrCreateItem`, 280 B each): about 4.3 MB per 15 s of ls_walk. Source: perf-alloc-sites-2 (bench-000371).
-- **Measure text without rasterizing it for the `RenderedText` atlas path**. Source: perf-alloc-sites-2.
-- **Presize or pool the `GpuItemCache` arrays** (`Array.Resize`, about 1 MB per 15 s on Gpu ls_walk). Source: perf-alloc-sites-2.
-- **Cache `ClilocLoader.Translate` + `CapitalizeAllWords` for empty arguments**: about 2.2 MB per 15 s of ls_walk (name labels). Source: perf-alloc-sites-2.
-- **Create the journal `RenderedText` for `DisplayClilocString` lazily** (only when the journal shows it). Source: perf-alloc-sites-2.
-- Done (perf-alloc-3, a52b1bc77/396b960ba): **Gpu 48 B/frame main-thread floor** in the corpses/effects/ls windows, NativeAOT only (the translucent key sort's delegate). Source: perf-alloc-sites-2 (bench-000384).
-- Done (perf-alloc-3, 188193899): **name overheads on allocated ~768 B/frame** (closures per name gump), both renderers. Source: perf-15 (bench-000389).
-- Done (perf-alloc-4): **the world map gump allocated ~352–400 B/frame while open** (draw closure, zone iterator, boxed Houses enumerator, coordinate caption). Source: worldmap-texture (bench-000392), perf-alloc-3 probe (bench-000397).
-- Done (perf-alloc-5, 79e0f20e2): **handles-walk ~930–1,017 B/frame**, first put on name gump creation (perf-alloc-3's probe: `ui_update`), was `Pathfinder.CanWalk` allocating lists and a `PathObject` per refused walk. Source: perf-alloc-3b (bench-000400/401).
-- **`NameOverHeadManager.TypeAllowed` reads `ProfileManager.CurrentProfile` per object per frame** (NameOverHeadManager.cs:35): read once per pass. Tiny. Source: perf-15.
-- **`Party.Contains` per guild entity per frame in the world map** (low). Source: perf-alloc-4.
-- **`RequestServerPartyGuildInfo` builds a packet buffer every 250 ms** (unverified). Source: perf-alloc-4.
-- **`HouseCustomizationGump` uses LINQ** (not per frame). Source: perf-alloc-4.
-- **`Control.InvokeMouseOver/Enter/Exit` allocate `MouseEventArgs` before checking for listeners**: about 32–40 B/frame while hovering. Source: perf-alloc-5.
-- **`UIManager.SortControlsByInfo` allocates a list node per Over gump** (`AddFirst(c)`): use `AddFirst(first)` to move the existing node. Source: perf-alloc-5.
-- **`HandleKeyboardInput` walks every gump every frame** (CPU). Source: perf-alloc-5.
-- **`MobileAnimationSystem.UpdateInPlace` -> `SamplePushed`/`SelectCached` build and compare a ~15-field `SelectKey` per drawn mobile per frame** (MobileAnimationSystem.cs:121-207), both renderers: a dirty bit from the push sites plus a `NextFrameTime` check would skip it. Est. 0.1–0.3 µs per mobile. Source: legacy-sprites-cost.
-- Done for art items (legacy-sprites-items 880c138ce, merged 618c63d55; corpse strips still resolve; timing parked): **`LegacySpriteSink.DrawItem` builds an `ItemSpriteInput` (~80 B), a `DynamicSprite` (~100 B) and a zeroed `LegacyDraw`, plus an interface dispatch, per item** (LegacySpriteSink.cs:197-222): draw art items directly. Likely the largest remaining `legacy_ecs_sprites` cost (25k items in the large scene, est. 20–40 ns per item). Source: legacy-sprites-cost; fix on `bg/legacy-sprites-items` (880c138ce, Legacy direct art draw).
-- Done (legacy-sprites-items b607aa19a, merged 618c63d55): **`ItemSpriteInput.Gather` with `ecs_item_offset` on: `ItemOffsets.Read` repeats `TryScalarEntity` + `EcsRead.TryGet`** (ItemOffsets.cs:77-108): read the row `ReadRecord` already has. Source: legacy-sprites-cost; fix on `bg/legacy-sprites-items` (b607aa19a, `ItemOffsets.ReadRow`). (see also the ecs-item-offset row above).
-- Done except the selection, still read per item (legacy-sprites-items b607aa19a, merged 618c63d55): **`Gather` reads profile, player-dead, `RangeSize` and `SelectedObject` per item** (ItemSpriteExtract.cs:113-132): a per-frame constants struct like `TakeHueFrame`. Source: legacy-sprites-cost; fix on `bg/legacy-sprites-items` (b607aa19a, `GatherFrame`).
-- Done (legacy-sprites-items 106a6ff8b, merged 618c63d55: no zero fill; `Commit` clears only the stale tail): **`SpritePickTable.Slot` zero-fills and writes 48 B per drawn object per frame, plus a `BeginDraw` clear** (SpritePickTable.cs:56-120): write only on frame or hover change. Est. ~10 ns per object. Source: legacy-sprites-cost; fix on `bg/legacy-sprites-items` (106a6ff8b, no zero-fill or clear).
-- **`ItemSpriteInput` `i = default` zero-fills ~90 B per item** in `Gather`. Source: legacy-sprites-items.
-- **`HueInput` is copied in `Run`**: `ChooseHue` could read the input in place. Source: legacy-sprites-items.
-- **`ArtLoader.GetEntry` called twice in `Art()`**. Source: legacy-sprites-items.
-- **`new GpuSpriteTables(pack)` per item in `ItemSpriteExtract.Emit`** (~l.272). Source: legacy-sprites-items.
-- **`EmitCorpse` re-reads the loaders per corpse**. Source: legacy-sprites-items.
-- **Corpse-strip interface dispatch**: a sealed fast path. Source: legacy-sprites-items.
-- **`EffectSystem.Animate` + `Publish` do two `EcsRead.Get` per effect per frame** (EffectSystem.cs ~130). Source: t9-delete-2.
-- **`DynamicTileIndex.Holds` does three type tests per placement**: a kind byte would do. Source: t9-delete-2.
-- **`(Maintain || ListDropped)` conditions to simplify once the switch paths go** (Chunk.cs:379, TileOrder.cs:302/384). Source: t9-delete-2.
-- **`World.GetHeld` falls back to the other table on a miss** (World.cs ~1161): a serial in neither table costs two dictionary lookups. Goes with the tables (world index slices), or the index answers it with `world_entity_index` on. Source: t9-world-index.
-- **`HealthLinesManager` walks every `Mobiles.Values` entry each frame** (HealthLinesManager.cs:43), ~2,000 mobiles at the large scene, most out of view: walk the range sweep's in-range set instead. Source: t9-world-index (survey). Taken up by perf-cpu-1109.
-- **`World.Holds` per `NeedsFrameUpdate` item per frame** in the active item stage (World.cs:908): a dictionary lookup per listed item; a "held" flag set and cleared by World's own bookkeeping would make it a field read. Source: t9-world-index-2. Taken up by perf-cpu-1109 (World held flag).
-- **`Entity.FindScalarEntity` and `WorldEcs.HoldsEntity` look the serial up twice** (Entity.cs:60, WorldEcs.cs:255): `World.Holds` (a table lookup) and then `Mirror.TryGetEntity` (the mirror's lookup). After world index slice 3, `Mirror.GetHandle(serial) == this` answers both in one lookup. Source: t9-world-index-2.
-
-## Found on 2026-11-09 and 2026-11-10
-
-- **`World.Holds` item branch via `Items.Holds`**: after world index slice 3 the item identity guard can use the held flag instead of the lookup (check what slice 3b left on the lookup). Source: perf-cpu-1109.
-- **`HealthLinesManager` with `ShowMobilesHP` on still walks every mobile**; hoist the `HitsTexture` and `CurrentProfile` reads out of the per-mobile loop. Source: perf-cpu-1109.
-- **`Item.RootContainer` does a lookup per level.** Source: t9-world-index-3.
-- **`HouseManager` looks the house up twice.** Source: t9-world-index-3.
-- **Due mobiles from the clock's handles** instead of a serial lookup per due mobile (World.cs:709). Source: t9-world-index-3b.
-- **`WorldState` children enumeration through a handle snapshot** (WorldState.cs:338). Source: t9-world-index-3b.
-- **Tab scan copies all items** (`World.FindNextCore`): a Tab keypress, not per frame. Source: t9-world-index-4.
-- **The ordered item table's free list as a `Stack<int>`** (it is a hand-rolled LIFO today). Source: t9-world-index-4.
-- **`ItemOffsets.ReadEcs` runs for every item every frame** (2.5-3.1 % of the large scene): a "has offset" flag on the item would skip the read for the ~all items that never rode a boat. Source: legacy-sprites-fix (2026-11-10).
-- **`GpuWorldRenderer.TryDrawMobileEcs` finds the dirty flag through a second lookup** (GpuWorldRenderer.cs:729): the same fix as 37237a511. Source: legacy-sprites-fix.
-- **The mobile replay builds a ~80 B draw struct per entry** (MobileSpriteExtract.cs:770): 2.2 % of the profile. Source: legacy-sprites-fix.
-- **The FrameStats 8 ms slow-frame log line skews benches that sit near 8 ms** (FrameStats.cs:666): raise or disable it under bench. Source: legacy-sprites-fix.
-- **Profile shares still open from the same list:** `SpritePickTable` ~1 %, `ItemSpriteExtract.Art` double `GetEntry` ~0.5 %, `MobileAnimationSystem.UpdateInPlace` 1.5 % (the backlog items above are confirmed). Source: legacy-sprites-fix.
-
+- Update path: W5 active items (`world_update_active_items`; 0.28-0.33 to 0.015-0.02 ms at 25k items), `gpu_mobile_frame_cache` (0.71 to 0.35 ms at 1,611 mobiles), `text_skip_expired` (0.18 to 0.04 ms), HP percentage in setters, `WMapManager` per-frame early-out, camera generation instead of per-frame screen positions, E11 single mirror sync per placement (98654f96f).
+- Allocation: B1-B5 batcher/UI (17-28 KB to 0.1-0.25 KB per frame), 250 fps cap removed, chunk loads without allocation (0069120eb), login warm-up (11174c3cf), perf-alloc-sites-2 (5c6b682a7; text pixel buffer, MegaCliloc), perf-alloc-3 (a52b1bc77, 396b960ba, 188193899: Gpu 48 B floor, name-overhead closures), perf-alloc-4 (world map gump 352 to 0), perf-alloc-5 (79e0f20e2; `Pathfinder.CanWalk`), perf-15 (8a16a5b55), perf-14 (d85a12570 console writes, 9a6bb9a98 `EffectManager.PushToBack` tail pointer).
+- Rendering: B1 `Pass.Apply` 16 to 3 per frame, B8 UI render cache (794526bbd), W4 ground-item chunk cache (9a35c9b9a), E6 effects (8a2bcb876), E7 mixed tiles (a4090e9ff), step 9 roof/translucent/range-tint as shader state (b0be567aa), Indexed8 single-tap and per-worker Kind 2 decoders (c18e96a6b), per-header page read, translucent list grows on demand.
+- Loading: pack-hitch buffers/SIMD picker/worker first-sight decode (df2fbf8c8), teleport decode on workers (28bb72308, 24a7e1504), item/multi art on workers (697e4c668), L1 network drain (48f970596), L7 handle cache measured negligible (593c65c1b), L2-L5 dropped (the pack replaces them).
+- ECS reads: tile-head (1150d9b3a), `EcsRead` (02c0ef387), ecs-hygiene (66cf4b8e7), linked-object (eb0f70ed0), perf-6..12 (picker/texmap, paperdoll `WornView` b221d00eb, `MobileInputs` by ref, hue frame inputs, worn cache once per mobile, per-corpse layer tables, one record read per mobile), perf-13-steps (9bd1ac059; door and corpse scans), perf-cpu-1109 (456bb0606; `ItemTable` held flag, `HealthLinesManager` target walk), legacy-sprites-items (880c138ce direct art draw, b607aa19a `GatherFrame`/`ItemOffsets.ReadRow`, 106a6ff8b `SpritePickTable` no zero-fill; merged 618c63d55).
+- Measured and rejected: static PGO and `OptimizationPreference=Speed` (AOT gap ~0.03 ms/frame inside native FNA calls; PGO opt-in via `-p:CuoMibcPath=`), `x86-64-v3` ISA (no difference), B9 batch sorting, flat animation pick index (up to ~12 MB per client), UI gump render cache #1889, legacy_item_draw_cache.
