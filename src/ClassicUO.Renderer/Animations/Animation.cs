@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using ClassicUO.Assets;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Uo.Pack;
@@ -23,7 +24,15 @@ namespace ClassicUO.Renderer.Animations
         public Animations(AnimationsLoader animationLoader, GraphicsDevice device)
         {
             _animationLoader = animationLoader;
-            _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
+            int page = 4096;
+#if CUO_DEVTOOLS
+            // CLEANUP(release): smaller anim atlas pages so the anim_atlas_lru gates evict within a short scene
+            if (int.TryParse(Environment.GetEnvironmentVariable("CUO_ANIM_ATLAS_PAGE"), out int p) && p >= 1024 && p <= 4096)
+            {
+                page = p;
+            }
+#endif
+            _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
             _cache = new SpriteInfo[animationLoader.BodyCount][][][];
             _queue = new DecodeQueue<DirectionJob>(DecodeBudget.Shared, job => job.Buffers.ReturnAll());
             _retire = Retire;
@@ -200,7 +209,22 @@ namespace ClassicUO.Renderer.Animations
 
             if (sprites == null)
             {
-                sprites = LoadDirection(id, action, dir, sync);
+                if (_lru != null && _evictedAt.Count != 0 && _evictedAt.Remove(DirKey(id, action, dir), out long evictedAt))
+                {
+                    // anim_atlas_lru: an evicted direction loads again through the async first-sight path
+                    _lru.OnReload(evictedAt, AtlasPageClock.NowMs);
+                    sprites = LoadDirection(id, action, dir, sync, evicted: true);
+#if CUO_DEVTOOLS
+                    if (LruCheck)
+                    {
+                        CheckReloaded(DirKey(id, action, dir), sprites, "reload");
+                    }
+#endif
+                }
+                else
+                {
+                    sprites = LoadDirection(id, action, dir, sync);
+                }
             }
             else if (sync && _pendingSprites.Count != 0 && _pendingSprites.Contains(sprites))
             {
@@ -209,6 +233,11 @@ namespace ClassicUO.Renderer.Animations
                 var loaded = LoadDirection(id, action, dir, true);
                 _pendingSprites.Remove(sprites);
                 sprites = loaded;
+            }
+
+            if (_lru != null && sprites.Length != 0)
+            {
+                TouchPages(sprites);
             }
 
             return sprites;
@@ -241,7 +270,7 @@ namespace ClassicUO.Renderer.Animations
         /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
         public int PendingDirections => Volatile.Read(ref _pendingJobs);
 
-        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync)
+        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync, bool evicted = false)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies
             if (!_animationLoader.TryGetDirection(body, action, dir + 3, out var entry))
@@ -258,7 +287,8 @@ namespace ClassicUO.Renderer.Animations
             // an empty frame. Once a body has a direction uploaded, later directions and actions stay synchronous, so a
             // visible mobile never blinks when it turns or changes action; the worker prefetches the chunks of the other
             // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
-            if (AsyncFirstSight && !sync && !_bodyDrawn[body] && !IsResident(entry))
+            // anim_atlas_lru: a direction loaded again after its page was evicted takes the same path (not drawn for a while)
+            if (AsyncFirstSight && !sync && (!_bodyDrawn[body] || evicted) && !IsResident(entry))
             {
                 long heldBytes = 0;
 
@@ -350,7 +380,289 @@ namespace ClassicUO.Renderer.Animations
             spriteInfo.Center.Y = frame.CenterY;
             spriteInfo.Texture = _atlas.AddSprite(pixels, frame.Sprite.OrigW, frame.Sprite.OrigH, out spriteInfo.UV);
             PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, PackSpriteMap.AnimFrame | index);
+
+            if (_lru != null && spriteInfo.Texture.Tag is AtlasPage page)
+            {
+                uint key = DirKey(body, action, dir);
+
+                if (page.LastKey != key)
+                {
+                    page.LastKey = key;
+                    page.Directions.Add(key);
+                }
+
+                page.LastUseMs = AtlasPageClock.NowMs;
+            }
         }
+
+        // ---- anim_atlas_lru: a budgeted LRU over the atlas pages (Tick, once per frame) ----
+
+        private AnimAtlasLruPolicy _lru;
+        // (body, action, dir) of the evicted directions not loaded again yet, with the eviction time
+        private readonly Dictionary<uint, long> _evictedAt = new Dictionary<uint, long>();
+        private long[] _lruUse = Array.Empty<long>();
+        private int[] _lruVictims = Array.Empty<int>();
+        private long _lruLogAt, _lruLogged = -1;
+
+        /// <summary>Bumped when a page is freed: cached draws that hold atlas textures (MobileFrameCache's Legacy replay) are
+        /// stale.</summary>
+        public static int AtlasEpoch;
+
+        public AnimAtlasLruPolicy Lru => _lru;
+
+        public int AtlasPages => _atlas.TexturesCount;
+
+        public long AtlasPageBytes => _atlas.PageBytes;
+
+        /// <summary>anim_atlas_lru on: call before the first direction loads.</summary>
+        public void EnableLru(AnimAtlasLruPolicy policy)
+        {
+            _lru = policy;
+            _atlas.TrackPages = true;
+
+            for (int i = 0; i < _atlas.TexturesCount; i++)
+            {
+                var texture = _atlas.GetPage(i);
+                texture.Tag ??= new AtlasPage(-1 - i, AtlasPageClock.NowMs);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint DirKey(ushort body, byte action, byte dir) => body | ((uint)action << 16) | ((uint)dir << 24);
+
+        // a direction's frames are uploaded in order, so they sit on one page or two consecutive ones: its first and last
+        // frames with a texture name them
+        private static void TouchPages(SpriteInfo[] sprites)
+        {
+            for (int i = 0; i < sprites.Length; i++)
+            {
+                if (sprites[i].Texture != null)
+                {
+                    AtlasPageClock.Touch(sprites[i].Texture);
+
+                    break;
+                }
+            }
+
+            for (int i = sprites.Length - 1; i >= 0; i--)
+            {
+                if (sprites[i].Texture != null)
+                {
+                    AtlasPageClock.Touch(sprites[i].Texture);
+
+                    break;
+                }
+            }
+#if CUO_DEVTOOLS
+            if (LruCheck)
+            {
+                for (int i = 0; i < sprites.Length; i++)
+                {
+                    LruCheckUse(sprites[i].Texture, "frame");
+                }
+            }
+#endif
+        }
+
+        /// <summary>
+        /// Once per frame, before the world is drawn (no batch holds atlas textures): sets the page clock, and with the LRU on
+        /// moves the budget and evicts pages above it. <paramref name="unfocused"/>: the window is unfocused or minimized.
+        /// </summary>
+        public void Tick(long nowMs, bool unfocused)
+        {
+            AtlasPageClock.NowMs = nowMs;
+
+            if (_lru == null)
+            {
+                return;
+            }
+
+            _lru.Tick(nowMs, unfocused);
+            int count = _atlas.TexturesCount;
+
+            if (count > _lru.BudgetPages)
+            {
+                if (_lruUse.Length < count)
+                {
+                    _lruUse = new long[count * 2];
+                    _lruVictims = new int[count * 2];
+                }
+
+                for (int i = 0; i < count; i++)
+                {
+                    _lruUse[i] = _atlas.GetPage(i).Tag is AtlasPage page ? page.LastUseMs : nowMs;
+                }
+
+                int n = _lru.SelectVictims(_lruUse.AsSpan(0, count), count - 1, nowMs, _lruVictims);
+
+                if (n > 0)
+                {
+                    // highest index first: removing a page shifts the ones after it
+                    Array.Sort(_lruVictims, 0, n);
+
+                    for (int k = n - 1; k >= 0; k--)
+                    {
+                        EvictPage(_lruVictims[k], nowMs);
+                    }
+                }
+            }
+
+            LogLru(nowMs);
+        }
+
+        private void EvictPage(int index, long nowMs)
+        {
+            Texture2D texture = _atlas.GetPage(index);
+
+            if (texture.Tag is AtlasPage page)
+            {
+                foreach (uint key in page.Directions)
+                {
+                    ushort body = (ushort)key;
+                    byte action = (byte)(key >> 16), dir = (byte)(key >> 24);
+                    var dirs = _cache[body]?[action];
+                    var sprites = dirs?[dir];
+
+                    if (sprites == null || !UsesTexture(sprites, texture) || _pendingSprites.Contains(sprites))
+                    {
+                        continue;
+                    }
+#if CUO_DEVTOOLS
+                    if (LruCheck)
+                    {
+                        RecordEvicted(key, sprites);
+                    }
+#endif
+                    dirs[dir] = null;
+                    _evictedAt[key] = nowMs;
+                    _lru.EvictedDirections++;
+                }
+
+                page.Directions.Clear();
+            }
+
+            PackSpriteMap.Unregister(texture);
+            _atlas.RemovePage(index);
+            _lru.EvictedPages++;
+            AtlasEpoch++;
+            TextureUploads.Changed();
+        }
+
+        private static bool UsesTexture(SpriteInfo[] sprites, Texture2D texture)
+        {
+            for (int i = 0; i < sprites.Length; i++)
+            {
+                if (ReferenceEquals(sprites[i].Texture, texture))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void LogLru(long nowMs)
+        {
+            long changes = _lru.EvictedPages + _lru.Reloads + _lru.Grows + _lru.Shrinks;
+            bool check = false;
+#if CUO_DEVTOOLS
+            check = LruCheck;
+#endif
+            if (nowMs < _lruLogAt || (changes == _lruLogged && !check))
+            {
+                return;
+            }
+
+            _lruLogAt = nowMs + 5000;
+            _lruLogged = changes;
+            int pages = _atlas.TexturesCount;
+            long mib = _atlas.PageBytes >> 20;
+            Log.Info(
+                $"[anim-lru] pages {pages} ({pages * mib} MiB), budget {_lru.BudgetPages} (low {_lru.LowWater}, floor {_lru.FloorPages}, ceiling {_lru.CeilingPages}; page {mib} MiB), " +
+                $"evicted {_lru.EvictedPages} pages / {_lru.EvictedDirections} directions, reloads {_lru.Reloads} (thrash {_lru.ThrashReloads}), grows {_lru.Grows}, shrinks {_lru.Shrinks}"
+            );
+#if CUO_DEVTOOLS
+            if (check)
+            {
+                Log.Info($"[anim-lru-check] {LruCheckCompared} reloads compared, {LruCheckUses} uses validated, {LruCheckMismatches} mismatches (anim_atlas_lru=on)");
+            }
+#endif
+        }
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_ANIM_LRU_CHECK: an evicted direction loads again with the same frames (count, size, centre),
+        // and no frame or recorded draw names a freed page
+        public static bool LruCheck = Environment.GetEnvironmentVariable("CUO_ANIM_LRU_CHECK") == "1";
+
+        public static long LruCheckCompared, LruCheckUses, LruCheckMismatches;
+
+        /// <summary>Tests: sees each mismatch line.</summary>
+        public static Action<string> LruMismatchObserver;
+
+        private readonly Dictionary<uint, (int W, int H, int X, int Y)[]> _evictedFrames = new Dictionary<uint, (int, int, int, int)[]>();
+
+        private void RecordEvicted(uint key, SpriteInfo[] sprites)
+        {
+            var dims = new (int, int, int, int)[sprites.Length];
+
+            for (int i = 0; i < sprites.Length; i++)
+            {
+                dims[i] = (sprites[i].UV.Width, sprites[i].UV.Height, sprites[i].Center.X, sprites[i].Center.Y);
+            }
+
+            _evictedFrames[key] = dims;
+        }
+
+        private void CheckReloaded(uint key, SpriteInfo[] sprites, string when)
+        {
+            if (!_evictedFrames.TryGetValue(key, out var dims))
+            {
+                return;
+            }
+
+            LruCheckCompared++;
+            bool same = dims.Length == sprites.Length;
+
+            for (int i = 0; same && i < sprites.Length; i++)
+            {
+                same = dims[i] == (sprites[i].UV.Width, sprites[i].UV.Height, sprites[i].Center.X, sprites[i].Center.Y);
+            }
+
+            if (!same)
+            {
+                LruMismatch($"[anim-lru-check] body 0x{(ushort)key:X4} action {(byte)(key >> 16)} dir {(byte)(key >> 24)} ({when}): {sprites.Length} frames, " +
+                    $"first {(sprites.Length > 0 ? $"{sprites[0].UV.Width}x{sprites[0].UV.Height} c {sprites[0].Center}" : "-")}; before eviction {dims.Length} frames, " +
+                    $"first {(dims.Length > 0 ? dims[0].ToString() : "-")}");
+            }
+        }
+
+        /// <summary>CUO_ANIM_LRU_CHECK: a texture about to be drawn must not be a freed atlas page.</summary>
+        public static void LruCheckUse(Texture2D texture, string where)
+        {
+            if (texture == null)
+            {
+                return;
+            }
+
+            LruCheckUses++;
+
+            if (texture.IsDisposed)
+            {
+                LruMismatch($"[anim-lru-check] {where}: draws from a freed atlas page (serial {(texture.Tag as AtlasPage)?.Serial})");
+            }
+        }
+
+        private static void LruMismatch(string line)
+        {
+            LruCheckMismatches++;
+            LruMismatchObserver?.Invoke(line);
+
+            if (LruCheckMismatches <= 50)
+            {
+                Log.Warn(line);
+            }
+        }
+#endif
 
         // Upload budget: at most DrainBudgetMs of finished directions per DrainWindowMs, so a crowd's worth of directions
         // finishing together spreads over a few frames instead of landing in one (the rest stay invisible a little longer).
@@ -404,6 +716,12 @@ namespace ClassicUO.Renderer.Animations
             try
             {
                 CompleteFrames(job);
+#if CUO_DEVTOOLS
+                if (LruCheck && _lru != null)
+                {
+                    CheckReloaded(DirKey(job.Body, job.Action, job.Dir), job.Sprites, "uploaded");
+                }
+#endif
             }
             finally
             {

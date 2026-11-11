@@ -783,7 +783,8 @@ namespace ClassicUO.Game
             int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
 
             if (cache.LegacyValid && cache.LegacySelectGen == cache.SelectGen && cache.LegacyAlpha == rs.Alpha &&
-                cache.LegacyOverrideHue == rs.OverrideHue && cache.LegacyBodyHue == bodyHue && ReferenceEquals(cache.LegacySource, src))
+                cache.LegacyOverrideHue == rs.OverrideHue && cache.LegacyBodyHue == bodyHue && ReferenceEquals(cache.LegacySource, src) &&
+                cache.LegacyAtlasEpoch == ClassicUO.Renderer.Animations.Animations.AtlasEpoch)
             {
                 MobileFrameCache.LegacyHits++;
                 _selCount = 0;
@@ -797,6 +798,14 @@ namespace ClassicUO.Game
                     // normal or shadow draws, never seated or rotated)
                     ref readonly MobileFrameCache.LegacyEntry entry = ref entries[i];
                     var position = new Vector2(baseX + entry.X, baseY + entry.Y);
+                    // anim_atlas_lru: a replay skips GetAnimationFrames, so it marks the page used itself
+                    ClassicUO.Renderer.Animations.AtlasPageClock.Touch(entry.Texture);
+#if CUO_DEVTOOLS
+                    if (ClassicUO.Renderer.Animations.Animations.LruCheck)
+                    {
+                        ClassicUO.Renderer.Animations.Animations.LruCheckUse(entry.Texture, "mobile replay");
+                    }
+#endif
                     float d = DepthOf(depth, entry.Kind, entry.Add);
 
                     if (entry.Mode == SpriteCaptureMode.Shadow)
@@ -889,6 +898,7 @@ namespace ClassicUO.Game
 
             cache.LegacyLightCount = _lightCount;
             cache.LegacySelectGen = cache.SelectGen;
+            cache.LegacyAtlasEpoch = ClassicUO.Renderer.Animations.Animations.AtlasEpoch;
             cache.LegacyAlpha = rs.Alpha;
             cache.LegacyOverrideHue = rs.OverrideHue;
             cache.LegacyBodyHue = bodyHue;
