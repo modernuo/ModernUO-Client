@@ -33,7 +33,11 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool CheckMouseSelection()
         {
-            if (!IsCorpse)
+            // pa-itemprep (perf audit #7): the record graphic read once, its tiledata row selected once, and the cheap
+            // IsAnimated test before OnGround (Container probes ContainedIn and EquippedOn); the same values and answers
+            ushort itemGraphic = Graphic;
+
+            if (itemGraphic != CORPSE_GRAPHIC)
             {
                 if (
                     ReferenceEquals(SelectedObject.Object, this)
@@ -43,18 +47,20 @@ namespace ClassicUO.Game.GameObjects
                     return false;
                 }
 
-                ushort graphic = DisplayedGraphic;
+                bool isMulti = IsMulti;
+                ref StaticTiles tile = ref Client.Game.UO.FileManager.TileData.StaticData[isMulti ? MultiGraphic : itemGraphic];
+                ushort graphic = DisplayedGraphicOf(itemGraphic);
 
-                if (OnGround && ItemData.IsAnimated)
+                if (tile.IsAnimated && OnGround)
                 {
                     if (
                         ProfileManager.CurrentProfile.FieldsType == 2
                         && (
-                            StaticFilters.IsFireField(Graphic)
-                            || StaticFilters.IsParalyzeField(Graphic)
-                            || StaticFilters.IsEnergyField(Graphic)
-                            || StaticFilters.IsPoisonField(Graphic)
-                            || StaticFilters.IsWallOfStone(Graphic)
+                            StaticFilters.IsFireField(itemGraphic)
+                            || StaticFilters.IsParalyzeField(itemGraphic)
+                            || StaticFilters.IsEnergyField(itemGraphic)
+                            || StaticFilters.IsPoisonField(itemGraphic)
+                            || StaticFilters.IsWallOfStone(itemGraphic)
                         )
                     )
                     {
@@ -128,7 +134,7 @@ namespace ClassicUO.Game.GameObjects
                         Scenes.PrepCheck.PicksRejected++;
 
                         if (Client.Game.UO.Arts.GetArt(graphic).Texture != null && (Client.Game.UO.Arts.PixelCheck(graphic, mouseX, mouseY) ||
-                            !IsMulti && !IsCoin && Amount > 1 && ItemData.IsStackable && Client.Game.UO.Arts.PixelCheck(graphic, mouseX + 5, mouseY + 5)))
+                            !isMulti && !IsCoinGraphic(itemGraphic) && tile.IsStackable && Amount > 1 && Client.Game.UO.Arts.PixelCheck(graphic, mouseX + 5, mouseY + 5)))
                         {
                             Scenes.PrepCheck.PicksWrong++;
                             Scenes.PrepCheck.Sample ??= $"item 0x{Serial:X8} graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {entryW},{entryH}";
@@ -150,7 +156,7 @@ namespace ClassicUO.Game.GameObjects
                     {
                         return true;
                     }
-                    else if (!IsMulti && !IsCoin && Amount > 1 && ItemData.IsStackable)
+                    else if (!isMulti && !IsCoinGraphic(itemGraphic) && tile.IsStackable && Amount > 1)
                     {
                         if (
                             Client.Game.UO.Arts.PixelCheck(
@@ -199,20 +205,22 @@ namespace ClassicUO.Game.GameObjects
                 }
 
                 byte animIndex = AnimIndex;
+                // a corpse's amount is its body
+                ushort corpseBody = Amount;
                 bool ishuman =
-                    MathHelper.InRange(Amount, 0x0190, 0x0193)
-                    || MathHelper.InRange(Amount, 0x00B7, 0x00BA)
-                    || MathHelper.InRange(Amount, 0x025D, 0x0260)
-                    || MathHelper.InRange(Amount, 0x029A, 0x029B)
-                    || MathHelper.InRange(Amount, 0x02B6, 0x02B7)
-                    || Amount == 0x03DB
-                    || Amount == 0x03DF
-                    || Amount == 0x03E2
-                    || Amount == 0x02E8
-                    || Amount == 0x02E9;
+                    MathHelper.InRange(corpseBody, 0x0190, 0x0193)
+                    || MathHelper.InRange(corpseBody, 0x00B7, 0x00BA)
+                    || MathHelper.InRange(corpseBody, 0x025D, 0x0260)
+                    || MathHelper.InRange(corpseBody, 0x029A, 0x029B)
+                    || MathHelper.InRange(corpseBody, 0x02B6, 0x02B7)
+                    || corpseBody == 0x03DB
+                    || corpseBody == 0x03DF
+                    || corpseBody == 0x03E2
+                    || corpseBody == 0x02E8
+                    || corpseBody == 0x02E9;
 
                 Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-                int layerCount = LayerRuleEval.CorpseOrder(this, Amount, direction, layers); // T3b: from the layering rules data
+                int layerCount = LayerRuleEval.CorpseOrder(this, corpseBody, direction, layers); // T3b: from the layering rules data
 
                 for (int i = -1; i < layerCount; i++)
                 {
