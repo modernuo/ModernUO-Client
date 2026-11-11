@@ -2507,7 +2507,7 @@ namespace ClassicUO.Game
         /// <summary>
         /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration, a multi's (re)load through
         /// <see cref="ClearBoatSteps"/>): the offset of the boat or of one object on it
-        /// back to zero: a mobile's Steps (T6c) and, with <c>ecs_item_offset</c>, an item's <c>ItemOffset</c> (<see cref="ItemOffsets"/>).
+        /// back to zero: a mobile's Steps (T6c) and an item's <c>ItemOffset</c> (<see cref="ItemOffsets"/>).
         /// Rejections as <see cref="SetHits"/>.
         /// </summary>
         public void ResetBoatOffset(Entity entity)
@@ -2605,7 +2605,7 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
-        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too with <c>ecs_item_offset</c>, as every boat
+        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too, as every boat
         /// operation that writes an item's offset). Rejections as <see cref="MoveBoatPassenger"/>.
         /// </summary>
         public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)

@@ -20,7 +20,8 @@ namespace ClassicUO.UnitTests.Ecs
             "world_anim_system",
             "world_step_system",
             "ecs_effects",
-            "ecs_step_mount_inputs"
+            "ecs_step_mount_inputs",
+            "ecs_item_offset"
         };
 
         [Fact]

@@ -14,8 +14,7 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // ecs_boat_steps: a boat's queued steps, step clock and passengers are its BoatSteps component, filled by WorldWriter's
     // boat operations and advanced by BoatStepSystem. A reference World runs the old BoatMovingManager (switch off); the
-    // subject World runs the same calls with the switch off or on (and CUO_BOAT_CHECK's shadow on or off, ecs_item_offset on
-    // or off), and after every call and frame both Worlds must be equal: positions, offsets, step clocks, tiles, records.
+    // subject World runs the same calls with the switch off or on (and CUO_BOAT_CHECK's shadow on or off), and after every call and frame both Worlds must be equal: positions, offsets, step clocks, tiles, records.
     public partial class WorldWriterMobileTests
     {
         [Fact]
@@ -26,11 +25,10 @@ namespace ClassicUO.UnitTests.Ecs
 
         private const uint BOAT2 = 0x4000_7402, DECKCOIN = 0x4000_7403;
 
-        private static World BuildTwoBoats(bool boatSteps, bool itemOffset)
+        private static World BuildTwoBoats(bool boatSteps)
         {
             World world = BuildBoat(Start.Standing);
             world.BoatStepsOverride = boatSteps;
-            world.ItemOffsetOverride = itemOffset;
             world.Writer.ThrowOnViolation = true;
 
             Item boat2 = world.GetOrCreateItem(BOAT2);
@@ -184,19 +182,18 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Theory]
-        [InlineData(false, false, false)]
-        [InlineData(true, false, false)]
-        [InlineData(true, true, false)]
-        [InlineData(true, true, true)]
-        [InlineData(false, true, true)]
-        public void The_Boat_Step_System_Equals_The_Old_Manager(bool boatSteps, bool check, bool itemOffset)
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        [InlineData(false, true)]
+        public void The_Boat_Step_System_Equals_The_Old_Manager(bool boatSteps, bool check)
         {
             BoatStepSystem.CheckOverride = check;
             BoatStepSystem.ResetCounters();
 
             try
             {
-                World reference = BuildTwoBoats(false, itemOffset), world = BuildTwoBoats(boatSteps, itemOffset);
+                World reference = BuildTwoBoats(false), world = BuildTwoBoats(boatSteps);
                 int frames = 0;
 
                 foreach ((uint ticks, string what, Action<World> act) in BoatScript())
@@ -245,7 +242,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void QueueBoatStep_Fills_The_Component_As_The_Old_Queue()
         {
-            World world = BuildTwoBoats(true, false);
+            World world = BuildTwoBoats(true);
             Item boat = world.Items.Get(BOAT);
             BoatMovingManager b = world.BoatMovingManager;
 
@@ -309,7 +306,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Boat_Operations_Write_No_Component_With_The_Switch_Off()
         {
-            World world = BuildTwoBoats(false, false);
+            World world = BuildTwoBoats(false);
             Item boat = world.Items.Get(BOAT);
             world.Writer.QueueBoatStep(boat, 3, Direction.East, 1001, 1000, 0, 0);
             world.Writer.SetBoatPassenger(boat, MOB, 1, 0, 0);
@@ -323,7 +320,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Boat_Operations_Reject_A_Boat_This_World_Does_Not_Hold()
         {
-            World world = BuildTwoBoats(true, false), other = BuildTwoBoats(true, false);
+            World world = BuildTwoBoats(true), other = BuildTwoBoats(true);
             Item foreign = other.Items.Get(BOAT);
 
             foreach (Action act in new Action[]
@@ -353,7 +350,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             try
             {
-                World world = BuildTwoBoats(true, false);
+                World world = BuildTwoBoats(true);
                 BoatMovingManager b = world.BoatMovingManager;
                 Time.Ticks = NOW + 100;
                 b.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
@@ -402,7 +399,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             try
             {
-                World world = BuildTwoBoats(true, false);
+                World world = BuildTwoBoats(true);
                 Time.Ticks = NOW + 100;
                 world.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
 
@@ -430,7 +427,7 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(true)]
         public void A_Boat_Step_Completes_When_Its_Time_Is_Reached_Exactly(bool boatSteps)
         {
-            World world = BuildTwoBoats(boatSteps, false);
+            World world = BuildTwoBoats(boatSteps);
             Item boat = world.Items.Get(BOAT);
             Time.Ticks = NOW + 100;
             world.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
@@ -522,18 +519,16 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Theory]
-        [InlineData(false, false)]
-        [InlineData(true, false)]
-        [InlineData(false, true)]
-        [InlineData(true, true)]
-        public void The_Boats_Step_In_The_Old_Managers_Order(bool check, bool itemOffset)
+        [InlineData(false)]
+        [InlineData(true)]
+        public void The_Boats_Step_In_The_Old_Managers_Order(bool check)
         {
             BoatStepSystem.CheckOverride = check;
             BoatStepSystem.ResetCounters();
 
             try
             {
-                World reference = BuildTwoBoats(false, itemOffset), world = BuildTwoBoats(true, itemOffset);
+                World reference = BuildTwoBoats(false), world = BuildTwoBoats(true);
 
                 foreach (World w in new[] { reference, world })
                 {
@@ -596,7 +591,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             try
             {
-                World reference = BuildTwoBoats(false, false), world = BuildTwoBoats(true, false);
+                World reference = BuildTwoBoats(false), world = BuildTwoBoats(true);
                 byte type = how == "multi" ? (byte)2 : (byte)0;
 
                 IEnumerable<(uint ticks, string what, Action<World> act)> Script()

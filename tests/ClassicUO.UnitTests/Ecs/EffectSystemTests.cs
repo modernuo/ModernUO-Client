@@ -48,20 +48,18 @@ namespace ClassicUO.UnitTests.Ecs
             _own.EffectEndpointsCheckOverride = true;
             _own.EffectMotionOverride = false;
 
-            // T8 ownership phase 2: the motion step (ecs_effect_motion) with every checker and item offsets from the ECS, and
-            // without any checker (the effects hold no objects; item offsets from the objects)
+            // T8 ownership phase 2: the motion step (ecs_effect_motion) with every checker, and without any checker (the
+            // effects hold no objects)
             _mot.EffectsCheckOverride = true;
             _mot.EffectEndpointsOverride = true;
             _mot.EffectEndpointsCheckOverride = true;
             _mot.EffectMotionOverride = true;
             _mot.EffectMotionCheckOverride = true;
-            _mot.ItemOffsetOverride = true;
             _bare.EffectsCheckOverride = false;
             _bare.EffectEndpointsOverride = true;
             _bare.EffectEndpointsCheckOverride = false;
             _bare.EffectMotionOverride = true;
             _bare.EffectMotionCheckOverride = false;
-            _bare.ItemOffsetOverride = false;
             _savedObserver = EffectSystem.Observer;
             EffectSystem.Observer = _mismatches.Add;
             _comparedBefore = EffectSystem.Compared;
@@ -833,7 +831,7 @@ namespace ClassicUO.UnitTests.Ecs
                 w.Ecs.PushSteps(m);
                 Item it = w.Items.Get(ITEM);
                 it.Offset = new Microsoft.Xna.Framework.Vector3(2 * i, i, i % 3);
-                ItemOffsets.Push(w, it, it.Offset); // the boat operations' ECS write (ecs_item_offset: the motion world)
+                ItemOffsets.Push(w, it, it.Offset); // the boat operations' ECS write
             });
 
             // the mobile's offset is read from its Steps: a component that differs from the object moves the effect, and the
@@ -847,7 +845,7 @@ namespace ClassicUO.UnitTests.Ecs
             _mismatches.Should().Contain(m => m.Contains("source offset"));
             _mismatches.Clear();
 
-            // the motion step reads the same: the mobile's Steps, and the item's ItemOffset component (ecs_item_offset); the
+            // the motion step reads the same: the mobile's Steps, and the item's ItemOffset component; the
             // motion checker's legacy replay reads the objects and reports both
             _mot.Ecs.Mirror.TryGetEntity(CASTER, out rec).Should().BeTrue();
             rec.GetComponent<ClassicUO.Ecs.Steps>().OffsetX = 77;

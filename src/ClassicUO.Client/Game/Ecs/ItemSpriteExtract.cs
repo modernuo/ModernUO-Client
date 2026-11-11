@@ -31,8 +31,8 @@ namespace ClassicUO.Game
         // tiledata of the item's graphic (the multi's graphic for a multi)
         public bool TileLight, TilePartialHue, TileAnimated, TileContainer, TileStackable, TileHeavy;
 
-        // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset (the ItemOffset
-        // component with ecs_item_offset), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state;
+        // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset (read from the
+        // ItemOffset component), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state;
         // AnimIndex and UsedLayer are read for corpses only
         public bool Destroyed, AllowedToDraw, UsedLayer, Flipped;
         public byte AlphaHue, AnimIndex;
@@ -90,7 +90,7 @@ namespace ClassicUO.Game
             public World World;
             public Profile Profile;
             public StaticTiles[] StaticData;
-            public bool HasPlayer, PlayerDeadGray, Highlight, NoColorOutOfRange, GridLoot, FieldsReplaced, ItemOffsetOn, DrawRowOn;
+            public bool HasPlayer, PlayerDeadGray, Highlight, NoColorOutOfRange, GridLoot, FieldsReplaced, DrawRowOn;
             public int RangeX, RangeY, ViewRange;
         }
 
@@ -129,7 +129,6 @@ namespace ClassicUO.Game
             f.PlayerDeadGray = player != null && player.IsDead && profile.EnableBlackWhiteEffect;
             f.GridLoot = profile.GridLootType > 0;
             f.FieldsReplaced = profile.FieldsType == 2;
-            f.ItemOffsetOn = world.ItemOffsetOn;
             f.DrawRowOn = ItemDrawRows.On;
 
             return ref f;
@@ -159,8 +158,8 @@ namespace ClassicUO.Game
             }
 
             i.AlphaHue = item.AlphaHue;
-            // ecs_item_offset: the ItemOffset component, from the row ReadRecord already holds
-            i.Offset = f.ItemOffsetOn ? ItemOffsets.ReadRow(item, record, in data) : item.Offset;
+            // the ItemOffset component, from the row ReadRecord already holds
+            i.Offset = ItemOffsets.ReadRow(item, record, in data);
             i.Flipped = item.ViewFlipped;
 
             // GameObject.Distance for an item

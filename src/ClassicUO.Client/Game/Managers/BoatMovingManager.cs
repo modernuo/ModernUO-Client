@@ -354,7 +354,7 @@ namespace ClassicUO.Game.Managers
 
         public void Update()
         {
-            ItemOffsets.LogSummary(_world);
+            ItemOffsets.LogSummary();
             BoatStepSystem.LogSummary(_world);
 
             if (On)

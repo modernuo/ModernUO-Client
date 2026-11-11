@@ -458,7 +458,7 @@ namespace ClassicUO.Game
 
                     if (passengerCount != 0)
                     {
-                        // the boat's offset as the item readers see it (ecs_item_offset: the ItemOffset component)
+                        // the boat's offset as the item readers see it (its ItemOffset component)
                         Vector3 offset = ItemOffsets.Read(item);
 
                         for (int k = 0; k < passengerCount; k++)

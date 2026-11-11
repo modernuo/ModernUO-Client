@@ -102,8 +102,8 @@ namespace ClassicUO.Game
             return r;
         }
 
-        // A live source's offset: a mobile's from its Steps while the step system keeps them, an item's (a boat passenger's)
-        // from its ItemOffset while ecs_item_offset is on (absent = zero); otherwise the object World holds under the serial.
+        // A live source's offset: a mobile's from its Steps while the step system keeps them (otherwise the Mobile World holds
+        // under the serial), an item's (a boat passenger's) from its ItemOffset (absent = zero).
         private static Vector3 SourceOffset(GameEffect e, ref EffectState s, EcsRow row)
         {
             if ((s.Ends & EffectState.END_SOURCE_MOBILE) != 0)
@@ -116,12 +116,7 @@ namespace ClassicUO.Game
                 return e.World.FindMobile(s.SourceSerial)?.Offset ?? default;
             }
 
-            if (e.World.ItemOffsetOn)
-            {
-                return row.TryGet(out ItemOffset io) ? new Vector3(io.X, io.Y, io.Z) : Vector3.Zero;
-            }
-
-            return e.World.FindItem(s.SourceSerial)?.Offset ?? default;
+            return row.TryGet(out ItemOffset io) ? new Vector3(io.X, io.Y, io.Z) : Vector3.Zero;
         }
 
         private static (ushort x, ushort y, sbyte z) ResolveTarget(GameEffect e, ref EffectState s, out bool gone)
