@@ -34,23 +34,14 @@ namespace ClassicUO.UnitTests.Game.Map
             data[Roof].Flags = TileFlag.Roof;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
-            // T6a's list rules: the list keeps the dynamics (world_tile_index's list-kept mode; ListDropTests covers the
-            // dropped list, the default since the switch went on)
-            _savedDropped = DynamicTileIndex.ListDropped;
-            _savedShadow = DynamicTileIndex.Shadow;
-            DynamicTileIndex.ListDropped = false;
-            DynamicTileIndex.Shadow = false;
             _chunk = new Chunk(_world);
         }
 
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedDropped, _savedShadow;
 
         public void Dispose()
         {
             Chunk.StaticTileData = _savedStaticData;
-            DynamicTileIndex.ListDropped = _savedDropped;
-            DynamicTileIndex.Shadow = _savedShadow;
         }
 
         private static Land NewLand(World world, sbyte z)
@@ -73,7 +64,21 @@ namespace ClassicUO.UnitTests.Game.Map
             _chunk.AddGameObject(obj, x, y);
         }
 
+        // the tile's objects in walk order: the list (land, statics, multis) merged with the DynamicTileIndex (T6b part 3)
         private List<GameObject> List(int x = 0, int y = 0)
+        {
+            var list = new List<GameObject>();
+
+            for (GameObject o = TileWalk.Begin(_chunk, x << 3 | y, out TileWalk w); o != null; o = w.Next())
+            {
+                list.Add(o);
+                Assert.True(list.Count < 100_000, "merged walk does not end");
+            }
+
+            return list;
+        }
+
+        private List<GameObject> RealList(int x = 0, int y = 0)
         {
             var list = new List<GameObject>();
 
@@ -86,10 +91,12 @@ namespace ClassicUO.UnitTests.Game.Map
             return list;
         }
 
+        // the expected orders are the legacy list's (the list that held everything until T9)
         private void AssertOrder(params GameObject[] expected)
         {
             List<GameObject> actual = List();
             Assert.Equal(expected, actual);
+            Assert.Equal(expected, LegacyTileOrder.Of(_chunk, 0));
             AssertKeySorted();
         }
 
@@ -98,9 +105,11 @@ namespace ClassicUO.UnitTests.Game.Map
             List<GameObject> actual = List(x, y);
             List<GameObject> sorted = actual.OrderBy(TileOrder.Key).ToList(); // OrderBy is stable
             Assert.Equal(sorted, actual);
+            Assert.Equal(actual.Where(o => !DynamicTileIndex.Holds(o)).ToList(), RealList(x, y));
             TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, x, y);
             Assert.False(r.Failed, $"out of order {r.OutOfOrder}, cycle {r.Cycle}, broken {r.BrokenLinks}, foreign {r.Foreign}");
-            Assert.Equal(actual.Count, r.Objects);
+            Assert.Equal(RealList(x, y).Count, r.Objects);
+            Assert.False(TileOrder.CheckIndex(_chunk, x, y).Failed);
         }
 
         [Fact]
@@ -406,7 +415,7 @@ namespace ClassicUO.UnitTests.Game.Map
             // a finished step: coordinates first, then the re-add (Mobile.ProcessSteps; the Map half of AddToTile is not
             // reachable in a unit test, so this calls the chunk directly, as AddToTile does for a loaded chunk)
             m.X = 3;
-            Assert.Equal(1, TileOrder.CheckTile(_chunk, 2, 2).Misplaced); // what the old code left behind, and the checker sees
+            Assert.True(_chunk.Dynamic.Contains(m, (2 << 3) | 2)); // still filed under its old tile until the re-add
 
             if (m.IsPlaced)
             {

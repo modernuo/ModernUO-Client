@@ -208,14 +208,12 @@ namespace ClassicUO.Game.GameObjects
                 TileChunk.OnTileContentChanged(this);
                 // Chunk.Tiles[cell] must not keep pointing at an object that left (it is how the walk finds the list)
                 TileChunk.ReleaseAnchor(this);
-                // T6b: the dynamic index follows the list (part 3, list dropped: the index alone holds the dynamics; their
-                // TNext/TPrevious stay null, so the unlink below and ReleaseAnchor, which never sees them as the anchor, are no-ops)
+                // T6b part 3: the index alone holds the dynamics; their TNext/TPrevious stay null, so the unlink below and
+                // ReleaseAnchor, which never sees them as the anchor, are no-ops
                 if (TileChunk.Dynamic != null && DynamicTileIndex.Holds(this))
                 {
                     TileChunk.Dynamic.Remove(this, TileCell);
                 }
-                // CUO_TILE_ORDER_CHECK with the list dropped: the legacy order's shadow
-                TileChunk.Shadow?.Remove(this, TileCell);
                 TileChunk = null;
             }
 
