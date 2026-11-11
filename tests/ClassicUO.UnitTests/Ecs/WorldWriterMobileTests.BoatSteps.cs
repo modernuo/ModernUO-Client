@@ -12,23 +12,17 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // ecs_boat_steps: a boat's queued steps, step clock and passengers are its BoatSteps component, filled by WorldWriter's
-    // boat operations and advanced by BoatStepSystem. A reference World runs the old BoatMovingManager (switch off); the
-    // subject World runs the same calls with the switch off or on (and CUO_BOAT_CHECK's shadow on or off), and after every call and frame both Worlds must be equal: positions, offsets, step clocks, tiles, records.
+    // A boat's queued steps, step clock and passengers are its BoatSteps component, filled by WorldWriter's boat operations
+    // and advanced by BoatStepSystem. A reference World runs a copy of the old BoatMovingManager's dictionaries
+    // (LegacyBoatCalls; T9 deleted ecs_boat_steps' off path); the subject World runs the same calls through the real manager,
+    // and after every call and frame both Worlds must be equal: positions, offsets, step clocks, tiles, records.
     public partial class WorldWriterMobileTests
     {
-        [Fact]
-        public void The_BoatSteps_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().EcsBoatSteps.Should().BeTrue();
-        }
-
         private const uint BOAT2 = 0x4000_7402, DECKCOIN = 0x4000_7403;
 
-        private static World BuildTwoBoats(bool boatSteps)
+        private static World BuildTwoBoats()
         {
             World world = BuildBoat(Start.Standing);
-            world.BoatStepsOverride = boatSteps;
             world.Writer.ThrowOnViolation = true;
 
             Item boat2 = world.GetOrCreateItem(BOAT2);
@@ -81,14 +75,13 @@ namespace ClassicUO.UnitTests.Ecs
             w.Ecs.Mirror.TryGetEntity(serial, false, out EcsEntity e) && e.HasComponent<BoatSteps>();
 
         // the scenarios: each call runs on both Worlds at its time; a null action is a frame (BoatMovingManager.Update)
-        private static IEnumerable<(uint ticks, string what, Action<World> act)> BoatScript()
+        private static IEnumerable<(uint ticks, string what, Action<World, IBoatCalls> act)> BoatScript()
         {
-            Action<World> frame = null;
+            Action<World, IBoatCalls> frame = null;
 
             // moving: boat 1 east with the mobile and the bag on deck, boat 2 north with the bystander; mid-step, then done
-            yield return (100, "two boats queue", w =>
+            yield return (100, "two boats queue", (w, b) =>
             {
-                BoatMovingManager b = w.BoatMovingManager;
                 b.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
                 b.PushItemToList(BOAT, MOB, 1, 0, -2);
                 b.PushItemToList(BOAT, BAG, -1, 1, 0);
@@ -102,51 +95,51 @@ namespace ClassicUO.UnitTests.Ecs
             yield return (700, "frame", frame);
 
             // stopping and turning: a turn in place (the boat's own tile) and a step after it, both done in one frame
-            yield return (750, "turn queued", w => w.BoatMovingManager.AddStep(BOAT, 3, Direction.South, Direction.South, 1001, 1000, 0));
-            yield return (900, "step after the turn", w =>
+            yield return (750, "turn queued", (w, b) => b.AddStep(BOAT, 3, Direction.South, Direction.South, 1001, 1000, 0));
+            yield return (900, "step after the turn", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(BOAT, 4, Direction.Down, Direction.Down, 1002, 1001, 1);
-                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 0, 0);
-                w.BoatMovingManager.PushItemToList(BOAT, BAG, -1, 1, 0);
-                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 1, 0); // listed twice: updated in place
+                b.AddStep(BOAT, 4, Direction.Down, Direction.Down, 1002, 1001, 1);
+                b.PushItemToList(BOAT, MOB, 1, 0, 0);
+                b.PushItemToList(BOAT, BAG, -1, 1, 0);
+                b.PushItemToList(BOAT, MOB, 1, 1, 0); // listed twice: updated in place
             });
             yield return (950, "frame", frame);
             yield return (1000, "frame", frame);
             yield return (1100, "frame (boat 2 done)", frame);
 
             // a turn while under way: the multi reload's ClearSteps resets the boat and its passengers mid-step
-            yield return (1150, "step", w =>
+            yield return (1150, "step", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1003, 1001, 1);
-                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 1, 0);
-                w.BoatMovingManager.PushItemToList(BOAT, BAG, -1, 1, 0);
+                b.AddStep(BOAT, 3, Direction.East, Direction.East, 1003, 1001, 1);
+                b.PushItemToList(BOAT, MOB, 1, 1, 0);
+                b.PushItemToList(BOAT, BAG, -1, 1, 0);
             });
             yield return (1250, "frame", frame);
-            yield return (1260, "ClearSteps mid-step", w => w.BoatMovingManager.ClearSteps(BOAT));
+            yield return (1260, "ClearSteps mid-step", (w, b) => b.ClearSteps(BOAT));
             yield return (1300, "frame (nothing queued)", frame);
-            yield return (1310, "ClearSteps with nothing queued", w => w.BoatMovingManager.ClearSteps(BOAT));
+            yield return (1310, "ClearSteps with nothing queued", (w, b) => b.ClearSteps(BOAT));
 
             // a passenger leaves (the next list has only the mobile) and one joins (a coin on deck), speeds slow/fast/other
-            yield return (1400, "steps with the bag on deck", w =>
+            yield return (1400, "steps with the bag on deck", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(BOAT, 2, Direction.East, Direction.East, 1004, 1001, 1);
-                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 1, 0);
-                w.BoatMovingManager.PushItemToList(BOAT, BAG, -1, 1, 0);
+                b.AddStep(BOAT, 2, Direction.East, Direction.East, 1004, 1001, 1);
+                b.PushItemToList(BOAT, MOB, 1, 1, 0);
+                b.PushItemToList(BOAT, BAG, -1, 1, 0);
             });
             yield return (1500, "frame", frame);
-            yield return (1520, "the bag leaves, the coin joins", w =>
+            yield return (1520, "the bag leaves, the coin joins", (w, b) =>
             {
                 Item coin = w.GetOrCreateItem(DECKCOIN);
                 coin.Graphic = 0xEED;
                 coin.SetInWorldTile(1003, 1000, 1);
                 coin.PendingBlock = 7;
                 w.Ecs.Sync(coin);
-                w.BoatMovingManager.ClearEntities(BOAT);
-                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 1, 0);
-                w.BoatMovingManager.PushItemToList(BOAT, DECKCOIN, 1, 1, 0);
-                w.BoatMovingManager.AddStep(BOAT, 6, Direction.East, Direction.East, 1005, 1001, 1);
-                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 1, 0);
-                w.BoatMovingManager.PushItemToList(BOAT, DECKCOIN, 1, 1, 0);
+                b.ClearEntities(BOAT);
+                b.PushItemToList(BOAT, MOB, 1, 1, 0);
+                b.PushItemToList(BOAT, DECKCOIN, 1, 1, 0);
+                b.AddStep(BOAT, 6, Direction.East, Direction.East, 1005, 1001, 1);
+                b.PushItemToList(BOAT, MOB, 1, 1, 0);
+                b.PushItemToList(BOAT, DECKCOIN, 1, 1, 0);
             });
             yield return (1600, "frame", frame);
             yield return (2000, "frame (first done)", frame);
@@ -154,13 +147,13 @@ namespace ClassicUO.UnitTests.Ecs
             yield return (2100, "frame (second done)", frame);
 
             // a full queue: seven packets in a row are trimmed to six
-            yield return (2200, "seven steps", w =>
+            yield return (2200, "seven steps", (w, b) =>
             {
                 for (int i = 0; i < 7; i++)
                 {
                     Time.Ticks = NOW + 2200 + (uint)i * 10;
-                    w.BoatMovingManager.AddStep(BOAT, 4, Direction.East, Direction.East, (ushort)(1006 + i), 1001, 1);
-                    w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 1, 0);
+                    b.AddStep(BOAT, 4, Direction.East, Direction.East, (ushort)(1006 + i), 1001, 1);
+                    b.PushItemToList(BOAT, MOB, 1, 1, 0);
                 }
             });
 
@@ -170,36 +163,33 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             // the boat removed mid-step: boat 2 under way, then deleted (0x1D); the bystander keeps its offset
-            yield return (2800, "boat 2 steps", w =>
+            yield return (2800, "boat 2 steps", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 998, 0);
-                w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 8, 0);
+                b.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 998, 0);
+                b.PushItemToList(BOAT2, OTHER, 20, 8, 0);
             });
             yield return (2900, "frame", frame);
-            yield return (2910, "boat 2 removed", w => w.Writer.RemoveWorldItem(w.Items.Get(BOAT2), out _));
+            yield return (2910, "boat 2 removed", (w, b) => w.Writer.RemoveWorldItem(w.Items.Get(BOAT2), out _));
             yield return (3000, "frame", frame);
             yield return (3500, "frame", frame);
         }
 
-        [Theory]
-        [InlineData(false, false)]
-        [InlineData(true, false)]
-        [InlineData(true, true)]
-        [InlineData(false, true)]
-        public void The_Boat_Step_System_Equals_The_Old_Manager(bool boatSteps, bool check)
+        [Fact]
+        public void The_Boat_Step_System_Equals_The_Old_Manager()
         {
-            BoatStepSystem.CheckOverride = check;
             BoatStepSystem.ResetCounters();
 
             try
             {
-                World reference = BuildTwoBoats(false), world = BuildTwoBoats(boatSteps);
+                World reference = BuildTwoBoats(), world = BuildTwoBoats();
+                var legacy = new LegacyBoatCalls(reference);
+                var boats = new ManagerBoatCalls(world);
                 int frames = 0;
 
-                foreach ((uint ticks, string what, Action<World> act) in BoatScript())
+                foreach ((uint ticks, string what, Action<World, IBoatCalls> act) in BoatScript())
                 {
                     Time.Ticks = NOW + ticks;
-                    Pair(() => (act ?? (w => w.BoatMovingManager.Update()))(reference), () => (act ?? (w => w.BoatMovingManager.Update()))(world));
+                    Pair(() => (act ?? ((w, b) => b.Update()))(reference, legacy), () => (act ?? ((w, b) => b.Update()))(world, boats));
                     Time.Ticks = NOW;
                     frames += act == null ? 1 : 0;
 
@@ -219,22 +209,18 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Get(OTHER).Offset.Should().NotBe(Vector3.Zero, "boat 2 was removed mid-step");
                 world.Writer.Violations.Should().Be(0);
 
-                // the component is the state with the switch on, never added with it off
-                HasBoatSteps(world, BOAT).Should().Be(boatSteps);
+                // the component is the state; the reference's dictionaries never add it
+                HasBoatSteps(world, BOAT).Should().BeTrue();
                 HasBoatSteps(reference, BOAT).Should().BeFalse();
-                (BoatStepSystem.Frames > 0).Should().Be(boatSteps, "the system runs only with the switch on");
-                (BoatStepSystem.Completed > 0).Should().Be(boatSteps);
-                (BoatStepSystem.Turns > 0).Should().Be(boatSteps, "the turn in place");
-                (BoatStepSystem.PassengerMoves > 0).Should().Be(boatSteps);
-                (BoatStepSystem.Follows > 0).Should().Be(boatSteps);
+                BoatStepSystem.Frames.Should().BeGreaterThan(0);
+                BoatStepSystem.Completed.Should().BeGreaterThan(0);
+                BoatStepSystem.Turns.Should().BeGreaterThan(0, "the turn in place");
+                BoatStepSystem.PassengerMoves.Should().BeGreaterThan(0);
+                BoatStepSystem.Follows.Should().BeGreaterThan(0);
                 BoatStepSystem.Fallbacks.Should().Be(0);
-                (BoatStepSystem.Checks > 0).Should().Be(boatSteps && check, "the shadow compares only with the checker on");
-                (BoatStepSystem.StateChecks > 0).Should().Be(boatSteps && check);
-                (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L));
             }
             finally
             {
-                BoatStepSystem.CheckOverride = null;
                 BoatStepSystem.ResetCounters();
             }
         }
@@ -242,7 +228,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void QueueBoatStep_Fills_The_Component_As_The_Old_Queue()
         {
-            World world = BuildTwoBoats(true);
+            World world = BuildTwoBoats();
             Item boat = world.Items.Get(BOAT);
             BoatMovingManager b = world.BoatMovingManager;
 
@@ -304,23 +290,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Boat_Operations_Write_No_Component_With_The_Switch_Off()
-        {
-            World world = BuildTwoBoats(false);
-            Item boat = world.Items.Get(BOAT);
-            world.Writer.QueueBoatStep(boat, 3, Direction.East, 1001, 1000, 0, 0);
-            world.Writer.SetBoatPassenger(boat, MOB, 1, 0, 0);
-            world.Writer.DropBoatSteps(boat, true);
-            world.Writer.SetBoatStepTime(boat, 77);
-            HasBoatSteps(world, BOAT).Should().BeFalse();
-            boat.LastStepTime.Should().Be(77);
-            world.Writer.Violations.Should().Be(0);
-        }
-
-        [Fact]
         public void The_Boat_Operations_Reject_A_Boat_This_World_Does_Not_Hold()
         {
-            World world = BuildTwoBoats(true), other = BuildTwoBoats(true);
+            World world = BuildTwoBoats(), other = BuildTwoBoats();
             Item foreign = other.Items.Get(BOAT);
 
             foreach (Action act in new Action[]
@@ -337,97 +309,11 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Violations.Should().Be(3);
         }
 
-        [Theory]
-        [InlineData("front step")]
-        [InlineData("clock")]
-        [InlineData("passenger")]
-        [InlineData("passenger dropped")]
-        [InlineData("queue")]
-        public void The_Boat_Checker_Reports_A_Component_That_Left_The_Shadow(string corrupt)
-        {
-            BoatStepSystem.CheckOverride = true;
-            BoatStepSystem.ResetCounters();
-
-            try
-            {
-                World world = BuildTwoBoats(true);
-                BoatMovingManager b = world.BoatMovingManager;
-                Time.Ticks = NOW + 100;
-                b.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
-                b.PushItemToList(BOAT, MOB, 1, 0, -2);
-                Time.Ticks = NOW + 200;
-                b.Update();
-                (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L), "clean before the corruption");
-
-                world.Ecs.Mirror.TryGetEntity(BOAT, false, out EcsEntity e).Should().BeTrue();
-                ref BoatSteps s = ref e.GetComponent<BoatSteps>();
-
-                switch (corrupt)
-                {
-                    case "front step": BoatStepRules.Front(ref s).X = 1005; break;
-                    case "clock": s.LastStepTime -= 50; break;
-                    case "passenger": s.Passengers[0].Y = 7; break;
-                    case "passenger dropped": s.PassengerCount = 0; break;
-                    case "queue": BoatStepRules.PushBack(ref s, new BoatStepEntry { X = 1002, Y = 1000, TimeDiff = 500 }); break;
-                }
-
-                Time.Ticks = NOW + 250;
-                b.Update();
-                Time.Ticks = NOW;
-
-                if (corrupt is "front step" or "clock")
-                {
-                    BoatStepSystem.DecisionDiffs.Should().BeGreaterThan(0, corrupt);
-                }
-
-                BoatStepSystem.StateDiffs.Should().BeGreaterThan(0, corrupt);
-                BoatStepSystem.Summary(world).Should().Contain("ecs_boat_steps on");
-            }
-            finally
-            {
-                BoatStepSystem.CheckOverride = null;
-                BoatStepSystem.ResetCounters();
-                Time.Ticks = NOW;
-            }
-        }
-
+        // the step is done in the frame whose delay reaches its time exactly (delay >= TimeDiff)
         [Fact]
-        public void The_Boat_Checker_Reports_A_Boat_Only_The_Shadow_Moves()
+        public void A_Boat_Step_Completes_When_Its_Time_Is_Reached_Exactly()
         {
-            BoatStepSystem.CheckOverride = true;
-            BoatStepSystem.ResetCounters();
-
-            try
-            {
-                World world = BuildTwoBoats(true);
-                Time.Ticks = NOW + 100;
-                world.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
-
-                // the component lost (a record recreated mid-step): only the frame-end sweep sees the shadow's queue
-                world.Ecs.Mirror.TryGetEntity(BOAT, false, out EcsEntity e).Should().BeTrue();
-                e.RemoveComponent<BoatSteps>();
-                Time.Ticks = NOW + 200;
-                world.BoatMovingManager.Update();
-                Time.Ticks = NOW;
-
-                BoatStepSystem.StateDiffs.Should().Be(1);
-                BoatStepSystem.DecisionDiffs.Should().Be(0);
-            }
-            finally
-            {
-                BoatStepSystem.CheckOverride = null;
-                BoatStepSystem.ResetCounters();
-                Time.Ticks = NOW;
-            }
-        }
-
-        // the step is done in the frame whose delay reaches its time exactly (delay >= TimeDiff), on both paths
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void A_Boat_Step_Completes_When_Its_Time_Is_Reached_Exactly(bool boatSteps)
-        {
-            World world = BuildTwoBoats(boatSteps);
+            World world = BuildTwoBoats();
             Item boat = world.Items.Get(BOAT);
             Time.Ticks = NOW + 100;
             world.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
@@ -464,71 +350,67 @@ namespace ClassicUO.UnitTests.Ecs
             b.UpdateRealScreenPositionOnly(0, 0);
         }
 
-        private static IEnumerable<(uint ticks, string what, Action<World> act)> OrderScript()
+        private static IEnumerable<(uint ticks, string what, Action<World, IBoatCalls> act)> OrderScript()
         {
-            Action<World> frame = null;
+            Action<World, IBoatCalls> frame = null;
 
             // four boats queue (slots W, X1, B, X2); X1 and X2 are removed under way, so the frame frees X1's slot, then X2's.
             // W is removed with nothing queued: the old manager kept its slot for good
-            yield return (100, "W, X1, B, X2 queue", w =>
+            yield return (100, "W, X1, B, X2 queue", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(GONE_W, 3, Direction.East, Direction.East, 1071, 1000, 0);
-                w.BoatMovingManager.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
-                w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1021, 1000, 0);
-                w.BoatMovingManager.AddStep(GONE_X2, 3, Direction.East, Direction.East, 1051, 1000, 0);
+                b.AddStep(GONE_W, 3, Direction.East, Direction.East, 1071, 1000, 0);
+                b.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
+                b.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1021, 1000, 0);
+                b.AddStep(GONE_X2, 3, Direction.East, Direction.East, 1051, 1000, 0);
             });
-            yield return (150, "X1 and X2 removed", w =>
+            yield return (150, "X1 and X2 removed", (w, b) =>
             {
                 w.Writer.RemoveWorldItem(w.Items.Get(GONE_X1), out _);
                 w.Writer.RemoveWorldItem(w.Items.Get(GONE_X2), out _);
             });
             yield return (200, "frame (X1, X2 dropped)", frame);
             yield return (600, "frame (B done)", frame);
-            yield return (650, "W removed, nothing queued", w => w.Writer.RemoveWorldItem(w.Items.Get(GONE_W), out _));
+            yield return (650, "W removed, nothing queued", (w, b) => w.Writer.RemoveWorldItem(w.Items.Get(GONE_W), out _));
 
             // A takes the last freed slot (X2's, after B): B runs first, so A's completion leaves B's step queued
-            yield return (700, "A queues, carrying B", w =>
+            yield return (700, "A queues, carrying B", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(CARRIER_A, 3, Direction.East, Direction.East, 1031, 1000, 0);
-                w.BoatMovingManager.PushItemToList(CARRIER_A, CARRIED_B, 9, 0, 0);
+                b.AddStep(CARRIER_A, 3, Direction.East, Direction.East, 1031, 1000, 0);
+                b.PushItemToList(CARRIER_A, CARRIED_B, 9, 0, 0);
             });
-            yield return (900, "B queues", w => w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1022, 1000, 0));
+            yield return (900, "B queues", (w, b) => b.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1022, 1000, 0));
             yield return (1200, "frame (A done, B mid-step)", frame);
             yield return (1300, "frame (B's turn)", frame);
 
             // Z takes X1's slot, before B: Z's completion puts B on its destination before B's own decision
-            yield return (1400, "Z queues, carrying B", w =>
+            yield return (1400, "Z queues, carrying B", (w, b) =>
             {
-                w.BoatMovingManager.AddStep(CARRIER_Z, 3, Direction.East, Direction.East, 1061, 1000, 0);
-                w.BoatMovingManager.PushItemToList(CARRIER_Z, CARRIED_B, 38, 0, 0);
+                b.AddStep(CARRIER_Z, 3, Direction.East, Direction.East, 1061, 1000, 0);
+                b.PushItemToList(CARRIER_Z, CARRIED_B, 38, 0, 0);
             });
-            yield return (1600, "B queues", w => w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1023, 1000, 0));
+            yield return (1600, "B queues", (w, b) => b.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1023, 1000, 0));
             yield return (1900, "frame (Z done, B mid-step)", frame);
             yield return (2000, "frame", frame);
 
             // X1 comes back under its serial and queues: no slot is free (W's is still held), so it goes last
-            yield return (2100, "X1 back, carrying B", w =>
+            yield return (2100, "X1 back, carrying B", (w, b) =>
             {
                 AddBoat(w, GONE_X1, 1040);
-                w.BoatMovingManager.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
-                w.BoatMovingManager.PushItemToList(GONE_X1, CARRIED_B, 17, 0, 0);
+                b.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
+                b.PushItemToList(GONE_X1, CARRIED_B, 17, 0, 0);
             });
-            yield return (2300, "B queues", w => w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1024, 1000, 0));
+            yield return (2300, "B queues", (w, b) => b.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1024, 1000, 0));
             yield return (2600, "frame (X1 done, B mid-step)", frame);
             yield return (2900, "frame", frame);
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Boats_Step_In_The_Old_Managers_Order(bool check)
+        [Fact]
+        public void The_Boats_Step_In_The_Old_Managers_Order()
         {
-            BoatStepSystem.CheckOverride = check;
-            BoatStepSystem.ResetCounters();
-
-            try
             {
-                World reference = BuildTwoBoats(false), world = BuildTwoBoats(true);
+                World reference = BuildTwoBoats(), world = BuildTwoBoats();
+                var legacy = new LegacyBoatCalls(reference);
+                var boats = new ManagerBoatCalls(world);
 
                 foreach (World w in new[] { reference, world })
                 {
@@ -540,10 +422,10 @@ namespace ClassicUO.UnitTests.Ecs
                     AddBoat(w, CARRIER_Z, 1060);
                 }
 
-                foreach ((uint ticks, string what, Action<World> act) in OrderScript())
+                foreach ((uint ticks, string what, Action<World, IBoatCalls> act) in OrderScript())
                 {
                     Time.Ticks = NOW + ticks;
-                    Pair(() => (act ?? (w => w.BoatMovingManager.Update()))(reference), () => (act ?? (w => w.BoatMovingManager.Update()))(world));
+                    Pair(() => (act ?? ((w, b) => b.Update()))(reference, legacy), () => (act ?? ((w, b) => b.Update()))(world, boats));
                     Time.Ticks = NOW;
 
                     AssertSameWorld(reference, world);
@@ -558,12 +440,6 @@ namespace ClassicUO.UnitTests.Ecs
 
                 world.Items.Get(CARRIED_B).X.Should().Be(1024, "every step of B was taken");
                 world.Writer.Violations.Should().Be(0);
-                (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L));
-            }
-            finally
-            {
-                BoatStepSystem.CheckOverride = null;
-                BoatStepSystem.ResetCounters();
             }
         }
 
@@ -574,46 +450,39 @@ namespace ClassicUO.UnitTests.Ecs
         // frame loses them there.
 
         [Theory]
-        [InlineData("multi", false)]
-        [InlineData("multi", true)]
-        [InlineData("item, then a frame", false)]
-        [InlineData("item, then a frame", true)]
-        [InlineData("item, then a packet", false)]
-        [InlineData("item, then a packet", true)]
-        [InlineData("item, list cleared while gone", false)]
-        [InlineData("item, list cleared while gone", true)]
-        [InlineData("back after a frame", false)]
-        [InlineData("back after a frame", true)]
-        public void A_Boat_Recreated_Before_The_Next_Frame_Keeps_Its_Pending_Steps(string how, bool check)
+        [InlineData("multi")]
+        [InlineData("item, then a frame")]
+        [InlineData("item, then a packet")]
+        [InlineData("item, list cleared while gone")]
+        [InlineData("back after a frame")]
+        public void A_Boat_Recreated_Before_The_Next_Frame_Keeps_Its_Pending_Steps(string how)
         {
-            BoatStepSystem.CheckOverride = check;
-            BoatStepSystem.ResetCounters();
-
-            try
             {
-                World reference = BuildTwoBoats(false), world = BuildTwoBoats(true);
+                World reference = BuildTwoBoats(), world = BuildTwoBoats();
+                var legacy = new LegacyBoatCalls(reference);
+                var boats = new ManagerBoatCalls(world);
                 byte type = how == "multi" ? (byte)2 : (byte)0;
 
-                IEnumerable<(uint ticks, string what, Action<World> act)> Script()
+                IEnumerable<(uint ticks, string what, Action<World, IBoatCalls> act)> Script()
                 {
-                    Action<World> frame = null;
+                    Action<World, IBoatCalls> frame = null;
 
-                    yield return (100, "boat 2 steps", w =>
+                    yield return (100, "boat 2 steps", (w, b) =>
                     {
-                        w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 999, 0);
-                        w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 9, 0);
+                        b.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 999, 0);
+                        b.PushItemToList(BOAT2, OTHER, 20, 9, 0);
                     });
-                    yield return (140, "a second step queued", w =>
+                    yield return (140, "a second step queued", (w, b) =>
                     {
-                        w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 998, 0);
-                        w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 9, 0);
+                        b.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 998, 0);
+                        b.PushItemToList(BOAT2, OTHER, 20, 9, 0);
                     });
                     yield return (300, "frame (mid-step)", frame);
-                    yield return (310, "boat 2 removed", w => w.Writer.RemoveWorldItem(w.Items.Get(BOAT2), out _));
+                    yield return (310, "boat 2 removed", (w, b) => w.Writer.RemoveWorldItem(w.Items.Get(BOAT2), out _));
 
                     if (how == "item, list cleared while gone")
                     {
-                        yield return (315, "ClearEntities without the Item", w => w.BoatMovingManager.ClearEntities(BOAT2));
+                        yield return (315, "ClearEntities without the Item", (w, b) => b.ClearEntities(BOAT2));
                     }
 
                     if (how == "back after a frame")
@@ -621,19 +490,25 @@ namespace ClassicUO.UnitTests.Ecs
                         yield return (320, "frame (boat 2 gone)", frame);
                     }
 
-                    yield return (330, "boat 2 recreated", w =>
+                    yield return (330, "boat 2 recreated", (w, b) =>
                     {
                         Item boat = w.Writer.UpsertWorldItem(BOAT2, 0x3E4E, 0, 1, 1010, 1000, 0, Direction.North, 0, 0, type, out bool created, out WorldWriter.Placement placement);
                         created.Should().BeTrue();
                         w.Writer.PlaceWorldItem(placement);
+
+                        if (type == 2 && b is LegacyBoatCalls)
+                        {
+                            // the multi's reload (LoadMulti) called the World's real manager; the reference's queue is here
+                            b.ClearSteps(BOAT2);
+                        }
                     });
 
                     if (how == "item, then a packet")
                     {
-                        yield return (400, "a packet for the recreated boat", w =>
+                        yield return (400, "a packet for the recreated boat", (w, b) =>
                         {
-                            w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 997, 0);
-                            w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 10, 0);
+                            b.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 997, 0);
+                            b.PushItemToList(BOAT2, OTHER, 20, 10, 0);
                         });
                     }
 
@@ -643,10 +518,10 @@ namespace ClassicUO.UnitTests.Ecs
                     yield return (1500, "frame", frame);
                 }
 
-                foreach ((uint ticks, string what, Action<World> act) in Script())
+                foreach ((uint ticks, string what, Action<World, IBoatCalls> act) in Script())
                 {
                     Time.Ticks = NOW + ticks;
-                    Pair(() => (act ?? (w => w.BoatMovingManager.Update()))(reference), () => (act ?? (w => w.BoatMovingManager.Update()))(world));
+                    Pair(() => (act ?? ((w, b) => b.Update()))(reference, legacy), () => (act ?? ((w, b) => b.Update()))(world, boats));
                     Time.Ticks = NOW;
 
                     AssertSameWorld(reference, world);
@@ -672,12 +547,6 @@ namespace ClassicUO.UnitTests.Ecs
                 world.BoatMovingManager.Steps.ParkedCount.Should().Be(0, "nothing waits once a frame ran");
 
                 world.Writer.Violations.Should().Be(0);
-                (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L));
-            }
-            finally
-            {
-                BoatStepSystem.CheckOverride = null;
-                BoatStepSystem.ResetCounters();
             }
         }
 

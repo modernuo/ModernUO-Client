@@ -540,29 +540,6 @@ namespace ClassicUO.Game
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_BOAT_STEPS=1|0)
-        private static readonly bool? _envBoatSteps = System.Environment.GetEnvironmentVariable("CUO_ECS_BOAT_STEPS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envBoatSteps = null;
-#endif
-
-        private static class BoatStepsSwitch
-        {
-            public static readonly bool On = _envBoatSteps ?? Settings.GlobalSettings.EcsBoatSteps;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? BoatStepsOverride;
-
-        /// <summary><c>ecs_boat_steps</c>: a boat's motion state is the ECS <c>BoatSteps</c> component (<see cref="BoatStepSystem"/>).</summary>
-        internal bool BoatStepsOn => BoatStepsOverride ?? BoatStepsSwitch.On;
-
-#if CUO_DEVTOOLS
         // CLEANUP(release): the gate's override of the setting (CUO_ECS_SMALL_FIELDS=1|0)
         private static readonly bool? _envSmallFields = System.Environment.GetEnvironmentVariable("CUO_ECS_SMALL_FIELDS") switch
         {
