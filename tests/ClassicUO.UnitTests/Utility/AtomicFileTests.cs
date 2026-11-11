@@ -205,6 +205,85 @@ namespace ClassicUO.UnitTests.Utility
             Directory.GetFiles(_dir).Should().ContainSingle("the temp is removed");
         }
 
+        [Theory]
+        [InlineData(30)]
+        [InlineData(75)]
+        [InlineData(200)]
+        public void The_retry_sleeps_never_run_past_the_wait_budget(int budgetMs)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return; // only Windows refuses a rename over an open file
+            }
+
+            string path = P("profile.json");
+            AtomicFile.WriteAllText(path, "one");
+
+            using var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            string temp = P("profile.tmp");
+            File.WriteAllText(temp, "two");
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            Action act = () => AtomicFile.Replace(temp, path, budgetMs);
+
+            act.Should().Throw<Exception>();
+            // the sleeps stop at the budget (the old 20 ms reserve let a 100 ms sleep overshoot); the slack is one rename attempt.
+            // This blocker has no FILE_SHARE_DELETE, which Windows reports as access denied: retried for 100 ms at most
+            clock.ElapsedMilliseconds.Should().BeLessThan(budgetMs + 40);
+            File.ReadAllText(path).Should().Be("one");
+        }
+
+        [Fact]
+        public void A_zero_budget_tries_the_rename_once()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            string path = P("profile.json");
+            AtomicFile.WriteAllText(path, "one");
+
+            using var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            string temp = P("profile.tmp");
+            File.WriteAllText(temp, "two");
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            Action act = () => AtomicFile.Replace(temp, path, 0);
+
+            act.Should().Throw<Exception>();
+            clock.ElapsedMilliseconds.Should().BeLessThan(40);
+        }
+
+        [Fact]
+        public void OpenRead_retries_a_sharing_violation_only_for_its_budget_and_a_missing_file_at_once()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return; // an exclusive lock only blocks readers on Windows
+            }
+
+            string path = P("locked.xml");
+            File.WriteAllText(path, "x");
+
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+
+                Action locked = () => AtomicFile.OpenRead(path, 50).Dispose();
+
+                locked.Should().Throw<IOException>();
+                clock.ElapsedMilliseconds.Should().BeInRange(45, 90);
+            }
+
+            var missing = System.Diagnostics.Stopwatch.StartNew();
+
+            Action act = () => AtomicFile.OpenRead(P("nothing.xml")).Dispose();
+
+            act.Should().Throw<FileNotFoundException>();
+            missing.ElapsedMilliseconds.Should().BeLessThan(30);
+        }
+
         [Fact]
         public void A_read_only_target_fails_at_once_instead_of_retrying()
         {

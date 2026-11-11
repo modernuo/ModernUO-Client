@@ -6,7 +6,6 @@ using System.Text;
 using System.Threading;
 using System.Xml;
 using ClassicUO.Utility.Logging;
-using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Utility
 {
@@ -23,20 +22,24 @@ namespace ClassicUO.Utility
         public const int DefaultReplaceBudgetMs = 200;
         internal const int ReplaceDelayMs = 20;
 
+        internal const int OpenReadBudgetMs = 70;
+
         /// <summary>Reads without blocking (or being blocked by) another instance replacing the file.</summary>
-        public static FileStream OpenRead(string path)
+        public static FileStream OpenRead(string path, int budgetMs = OpenReadBudgetMs)
         {
-            for (int attempt = 1; ; attempt++)
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            while (true)
             {
                 try
                 {
                     return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 }
-                catch (Exception e) when ((e is IOException || e is UnauthorizedAccessException) && !(e is DirectoryNotFoundException) && attempt < 8)
+                catch (Exception e) when (IsTransient(e, path, clock.ElapsedMilliseconds, budgetMs, true) && clock.ElapsedMilliseconds < budgetMs)
                 {
-                    // another instance is mid-replace (a delete-pending target refuses opens); a file that is really
-                    // missing or locked costs ~70 ms before the exception goes to the caller
-                    Thread.Sleep(10);
+                    // another instance has the file open without sharing for a moment; a missing file, a denied one or
+                    // any other error is permanent and goes to the caller at once
+                    Thread.Sleep((int)Math.Min(10, budgetMs - clock.ElapsedMilliseconds));
                 }
             }
         }
@@ -151,7 +154,7 @@ namespace ClassicUO.Utility
 
         /// <summary>
         /// Moves <paramref name="temp"/> over <paramref name="target"/>. Only a sharing violation is retried (a reader of
-        /// the old file, Windows), for at most <paramref name="waitMs"/> in total; a read-only target, a missing directory
+        /// the old file, Windows), for at most <paramref name="waitMs"/> in total, sleeps included; a read-only target, a missing directory
         /// or any error off Windows is permanent and fails at once.
         /// </summary>
         public static void Replace(string temp, string target, int waitMs = DefaultReplaceBudgetMs)
@@ -168,12 +171,13 @@ namespace ClassicUO.Utility
 
                     return;
                 }
-                catch (Exception e) when (IsTransient(e, target) && clock.ElapsedMilliseconds + ReplaceDelayMs <= waitMs)
+                catch (Exception e) when (IsTransient(e, target, clock.ElapsedMilliseconds, waitMs, false) && clock.ElapsedMilliseconds < waitMs)
                 {
                     // Windows refuses a rename over a file another instance has open, whatever its share flags; readers hold it
                     // only while they read a small file, so it lets go in a moment (ReplaceFile would get through, but it
                     // leaves ~RF*.TMP litter under contention)
-                    Thread.Sleep(Math.Min(ReplaceDelayMs * attempt, 100));
+                    // never sleeps past the budget: the last attempt happens at waitMs, so the total stays within it
+                    Thread.Sleep((int)Math.Min(Math.Min(ReplaceDelayMs * attempt, 100), waitMs - clock.ElapsedMilliseconds));
                 }
             }
         }
@@ -199,19 +203,30 @@ namespace ClassicUO.Utility
             }
         }
 
-        private static bool IsTransient(Exception e, string target)
+        // Retried: ERROR_SHARING_VIOLATION (32) and ERROR_LOCK_VIOLATION (33), another handle has the file open.
+        // Access denied is permanent (read-only file, ACL) except for one case Windows cannot tell apart by code: a rename
+        // over, or an open of, a file that another instance has open without FILE_SHARE_DELETE or is replacing right now
+        // also reports ERROR_ACCESS_DENIED (the concurrent-writers test hits it). So access denied is retried only while
+        // the file exists and is not read-only, and only for the first AccessDeniedWindowMs of the budget (the whole budget when the caller asked for a long wait, e.g. a background writer).
+        internal const int AccessDeniedWindowMs = 100;
+
+        private static bool IsTransient(Exception e, string file, long elapsedMs, int budgetMs, bool openingForRead)
         {
             if (!OperatingSystem.IsWindows() || e is DirectoryNotFoundException || e is FileNotFoundException)
             {
                 return false;
             }
 
-            if (e is UnauthorizedAccessException)
+            if (e is IOException io)
             {
-                // a delete-pending target also reports access denied, but a read-only one never opens up
+                return (io.HResult & 0xFFFF) is 32 or 33;
+            }
+
+            if (e is UnauthorizedAccessException && elapsedMs < (budgetMs > DefaultReplaceBudgetMs ? budgetMs : AccessDeniedWindowMs))
+            {
                 try
                 {
-                    return File.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReadOnly) == 0;
+                    return File.Exists(file) && (openingForRead || (File.GetAttributes(file) & FileAttributes.ReadOnly) == 0);
                 }
                 catch
                 {
@@ -219,7 +234,7 @@ namespace ClassicUO.Utility
                 }
             }
 
-            return e is IOException;
+            return false;
         }
 
         public sealed class AtomicStream : FileStream
