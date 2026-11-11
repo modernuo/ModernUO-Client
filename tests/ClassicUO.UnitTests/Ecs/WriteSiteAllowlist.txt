@@ -62,17 +62,4 @@ src/ClassicUO.Client/Game/Managers/CorpseManager.cs|Layer|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Graphic|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|Hue|1
 src/ClassicUO.Client/Game/Scenes/GameScene.cs|IsMulti|1
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Container|1
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Flags|2
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Graphic|6
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Hue|4
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|IsFemale|1
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Layer|1
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Race|1
-src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Flags|2
-src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Graphic|5
-src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Hue|7
-src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|IsFemale|1
-src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Layer|1
-src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Race|1
 src/ClassicUO.Client/Game/World.cs|Container|1

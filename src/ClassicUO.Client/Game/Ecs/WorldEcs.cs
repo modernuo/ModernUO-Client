@@ -923,6 +923,54 @@ namespace ClassicUO.Game
             return e;
         }
 
+        // T9 S4: the detached preview objects' records (see Previews); created at the first preview write
+        private WorldMirror _previews;
+
+        /// <summary>
+        /// T9 S4: the records of the detached preview objects (the character-creation and race-change gumps' Mobile and the
+        /// Items they wear), written only by <see cref="WorldWriter"/>'s preview operations. A mirror of its own, not
+        /// <see cref="Mirror"/>: no system, extract, sweep or index walks it, so a preview never draws, updates or answers a
+        /// world lookup, and its serials (1 or 0, 0x4000_0000 + layer) cannot clash with a world record. Keyed by serial
+        /// with the instance as the handle (<see cref="TryGetPreviewRecord"/> checks it). Null until the first preview write.
+        /// </summary>
+        public WorldMirror Previews => _previews;
+
+        /// <summary>
+        /// T9 S4: the preview record of <paramref name="entity"/> (a detached instance last committed by a preview operation).
+        /// False for every other instance, and for a preview whose record was released or taken by another instance under
+        /// the same serial (two race-change gumps at once: the newer one's objects own the serials).
+        /// </summary>
+        internal bool TryGetPreviewRecord(Entity entity, out EcsEntity e)
+        {
+            e = default;
+
+            return _previews != null && entity != null && _previews.TryGetEntityOf(entity.Serial, entity, out e);
+        }
+
+        /// <summary>T9 S4: a preview mobile's record from the operation's values (body, hue, flags, and the traits).</summary>
+        internal void CommitPreviewMobile(Mobile mobile, in MobileState v, in MobileTraits traits)
+        {
+            _previews ??= new WorldMirror();
+            _previews.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
+            _previews.SetMobileTraits(v.Serial, in traits);
+        }
+
+        /// <summary>
+        /// T9 S4: a preview item's record from the operation's values. Never attached (no child-order stamp): the gumps keep
+        /// the worn table themselves (<see cref="Mobile.Preview"/>, the race-change gump's hair and beard fields).
+        /// </summary>
+        internal void CommitPreviewItem(Item item, in ItemState v)
+        {
+            _previews ??= new WorldMirror();
+            _previews.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach: false, handle: item);
+        }
+
+        /// <summary>T9 S4: drops every preview record (a preview gump closed), so no closed gump's objects stay reachable.</summary>
+        internal void ReleasePreviews()
+        {
+            _previews?.Clear();
+        }
+
         public void OnWorldCleared()
         {
             _world.State.OnWorldCleared();

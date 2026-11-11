@@ -52,8 +52,10 @@ namespace ClassicUO.Game
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
-    /// Detached objects (the character-creation mobiles, the house placement preview, the 0xBF spellbook entries) never pass
-    /// here: the funnel creates no entity for an object its World does not hold. All of this runs on the one world-mutation
+    /// Detached objects (the house placement preview, the 0xBF spellbook entries) never pass here: the funnel creates no
+    /// world entity for an object its World does not hold. The character-creation and race-change previews are the one
+    /// detached kind with operations of their own (<see cref="SetPreviewBody"/>, <see cref="SetPreviewItem"/>,
+    /// <see cref="SetPreviewHue"/>, T9 S4), which write a record in <see cref="WorldEcs.Previews"/>, never in the world mirror. All of this runs on the one world-mutation
     /// thread (the game loop); nothing here is synchronised.
     /// </para>
     /// </summary>
@@ -69,7 +71,9 @@ namespace ClassicUO.Game
             /// <summary>A removal of an item this World does not hold for its serial (foreign or stale).</summary>
             NotHeld,
             /// <summary>An item upsert for a serial that is a live mobile.</summary>
-            LiveMobile
+            LiveMobile,
+            /// <summary>T9 S4: a preview operation on an object this World holds (or another World's object).</summary>
+            NotDetached
         }
 
         /// <summary>
@@ -3467,6 +3471,146 @@ namespace ClassicUO.Game
             return joined || Admitted(operation, player.Serial);
         }
 
+        // ---- T9 S4: the detached previews (character creation, race change)
+
+        /// <summary>
+        /// The character-creation and race-change gumps' preview mobile: its body, race and sex (the gump's sex and race
+        /// buttons). The record in <see cref="WorldEcs.Previews"/> first, then the cache: Race, IsFemale, the Female flag and
+        /// Graphic, as the gumps wrote them before (the hue is <see cref="SetPreviewHue"/>'s). The mobile must be detached
+        /// (a World object is rejected as <see cref="Violation.NotDetached"/>; nothing changes).
+        /// </summary>
+        public void SetPreviewBody(Mobile mobile, ushort graphic, RaceType race, bool female)
+        {
+            if (mobile == null || !Admitted(nameof(SetPreviewBody), mobile.Serial) || !AcceptedPreview(mobile, nameof(SetPreviewBody)))
+            {
+                return;
+            }
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = graphic;
+            v.Hue = mobile.Hue;
+            v.X = mobile.X;
+            v.Y = mobile.Y;
+            v.Z = mobile.Z;
+            v.Direction = mobile.Direction;
+            v.Flags = female ? mobile.Flags | Flags.Female : mobile.Flags & ~Flags.Female;
+            v.IsPlayer = false;
+            ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
+            traits.Race = (byte)race;
+            traits.Bits = female ? traits.Bits | ClassicUO.Ecs.MobileTraitBits.Female : traits.Bits & ~ClassicUO.Ecs.MobileTraitBits.Female;
+
+            using (Open(mobile, null))
+            {
+                _world.Ecs.CommitPreviewMobile(mobile, in v, in traits);
+                mobile.Race = race;
+                mobile.IsFemale = female;
+                mobile.Flags = v.Flags;
+                mobile.Graphic = graphic;
+            }
+        }
+
+        /// <summary>
+        /// The preview gumps' items (clothes, hair, beard): graphic, hue, layer and the wearer's serial
+        /// (<paramref name="container"/>; the race-change gump's hair and beard keep 0xFFFF_FFFF). The record first, then the
+        /// cache. Wearing is the gump's table, not an attach (<see cref="WorldEcs.CommitPreviewItem"/>). Rejections as
+        /// <see cref="SetPreviewBody"/>.
+        /// </summary>
+        public void SetPreviewItem(Item item, ushort graphic, ushort hue, Layer layer, uint container)
+        {
+            if (item == null || !Admitted(nameof(SetPreviewItem), item.Serial) || !AcceptedPreview(item, nameof(SetPreviewItem)))
+            {
+                return;
+            }
+
+            ItemState v;
+            v.Serial = item.Serial;
+            v.Graphic = graphic;
+            v.Hue = hue;
+            v.X = item.X;
+            v.Y = item.Y;
+            v.Z = item.Z;
+            v.Direction = item.Direction;
+            v.Flags = item.Flags;
+            v.Amount = item.Amount;
+            v.Container = container;
+            v.Layer = layer;
+            v.IsMulti = item.IsMulti;
+
+            using (Open(item, null))
+            {
+                _world.Ecs.CommitPreviewItem(item, in v);
+                item.Graphic = graphic;
+                item.Hue = hue;
+                item.Layer = layer;
+                item.Container = container;
+            }
+        }
+
+        /// <summary>
+        /// The preview gumps' colour pickers: the hue of the preview mobile (skin) or of one of its items. Rejections as
+        /// <see cref="SetPreviewBody"/>.
+        /// </summary>
+        public void SetPreviewHue(Entity entity, ushort hue)
+        {
+            if (entity == null || !Admitted(nameof(SetPreviewHue), entity.Serial) || !AcceptedPreview(entity, nameof(SetPreviewHue)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                if (entity is Item item)
+                {
+                    ItemState v;
+                    v.Serial = item.Serial;
+                    v.Graphic = item.Graphic;
+                    v.Hue = hue;
+                    v.X = item.X;
+                    v.Y = item.Y;
+                    v.Z = item.Z;
+                    v.Direction = item.Direction;
+                    v.Flags = item.Flags;
+                    v.Amount = item.Amount;
+                    v.Container = item.Container;
+                    v.Layer = item.Layer;
+                    v.IsMulti = item.IsMulti;
+                    _world.Ecs.CommitPreviewItem(item, in v);
+                }
+                else if (entity is Mobile mobile)
+                {
+                    MobileState v;
+                    v.Serial = mobile.Serial;
+                    v.Graphic = mobile.Graphic;
+                    v.Hue = hue;
+                    v.X = mobile.X;
+                    v.Y = mobile.Y;
+                    v.Z = mobile.Z;
+                    v.Direction = mobile.Direction;
+                    v.Flags = mobile.Flags;
+                    v.IsPlayer = false;
+                    ClassicUO.Ecs.MobileTraits traits = mobile.CachedTraits;
+                    _world.Ecs.CommitPreviewMobile(mobile, in v, in traits);
+                }
+
+                entity.Hue = hue;
+            }
+        }
+
+        // a preview is an object of this World that the World does not hold (the gumps build it with new PlayerMobile and
+        // Item.Create and never add it); a held object is a caller bug, rejected (no pre-T1 path: the gumps have none)
+        private bool AcceptedPreview(Entity entity, string operation)
+        {
+            if (entity.World == _world && !_world.Holds(entity))
+            {
+                return true;
+            }
+
+            Reject(Violation.NotDetached, $"WorldWriter.{operation}: 0x{entity.Serial:X8} is not a detached preview of this World", rejected: true);
+
+            return false;
+        }
+
         // ---- funnel part 8, group 5: logout's removals (World.Clear)
 
         /// <summary>
@@ -3655,7 +3799,7 @@ namespace ClassicUO.Game
         // or UI write to an object World holds. CreateCharAppearanceGump and RaceChangeGump write their own preview mobiles
         // and clothes; until the Codex audit of part 8 (P2 #2) character creation put its mobile in World.Mobiles and both
         // made their clothes with World.GetOrCreateItem; they are now detached: Item.Create, no table, and the character
-        // creation paperdoll draws its preview instance)
+        // creation paperdoll draws its preview instance; since T9 S4 through the preview operations above)
 
         /// <summary>
         /// <c>ContainerGump.CheckItemControlPosition</c> (0x25's <c>AddItemToContainer</c>, after the item is placed in an
