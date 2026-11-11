@@ -834,9 +834,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 Item multiItem = _world.Items.Get(serial);
-                multiItem.OffsetX = 0;
-                multiItem.OffsetY = 0;
-                multiItem.OffsetZ = 0;
+                SetOffset(_world, multiItem, default);
 
                 foreach (var it in _items)
                 {
@@ -844,9 +842,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                     if (ent != null)
                     {
-                        ent.OffsetX = 0;
-                        ent.OffsetY = 0;
-                        ent.OffsetZ = 0;
+                        SetOffset(_world, ent, default);
                     }
                 }
 
@@ -872,10 +868,9 @@ namespace ClassicUO.UnitTests.Ecs
                             float steps = maxDelay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float x = delay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float y = x;
-                            item.OffsetZ = (sbyte)((step.Z - item.Z) * x * (4.0f / steps));
+                            float oz = (sbyte)((step.Z - item.Z) * x * (4.0f / steps));
                             MovementSpeed.GetPixelOffset((byte)step.MovingDir, ref x, ref y, steps);
-                            item.OffsetX = (sbyte)x;
-                            item.OffsetY = (sbyte)y;
+                            SetOffset(_world, item, new Microsoft.Xna.Framework.Vector3((sbyte)x, (sbyte)y, oz));
                         }
                     }
                     else
@@ -890,9 +885,7 @@ namespace ClassicUO.UnitTests.Ecs
                         item.Y = step.Y;
                         item.Z = step.Z;
                         item.UpdateScreenPosition();
-                        item.OffsetX = 0;
-                        item.OffsetY = 0;
-                        item.OffsetZ = 0;
+                        SetOffset(_world, item, default);
                         _steps.RemoveAt(0);
 
                         if (item.IsPlaced)
@@ -910,7 +903,7 @@ namespace ClassicUO.UnitTests.Ecs
                         {
                             foreach (Multi c in house.Components)
                             {
-                                c.Offset = item.Offset;
+                                c.Offset = item.ScreenOffset;
                             }
                         }
 
@@ -941,9 +934,7 @@ namespace ClassicUO.UnitTests.Ecs
                         entity.Y = (ushort)(y - it.Y);
                         entity.Z = (sbyte)(z - it.Z);
                         entity.UpdateScreenPosition();
-                        entity.OffsetX = 0;
-                        entity.OffsetY = 0;
-                        entity.OffsetZ = 0;
+                        SetOffset(_world, entity, default);
 
                         if (entity.IsPlaced)
                         {
@@ -952,13 +943,27 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                     else
                     {
-                        entity.Offset = item.Offset;
+                        SetOffset(_world, entity, item.ScreenOffset);
                     }
                 }
             }
         }
 
         private const uint BOAT = 0x4000_7400;
+
+        // the old code's offset writes, where each kind keeps its offset since T9 S7: a mobile's on the Mobile, an item's in
+        // its ItemOffset component (the boat operations' ECS write)
+        private static void SetOffset(World w, Entity e, Microsoft.Xna.Framework.Vector3 v)
+        {
+            if (e is Mobile m)
+            {
+                m.Offset = v;
+            }
+            else
+            {
+                ItemOffsets.Push(w, e, v);
+            }
+        }
 
         private static World BuildBoat(Start start)
         {
@@ -986,7 +991,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Entity e = w.Get(serial);
 
-            return e == null ? "none" : $"{e.X},{e.Y},{e.Z} {e.Offset} {e.LastStepTime} {e.PendingBlock} {e.IsPositionChanged}";
+            return e == null ? "none" : $"{e.X},{e.Y},{e.Z} {e.ScreenOffset} {e.LastStepTime} {e.PendingBlock} {e.IsPositionChanged}";
         }
 
         [Theory]
@@ -1024,9 +1029,9 @@ namespace ClassicUO.UnitTests.Ecs
             Both(o => o.AddStep(BOAT, 1002, 1001, 1, Direction.Down), n => n.AddStep(BOAT, 3, Direction.Down, Direction.Down, 1002, 1001, 1), NOW + 800);
             Both(o => { o.PushItemToList(MOB, 1, 0, 0); o.PushItemToList(BAG, -1, 1, 0); }, n => { n.PushItemToList(BOAT, MOB, 1, 0, 0); n.PushItemToList(BOAT, BAG, -1, 1, 0); }, NOW + 800);
             Both(o => o.Update(BOAT), n => n.Update(), NOW + 1000);
-            newWorld.Items.Get(BOAT).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "mid-step");
+            newWorld.Items.Get(BOAT).ScreenOffset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "mid-step");
             Both(o => o.ClearSteps(BOAT), n => n.ClearSteps(BOAT), NOW + 1000);
-            newWorld.Items.Get(BOAT).Offset.Should().Be(default(Microsoft.Xna.Framework.Vector3), "reset");
+            newWorld.Items.Get(BOAT).ScreenOffset.Should().Be(default(Microsoft.Xna.Framework.Vector3), "reset");
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
         }
@@ -1039,8 +1044,8 @@ namespace ClassicUO.UnitTests.Ecs
                 World world = BuildBoat(Start.Standing), other = BuildBoat(Start.Standing);
                 world.Writer.ThrowOnViolation = throws;
                 Item foreign = other.Items.Get(BOAT);
-                foreign.OffsetX = 3;
-                string before = $"{foreign.X},{foreign.Y} {foreign.Offset} {foreign.LastStepTime}";
+                SetOffset(other, foreign, new Microsoft.Xna.Framework.Vector3(3, 0, 0));
+                string before = $"{foreign.X},{foreign.Y} {foreign.ScreenOffset} {foreign.LastStepTime}";
 
                 foreach (Action act in new Action[]
                 {
@@ -1060,7 +1065,7 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                 }
 
-                $"{foreign.X},{foreign.Y} {foreign.Offset} {foreign.LastStepTime}".Should().Be(before);
+                $"{foreign.X},{foreign.Y} {foreign.ScreenOffset} {foreign.LastStepTime}".Should().Be(before);
                 world.Writer.Violations.Should().Be(4);
             }
         }
@@ -1103,7 +1108,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 foreach (uint serial in new[] { BOAT, MOB, BAG })
                 {
-                    w.Get(serial).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), $"0x{serial:X8} mid-step");
+                    w.Get(serial).ScreenOffset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), $"0x{serial:X8} mid-step");
                 }
             }
 
@@ -1128,7 +1133,7 @@ namespace ClassicUO.UnitTests.Ecs
             boat.Should().BeSameAs(newWorld.Items.Get(BOAT));
             created.Should().BeFalse();
             newWorld.Writer.InScope.Should().BeFalse("the deferred resets ran before the upsert returned");
-            newWorld.Get(MOB).Offset.Should().Be(default(Microsoft.Xna.Framework.Vector3), "the passenger's reset ran before the handler's callbacks");
+            newWorld.Get(MOB).ScreenOffset.Should().Be(default(Microsoft.Xna.Framework.Vector3), "the passenger's reset ran before the handler's callbacks");
             newWorld.Writer.PlaceWorldItem(placement);
 
             Compare("after the reload");
@@ -1136,7 +1141,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (uint serial in new[] { BOAT, MOB, BAG })
             {
-                newWorld.Get(serial).Offset.Should().Be(default(Microsoft.Xna.Framework.Vector3), $"0x{serial:X8} reset");
+                newWorld.Get(serial).ScreenOffset.Should().Be(default(Microsoft.Xna.Framework.Vector3), $"0x{serial:X8} reset");
             }
 
             // the steps and the passengers are gone in both: a later frame moves nothing
@@ -1158,13 +1163,13 @@ namespace ClassicUO.UnitTests.Ecs
                 Time.Ticks = NOW;
             }
 
-            newWorld.Items.Get(BOAT).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "under way again");
+            newWorld.Items.Get(BOAT).ScreenOffset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "under way again");
             var coin = new WorldWriterTests.Packet { Serial = 0x4000_7401, Graphic = 0xEED, Count = 1, X = 1010, Y = 1000, Z = 0, Direction = Direction.North };
             WorldWriterTests.OldUpsert(oldWorld, in coin);
             newWorld.Writer.UpsertWorldItem(coin.Serial, coin.Graphic, coin.GraphicInc, coin.Count, coin.X, coin.Y, coin.Z, coin.Direction, coin.Hue, coin.Flags, coin.Type, out _, out WorldWriter.Placement coinPlacement);
             newWorld.Writer.PlaceWorldItem(coinPlacement);
             Compare("another item's upsert");
-            newWorld.Items.Get(BOAT).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "still under way");
+            newWorld.Items.Get(BOAT).ScreenOffset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "still under way");
 
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();

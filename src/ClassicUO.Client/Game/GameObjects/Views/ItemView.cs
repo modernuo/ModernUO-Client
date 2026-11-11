@@ -43,8 +43,9 @@ namespace ClassicUO.Game.GameObjects
             //Engine.DebugInfo.ItemsRendered++;
             Vector3 hueVec;
 
-            posX += (int)Offset.X;
-            posY += (int)(Offset.Y + Offset.Z);
+            Vector3 offset = ItemOffsets.Read(this);
+            posX += (int)offset.X;
+            posY += (int)(offset.Y + offset.Z);
 
             float alpha = AlphaHue / 255f;
 
@@ -533,7 +534,6 @@ namespace ClassicUO.Game.GameObjects
                 }
 
                 Point position = RealScreenPosition;
-                // ecs_item_offset: the ItemOffset component (CUO_ITEM_OFFSET_CHECK compares it with Offset)
                 Vector3 offset = ItemOffsets.Read(this);
                 position.X += (int)offset.X;
                 position.Y += (int)(offset.Y + offset.Z);

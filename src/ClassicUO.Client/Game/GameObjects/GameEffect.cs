@@ -27,7 +27,6 @@ namespace ClassicUO.Game.GameObjects
             AlphaHue = 0xFF;
             AnimDataFrame = Client.Game?.UO?.FileManager?.AnimData?.CalculateCurrentGraphic(graphic) ?? default;
             IsEnabled = true;
-            AnimIndex = 0;
 
 
             speed *= 10;
@@ -61,20 +60,16 @@ namespace ClassicUO.Game.GameObjects
         public bool IsMoving => (!EcsEntity.IsNull ? EffectSystem.HasTarget(this) : Target != null) || TargetX != 0 && TargetY != 0;
 
         public bool CanCreateExplosionEffect;
-        public ushort AnimationGraphic = 0xFFFF;
         public AnimDataFrame AnimDataFrame;
-        public byte AnimIndex;
-        public float AngleToTarget;
         public GraphicEffectBlendMode Blend;
         public long Duration = -1;
         public uint IntervalInMs;
         public bool IsEnabled;
-        public long NextChangeFrameTime;
 
         /// <summary>T8: this effect's entity, created when it joins the manager's list (default before that and once the effect
         /// is destroyed). From then on source and target are the state's references, read from the ECS, and the kind's motion
-        /// is <see cref="EffectSystem"/>'s motion step over the state; position, offset, angle and target here are written
-        /// from it for the views.</summary>
+        /// is <see cref="EffectSystem"/>'s motion step over the state. The frame, offset and angle live only in the state (T9
+        /// S7); the position here is written from it for the tile placement, the target coordinates for a gone target.</summary>
         internal Friflo.Engine.ECS.Entity EcsEntity;
 
         internal EffectManager Manager => _manager;
@@ -119,8 +114,9 @@ namespace ClassicUO.Game.GameObjects
             _manager.Add(effect);
         }
 
-        /// <summary>T8: copies position, offset, angle and target to <paramref name="s"/> (Register; the source and target
-        /// references and serials are bound before).</summary>
+        /// <summary>T8: copies position and target to <paramref name="s"/>, with the starting offset (a moving effect's
+        /// <see cref="MovingEffect.START_OFFSET_X"/>) and no angle (Register; the source and target references and serials are
+        /// bound before).</summary>
         internal void Publish(ref EffectState s)
         {
             (ushort tx, ushort ty, sbyte tz) = ObjectTarget();
@@ -130,10 +126,10 @@ namespace ClassicUO.Game.GameObjects
             s.TargetX = tx;
             s.TargetY = ty;
             s.TargetZ = tz;
-            s.OffsetX = OffsetX;
-            s.OffsetY = OffsetY;
-            s.OffsetZ = Offset.Z;
-            s.Angle = AngleToTarget;
+            s.OffsetX = this is MovingEffect ? MovingEffect.START_OFFSET_X : 0;
+            s.OffsetY = 0;
+            s.OffsetZ = 0;
+            s.Angle = 0;
             s.Flags = (byte)(IsMoving ? s.Flags | EffectState.FLAG_MOVING : s.Flags & ~EffectState.FLAG_MOVING);
         }
 
@@ -185,7 +181,6 @@ namespace ClassicUO.Game.GameObjects
             _manager?.Remove(this);
             EffectSystem.Unregister(this);
 
-            AnimIndex = 0;
             Source = null;
             Target = null;
             base.Destroy();

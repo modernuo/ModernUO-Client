@@ -1135,7 +1135,7 @@ namespace ClassicUO.Game
                     {
                         if (multi.IsMulti && !multi.IsDestroyed && Math.Abs(multi.X - player.X) <= 24 && Math.Abs(multi.Y - player.Y) <= 24)
                         {
-                            Log.Info($"[ECS] boat: multi 0x{multi.Serial:X8} graphic 0x{multi.Graphic:X4} at {multi.X},{multi.Y},{multi.Z} offset ({multi.Offset.X},{multi.Offset.Y},{multi.Offset.Z})");
+                            Log.Info($"[ECS] boat: multi 0x{multi.Serial:X8} graphic 0x{multi.Graphic:X4} at {multi.X},{multi.Y},{multi.Z} offset {ItemOffsets.Read(multi)}");
                         }
                     }
 

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using ClassicUO.Configuration;
+using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Assets;
@@ -101,20 +102,25 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
-            if (IsDestroyed || !AllowedToDraw)
+            if (IsDestroyed || !AllowedToDraw || EcsEntity.IsNull)
             {
                 return false;
             }
 
-            if (AnimationGraphic == 0xFFFF)
+            // T9 S7: the frame, offset and angle from the state (the extract's input; this draw is its fallback)
+            ref readonly EffectState s = ref EcsRead.Get<EffectState>(EcsEntity);
+            ushort animationGraphic = s.AnimGraphic;
+            float angle = s.Angle;
+
+            if (animationGraphic == EffectSystem.NO_FRAME)
             {
                 return false;
             }
 
             ref StaticTiles data = ref Client.Game.UO.FileManager.TileData.StaticData[Graphic];
 
-            posX += (int)Offset.X;
-            posY += (int)(Offset.Z + Offset.Y);
+            posX += (int)s.OffsetX;
+            posY += (int)(s.OffsetZ + s.OffsetY);
 
             ushort hue = Hue;
 
@@ -144,10 +150,10 @@ namespace ClassicUO.Game.GameObjects
                     DrawStaticRotated
                     (
                         batcher,
-                        AnimationGraphic,
+                        animationGraphic,
                         posX,
                         posY,
-                        AngleToTarget,
+                        angle,
                         hueVec,
                         depth
                     );
@@ -163,10 +169,10 @@ namespace ClassicUO.Game.GameObjects
                     DrawStaticRotated
                     (
                         batcher,
-                        AnimationGraphic,
+                        animationGraphic,
                         posX,
                         posY,
-                        AngleToTarget,
+                        angle,
                         hueVec,
                         depth
                     );
@@ -181,10 +187,10 @@ namespace ClassicUO.Game.GameObjects
                     DrawStaticRotated
                     (
                         batcher,
-                        AnimationGraphic,
+                        animationGraphic,
                         posX,
                         posY,
-                        AngleToTarget,
+                        angle,
                         hueVec,
                         depth
                     );
@@ -199,10 +205,10 @@ namespace ClassicUO.Game.GameObjects
                     DrawStaticRotated
                     (
                         batcher,
-                        AnimationGraphic,
+                        animationGraphic,
                         posX,
                         posY,
-                        AngleToTarget,
+                        angle,
                         hueVec,
                         depth
                     );
@@ -217,10 +223,10 @@ namespace ClassicUO.Game.GameObjects
                     DrawStaticRotated
                     (
                         batcher,
-                        AnimationGraphic,
+                        animationGraphic,
                         posX,
                         posY,
-                        AngleToTarget,
+                        angle,
                         hueVec,
                         depth
                     );
@@ -245,10 +251,10 @@ namespace ClassicUO.Game.GameObjects
                     DrawStaticRotated
                     (
                         batcher,
-                        AnimationGraphic,
+                        animationGraphic,
                         posX,
                         posY,
-                        AngleToTarget,
+                        angle,
                         hueVec,
                         depth
                     );

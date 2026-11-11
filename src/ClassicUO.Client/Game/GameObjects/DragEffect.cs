@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.Configuration;
+using ClassicUO.Ecs;
 using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Assets;
@@ -11,9 +12,6 @@ namespace ClassicUO.Game.GameObjects
 {
     internal class DragEffect : GameEffect
     {
-        /// <summary>The next offset step's time (a cache of the state's MoveTime).</summary>
-        internal uint LastMoveTime;
-
         public DragEffect
         (
             World world,
@@ -55,9 +53,6 @@ namespace ClassicUO.Game.GameObjects
             {
                 SetTarget(xTarget, yTarget, zTarget);
             }
-
-            Hue = hue;
-            Graphic = graphic;
         }
 
         public override void Update()
@@ -67,11 +62,13 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
-            if (IsDestroyed)
+            if (IsDestroyed || EcsEntity.IsNull)
             {
                 return false;
             }
 
+            // T9 S7: the frame and offset from the state
+            ref readonly EffectState s = ref EcsRead.Get<EffectState>(EcsEntity);
             ushort hue;
             if (ProfileManager.CurrentProfile.NoColorObjectsOutOfRange && Distance > World.ClientViewRange)
             {
@@ -93,9 +90,9 @@ namespace ClassicUO.Game.GameObjects
             DrawStatic
             (
                 batcher,
-                AnimationGraphic,
-                posX - ((int) Offset.X + 22),
-                posY - ((int) -Offset.Y + 22),
+                s.AnimGraphic,
+                posX - ((int) s.OffsetX + 22),
+                posY - ((int) -s.OffsetY + 22),
                 hueVec,
                 depth
             );

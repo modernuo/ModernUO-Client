@@ -2283,9 +2283,6 @@ namespace ClassicUO.Game
                 boat.Z = z;
                 boat.UpdateScreenPosition();
 
-                boat.OffsetX = 0;
-                boat.OffsetY = 0;
-                boat.OffsetZ = 0;
                 ItemOffsets.Push(_world, boat, Microsoft.Xna.Framework.Vector3.Zero);
 
                 if (boat.IsPlaced)
@@ -2335,9 +2332,13 @@ namespace ClassicUO.Game
                 entity.Z = z;
                 entity.UpdateScreenPosition();
 
-                entity.OffsetX = 0;
-                entity.OffsetY = 0;
-                entity.OffsetZ = 0;
+                if (entity is Mobile mobile)
+                {
+                    mobile.OffsetX = 0;
+                    mobile.OffsetY = 0;
+                    mobile.OffsetZ = 0;
+                }
+
                 ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
 
                 if (entity.IsPlaced)
@@ -2517,9 +2518,13 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
-                entity.OffsetX = 0;
-                entity.OffsetY = 0;
-                entity.OffsetZ = 0;
+                if (entity is Mobile mobile)
+                {
+                    mobile.OffsetX = 0;
+                    mobile.OffsetY = 0;
+                    mobile.OffsetZ = 0;
+                }
+
                 ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
             }
 
@@ -2561,8 +2566,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// <c>BoatMovingManager.Update</c> between two boat steps: the boat's offset toward the front step, <c>OffsetZ</c>,
-        /// then <c>OffsetX</c> and <c>OffsetY</c>. Rejections as <see cref="CompleteBoatStep"/>.
+        /// <c>BoatMovingManager.Update</c> between two boat steps: the boat's offset toward the front step, into its
+        /// <c>ItemOffset</c> (T9 S7: the item keeps no copy). Rejections as <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void InterpolateBoat(Item boat, sbyte x, sbyte y, sbyte z)
         {
@@ -2573,9 +2578,6 @@ namespace ClassicUO.Game
 
             using (Open(boat, null))
             {
-                boat.OffsetZ = z;
-                boat.OffsetX = x;
-                boat.OffsetY = y;
                 ItemOffsets.Push(_world, boat, new Microsoft.Xna.Framework.Vector3(x, y, z));
             }
         }
@@ -2594,17 +2596,20 @@ namespace ClassicUO.Game
 
             using (Open(boat, null))
             {
+                Microsoft.Xna.Framework.Vector3 offset = ItemOffsets.Read(boat);
+
                 foreach (Multi c in house.Components)
                 {
-                    c.Offset = boat.Offset;
+                    c.Offset = offset;
                 }
             }
         }
 
         /// <summary>
         /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
-        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too, as every boat
-        /// operation that writes an item's offset). Rejections as <see cref="MoveBoatPassenger"/>.
+        /// the boat's offset <paramref name="offset"/> (a mobile's on the Mobile and its Steps, an item's in its
+        /// <c>ItemOffset</c>, as every boat operation that writes an item's offset). Rejections as
+        /// <see cref="MoveBoatPassenger"/>.
         /// </summary>
         public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)
         {
@@ -2615,7 +2620,11 @@ namespace ClassicUO.Game
 
             using (Open(passenger, null))
             {
-                passenger.Offset = offset;
+                if (passenger is Mobile mobile)
+                {
+                    mobile.Offset = offset;
+                }
+
                 ItemOffsets.Push(_world, passenger, offset);
             }
 

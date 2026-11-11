@@ -133,13 +133,13 @@ namespace ClassicUO.Game.Managers
             {
                 passengers++;
 
-                if (_world.Get(s.Passengers[i].Serial) is { } ent && (ent.Offset.X != 0 || ent.Offset.Y != 0 || ent.Offset.Z != 0))
+                if (_world.Get(s.Passengers[i].Serial) is { } ent && ent.ScreenOffset != Microsoft.Xna.Framework.Vector3.Zero)
                 {
                     moved++;
                 }
             }
 
-            return $"steps {s.Count}, boat offset {(boat == null ? "none" : $"({boat.Offset.X},{boat.Offset.Y},{boat.Offset.Z})")}, " +
+            return $"steps {s.Count}, boat offset {(boat == null ? "none" : ItemOffsets.Read(boat).ToString())}, " +
                 $"passengers {passengers} ({moved} with a non-zero offset)";
         }
 #endif
@@ -167,7 +167,6 @@ namespace ClassicUO.Game.Managers
 
         public void Update()
         {
-            ItemOffsets.LogSummary();
             _system.Run();
         }
     }

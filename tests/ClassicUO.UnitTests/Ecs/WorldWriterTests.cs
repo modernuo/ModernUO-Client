@@ -1222,7 +1222,7 @@ namespace ClassicUO.UnitTests.Ecs
             y.Graphic.Should().Be(x.Graphic);
             y.Hue.Should().Be(x.Hue);
             (y.X, y.Y, y.Z).Should().Be((x.X, x.Y, x.Z));
-            y.Offset.Should().Be(x.Offset);
+            y.ScreenOffset.Should().Be(x.ScreenOffset);
             y.Direction.Should().Be(x.Direction);
             y.Flags.Should().Be(x.Flags);
             y.Amount.Should().Be(x.Amount);
@@ -2751,7 +2751,6 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Reset();
 
             it.Graphic = 1;
-            it.OffsetX = 1;
 
             FunnelCheck.Total.Should().Be(0);
         }

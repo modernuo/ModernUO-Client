@@ -78,6 +78,12 @@ namespace ClassicUO.Ecs
 
         public int ItemCount { get; private set; }
 
+        /// <summary>
+        /// T9 S7: the records with an <see cref="ItemOffset"/> component (the client adds it for a non-zero boat offset and
+        /// removes it at zero; a removed record takes it along). Zero lets the per-frame offset readers skip the lookup.
+        /// </summary>
+        public int ItemOffsetCount;
+
         public Dictionary<uint, Entity>.KeyCollection Serials => _bySerial.Keys;
 
         public static bool IsMobileSerial(uint serial) => serial > 0 && serial < 0x4000_0000;
@@ -451,6 +457,12 @@ namespace ClassicUO.Ecs
 
             Epoch++;
             ClearHandle(e);
+
+            if (ItemOffsetCount != 0 && e.HasComponent<ItemOffset>())
+            {
+                ItemOffsetCount--;
+            }
+
             e.DeleteEntity();
 
             return true;
@@ -511,6 +523,7 @@ namespace ClassicUO.Ecs
             _scratch.Clear();
             _bySerial.Clear();
             Array.Clear(_handles);
+            ItemOffsetCount = 0;
             MobileCount = 0;
             _mobileEpoch++;
             _batchWearer = 0;

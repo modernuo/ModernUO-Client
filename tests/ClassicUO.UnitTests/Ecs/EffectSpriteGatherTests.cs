@@ -88,14 +88,16 @@ namespace ClassicUO.UnitTests.Ecs
                     string at = $"frame {i} {e.GetType().Name} 0x{e.Graphic:X4}";
                     input.Kind.Should().Be(EffectSystem.KindOf(e), at);
                     input.Graphic.Should().Be(e.Graphic, at);
-                    input.AnimGraphic.Should().Be(e.AnimationGraphic, at);
+                    // T9 S7: the frame and angle live only in the state; the offset is the effect's ScreenOffset
+                    EffectState st = e.EcsEntity.GetComponent<EffectState>();
+                    input.AnimGraphic.Should().Be(st.AnimGraphic, at);
                     input.Hue.Should().Be(e.Hue, at);
                     input.Blend.Should().Be(e.Blend, at);
                     input.X.Should().Be(e.X, at);
-                    input.OffsetX.Should().Be(e.Offset.X, at);
-                    input.OffsetY.Should().Be(e.Offset.Y, at);
-                    input.OffsetZ.Should().Be(e.Offset.Z, at);
-                    input.Angle.Should().Be(e.AngleToTarget, at);
+                    input.OffsetX.Should().Be(e.ScreenOffset.X, at);
+                    input.OffsetY.Should().Be(e.ScreenOffset.Y, at);
+                    input.OffsetZ.Should().Be(e.ScreenOffset.Z, at);
+                    input.Angle.Should().Be(st.Angle, at);
                     input.Drawable.Should().Be(e.AllowedToDraw, at);
                     // DragEffect.Draw reads its source only for a light
                     input.Source.Should().BeSameAs(input.Kind != EffectState.KIND_DRAG || input.TileLight ? e.SourceObject : null, at);
