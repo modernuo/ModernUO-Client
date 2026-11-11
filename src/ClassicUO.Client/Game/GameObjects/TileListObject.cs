@@ -26,10 +26,12 @@ namespace ClassicUO.Game.GameObjects
             {
                 // a placed object's graphic changed in place (no tile-list change: a season swap, Static.SetGraphic): its
                 // tiledata flags are an input of the max-Z decision. Items get the same note from WorldWriter's operations
-                // (Item.GraphicCommitted)
+                // (Item.GraphicCommitted). The Legacy chunk mesh baked the old graphic's art (and the Gpu walk reads
+                // InChunkMesh, which depends on the graphic): rebuild it, or meshed land and statics keep the previous season.
                 if (value != _graphic && TileChunk != null)
                 {
                     TileChunk.OwnerMap?.NoteContentChanged(TileChunk.X, TileChunk.Y);
+                    TileChunk.Mesh.IsDirty = true;
                 }
 
                 _graphic = value;
