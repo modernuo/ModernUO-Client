@@ -250,7 +250,9 @@ public sealed class BakeJob : Job
             || d.Height == 5 && surface && !background;
         var noCot = Pack.StaticNoCot;
         bool exempt = (f & TileFlags.Foliage) != 0 || noCot != null && g < noCot.Length && noCot[g];
-        uint bits = (roof ? SpriteInstance.ZRoof : 0) | (cotCapable ? SpriteInstance.ZCotCapable : 0) | (exempt ? SpriteInstance.ZNoCot : 0);
+        uint bits = (roof ? SpriteInstance.ZRoof : 0) | (cotCapable ? SpriteInstance.ZCotCapable : 0) | (exempt ? SpriteInstance.ZNoCot : 0)
+            | ((f & TileFlags.Wall) != 0 ? SpriteInstance.ZGeoWall : 0)
+            | ((f & TileFlags.Wall) == 0 && d.Height == 0 && (background || surface) ? SpriteInstance.ZGeoFlat : 0);
         return (uint)(byte)(sbyte)z | (uint)d.Height << 8 | bits << 16;
     }
 

@@ -62,6 +62,16 @@
 #define Z_ROOF        2u
 #define Z_COTCAPABLE  4u      // Static._canBeTransparent
 #define Z_NOCOT       8u      // trees and foliage stay opaque inside the circle
+#define Z_GEOWALL     16u     // clip-2 depth model: tiledata Wall (vertical faces on the tile's back edges)
+#define LIGHT_GEOMOB  0xA000u // ROTATED | WOBBLE together: a mobile layer with its composite's anchor (SpriteInstance.GeoMobile)
+// clip-2 depth model classes (GeoDepth.cs mirrors the maths)
+#define GEO_LINEAR    0u      // depth interpolated per vertex (land planes, and the key fallback)
+#define GEO_BOX       1u      // static over its tile: max(back edges, min(top plane, front faces))
+#define GEO_WALL      2u      // vertical faces on the tile's back edges
+#define GEO_MOBILE    3u      // mobile composite: billboard through the tile centre, ground plane below, own tile's front faces
+#define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land
+#define Z_GEOFLAT     32u
+#define FLAT_DROP     1.5     // flats sit FLAT_DROP tile sums back: a mobile's lower rows beat the floors they hang over
 #define COT_NONE      0u
 #define COT_HOLE      1u      // opaque pass: cut the circle out
 #define COT_RING      2u      // translucent pass, opaque instance: only the faded ring
@@ -122,6 +132,10 @@ cbuffer Frame : register(b0, space1)
     int    RangeX;         // player tile (ClassicUO World.RangeSize)
     int    RangeY;
     int    RangeDist;      // ClientViewRange
+    uint   DepthModel;     // clip-2: 1 = geometric per-pixel depth (PSMainGeo pipelines), 0 = the depth key
+    float  GeoOff;         // CamPx.y / 22 - the tile sum CamDepth was made from
+    float  GeoScale;       // tile-sum units -> target depth
+    uint   GeoPad;
 };
 
 [[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
@@ -144,6 +158,13 @@ struct VSOut
     nointerpolation float grayTol : TEXCOORD4;
     nointerpolation float4 cot : TEXCOORD5; // centre (target px), radius, COT_* mode
     nointerpolation float4 rect : TEXCOORD6; // FLAG_TILE: the sprite's atlas rect in texels (x0, y0, x1, y1)
+    // clip-2 depth model (PSMainGeo only): camera-relative world pixel, the per-vertex depth of GEO_LINEAR, and the class
+    // parameters (x = class, y/z/w as GeoDepth: north vertex column / top-diamond north row / tile sum, or anchor column /
+    // centre row / billboard sum), bias and scale
+    float2 geoW : TEXCOORD7;
+    float  geoLin : TEXCOORD8;
+    nointerpolation float4 geoP : TEXCOORD9;
+    nointerpolation float2 geoB : TEXCOORD10; // x = bias, y = GeoScale
 };
 
 // Must match the linear sampler's max_lod (Renderer.cs _samplerLinear).
@@ -166,6 +187,7 @@ VSOut Collapsed()
     VSOut o;
     o.pos = float4(-2, -2, 0, 1);
     o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0; o.cot = 0; o.rect = 0;
+    o.geoW = 0; o.geoLin = 0; o.geoP = 0; o.geoB = 0;
     return o;
 }
 
@@ -199,6 +221,10 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // premultiplied blend, the others get their own pipeline (the host splits the sorted list into runs)
     uint blendLo = lit ? 0u : (inst.light >> 10) & 0x3u;
     uint lbits = lit ? 0u : inst.light & 0xF000u;
+    // clip-2: a mobile layer's anchor rides in the ROTATED | WOBBLE combination; it is neither
+    bool geoMob = (lbits & LIGHT_GEOMOB) == LIGHT_GEOMOB;
+    if (geoMob)
+        lbits &= ~LIGHT_GEOMOB;
     bool forceShow = false;
     bool highlighted = false;
     if (OverrideMask != 0)
@@ -341,6 +367,56 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     bool indexed = (flags & FLAG_INDEXED) != 0;
 
     float2 world = float2(int2(inst.x, inst.y) - CamPx) - CamFrac + local;
+    o.geoW = 0; o.geoLin = 0; o.geoP = 0; o.geoB = 0;
+    if (DepthModel != 0)
+    {
+        // clip-2 geometric depth: X + Y of the visible 3D surface point (bigger = nearer); see GeoDepth.cs
+        float2 wc = float2(int2(inst.x, inst.y) - CamPx) + local;
+        o.geoW = wc;
+        o.geoP = 0;
+        o.geoB = float2(0, GeoScale);
+        o.geoLin = (float)(int)(inst.depth - CamDepth) / 12800.0 + 0.5; // key fallback: about x + y + 0.5 + z / 100
+        if (flags & FLAG_STRETCH)
+        {
+            // each corner is a world point: its tile sum is exact, and the triangles are planar
+            static const float CornerSum[4] = { 0, 1, 1, 2 };
+            o.geoLin = (float)(inst.y - CamPx.y + 22) / 22.0 + CornerSum[c] + GeoOff - FLAT_DROP;
+            o.geoB.x = (z - 2) * 2.5e-4;
+        }
+        else if (zTest && zLand)
+        {
+            o.geoLin = (wc.y + 22.0 + 4.0 * z) / 22.0 + GeoOff - FLAT_DROP;
+            o.geoB.x = (z - 2) * 2.5e-4;
+        }
+        else if (zTest)
+        {
+            // must match SpriteInstance.Tile (GpuTypes.cs): the static's tile from its rectangle and low bytes
+            int a = inst.x + (int)((inst.whf & 0xFFFu) >> 1) + 11;
+            int b = inst.y + (int)((inst.whf >> 12) & 0xFFFu) + z * 4 - 11;
+            int d = (a >= 0 ? a : a - 21) / 22, s = (b >= 0 ? b : b - 21) / 22;
+            int tx = (s + d) >> 1, ty = (s - d) >> 1;
+            tx += (int)((((inst.light >> 16) - (uint)tx + 128u) & 0xFFu)) - 128;
+            ty += (int)((((inst.light >> 24) - (uint)ty + 128u) & 0xFFu)) - 128;
+            int height = (int)((inst.corners >> 8) & 0xFFu);
+            bool wall = ((inst.corners >> 16) & Z_GEOWALL) != 0;
+            bool flat = ((inst.corners >> 16) & Z_GEOFLAT) != 0;
+            float nx = (float)((tx - ty) * 22 - CamPx.x);
+            float ny = (float)((tx + ty) * 22 - 22 - 4 * z - CamPx.y);
+            float sum = (ny + 22.0 + 4.0 * z) / 22.0 + GeoOff;
+            o.geoP = float4(wall ? GEO_WALL : flat ? GEO_FLAT : GEO_BOX, nx, ny - 4.0 * height, sum);
+            o.geoB.x = (wall ? 0.02 : 0.0) + z * 2.5e-4;
+        }
+        else if (geoMob)
+        {
+            int adx = (int)(inst.light << 4) >> 20;
+            int ady = (int)(inst.corners << 4) >> 20;
+            int mz = (int)((((inst.light >> 28) | ((inst.corners >> 28) << 4)) & 0xFFu) << 24) >> 24;
+            float ax = (float)(inst.x + adx - CamPx.x);
+            float cy = (float)(inst.y + ady - CamPx.y) + 3.0; // MobileView's anchor is posY + 19: 3 rows above the centre
+            o.geoP = float4(GEO_MOBILE, ax, cy, (cy + 22.0 + 4.0 * mz) / 22.0 + GeoOff);
+            o.geoB.x = 0.01 + mz * 2.5e-4;
+        }
+    }
     float2 ndc = world * Scale * 2.0 * InvViewport;
     float depth = 0.5 - (float)(int)(inst.depth - CamDepth) * DepthScale;
 
@@ -499,6 +575,33 @@ float4 SampleTile(VSOut i, uint flags)
     return c;
 }
 
+// clip-2 depth model: the tile-sum depth of the visible surface at world pixel w (GeoDepth.cs is the same maths).
+float GeoDepth(VSOut i)
+{
+    uint cls = (uint)i.geoP.x;
+    float2 w = i.geoW;
+    if (cls == GEO_BOX)
+    {
+        float s = (w.x - i.geoP.y) / 22.0;
+        float back = i.geoP.w + abs(s);
+        float front = i.geoP.w + 2.0 - abs(s);
+        float top = i.geoP.w + (w.y - i.geoP.z) / 22.0;
+        return max(back, min(top, front));
+    }
+    if (cls == GEO_WALL)
+        return i.geoP.w + abs((w.x - i.geoP.y) / 22.0);
+    if (cls == GEO_FLAT)
+        return i.geoP.w + (w.y - i.geoP.z) / 22.0 - FLAT_DROP;
+    if (cls == GEO_MOBILE)
+    {
+        float B = i.geoP.w;
+        float ground = B + (w.y - i.geoP.z) / 22.0;
+        float front = B + 1.0 - abs((w.x - i.geoP.y) / 22.0);
+        return max(B, min(ground, front));
+    }
+    return i.geoLin;
+}
+
 float4 PSMain(VSOut i) : SV_Target
 {
     float cotAlpha = CotAlpha(i.pos, i.cot);
@@ -549,4 +652,12 @@ float4 PSMain(VSOut i) : SV_Target
     }
     c.rgb *= i.light;
     return Finish(c.rgb, flags, cotAlpha);
+}
+
+// clip-2 depth model (switch depth_model): the same fragment with the geometric depth. A separate entry point and
+// pipelines, so the default path keeps early depth testing.
+float4 PSMainGeo(VSOut i, out float depthOut : SV_Depth) : SV_Target
+{
+    depthOut = saturate(0.5 - (GeoDepth(i) + i.geoB.x) * i.geoB.y);
+    return PSMain(i);
 }

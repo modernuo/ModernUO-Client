@@ -313,6 +313,13 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>ClassicUO's roof and max-Z hiding for this frame, tested per baked instance in the shader: land with
     /// z &gt; <paramref name="maxGroundZ"/>, statics with z &gt;= <paramref name="maxZ"/>, and roofs when
     /// <paramref name="hideRoofs"/> are not drawn (unless a <c>forceShow</c> override keeps one).</summary>
+    /// <summary>clip-2 depth model (host switch depth_model): true = per-pixel geometric depth (sprite.hlsl PSMainGeo,
+    /// <see cref="GeoDepth"/>), false = one depth key per instance.</summary>
+    public bool GeometricDepth;
+
+    /// <summary>Target depth per tile-sum unit of the geometric model: ±1250 units around the camera fit in [0, 1].</summary>
+    public const float GeoScale = 1f / 2500f;
+
     public void SetZHiding(int maxZ, int maxGroundZ, bool hideRoofs)
     {
         _maxZ = maxZ;
@@ -647,6 +654,10 @@ public sealed unsafe class WorldRenderer : IDisposable
                 CamFracX = (float)(_cx - camPxX), CamFracY = (float)(_cy - camPxY),
                 ScaleX = scale, ScaleY = scale,
                 CamDepth = BakeJob.CameraDepthKey((float)(_cy / 22.0)),
+                DepthModel = GeometricDepth ? 1u : 0u,
+                // the tile sum CameraDepthKey truncates to, so a key-fallback instance and a geometric one share the origin
+                GeoOff = (float)(camPxY / 22.0 - (int)((float)(_cy / 22.0) * 100) / 100.0),
+                GeoScale = GeoScale,
                 ChunkCount = (uint)chunkCount,
                 InvAtlas = 1f / Pack.PageSize,
                 FormatFlags = FormatFlagsOverride >= 0 ? (uint)FormatFlagsOverride : PageFormats.ShaderFlags(Pack.Format),
