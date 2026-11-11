@@ -128,8 +128,8 @@ namespace ClassicUO.Configuration
 
         // A minimized window skips world prepare, draw and present (GameController.Update); packets, update and audio keep running.
         // Not an ECS path, so there is no CUO_*_CHECK checker: nothing old to compare against, the draw is simply not run.
-        // Default off.
-        [JsonPropertyName("skip_draw_when_minimized")] public bool SkipDrawWhenMinimized { get; set; }
+        // Default on (owner decision): a minimized window shows nothing, and several clients run at once.
+        [JsonPropertyName("skip_draw_when_minimized")] public bool SkipDrawWhenMinimized { get; set; } = true;
 
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a

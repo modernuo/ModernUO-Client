@@ -5,14 +5,14 @@ using Xunit;
 
 namespace ClassicUO.UnitTests
 {
-    // skip_draw_when_minimized: default off; the key loads in both states. The draw skip itself lives in
+    // skip_draw_when_minimized: default on; the key loads in both states. The draw skip itself lives in
     // GameController.Update and needs a window, so it is exercised by the DevBench plan entries skipmin: and minimized:.
     public class SkipDrawWhenMinimizedSettingTests
     {
         [Fact]
-        public void Default_Is_Off()
+        public void Default_Is_On()
         {
-            new Settings().SkipDrawWhenMinimized.Should().BeFalse();
+            new Settings().SkipDrawWhenMinimized.Should().BeTrue();
         }
 
         [Theory]
@@ -24,9 +24,9 @@ namespace ClassicUO.UnitTests
         }
 
         [Fact]
-        public void Absent_Key_Loads_As_Off()
+        public void Absent_Key_Loads_As_On()
         {
-            Load("{\n  \"username\": \"tester\"\n}\n").SkipDrawWhenMinimized.Should().BeFalse();
+            Load("{\n  \"username\": \"tester\"\n}\n").SkipDrawWhenMinimized.Should().BeTrue();
         }
 
         private static Settings Load(string json)
