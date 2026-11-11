@@ -39,7 +39,7 @@ namespace ClassicUO
             }
 
             _worldSetupError = error;
-            Log.Error($"GPU world renderer setup failed: {error}. ClassicUO exits with code 0x{WorldSetupExitCode:X} (world_renderer \"auto\" or \"legacy\" in settings.json, or -worldrenderer, runs Legacy instead).");
+            Log.Error($"World renderer setup failed: {error}. ClassicUO exits with code 0x{WorldSetupExitCode:X} (world_renderer \"auto\" or \"compatibility\" in settings.json, or -worldrenderer, runs the Compatibility renderer instead).");
         }
 
         public static bool WorldSetupFailed => _worldSetupError != null;
@@ -73,8 +73,8 @@ namespace ClassicUO
         {
             if (_worldSetupError != null && !IsLost)
             {
-                Shutdown($"The GPU world renderer could not start ({_worldSetupError}). ClassicUO will close.", WorldSetupExitCode,
-                    "the GPU world renderer setup failed");
+                Shutdown($"The GPU renderer you selected could not start.\n\nReason: {_worldSetupError}\n\nTo recover, set the renderer to Automatic in Options (Video), or set \"world_renderer\" to \"auto\" in settings.json. ClassicUO will close.", WorldSetupExitCode,
+                    "the world renderer setup failed");
 
                 return;
             }

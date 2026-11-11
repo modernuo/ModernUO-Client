@@ -90,7 +90,7 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("pack")] public string PackDirectory { get; set; }
 
         // The world renderer setting: "auto" (default: Gpu when the machine supports it, else Legacy), "gpu" (forced: no
-        // Gpu world = error and exit) or "legacy" (forced). Saved. -worldrenderer overrides it for one run without saving
+        // Gpu world = error and exit) or "compatibility" ("legacy" also accepted; forced). Saved; the Options menu writes it. -worldrenderer overrides it for one run without saving
         // (WorldRendererOverride). RendererSelection decides at startup; WorldRenderer below is the result.
         [JsonPropertyName("world_renderer")] public string WorldRendererSetting { get; set; } = "auto";
 

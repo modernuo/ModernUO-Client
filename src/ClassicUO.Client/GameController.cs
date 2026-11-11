@@ -192,8 +192,12 @@ namespace ClassicUO
             _windowTitle = title;
             _titleShowsLegacy = !Settings.GlobalSettings.UseGpuWorldRenderer;
 
-            // Legacy is a developer comparison mode: say so in the title, so nobody mistakes its frames for the Gpu renderer's
-            string legacy = _titleShowsLegacy ? " [Legacy renderer]" : "";
+            // dev builds say so in the title, so nobody mistakes Compatibility frames for the Gpu renderer's
+#if CUO_DEVTOOLS
+            string legacy = _titleShowsLegacy ? " [Compatibility renderer]" : "";
+#else
+            string legacy = "";
+#endif
 
             if (string.IsNullOrEmpty(title))
             {
