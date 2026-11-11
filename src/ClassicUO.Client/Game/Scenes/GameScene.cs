@@ -617,6 +617,7 @@ namespace ClassicUO.Game.Scenes
 
             long setupStart = FrameStats.Stamp();
             BeginMeshHueFrame();
+            BeginMeshVisFrame();
             // while the world settle gate holds the last frame nobody sees the fades: alphas jump to their targets, so the
             // first frame after the hold doesn't show statics of freshly loaded chunks fading in (they start at 0)
             _snapAlphas = _settle.Holding;
@@ -733,9 +734,9 @@ namespace ClassicUO.Game.Scenes
                     // Reset visibility and alpha for this frame
                     if (_gpuWorld == null)
                     {
-                        chunk.Mesh.Land.ResetVisibility();
+                        chunk.Mesh.Land.ResetVisibility(_meshVisBits, _meshVisCheck);
                         chunk.Mesh.Land.ResetAlpha();
-                        chunk.Mesh.Statics.ResetVisibility();
+                        chunk.Mesh.Statics.ResetVisibility(_meshVisBits, _meshVisCheck);
                         chunk.Mesh.Statics.ResetAlpha();
                     }
 
@@ -912,6 +913,11 @@ namespace ClassicUO.Game.Scenes
             if (_meshHueCheck)
             {
                 ReportMeshHueCheck();
+            }
+
+            if (_meshVisCheck)
+            {
+                ReportMeshVisCheck();
             }
 #endif
             FrameStats.AddSince(FramePhase.PrepText, textStart);
