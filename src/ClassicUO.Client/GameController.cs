@@ -8,6 +8,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Input;
+using ClassicUO.Loop;
 using ClassicUO.Network;
 using ClassicUO.Network.Encryption;
 using ClassicUO.Renderer;
@@ -499,6 +500,13 @@ namespace ClassicUO
         protected override void Update(GameTime gameTime)
         {
             FrameStats.Begin(FramePhase.Update);
+            FrameStats.Inc(FrameCounter.LoopTicks);
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteTick();
+                LoopStats.NoteUpdateStart(SDL_GetTicksNS());
+            }
 
             if (Profiler.InContext(Profiler.ProfilerContext.OUT_OF_CONTEXT))
             {
@@ -521,8 +529,13 @@ namespace ClassicUO
 
             FrameStats.Begin(FramePhase.Packets);
             _parseSlice ??= ParseSlice;
-            var drainStart = _netTrace ? Stopwatch.GetTimestamp() : 0;
+            var drainStart = _netTrace || LoopStats.On ? Stopwatch.GetTimestamp() : 0;
             var packetsCount = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets, _netCapMs);
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteDrain(drainStart, Stopwatch.GetTimestamp(), NetClient.Socket.LastDrainBytes);
+            }
 
             if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
             {
@@ -594,7 +607,7 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(idleSleepMs);
+                    LegacySleep(idleSleepMs);
                 }
             }
             else if (x <= 0)
@@ -612,7 +625,7 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(idleSleepMs);
+                    LegacySleep(idleSleepMs);
                 }
             }
 
@@ -640,6 +653,18 @@ namespace ClassicUO
             base.Update(gameTime);
 
             FrameStats.End(FramePhase.Update);
+        }
+
+        private static void LegacySleep(int ms)
+        {
+            FrameStats.Inc(FrameCounter.LoopWaits);
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteSleep();
+            }
+
+            Thread.Sleep(ms);
         }
 
 #if CUO_DEVTOOLS
@@ -797,6 +822,11 @@ namespace ClassicUO
             }
 
             GpuDeviceLost.AfterPresent();
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteDraw();
+            }
         }
 
         private float _screenScale = Settings.GlobalSettings.ScreenScale;
@@ -864,6 +894,11 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
+            if (LoopStats.On)
+            {
+                LoopStats.NoteInputEvent(sdlEvent->type, sdlEvent->common.timestamp);
+            }
+
             // Don't pass SDL events to the plugin host before the plugins are initialized
             // or the garbage collector can get screwed up
             if (_pluginsInitialized && Plugin.ProcessWndProc(sdlEvent) != 0)
