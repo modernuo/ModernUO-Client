@@ -416,6 +416,7 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
                     case "ecsdriver":
                         CUOEnviroment.EcsDriverScript = value;
+                        FocusRule.DriverSession = true;
 
                         break;
 #endif

@@ -332,7 +332,7 @@ namespace ClassicUO
             Settings.GlobalSettings.FPS = rate;
 
             _intervalFixedUpdate[0] = frameDelay;
-            _intervalFixedUpdate[1] = 217; // 5 FPS
+            _intervalFixedUpdate[1] = 100; // 10 FPS while inactive (ReduceFPSWhenInactive); was 217 ms (about 4.6 FPS)
         }
 
         private void SetWindowPosition(int x, int y)
@@ -571,17 +571,33 @@ namespace ClassicUO
                 _currentFpsTime = 0;
             }
 
-            double x = _intervalFixedUpdate[
-                !IsActive
-                && !DevBench.FrameStats
+            // FocusRule: an automated session counts as focused; the simulated `inactive on` forces this path
+            bool inactive = FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive)
                 && ProfileManager.CurrentProfile != null
-                && ProfileManager.CurrentProfile.ReduceFPSWhenInactive
-                    ? 1
-                    : 0
-            ];
+                && (ProfileManager.CurrentProfile.ReduceFPSWhenInactive || FocusRule.ForceInactive);
+            double x = _intervalFixedUpdate[inactive ? 1 : 0];
             _suppressedDraw = false;
+            bool minimized = IsMinimizedForDrawSkip();
 
-            if (x <= 0)
+            // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
+            // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
+            int idleSleepMs = (inactive || minimized) && Settings.GlobalSettings.ThrottleUpdateWhenInactive ? 12 : 1;
+
+            if (minimized)
+            {
+                // skip_draw_when_minimized: nothing to show, so no world prepare, draw or present; packets, update and audio above
+                // and below keep running. The first frame after a restore draws in full (the world target preserves its contents).
+                _totalElapsed = 0;
+                _suppressedDraw = true;
+                SuppressDraw();
+                (Scene as GameScene)?.OnDrawSkipped(gameTime.ElapsedGameTime.TotalMilliseconds);
+
+                if (!gameTime.IsRunningSlowly)
+                {
+                    Thread.Sleep(idleSleepMs);
+                }
+            }
+            else if (x <= 0)
             {
                 _totalElapsed = 0;
             }
@@ -596,7 +612,7 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(1);
+                    Thread.Sleep(idleSleepMs);
                 }
             }
 
@@ -624,6 +640,29 @@ namespace ClassicUO
             base.Update(gameTime);
 
             FrameStats.End(FramePhase.Update);
+        }
+
+#if CUO_DEVTOOLS
+        // DevBench plan entry minimized:on|off: stands in for a minimized window (no OS window state is touched)
+        internal static bool DevForceMinimized;
+#endif
+
+        private bool IsMinimizedForDrawSkip()
+        {
+            if (!Settings.GlobalSettings.SkipDrawWhenMinimized)
+            {
+                return false;
+            }
+
+            bool forced = false;
+#if CUO_DEVTOOLS
+            forced = DevForceMinimized;
+#endif
+            // polled, not event-driven: a plugin can consume the window events; Wayland sets no minimized flag (the switch does nothing there)
+            bool real = !forced && !FocusRule.Automation
+                && (((SDL_WindowFlags)SDL_GetWindowFlags(Window.Handle)) & SDL_WindowFlags.SDL_WINDOW_MINIMIZED) != 0;
+
+            return FocusRule.IsMinimized(real, FocusRule.Automation, forced);
         }
 
         protected override void Draw(GameTime gameTime)

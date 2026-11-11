@@ -3660,7 +3660,7 @@ namespace ClassicUO.Game.UI.Gumps
                     _sliderFPS.Value = 240;
                     _uncapFPS.IsChecked = true;
                     _vsync.IsChecked = false;
-                    _reduceFPSWhenInactive.IsChecked = false;
+                    _reduceFPSWhenInactive.IsChecked = true;
                     _highlightObjects.IsChecked = true;
                     _enableTopbar.IsChecked = false;
                     _newTargetSystem.IsChecked = true;

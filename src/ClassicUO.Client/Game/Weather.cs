@@ -60,6 +60,7 @@ namespace ClassicUO.Game
             Count = CurrentCount = Temperature = 0;
             Wind = 0;
             _windTimer = _timer = 0;
+            _windRecalc = false;
             CurrentWeather = null;
         }
 
@@ -222,6 +223,99 @@ namespace ClassicUO.Game
             Client.Game.Audio.PlaySoundWithDistance(_world, sound, _world.Player.X + randX, _world.Player.Y + randY);
         }
 
+        private bool _windRecalc;
+
+        // The wind roll of Draw: true when the wind changed (or was first set).
+        private bool RollWind()
+        {
+            bool windChanged = false;
+
+            if (_windTimer < Time.Ticks)
+            {
+                if (_windTimer == 0)
+                {
+                    windChanged = true;
+                }
+
+                _windTimer = Time.Ticks + (uint) (RandomHelper.GetValue(13, 19) * 1000);
+
+                sbyte lastWind = Wind;
+
+                Wind = (sbyte) RandomHelper.GetValue(0, 4);
+
+                if (RandomHelper.GetValue(0, 2) != 0)
+                {
+                    Wind *= -1;
+                }
+
+                if (Wind < 0 && lastWind > 0)
+                {
+                    Wind = 0;
+                }
+                else if (Wind > 0 && lastWind < 0)
+                {
+                    Wind = 0;
+                }
+
+                if (lastWind != Wind)
+                {
+                    windChanged = true;
+                }
+            }
+
+            return windChanged;
+        }
+
+        /// <summary>
+        /// The clock and sound part of <see cref="Draw"/>, for frames whose draw is skipped (skip_draw_when_minimized): the wind
+        /// timer keeps rolling and its thunder/wind sound still plays (once, where Draw plays it per drawn effect), and expired
+        /// weather ends at once. Effect positions do not move; the next Draw takes the new wind speeds.
+        /// </summary>
+        public void SimulateSkippedDraw()
+        {
+            if (_timer < Time.Ticks)
+            {
+                // Draw lets the particles drain off screen first, which needs the draw; with it skipped, expired weather ends at
+                // once (by time, not by particle count) so no wind or thunder rolls past the weather's timeout
+                Reset();
+
+                return;
+            }
+
+            if (Type == WeatherType.WT_INVALID_0 || Type == WeatherType.WT_INVALID_1)
+            {
+                return;
+            }
+
+            _lastTick = Time.Ticks;
+
+            if (!RollWind())
+            {
+                return;
+            }
+
+            _windRecalc = true;
+
+            if (CurrentCount == 0)
+            {
+                return;
+            }
+
+            switch (Type)
+            {
+                case WeatherType.WT_STORM_BREWING:
+                case WeatherType.WT_STORM_APPROACH:
+                    PlayThunder();
+
+                    break;
+
+                case WeatherType.WT_SNOW:
+                    PlayWind();
+
+                    break;
+            }
+        }
+
         public void Draw(UltimaBatcher2D batcher, int x, int y, float layerDepth)
         {
             bool removeEffects = false;
@@ -259,40 +353,12 @@ namespace ClassicUO.Game
                 passed = 25;
             }
 
-            bool windChanged = false;
-
-            if (_windTimer < Time.Ticks)
-            {
-                if (_windTimer == 0)
-                {
-                    windChanged = true;
-                }
-
-                _windTimer = Time.Ticks + (uint) (RandomHelper.GetValue(13, 19) * 1000);
-
-                sbyte lastWind = Wind;
-
-                Wind = (sbyte) RandomHelper.GetValue(0, 4);
-
-                if (RandomHelper.GetValue(0, 2) != 0)
-                {
-                    Wind *= -1;
-                }
-
-                if (Wind < 0 && lastWind > 0)
-                {
-                    Wind = 0;
-                }
-                else if (Wind > 0 && lastWind < 0)
-                {
-                    Wind = 0;
-                }
-
-                if (lastWind != Wind)
-                {
-                    windChanged = true;
-                }
-            }
+            // a wind change rolled while the draw was skipped (SimulateSkippedDraw) already played its sound; the effects still take
+            // its speeds here
+            bool windChanged = RollWind();
+            bool windSound = windChanged;
+            windChanged |= _windRecalc;
+            _windRecalc = false;
 
             //switch ((WEATHER_TYPE) Type)
             //{
@@ -351,7 +417,7 @@ namespace ClassicUO.Game
                         effect.SpeedX = Wind * 1.5f;
                         effect.SpeedY = 1.5f;
 
-                        if (windChanged)
+                        if (windSound)
                         {
                             PlayThunder();
                         }
@@ -378,13 +444,16 @@ namespace ClassicUO.Game
 
                             effect.SpeedMagnitude = (float) Math.Sqrt(Math.Pow(effect.SpeedX, 2) + Math.Pow(effect.SpeedY, 2));
 
-                            if (Type == WeatherType.WT_SNOW)
+                            if (windSound)
                             {
-                                PlayWind();
-                            }
-                            else
-                            {
-                                PlayThunder();
+                                if (Type == WeatherType.WT_SNOW)
+                                {
+                                    PlayWind();
+                                }
+                                else
+                                {
+                                    PlayThunder();
+                                }
                             }
                         }
 
