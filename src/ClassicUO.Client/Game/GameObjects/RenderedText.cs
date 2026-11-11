@@ -791,6 +791,8 @@ namespace ClassicUO.Game
 
             // fi.Data is read only below (the hit map copies it), so the loader may hand back its reused buffer.
             Client.Game.UO.FileManager.Fonts.ReusePixelBuffer = true;
+            // The bitmap is only needed for the hit map; the atlas draws the glyphs, so otherwise only measure.
+            Client.Game.UO.FileManager.Fonts.MeasureOnly = !SaveHitMap;
 
             FontsLoader.FontInfo fi;
             try
@@ -813,6 +815,7 @@ namespace ClassicUO.Game
             finally
             {
                 Client.Game.UO.FileManager.Fonts.ReusePixelBuffer = false;
+                Client.Game.UO.FileManager.Fonts.MeasureOnly = false;
             }
 
             if (SaveHitMap)
