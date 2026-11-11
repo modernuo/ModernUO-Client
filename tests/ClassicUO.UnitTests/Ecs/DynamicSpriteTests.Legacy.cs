@@ -17,7 +17,8 @@ namespace ClassicUO.UnitTests.Ecs
     // T7b part 2a: the Legacy resolve. Golden: the views' batcher calls, transcribed from MobileView.Draw/DrawInternal and
     // View.DrawStaticAnimated (geometry, strips, shadow, seated draw, the hue choice of DrawInternal), over a fake atlas made
     // from the same pack tables the select reads. The resolve of the select's records must make the same calls in the same
-    // order. In the client, CUO_LEGACY_ECS_PARITY compares the real views' calls with the sink's.
+    // order. (The in-client checker that compared the real views' calls with the sink's, CUO_LEGACY_ECS_PARITY, was deleted
+    // with legacy_ecs_sprites in T9; the golden captures of measure/t9-golden hold the reference.)
     public partial class DynamicSpriteTests
     {
         // ---- fake atlas ----
@@ -564,28 +565,15 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.Equal(copies, count);
         }
 
-        // ---- the switch and the checker ----
-
-        [Theory]
-        [InlineData(null, null, false, false)]
-        [InlineData(null, null, true, true)]
-        [InlineData(null, true, false, true)]
-        [InlineData(null, false, true, false)]
-        [InlineData(true, false, false, true)]
-        [InlineData(false, true, true, false)]
-        public void Legacy_Switch_Resolves_Override_Then_Env_Then_Setting(bool? over, bool? env, bool setting, bool want)
-        {
-            Assert.Equal(want, LegacySpriteSink.Resolve(over, env, setting));
-        }
+        // ---- the sink ----
 
         [Fact]
-        public void Legacy_Switch_Env_Parse_And_Default_On()
+        public void Legacy_Env_Switch_Parse()
         {
             Assert.True(LegacySpriteSink.ParseSwitch("1"));
             Assert.False(LegacySpriteSink.ParseSwitch("0"));
             Assert.Null(LegacySpriteSink.ParseSwitch(null));
             Assert.Null(LegacySpriteSink.ParseSwitch("yes"));
-            Assert.True(new ClassicUO.Configuration.Settings().LegacyEcsSprites);
         }
 
         // perf-7: DrawItem's hasAnims is read once per frame (BeginFrame) instead of per item; the pack's animation tables are
@@ -600,97 +588,5 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.Equal(anims.PackFrames != null, LegacySpriteSink.HasPackAnims(anims));
             Assert.True(LegacySpriteSink.HasPackAnims(anims));
         }
-
-        [Fact]
-        public void Legacy_Switch_Off_Routes_Nothing_Through_The_Sink()
-        {
-            // the render list takes DrawRenderList (every object's view.Draw) unless the frame routes through the sink
-            LegacySpriteSink.EndFrame();
-            Assert.False(LegacySpriteSink.Routes);
-        }
-
-#if CUO_DEVTOOLS
-        [Fact]
-        public void Legacy_Parity_Recorder_Drops_Empty_Calls_And_Suppresses_One_Side()
-        {
-            Texture2D tex = FakeTextures[0];
-            ISpriteCapture drawn = LegacyEcsParity.NewRecorder(false), dropped = LegacyEcsParity.NewRecorder(true);
-            var hue = new Vector3(5, 1, 1);
-
-            Assert.False(drawn.Draw(tex, new Vector2(1, 2), new Rectangle(0, 0, 10, 4), hue, true, false, 3f, SpriteCaptureMode.Normal));
-            Assert.False(drawn.Draw(tex, new Vector2(1, 6), new Rectangle(0, 4, 10, 0), hue, true, false, 5f, SpriteCaptureMode.Normal));
-            Assert.False(drawn.DrawSitted(tex, new Vector2(1, 2), new Rectangle(0, 0, 10, 4), new Vector3(0.3f, 0.3f, 0.4f), hue, false, 4f));
-            Assert.True(dropped.Draw(tex, new Vector2(1, 2), new Rectangle(0, 0, 10, 4), hue, true, false, 3f, SpriteCaptureMode.Normal));
-            Assert.True(dropped.DrawSitted(tex, new Vector2(1, 2), new Rectangle(0, 0, 10, 4), new Vector3(0.3f, 0.3f, 0.4f), hue, false, 4f));
-
-            ReadOnlySpan<LegacyDraw> a = ((LegacyEcsParity)drawn).Recorded, b = ((LegacyEcsParity)dropped).Recorded;
-            Assert.Equal(2, a.Length);
-            Assert.Equal(-1, LegacyEcsParity.FirstDifference(a, b));
-
-            LegacyDraw[] c = b.ToArray();
-            c[1].SitMod.Z = 0.5f;
-            Assert.Equal(1, LegacyEcsParity.FirstDifference(a, c));
-            c = b.ToArray();
-            c[0].Texture = FakeTextures[1];
-            Assert.Equal(0, LegacyEcsParity.FirstDifference(a, c));
-            Assert.Equal(1, LegacyEcsParity.FirstDifference(a, b.Slice(0, 1)));
-        }
-
-        [Fact]
-        public void Legacy_Parity_No_Problem_Parts_Is_No_Mismatch()
-        {
-            // bench-000244: problem += CompareLights(…) turned null + null into "", so every compared object with matching
-            // lights counted as a mismatch with an empty reason
-            Assert.Null(LegacyEcsParity.AddProblem(null, null));
-            Assert.Equal(" lights view=1 sink=0", LegacyEcsParity.AddProblem(null, " lights view=1 sink=0"));
-            Assert.Equal(" drawn view=True sink=False", LegacyEcsParity.AddProblem(" drawn view=True sink=False", null));
-            Assert.Equal(" a b", LegacyEcsParity.AddProblem(" a", " b"));
-        }
-
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Legacy_Parity_Runs_Both_Paths_From_One_Rng_State_And_Keeps_The_Drawn_Ones(bool sinkDraws)
-        {
-            // Codex P3 (t7b2a): the view's and the sink's animation-group rolls see the same values, and the RNG ends as if
-            // only the drawn path had run (view: 1 roll, sink: 2 rolls here)
-            ClassicUO.Utility.RandomHelper.State start = ClassicUO.Utility.RandomHelper.Save();
-            int r1 = ClassicUO.Utility.RandomHelper.GetValue();
-            int r2 = ClassicUO.Utility.RandomHelper.GetValue();
-            int r3 = ClassicUO.Utility.RandomHelper.GetValue();
-            ClassicUO.Utility.RandomHelper.Restore(in start);
-
-            var fork = new LegacyEcsParity.RngFork();
-            fork.Begin();
-            int view = ClassicUO.Utility.RandomHelper.GetValue();
-            fork.Second();
-            int sink = ClassicUO.Utility.RandomHelper.GetValue();
-            ClassicUO.Utility.RandomHelper.GetValue();
-            fork.End(sinkDraws);
-
-            Assert.Equal(r1, view);
-            Assert.Equal(r1, sink);
-            Assert.Equal(sinkDraws ? r3 : r2, ClassicUO.Utility.RandomHelper.GetValue());
-        }
-
-        [Fact]
-        public void Legacy_Parity_On_Loads_Animations_Synchronously()
-        {
-            bool saved = ClassicUO.Renderer.Animations.Animations.AsyncFirstSight;
-
-            try
-            {
-                ClassicUO.Renderer.Animations.Animations.AsyncFirstSight = true;
-                LegacyEcsParity.ConfigureLoaders("0");
-                Assert.True(ClassicUO.Renderer.Animations.Animations.AsyncFirstSight);
-                LegacyEcsParity.ConfigureLoaders("1");
-                Assert.False(ClassicUO.Renderer.Animations.Animations.AsyncFirstSight);
-            }
-            finally
-            {
-                ClassicUO.Renderer.Animations.Animations.AsyncFirstSight = saved;
-            }
-        }
-#endif
     }
 }

@@ -927,7 +927,7 @@ namespace ClassicUO.Game.GameObjects
             position.Y += (int)(Offset.Y - Offset.Z) + 22;
 
             // T7b part 2b: the last draw's frame rectangle and mirror bit from the extract's records when it drew this mobile
-            // (legacy_ecs_sprites, or the Gpu world's extracts), else the ones the draw left on the mobile
+            // (the Legacy sink, or the Gpu world's extracts), else the ones the draw left on the mobile
             if (!Scenes.SpritePickTable.TryMobile(this, out Rectangle r, out bool pickFlipped))
             {
                 r = FrameInfo;

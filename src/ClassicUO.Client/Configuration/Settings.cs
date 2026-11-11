@@ -126,13 +126,6 @@ namespace ClassicUO.Configuration
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
 
-        // T7b (ecs-transition-plan.md, T7): the Legacy world draws mobiles and world items from the ECS extract (select, then
-        // LegacySpriteResolve to the FNA atlas through the Art/Animations loaders) at the render list's view.Draw position,
-        // instead of MobileView/ItemView.Draw. Effects stay on their views. CUO_LEGACY_ECS_PARITY=1 compares the view's
-        // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default on since
-        // legacy-flip (owner decision 2026-11-10, bench-000564); off = the views.
-        [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; } = true;
-
         // legacy-sprites-fix: the item sprite extract's Gather reads the item's packed ItemDrawRow component (one row,
         // written by WorldMirror.UpsertItem with the record) instead of the Graphic, Hue, Position, Flags and ItemData
         // components. CUO_ECS_ITEM_DRAW_ROW=1|0 overrides it in developer builds; CUO_ITEM_DRAW_ROW_CHECK=1 compares the row

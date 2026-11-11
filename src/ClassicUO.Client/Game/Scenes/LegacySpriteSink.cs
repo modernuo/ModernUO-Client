@@ -10,29 +10,21 @@ using ClassicUO.Renderer;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// T7b part 2a (setting <c>legacy_ecs_sprites</c>): the Legacy world's batcher sink for the dynamic-sprite extract. At the
+    /// T7b part 2a: the Legacy world's batcher sink for the dynamic-sprite extract. At the
     /// render list's view.Draw position (painter order unchanged) a mobile or world item is drawn from the ECS: the mobile
     /// through MobileAnimationSystem + <see cref="MobileSpriteExtract.Select"/>, the item through
     /// <see cref="ItemSpriteInput.Gather"/> + <see cref="ItemSpriteExtract.Select"/>, each record through
     /// <see cref="LegacySpriteResolve"/>. What the views did besides drawing comes from the extract's side outputs, as on the
     /// Gpu path (GpuWorldRenderer.TryDrawMobileEcs/EmitItem): the mobile's FrameInfo and mirror bit, the corpse's mirror bit,
-    /// the item art entry's picking offset (written by the select), the aura, and the lights. While the switch is on, picking
-    /// reads the same pick state from <see cref="SpritePickTable"/> (2b), which the sink records from the select. Effects have their
-    /// own sink (EffectSpriteSink). A mobile without a mirror entity falls back to its view. CUO_LEGACY_ECS_PARITY=1 (<see cref="LegacyEcsParity"/>) compares the view's batcher calls with the sink's.
+    /// the item art entry's picking offset (written by the select), the aura, and the lights. Picking reads the same pick
+    /// state from <see cref="SpritePickTable"/> (2b), which the sink records from the select. Effects have their own sink
+    /// (EffectSpriteSink). A mobile without a mirror entity falls back to its view (MobileView.Draw), as do objects that are
+    /// neither mobiles nor items. T9 deleted the switch <c>legacy_ecs_sprites</c> (its off path drew every mobile and item
+    /// through its view) and the checker CUO_LEGACY_ECS_PARITY.
     /// </summary>
     internal static class LegacySpriteSink
     {
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_LEGACY_ECS_SPRITES=1|0)
-        private static readonly bool? _env = ParseSwitch(Environment.GetEnvironmentVariable("CUO_LEGACY_ECS_SPRITES"));
-#else
-        private static readonly bool? _env = null;
-#endif
-
-        /// <summary>DevBench (pickscan's legacy_ecs_sprites mode) and tests: wins over the env override and the setting.</summary>
-        internal static bool? Override;
-
-        private static bool _on, _route, _hasAnims, _drawRow;
+        private static bool _hasAnims, _drawRow;
         private static GameScene _scene;
         private static readonly ItemSpriteExtract _items = new ItemSpriteExtract();
 
@@ -43,27 +35,12 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
-        /// <summary>The switch: <see cref="Override"/>, else the env override, else the setting.</summary>
-        internal static bool Resolve(bool? over, bool? env, bool setting) => over ?? env ?? setting;
-
-        public static bool On => _on;
-
-        /// <summary>This frame's mobiles and items go through <see cref="Draw"/> (the switch, or a parity frame).</summary>
-        public static bool Routes => _route;
-
-        /// <summary>Start of the Legacy world's render-list draw: reads the switch once for the frame.</summary>
+        /// <summary>Start of the Legacy world's render-list draw.</summary>
         public static void BeginFrame()
         {
-            _on = Resolve(Override, _env, Configuration.Settings.GlobalSettings.LegacyEcsSprites);
-#if CUO_DEVTOOLS
-            LegacyEcsParity.BeginFrame();
-            _route = _on || LegacyEcsParity.Active;
-#else
-            _route = _on;
-#endif
-            _scene = _route ? Client.Game.GetScene<GameScene>() : null;
+            _scene = Client.Game.GetScene<GameScene>();
             // the pack's animation tables are loaded once at startup: read per frame, not per item
-            _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
+            _hasAnims = HasPackAnims(Client.Game.UO.FileManager.Animations);
             _drawRow = ItemDrawRows.On;
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
@@ -75,31 +52,25 @@ namespace ClassicUO.Game.Scenes
         /// <summary>End of the Legacy world's render-list draw (the render lists are also drawn by UI controls).</summary>
         public static void EndFrame()
         {
-            _route = false;
             _scene = null;
             SpritePickTable.Commit();
         }
 
-        /// <summary>The render list's draw of one object: the sink for mobiles and items while the switch (or the parity
-        /// checker) is on, the view otherwise.</summary>
+        /// <summary>The render list's draw of one object: the sink for mobiles and items, the view for the rest.</summary>
         public static bool Draw(UltimaBatcher2D batcher, GameObject obj, float depth)
         {
             // items first: most of the list, and Item is sealed (one type compare)
-            bool item = obj is Item;
-
-            if (!_route || !item && obj is not Mobile)
+            if (obj is Item)
             {
-                return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+                return DrawItem(batcher, Unsafe.As<Item>(obj), depth);
             }
 
-#if CUO_DEVTOOLS
-            if (LegacyEcsParity.Active)
+            if (obj is Mobile)
             {
-                return LegacyEcsParity.Compare(batcher, obj, depth, _on, _scene);
+                return DrawMobileOrView(batcher, Unsafe.As<Mobile>(obj), depth);
             }
-#endif
 
-            return item ? DrawItem(batcher, Unsafe.As<Item>(obj), depth, true) : DrawMobileOrView(batcher, Unsafe.As<Mobile>(obj), depth, true, out _);
+            return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
         }
 
         // how many render-list entries ahead DrawWorldRenderList prefetches an object's own memory, then an item's mirror node,
@@ -137,7 +108,7 @@ namespace ClassicUO.Game.Scenes
         private static nint _handleOffset = -1;
 
         /// <summary>
-        /// legacy-sprites-fix: called by the routed render-list loop (switch on) before it draws entry <paramref name="i"/>.
+        /// legacy-sprites-fix: called by the render-list loop before it draws entry <paramref name="i"/>.
         /// Three prefetch stages, each reading only what the stage before fetched: the object <see cref="OBJECT_AHEAD"/>
         /// entries ahead (its header and its mirror handle, from the list's reference alone), the mirror node of the item
         /// <see cref="NODE_AHEAD"/> ahead, and the record components
@@ -216,31 +187,10 @@ namespace ClassicUO.Game.Scenes
             public byte Data;
         }
 
-        /// <summary>
-        /// The sink's draw of <paramref name="obj"/>. <paramref name="effects"/>: also apply the view's side effects (lights,
-        /// FrameInfo, mirror bits); the parity checker passes false after the view has applied its own.
-        /// <paramref name="ecs"/>: false = the object took the view path (a mobile without a mirror entity).
-        /// </summary>
-        internal static bool DrawEcs(UltimaBatcher2D batcher, GameObject obj, float depth, bool effects, out bool ecs)
+        private static bool DrawMobileOrView(UltimaBatcher2D batcher, Mobile mobile, float depth)
         {
-            if (obj is Item item)
-            {
-                ecs = true;
-
-                return DrawItem(batcher, item, depth, effects);
-            }
-
-            return DrawMobileOrView(batcher, (Mobile)obj, depth, effects, out ecs);
-        }
-
-        private static bool DrawMobileOrView(UltimaBatcher2D batcher, Mobile mobile, float depth, bool effects, out bool ecs)
-        {
-            ecs = true;
-
             if (!TryMobileEntity(mobile, out Friflo.Engine.ECS.Entity e))
             {
-                ecs = false;
-
                 if (mobile.IsDestroyed || !mobile.AllowedToDraw)
                 {
                     return false;
@@ -249,7 +199,7 @@ namespace ClassicUO.Game.Scenes
                 return mobile.Draw(batcher, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth);
             }
 
-            return DrawMobile(batcher, mobile, e, depth, effects);
+            return DrawMobile(batcher, mobile, e, depth);
         }
 
         // E5 (shared with GpuWorldRenderer.TryDrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
@@ -265,7 +215,7 @@ namespace ClassicUO.Game.Scenes
             return MobileEntityLookup.TryGet(mobile, out e);
         }
 
-        private static bool DrawMobile(UltimaBatcher2D batcher, Mobile mobile, Friflo.Engine.ECS.Entity e, float depth, bool effects)
+        private static bool DrawMobile(UltimaBatcher2D batcher, Mobile mobile, Friflo.Engine.ECS.Entity e, float depth)
         {
             World world = mobile.World;
             WorldEcs ecs = world.Ecs;
@@ -290,25 +240,17 @@ namespace ClassicUO.Game.Scenes
             // the select and resolve, or their calls replayed from the mobile's MobileFrameCache (as the Gpu path's Emit)
             extract.DrawLegacy(batcher, ClientLegacySpriteSource.Instance, e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
             bool mirror = (state.Flags & AnimStateFlags.Mirror) != 0;
-
-            if (_on)
-            {
-                // picking reads these (the views' FrameInfo and mirror bit below stay: other readers, the mirror history)
-                SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
-            }
-
-            if (effects)
-            {
-                // the view's side effects: picking, text and health bars read FrameInfo and the mirror bit
-                mobile.FrameInfo = extract.FrameInfo;
-                mobile.ViewFlipped = mirror;
-                AddMobileLights(mobile, extract);
-            }
+            // picking reads these (the views' FrameInfo and mirror bit below stay: other readers, the mirror history)
+            SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
+            // the view's side effects: picking, text and health bars read FrameInfo and the mirror bit
+            mobile.FrameInfo = extract.FrameInfo;
+            mobile.ViewFlipped = mirror;
+            AddMobileLights(mobile, extract);
 
             return true;
         }
 
-        internal static void AddMobileLights(Mobile mobile, MobileSpriteExtract extract)
+        private static void AddMobileLights(Mobile mobile, MobileSpriteExtract extract)
         {
             if (_scene == null)
             {
@@ -326,7 +268,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth, bool effects)
+        private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth)
         {
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
             // the records are drawn as the select makes them (the batcher calls of a select + DrawAll); the side effects below
@@ -334,27 +276,19 @@ namespace ClassicUO.Game.Scenes
             bool drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, item.RealScreenPosition.X,
                 item.RealScreenPosition.Y, depth);
 
-            if (_on)
+            SpritePickTable.RecordItem(item, _items);
+
+            if (_items.SetsFlipped)
             {
-                SpritePickTable.RecordItem(item, _items);
+                item.ViewFlipped = _items.Flipped;
             }
 
-            if (effects)
+            if (_items.Light)
             {
-                if (_items.SetsFlipped)
-                {
-                    item.ViewFlipped = _items.Flipped;
-                }
-
-                if (_items.Light)
-                {
-                    _scene?.AddLight(item, item, _items.LightX, _items.LightY);
-                }
+                _scene?.AddLight(item, item, _items.LightX, _items.LightY);
             }
 
             return drawn;
         }
-
-        internal static ItemSpriteExtract ItemExtract => _items;
     }
 }

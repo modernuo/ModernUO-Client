@@ -9,9 +9,8 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // legacy-sprites-fix: the Legacy sink's render-list prefetch (legacy_ecs_sprites on) reads nothing it could get wrong:
-    // over a list of items with and without records, mobiles and stale handles it changes no record and no read, and the
-    // switch-off loop never calls it (DrawWorldRenderList takes DrawRenderList then; prefetch is read from On).
+    // legacy-sprites-fix: the Legacy sink's render-list prefetch reads nothing it could get wrong: over a list of items with
+    // and without records, mobiles and stale handles it changes no record and no read.
     public class LegacySinkPrefetchTests
     {
         private const uint ITEM0 = 0x4000_0000;

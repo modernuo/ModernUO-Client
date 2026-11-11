@@ -29,7 +29,8 @@ namespace ClassicUO.UnitTests.Ecs
             "ecs_effect_endpoints",
             "ecs_effect_sprites",
             "world_tile_index",
-            "gpu_ecs_sprites"
+            "gpu_ecs_sprites",
+            "legacy_ecs_sprites"
         };
 
         [Fact]
