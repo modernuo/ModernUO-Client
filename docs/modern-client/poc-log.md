@@ -6450,7 +6450,8 @@ Base `bg/t9-wave-a` ff5cc065e; commits c3a86bcb6, f7518ab3f, 1ab7a6de1, 195e5e14
 
 Base `bg/t9-wave-a` ff5cc065e. Owner decisions: the world renderer override is reachable from the game, the Legacy renderer is kept and renamed for players.
 
-- **Options menu.** General page, under the FPS options: "World renderer (takes effect on next start)" with Automatic (recommended) / GPU / Compatibility. Apply writes `world_renderer` (`auto`, `gpu`, `compatibility`) and saves settings.json only when it changed. No runtime switch outside `CUO_DEVTOOLS`.
+- **Options menu.** Video page (Options page 3), under the FPS options: "World renderer (takes effect on next start)" with Automatic (recommended) / GPU / Compatibility. Apply writes `world_renderer` (`auto`, `gpu`, `compatibility`) and saves settings.json only when it changed. No runtime switch outside `CUO_DEVTOOLS`.
+- **Results (merged as 68a6ff7f2).** Screenshot job bench-000602 (dev driver `options` / `optionsdrop`): the combobox sits under the FPS options above "Game window"; the open list ends above that section, no overlap.
 - **Rename.** Player-visible "Legacy" is "Compatibility". `ParseMode` accepts `legacy` and `compatibility` (either case); `-worldrenderer` too. Internal names (`WorldRendererMode.Legacy`, the `legacy` runtime renderer string, `[renderer]` log lines that scripts parse) are unchanged.
 - **Window title.** `[Compatibility renderer]` only with `CUO_DEVTOOLS`.
 - **Error box (forced gpu fails).** "The GPU renderer you selected could not start.", the reason on its own line, then how to recover (Automatic in Options, or `world_renderer` "auto" in settings.json). The log line no longer says "GPU world renderer".
