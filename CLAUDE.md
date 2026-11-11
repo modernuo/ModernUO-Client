@@ -63,7 +63,7 @@ dotnet test tests/Uo.Converter.Tests -c Release
 
 ### New ECS paths: switch plus checker
 
-A new ECS read or update path lands behind a `settings.json` switch (`Configuration/Settings.cs`), default off at first, with a `CUO_*_CHECK` environment checker that compares the new path with the old one at every use and logs mismatches. Examples: `world_entity_index` and `CUO_ENTITY_INDEX_CHECK`, `ecs_item_draw_row` and `CUO_ITEM_DRAW_ROW_CHECK`. The old path and the checker stay until the switch has been default on for a while; then the old path, the switch and any checker that compares against the old path are deleted (an old `settings.json` that still names the key loads, since unknown keys are skipped). Checkers and `CUO_ECS_*` overrides are compiled only with `CUO_DEVTOOLS`. Add unit tests that exercise both switch states.
+A new ECS read or update path lands behind a `settings.json` switch (`Configuration/Settings.cs`), default off at first, with a `CUO_*_CHECK` environment checker that compares the new path with the old one at every use and logs mismatches. The checker runs the old path next to the new one on the same input (or keeps the old structure as a shadow), logs each mismatch with the object and values involved, and prints a periodic summary with the switch state and the mismatch count. The old path and the checker stay until the switch has been default on for a while; then the old path, the switch and any checker that compares against the old path are deleted (an old `settings.json` that still names the key loads, since unknown keys are skipped). Checkers and `CUO_ECS_*` overrides are compiled only with `CUO_DEVTOOLS`. Add unit tests that exercise both switch states.
 
 ### The pack is the asset source
 
