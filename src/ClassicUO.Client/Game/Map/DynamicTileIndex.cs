@@ -40,7 +40,7 @@ namespace ClassicUO.Game.Map
 
         /// <summary>Bit c set: tile c holds at least one entry. The whole-tile walks test it once per tile (a register test, see
         /// <see cref="TileWalk.MergeCells"/>) instead of reading the cell's count, so a tile without dynamics walks its list
-        /// by TNext alone.</summary>
+        /// alone.</summary>
         public ulong Cells { get; private set; }
 
         public ReadOnlySpan<Entry> Cell(int cell) => _cells[cell] == null ? default : new ReadOnlySpan<Entry>(_cells[cell], 0, _counts[cell]);
@@ -281,13 +281,13 @@ namespace ClassicUO.Game.Map
     /// </summary>
     internal struct TileWalk
     {
-        private GameObject _s;
+        private TileListObject _s;
         private DynamicTileIndex.Entry[] _d;
         private int _di, _dn;
 
         /// <summary>
         /// The tiles of <paramref name="chunk"/> whose whole-tile walk takes the merged order (bit = cell): the index's occupied
-        /// cells (<see cref="DynamicTileIndex.Cells"/>). A tile without dynamics walks its list by TNext alone. The whole-tile
+        /// cells (<see cref="DynamicTileIndex.Cells"/>). A tile without dynamics walks its list alone. The whole-tile
         /// walks (the render walk's chunk loop, the Gpu mask build, the item cache) read it once per chunk, so the per-tile
         /// decision is a test of a register (tile-index-2: fix A's per-tile Start call and count lookup were the merge's
         /// remaining cost per walked tile).
@@ -302,48 +302,64 @@ namespace ClassicUO.Game.Map
 
         /// <summary>Where a render-list walk starts. A whole-tile walk (<paramref name="single"/> false) with dynamics on the tile
         /// starts the merged order at the tile's head (<paramref name="merged"/> true: continue with <see cref="Next"/>);
-        /// otherwise the walk starts at <paramref name="first"/> and follows TNext. A single-object walk (one object submitted,
-        /// the Gpu item cache and mobile calls) never merges: the object's TNext is null for the tile's last object, so it
-        /// cannot tell the two apart (Codex P2: a tail mobile's call restarted at the tile head). The render walk takes the same
-        /// decision from its caller's <see cref="MergeCells"/> and starts with <see cref="StartTile"/>.</summary>
-        public static GameObject Start(GameObject first, Chunk chunk, bool single, out TileWalk walk, out bool merged)
+        /// otherwise it walks the tile's list from its head by TNext from <paramref name="list"/>. A single-object walk (one
+        /// object submitted, the Gpu item cache and mobile calls) never merges and ends after <paramref name="first"/>
+        /// (<paramref name="list"/> null; Codex P2: a tail mobile's call restarted at the tile head). The render walk takes the
+        /// same decision from its caller's <see cref="MergeCells"/> and starts with <see cref="StartTile"/>.</summary>
+        public static GameObject Start(GameObject first, Chunk chunk, bool single, out TileWalk walk, out bool merged, out TileListObject list)
         {
             merged = !single && (MergeCells(chunk) >> first.TileCell & 1) != 0;
 
-            return StartTile(first, chunk, merged, out walk);
+            return StartTile(first, chunk, merged, single, out walk, out list);
         }
 
-        /// <summary>A walk from <paramref name="first"/>: the merged order of its tile from the tile's head when
-        /// <paramref name="merged"/>, else <paramref name="first"/> itself (continue with TNext).</summary>
+        /// <summary>A walk of <paramref name="first"/>'s tile: the merged order from the tile's head when
+        /// <paramref name="merged"/> (continue with <see cref="Next"/>), <paramref name="first"/> alone when
+        /// <paramref name="single"/> (<paramref name="list"/> null: continue with list?.TNext), else the list from the tile's
+        /// head (<paramref name="list"/>, the walk's current object typed as a list object, kept in a local by the caller:
+        /// continue with list.TNext). A whole-tile walk starts at the tile's first object (<see cref="First"/>), which is the
+        /// list's head unless the tile holds only dynamics, and then it merges.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static GameObject StartTile(GameObject first, Chunk chunk, bool merged, out TileWalk walk)
+        public static GameObject StartTile(GameObject first, Chunk chunk, bool merged, bool single, out TileWalk walk, out TileListObject list)
         {
-            if (!merged)
+            if (merged)
             {
-                walk = default;
+                list = null;
+
+                return Begin(chunk, first.TileCell, out walk);
+            }
+
+            walk = default;
+
+            if (single)
+            {
+                list = null;
 
                 return first;
             }
 
-            return Begin(chunk, first.TileCell, out walk);
+            return list = chunk.HeadAt(first.TileCell);
         }
 
         /// <summary>A whole-tile walk of (<paramref name="chunk"/>, <paramref name="cell"/>) by the chunk's
         /// <see cref="MergeCells"/>: the merged order (<paramref name="merged"/> true, continue with <see cref="Next"/>) or the
-        /// list from its head (continue with TNext).</summary>
+        /// list from its head (<paramref name="list"/>, the walk's current object typed as a list object: continue with
+        /// list.TNext).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static GameObject Open(Chunk chunk, int cell, ulong mergeCells, out TileWalk walk, out bool merged)
+        public static GameObject Open(Chunk chunk, int cell, ulong mergeCells, out TileWalk walk, out bool merged, out TileListObject list)
         {
             merged = (mergeCells >> cell & 1) != 0;
 
             if (merged)
             {
+                list = null;
+
                 return Begin(chunk, cell, out walk);
             }
 
             walk = default;
 
-            return chunk.HeadAt(cell);
+            return list = chunk.HeadAt(cell);
         }
 
         /// <summary>
@@ -396,7 +412,7 @@ namespace ClassicUO.Game.Map
 
         public GameObject Next()
         {
-            GameObject s = _s;
+            TileListObject s = _s;
 
             if (_di < _dn && (s == null || Before(in _d[_di].Key, s)))
             {
@@ -415,7 +431,7 @@ namespace ClassicUO.Game.Map
     /// <summary>
     /// T6b part 2: one tile's objects for the readers that are not in the render hot path (GetMapZ, the pathfinder, the
     /// foliage, lights, targeting, the max-Z decision, sitting): <see cref="TileWalk"/>'s merged order, from the tile's head or
-    /// from a given object. A chunk without an index walks its list by TNext.
+    /// from a given object. A chunk without an index walks its list alone.
     /// </summary>
     internal struct TileReader
     {
@@ -460,7 +476,8 @@ namespace ClassicUO.Game.Map
                 return _walk.Next();
             }
 
-            return _cur = _cur?.TNext;
+            // a chunk without an index holds no dynamics; a dynamic passed as the start has no list links
+            return _cur = (_cur as TileListObject)?.TNext;
         }
     }
 }

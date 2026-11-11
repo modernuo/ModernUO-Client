@@ -87,7 +87,7 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             var list = new List<GameObject>();
 
-            for (GameObject o = chunk.GetHeadObject(x, y); o != null; o = o.TNext)
+            for (TileListObject o = chunk.GetHeadObject(x, y); o != null; o = o.TNext)
             {
                 list.Add(o);
             }
@@ -143,9 +143,8 @@ namespace ClassicUO.UnitTests.Game.Map
         private static List<GameObject> WalkFrom(GameObject first, Chunk chunk, bool single)
         {
             var seen = new List<GameObject>();
-            GameObject stopAt = single ? first.TNext : null;
 
-            for (GameObject o = TileWalk.Start(first, chunk, single, out TileWalk w, out bool merged); o != stopAt; o = merged ? w.Next() : o.TNext)
+            for (GameObject o = TileWalk.Start(first, chunk, single, out TileWalk w, out bool merged, out TileListObject list); o != null; o = merged ? w.Next() : list = list?.TNext)
             {
                 seen.Add(o);
                 Assert.True(seen.Count < 100_000, "walk does not end");
@@ -157,7 +156,7 @@ namespace ClassicUO.UnitTests.Game.Map
         [Fact]
         public void Single_Object_Walk_Of_A_Tail_Object_Does_Not_Restart_At_The_Tile_Head()
         {
-            // Codex P2: the tile's last object has TNext == null, the same value a whole-tile call passes as "no stop"
+            // Codex P2: a single-object call of the tile's last object must not continue at the tile head
             Place(_a, NewLand(_world, 0), 2, 2);
             Item item = NewItem(Plain, 0);
             Place(_a, item, 2, 2);
@@ -165,7 +164,6 @@ namespace ClassicUO.UnitTests.Game.Map
             Place(_a, m1, 2, 2);
             Place(_a, m2, 2, 2);
             List<GameObject> list = List(_a, 2, 2);
-            Assert.Null(list[^1].TNext);
 
             foreach (GameObject o in list)
             {

@@ -82,7 +82,7 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             var list = new List<GameObject>();
 
-            for (GameObject o = _chunk.GetHeadObject(x, y); o != null; o = o.TNext)
+            for (TileListObject o = _chunk.GetHeadObject(x, y); o != null; o = o.TNext)
             {
                 list.Add(o);
                 Assert.True(o.TNext == null || o.TNext.TPrevious == o, "broken TPrevious link");
@@ -408,8 +408,6 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Mobile m = _world.GetOrCreateMobile(0x2000);
             Add(m, 2, 2);
-            Assert.Null(m.TNext);
-            Assert.Null(m.TPrevious); // the old "TNext != null || TPrevious != null" test said: not placed, don't re-add
             Assert.True(m.IsPlaced);
 
             // a finished step: coordinates first, then the re-add (Mobile.ProcessSteps; the Map half of AddToTile is not

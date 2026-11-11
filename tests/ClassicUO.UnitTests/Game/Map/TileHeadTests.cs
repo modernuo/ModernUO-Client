@@ -124,7 +124,7 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             var list = new List<GameObject>();
 
-            for (GameObject o = chunk.GetHeadObject(cell >> 3, cell & 7); o != null; o = o.TNext)
+            for (TileListObject o = chunk.GetHeadObject(cell >> 3, cell & 7); o != null; o = o.TNext)
             {
                 list.Add(o);
                 Assert.True(list.Count < 10_000);
@@ -144,8 +144,8 @@ namespace ClassicUO.UnitTests.Game.Map
                 for (int cell = 0; cell < 64; cell++)
                 {
                     int x = cell >> 3, y = cell & 7;
-                    GameObject anchor = chunk.Tiles[x, y];
-                    GameObject walked = TileOrder.FindHead(anchor, out bool cycle);
+                    TileListObject anchor = chunk.Tiles[x, y];
+                    TileListObject walked = TileOrder.FindHead(anchor, out bool cycle);
                     Assert.False(cycle);
                     // the stored head is the TPrevious walk's head (both null on an empty list)
                     Assert.Same(walked, chunk.GetHeadObject(x, y));

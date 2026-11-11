@@ -82,7 +82,8 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public void Retire(GameObject obj, uint now)
         {
-            if (obj.InRecycler || !obj.IsDestroyed || obj.TileChunk != null || obj.TNext != null || obj.TPrevious != null)
+            if (obj is not TileListObject node || obj.InRecycler || !obj.IsDestroyed || obj.TileChunk != null || node.TNext != null ||
+                node.TPrevious != null)
             {
                 // not retired by Chunk.Destroy's rules: never reuse it
                 return;
@@ -287,10 +288,10 @@ namespace ClassicUO.Game.Map
                     for (int y = 0; y < 8; y++)
                     {
                         // Tiles[x, y] is any node of the list (normally the land), not necessarily its head
-                        GameObject head = chunk.GetHeadObject(x, y);
+                        TileListObject head = chunk.GetHeadObject(x, y);
                         int guard = 0;
 
-                        for (GameObject o = head; o != null && guard < 10000; o = o.TNext, guard++)
+                        for (TileListObject o = head; o != null && guard < 10000; o = o.TNext, guard++)
                         {
                             _sweepObjects++;
 

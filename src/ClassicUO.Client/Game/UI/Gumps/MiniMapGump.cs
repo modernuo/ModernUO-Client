@@ -344,7 +344,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                             if (block != null)
                             {
-                                GameObject obj = block.Tiles[x, y];
+                                TileListObject obj = block.Tiles[x, y];
 
                                 while (obj?.TNext != null)
                                 {
