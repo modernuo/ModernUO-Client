@@ -322,28 +322,11 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             // T1 (funnel part 8, Codex audit P2 #2): nothing is linked to the detached preview mobile (its hair and beard are
-            // held by the gump), so there is nothing to remove from the World
-            fakeMobile.Race = selectedRace;
-            fakeMobile.IsFemale = isFemale;
-
-            if (isFemale)
-            {
-                fakeMobile.Flags |= Flags.Female;
-            }
-            else
-            {
-                fakeMobile.Flags &= ~Flags.Female;
-            }
+            // held by the gump), so there is nothing to remove from the World. T9 S4: its record (WorldEcs.Previews) and cache
+            // are written through the funnel
+            ushort body = selectedRace == RaceType.ELF ? (ushort)(isFemale ? 0x025E : 0x025D) : (ushort)(isFemale ? 0x0191 : 0x0190);
+            World.Writer.SetPreviewBody(this, fakeMobile, body, selectedRace, isFemale);
             #endregion
-
-            if (selectedRace == RaceType.ELF)
-            {
-                fakeMobile.Graphic = (ushort)(isFemale ? 0x025E : 0x025D);
-            }
-            else
-            {
-                fakeMobile.Graphic = (ushort)(isFemale ? 0x0191 : 0x0190);
-            }
 
             hair = CreateItem(0x4000_0000 + (int)Layer.Hair, 0, Layer.Hair);
             if (!isFemale && selectedRace != RaceType.ELF)
@@ -407,13 +390,13 @@ namespace ClassicUO.Game.UI.Gumps
             switch (e.Layer)
             {
                 case Layer.Beard:
-                    beard.Hue = e.SelectedHue;
+                    World.Writer.SetPreviewHue(this, beard, e.SelectedHue);
                     break;
                 case Layer.Hair:
-                    hair.Hue = e.SelectedHue;
+                    World.Writer.SetPreviewHue(this, hair, e.SelectedHue);
                     break;
                 case Layer.Invalid:
-                    fakeMobile.Hue = e.SelectedHue;
+                    World.Writer.SetPreviewHue(this, fakeMobile, e.SelectedHue);
                     break;
             }
 
@@ -455,22 +438,33 @@ namespace ClassicUO.Game.UI.Gumps
             Layer layer;
             CharacterCreationValues.ComboContent content;
 
-            fakeMobile.Hue = CurrentColorOption[Layer.Invalid].Item2;
+            World.Writer.SetPreviewHue(this, fakeMobile, CurrentColorOption[Layer.Invalid].Item2);
 
             if (beard != null)
             {
                 layer = Layer.Beard;
                 content = CharacterCreationValues.GetFacialHairComboContent(selectedRace);
 
-                beard.Graphic = (ushort)content.GetGraphic(CurrentOption[layer]);
-                beard.Hue = CurrentColorOption[layer].Item2;
+                World.Writer.SetPreviewItem(this, beard, (ushort)content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, beard.Layer, beard.Container);
             }
 
             layer = Layer.Hair;
             content = CharacterCreationValues.GetHairComboContent(isFemale, selectedRace);
 
-            hair.Graphic = (ushort)content.GetGraphic(CurrentOption[layer]);
-            hair.Hue = CurrentColorOption[layer].Item2;
+            World.Writer.SetPreviewItem(this, hair, (ushort)content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, hair.Layer, hair.Container);
+        }
+
+        public override void Dispose()
+        {
+            bool first = !IsDisposed;
+            base.Dispose();
+
+            // T9 S4: this gump's preview records (its mobile, hair and beard live only here); once, after the base disposal,
+            // and only this gump's (another preview gump's records stay)
+            if (first)
+            {
+                World?.Ecs.ReleasePreviews(this);
+            }
         }
 
         private Item CreateItem(int id, ushort hue, Layer layer)
@@ -484,10 +478,7 @@ namespace ClassicUO.Game.UI.Gumps
             // draws the instance it is given. Before, GetOrCreateItem put it in the in-game World under 0x4000_0000 + layer,
             // a serial a real server item can have (that item would have been rewritten, then removed on Apply)
             Item item = Item.Create(World, 0x4000_0000 + (uint)layer); // use layer as unique Serial
-            item.Graphic = (ushort)id;
-            item.Hue = hue;
-            item.Layer = layer;
-            //
+            World.Writer.SetPreviewItem(this, item, (ushort)id, hue, layer, item.Container);
 
             return item;
         }

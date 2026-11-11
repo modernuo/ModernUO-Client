@@ -47,13 +47,22 @@ namespace ClassicUO.Ecs
     {
         public const uint NO_CONTAINER = 0xFFFF_FFFF;
 
-        private readonly Dictionary<uint, Entity> _bySerial = new Dictionary<uint, Entity>(4096);
-        private readonly List<Entity> _scratch = new List<Entity>(256);
+        private readonly Dictionary<uint, Entity> _bySerial;
+        private readonly List<Entity> _scratch;
 
-        public WorldMirror()
+        public WorldMirror() : this(4096)
+        {
+        }
+
+        /// <summary><paramref name="capacity"/>: the records expected (the serial index and handle table start that big;
+        /// the client's preview mirror holds a few dozen).</summary>
+        public WorldMirror(int capacity)
         {
             EcsSchema.Register();
             Store = new EntityStore();
+            _bySerial = new Dictionary<uint, Entity>(capacity);
+            _scratch = new List<Entity>(Math.Min(capacity, 256));
+            _handles = new object[capacity];
         }
 
         public EntityStore Store { get; }
@@ -84,7 +93,7 @@ namespace ClassicUO.Ecs
         // T9 (World.Get and its kin): the client object each record stands for, by entity id (ClassicUO.Ecs does not know the
         // client's types). Not a component: Friflo's DeleteEntity leaves the vacated tail uncleared, so a reference there would
         // keep removed objects reachable, and an extra component on every record costs archetype churn (T3a).
-        private object[] _handles = new object[4096];
+        private object[] _handles;
 
         /// <summary>
         /// T9 (<c>World.Get</c>): the client object last upserted under <paramref name="serial"/>'s record (null: no

@@ -287,7 +287,7 @@ namespace ClassicUO.Game.GameObjects
         /// hooks queue it, World.Update's first pass and sweep catch any other), so the candidates are counted there: none
         /// (every step but the first near new corpses) costs O(corpses); one is opened directly; two or more take the
         /// every-item loop, which alone knows the dictionary's order (which gump opens first). Before the list's first build
-        /// after World.Clear the loop runs. CUO_STEP_OPEN_CHECK compares the decision with the loop's.
+        /// after World.Clear the loop runs.
         /// </summary>
         internal void OpenCorpsesInRange(int range)
         {
@@ -317,13 +317,6 @@ namespace ClassicUO.Game.GameObjects
             {
                 found = 2;
             }
-
-#if CUO_DEVTOOLS
-            if (StepOpenCheck.On)
-            {
-                StepOpenCheck.Corpses(this, range, found, single);
-            }
-#endif
 
             if (found == 1)
             {
@@ -374,13 +367,6 @@ namespace ClassicUO.Game.GameObjects
 
                 bool door = DoorAhead(World, x, y, z, Client.Game.UO.FileManager.TileData.StaticData);
 
-#if CUO_DEVTOOLS
-                if (StepOpenCheck.On)
-                {
-                    StepOpenCheck.Door(World, x, y, z, door);
-                }
-#endif
-
                 if (door)
                 {
                     GameActions.OpenDoor();
@@ -394,7 +380,6 @@ namespace ClassicUO.Game.GameObjects
         /// the dynamic tile index, <see cref="TileReader"/>). A world item's place is its tile; the scan also matched items in
         /// containers or worn whose container X/Y equalled the tile, which are not doors in front of the player. When the
         /// tile's chunk is not loaded (its items parked) the scan runs. <paramref name="data"/> is the tile data (Item.ItemData's).
-        /// CUO_STEP_OPEN_CHECK compares the answer with the scan's.
         /// </summary>
         internal static bool DoorAhead(World world, int x, int y, int z, StaticTiles[] data)
         {
