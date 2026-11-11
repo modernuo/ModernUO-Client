@@ -83,8 +83,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             if (item != null && item.Container != 0xFFFF_FFFF)
             {
-                // the tables' lookup, as World's before T9 (world_entity_index off): the reference keeps the old semantics
-                world.GetHeld(item.Container)?.Remove(item);
+                // the tables' lookup, as World's before T9 (world_entity_index): the reference keeps the old semantics
+                LegacyWorldLookups.GetHeld(world, item.Container)?.Remove(item);
             }
         }
 

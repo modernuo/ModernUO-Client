@@ -252,7 +252,7 @@ namespace ClassicUO.Game
 
         // T4: World holds this instance AND the record under its serial is of its kind (a death-rekeyed mobile and a corpse
         // item can share a serial; the mirror keeps one record per serial, so a commit must not write the other kind's record)
-        // (T9 slice 3: with world_entity_index on, one lookup: the record's handle is the instance)
+        // (T9 slice 3: one lookup, the record's handle is the instance)
         private bool HoldsEntity(Entity entity) => entity != null && _world.TryGetLiveRecord(entity, entity.Serial, out _);
 
         /// <summary>
@@ -803,7 +803,7 @@ namespace ClassicUO.Game
 
         public void OnDestroyed(Entity entity)
         {
-            // a newer live object already owns this serial (T9 slice 3: World.NewerOwner follows world_entity_index)
+            // a newer live object already owns this serial (T9 slice 3: World.NewerOwner, the index's handle)
             if (_world.NewerOwner(entity) != null)
             {
                 return;

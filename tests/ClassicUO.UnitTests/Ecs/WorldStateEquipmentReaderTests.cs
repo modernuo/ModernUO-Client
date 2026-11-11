@@ -423,7 +423,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.Remove(LATE);
             late.FindItemByLayer(Layer.Shirt).Should().BeNull();
 
-            // with its handle, as WorldEcs creates every record: world_entity_index resolves the wearer from it (a record
+            // with its handle, as WorldEcs creates every record: World's index resolves the wearer from it (a record
             // without one is no object to the index, so the equip would make an orphan)
             world.Ecs.Mirror.UpsertMobile(LATE, late.Graphic, 0, late.X, late.Y, late.Z, 0, 0, false, late);
             world.Writer.Equip(NEWSHIRT, 0x1517, Layer.Shirt, LATE, 0, out _, out _);

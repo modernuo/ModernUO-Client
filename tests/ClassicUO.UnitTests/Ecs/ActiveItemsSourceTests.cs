@@ -35,7 +35,7 @@ namespace ClassicUO.UnitTests.Ecs
             World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer _, PLAYER);
 
             // the mobile stage is not under test (its updates need the animation data): the world holds no mobile, and no
-            // mobile record (with world_entity_index on, the due mobiles resolve through the mirror's index)
+            // mobile record (the due mobiles resolve through the mirror's index)
             foreach (uint serial in world.Mobiles.Values.Select(m => m.Serial).ToList())
             {
                 world.Mobiles.Remove(serial);

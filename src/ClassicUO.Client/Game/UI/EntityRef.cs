@@ -8,8 +8,8 @@ namespace ClassicUO.Game.UI
     /// perf-8: a window's reference to the world object it shows by serial, so a per-frame update repeats the dictionary
     /// lookup only when the object may have changed. MobileEntityLookup's rule: the cached object is used while its serial is
     /// the one asked for, it is not destroyed (objects are pooled and reused for other serials), and no mirror record was
-    /// deleted since (WorldMirror.Epoch). Otherwise the lookup runs again and its result, also null or (world_entity_index
-    /// off) a destroyed object still in the table, is what the caller gets, as before. A null result is not cached (an add moves no epoch). One
+    /// deleted since (WorldMirror.Epoch). Otherwise the lookup runs again and its result, also null, is what the caller
+    /// gets, as before. A null result is not cached (an add moves no epoch). One
     /// reference holds one kind: use one of <see cref="Mobile"/>, <see cref="Item"/> or <see cref="Entity"/>.
     /// </summary>
     internal struct EntityRef
