@@ -71,6 +71,23 @@ Notes:
 - `-p:CuoMibcPath=<file.mibc>` applies a static PGO profile (opt-in; `tools/pgo/collect_mibc.py` collects one).
 - `scripts/build-naot.sh` (run from `scripts/`) is the plugin-host layout. It publishes `ClassicUO.Bootstrap` and then the client as a shared library (`-p:NativeLib=Shared -p:OutputType=Library`) into `bin/dist`.
 
+### Shader toolchain
+
+The Gpu world renderer's shaders are compiled ahead of time and committed: `poc/Uo.Render/Shaders/compiled/` holds DXIL (D3D12) and SPIR-V (Vulkan) for each shader variant, and `Uo.Render` embeds them. A normal build or NativeAOT publish needs no shader compiler and no Windows SDK. The client's Gpu path always runs on Vulkan, so it needs the SPIR-V files. A build without them runs `auto` on the Compatibility renderer and logs why; `gpu` exits with an error.
+
+You need DXC only when you change a shader source (`poc/Uo.Render/Shaders/*.hlsl`) or the variant list (`ShaderVariant` items in `Uo.Render.csproj`). Two compilers are used:
+
+- DXIL: the `dxc.exe` of the Windows SDK 10.0.26100.0 (`C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\dxc.exe`). Override with `-p:Dxc=<path>`.
+- SPIR-V: the official DXC release v1.9.2609 from https://github.com/microsoft/DirectXShaderCompiler/releases (the SDK's dxc has no SPIR-V backend). Unpack it anywhere; the default path is `C:\Repositories\tools\dxc\v1.9.2609\bin\x64\dxc.exe`. Override with `-p:DxcSpirv=<path>`.
+
+Regenerate:
+
+```
+dotnet build <repo>/poc/Uo.Render/Uo.Render.csproj -c Release -p:CompileShaders=true
+```
+
+It rewrites the compiled files and `Shaders/compiled/<name>.hlsl.sha256`, the SHA-256 of each source with CR removed. The build fails if either compiler is missing. Commit the compiled files and hash files with the source change. `ShaderBundleTests` fails when a source no longer matches its stored hash, and when `Uo.Render` does not embed both formats.
+
 ## Convert a UO install into a pack
 
 The converter is `poc/Uo.Converter`. Full conversion:
