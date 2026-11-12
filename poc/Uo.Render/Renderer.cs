@@ -162,9 +162,6 @@ public sealed unsafe class Renderer : IDisposable
 
             _vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
             _ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
-            // clip-2 depth model (FrameUniforms.DepthModel): sprite.hlsl compiled with GEO, the fragment writing the geometric depth
-            _vsGeo = CreateShader("sprite_vsgeo", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
-            _psGeo = CreateShader("sprite_psgeo", "PSMainGeo", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
 
             _samplerPoint = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
             // zoomed out: trilinear, limited to mips the 2-px gutter still protects (sprite.hlsl LINEAR_MAX_LOD must match)
@@ -485,6 +482,17 @@ public sealed unsafe class Renderer : IDisposable
         return pipeline;
     }
 
+    /// <summary>clip-2 depth model (FrameUniforms.DepthModel): sprite.hlsl compiled with GEO, the fragment writing the geometric
+    /// depth. Created with the first GEO pipeline, so a renderer that never turns depth_model on loads only the default pair.</summary>
+    void EnsureGeoShaders()
+    {
+        if (_vsGeo == IntPtr.Zero) _vsGeo = CreateShader("sprite_vsgeo", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
+        if (_psGeo == IntPtr.Zero) _psGeo = CreateShader("sprite_psgeo", "PSMainGeo", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
+    }
+
+    /// <summary>The GEO shaders exist (<see cref="EnsureGeoShaders"/>).</summary>
+    public bool GeoShadersLoaded => _vsGeo != IntPtr.Zero && _psGeo != IntPtr.Zero;
+
     IntPtr CreatePipeline(SDL_GPUTextureFormat format, bool translucent, SDL_GPUColorTargetBlendState? blend = null, bool geo = false)
     {
         var color = new SDL_GPUColorTargetDescription { format = format };
@@ -506,6 +514,7 @@ public sealed unsafe class Renderer : IDisposable
                 alpha_blend_op = SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD,
             };
         }
+        if (geo) EnsureGeoShaders();
         var ci = new SDL_GPUGraphicsPipelineCreateInfo
         {
             vertex_shader = geo ? _vsGeo : _vs,
