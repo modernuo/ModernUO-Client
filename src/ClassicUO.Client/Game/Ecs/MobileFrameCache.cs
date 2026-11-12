@@ -60,6 +60,8 @@ namespace ClassicUO.Game
         public byte Alpha;
         public ushort OverrideHue, BodyHue;
         public PackSet Pack;
+        // clip-2: recorded with depth_model on (the instances carry the composite anchor, SpriteInstance.GeoMobile)
+        public bool Geo;
         public Entry[] Entries = new Entry[8];
         public int Count;
 

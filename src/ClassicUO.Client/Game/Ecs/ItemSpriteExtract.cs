@@ -28,8 +28,15 @@ namespace ClassicUO.Game
         public byte Layer;
         public bool OnGround, Multi, Hidden, Movable;
 
+        // clip-2 depth model: the item's tile y and z (X above), for the geometric depth's shape
+        public ushort Y;
+        public sbyte Z;
+
         // tiledata of the item's graphic (the multi's graphic for a multi)
         public bool TileLight, TilePartialHue, TileAnimated, TileContainer, TileStackable, TileHeavy;
+
+        // clip-2: the shape bits (SpriteInstance.GeoShapeBits) and height of the same tiledata row
+        public byte TileGeoBits, TileHeight;
 
         // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset (read from the
         // ItemOffset component), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state;
@@ -212,6 +219,8 @@ namespace ClassicUO.Game
                 i.Hue = r.Hue;
                 i.X = r.X;
                 y = r.Y;
+                i.Y = r.Y;
+                i.Z = r.Z;
                 i.Hidden = ((Flags)r.Flags & Flags.Hidden) != 0;
                 i.Movable = ((Flags)r.Flags & Flags.Movable) != 0;
                 i.OnGround = (r.Bits & ClassicUO.Ecs.ItemDrawRow.ON_GROUND) != 0;
@@ -233,6 +242,8 @@ namespace ClassicUO.Game
             i.Hue = item.Hue;
             i.X = item.X;
             y = item.Y;
+            i.Y = item.Y;
+            i.Z = item.Z;
             i.Hidden = item.IsHidden;
             i.Movable = (item.Flags & Flags.Movable) != 0;
             i.Amount = item.Amount;
@@ -256,6 +267,8 @@ namespace ClassicUO.Game
             i.TileContainer = tile.IsContainer;
             i.TileStackable = tile.IsStackable;
             i.TileHeavy = tile.Weight > 90;
+            i.TileHeight = tile.Height;
+            i.TileGeoBits = (byte)SpriteInstance.GeoShapeBits(tile.IsWall, tile.IsBackground, tile.IsSurface, tile.Height);
         }
     }
 
@@ -285,6 +298,13 @@ namespace ClassicUO.Game
         private ILegacySpriteSource _legacySrc;
         private GpuSpriteTables _tables;
         private int _offsetX, _offsetY;
+
+        // clip-2 depth model (DepthModel.On at Run): the drawn item's tile, z and shape for its records (DynamicSprite.GeoTile,
+        // corpses DynamicSprite.Geo); off, the records stay as before the switch existed
+        private bool _geo;
+        private ushort _geoTx, _geoTy;
+        private sbyte _geoZ;
+        private byte _geoHeight, _geoBits;
 
         public ItemSpriteExtract() { }
 
@@ -385,6 +405,12 @@ namespace ClassicUO.Game
             _selectOnly = selectOnly;
             _offsetX = offsetX;
             _offsetY = offsetY;
+            _geo = Scenes.DepthModel.On;
+            _geoTx = item.X;
+            _geoTy = item.Y;
+            _geoZ = item.Z;
+            _geoHeight = item.TileHeight;
+            _geoBits = item.TileGeoBits;
             Light = false;
             SetsFlipped = false;
             HasArtPick = false;
@@ -687,6 +713,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+            int anchorX = x, anchorY = y;
             x -= flipped ? w - fe.CenterX : fe.CenterX;
             y -= h + fe.CenterY;
 
@@ -739,12 +766,27 @@ namespace ClassicUO.Game
                 ObjX = owner.X
             };
 
+            if (_geo)
+            {
+                // clip-2: a corpse is a mobile composite around the same anchor (MobileView's draw point: tile centre, 3 rows
+                // up), so its body and worn layers lie on the floor below the centre row as a standing mobile's feet do
+                sprite.Geo = true;
+                sprite.GeoAx = (short)Math.Clamp(anchorX - x, short.MinValue, short.MaxValue);
+                sprite.GeoZ = _geoZ;
+            }
+
             for (int i = 0; i < strips; i++)
             {
                 sprite.Y = y + srcY;
                 sprite.SrcY = srcY;
                 sprite.SrcH = srcH;
                 sprite.Depth = depth + 1f + i * 2;
+
+                if (_geo)
+                {
+                    sprite.GeoAy = (short)Math.Clamp(anchorY - sprite.Y, short.MinValue, short.MaxValue);
+                }
+
                 Add(in sprite);
                 srcY += srcH;
                 srcH = remains;
@@ -845,6 +887,16 @@ namespace ClassicUO.Game
                 Depth = depth + 0.5f,
                 ObjX = objX
             };
+
+            if (_geo)
+            {
+                sprite.GeoTile = true;
+                sprite.GeoTx = _geoTx;
+                sprite.GeoTy = _geoTy;
+                sprite.GeoZ = _geoZ;
+                sprite.GeoHeight = _geoHeight;
+                sprite.GeoBits = _geoBits;
+            }
 
             Add(in sprite);
         }

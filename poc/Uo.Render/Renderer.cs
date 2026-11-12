@@ -33,10 +33,10 @@ public sealed unsafe class Renderer : IDisposable
     /// <summary>Swapchain / offscreen format, or the external target's format at creation (pipelines for other target
     /// formats are built on first use).</summary>
     public readonly SDL_GPUTextureFormat ColorFormat;
-    IntPtr _vs, _ps;
-    readonly List<(SDL_GPUTextureFormat Format, IntPtr Opaque, IntPtr Translucent)> _pipelines = new(2);
+    IntPtr _vs, _ps, _vsGeo, _psGeo;
+    readonly List<(SDL_GPUTextureFormat Format, bool Geo, IntPtr Opaque, IntPtr Translucent)> _pipelines = new(2);
     // translucent-pass pipelines for the effect blends other than Normal/Screen, built on first use
-    readonly List<(SDL_GPUTextureFormat Format, InstanceBlend Blend, IntPtr Pipeline)> _blendPipelines = new();
+    readonly List<(SDL_GPUTextureFormat Format, bool Geo, InstanceBlend Blend, IntPtr Pipeline)> _blendPipelines = new();
     IntPtr _depth;
     uint _depthW, _depthH;
     readonly IntPtr _samplerPoint, _samplerLinear, _samplerHue;
@@ -444,26 +444,25 @@ public sealed unsafe class Renderer : IDisposable
     }
 
     /// <summary>Opaque and translucent pipelines for a colour target format, built on first use.</summary>
-    (IntPtr Opaque, IntPtr Translucent) Pipelines(SDL_GPUTextureFormat format)
+    (IntPtr Opaque, IntPtr Translucent) Pipelines(SDL_GPUTextureFormat format, bool geo = false)
     {
         foreach (var p in _pipelines)
-            if (p.Format == format) return (p.Opaque, p.Translucent);
-        var opaque = CreatePipeline(format, false);
+            if (p.Format == format && p.Geo == geo) return (p.Opaque, p.Translucent);
+        var opaque = CreatePipeline(format, false, null, geo);
         IntPtr translucent;
-        try { translucent = CreatePipeline(format, true); }
+        try { translucent = CreatePipeline(format, true, null, geo); }
         catch { SDL_ReleaseGPUGraphicsPipeline(Device, opaque); throw; }
-        var entry = (format, opaque, translucent);
-        _pipelines.Add(entry);
-        return (entry.Item2, entry.Item3);
+        _pipelines.Add((format, geo, opaque, translucent));
+        return (opaque, translucent);
     }
 
     /// <summary>The translucent pipeline for an effect blend (ClassicUO GameEffect's FNA BlendState: the colour factors as
     /// there, alpha One/Zero as FNA's defaults). Normal and Screen use the premultiplied pipeline.</summary>
-    IntPtr BlendPipeline(SDL_GPUTextureFormat format, InstanceBlend blend)
+    IntPtr BlendPipeline(SDL_GPUTextureFormat format, InstanceBlend blend, bool geo = false)
     {
         foreach (var p in _blendPipelines)
-            if (p.Format == format && p.Blend == blend) return p.Pipeline;
-        if (blend == InstanceBlend.NormalOrdered) return Pipelines(format).Translucent;
+            if (p.Format == format && p.Geo == geo && p.Blend == blend) return p.Pipeline;
+        if (blend == InstanceBlend.NormalOrdered) return Pipelines(format, geo).Translucent;
         (SDL_GPUBlendFactor src, SDL_GPUBlendFactor dst, SDL_GPUBlendOp op) = blend switch
         {
             InstanceBlend.Multiply => (SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ZERO, SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_SRC_COLOR, SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD),
@@ -482,12 +481,23 @@ public sealed unsafe class Renderer : IDisposable
             dst_alpha_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ZERO,
             alpha_blend_op = SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD,
         };
-        var pipeline = CreatePipeline(format, true, state);
-        _blendPipelines.Add((format, blend, pipeline));
+        var pipeline = CreatePipeline(format, true, state, geo);
+        _blendPipelines.Add((format, geo, blend, pipeline));
         return pipeline;
     }
 
-    IntPtr CreatePipeline(SDL_GPUTextureFormat format, bool translucent, SDL_GPUColorTargetBlendState? blend = null)
+    /// <summary>clip-2 depth model (FrameUniforms.DepthModel): sprite.hlsl compiled with GEO, the fragment writing the geometric
+    /// depth. Created with the first GEO pipeline, so a renderer that never turns depth_model on loads only the default pair.</summary>
+    void EnsureGeoShaders()
+    {
+        if (_vsGeo == IntPtr.Zero) _vsGeo = CreateShader("sprite_vsgeo", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
+        if (_psGeo == IntPtr.Zero) _psGeo = CreateShader("sprite_psgeo", "PSMainGeo", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
+    }
+
+    /// <summary>The GEO shaders exist (<see cref="EnsureGeoShaders"/>).</summary>
+    public bool GeoShadersLoaded => _vsGeo != IntPtr.Zero && _psGeo != IntPtr.Zero;
+
+    IntPtr CreatePipeline(SDL_GPUTextureFormat format, bool translucent, SDL_GPUColorTargetBlendState? blend = null, bool geo = false)
     {
         var color = new SDL_GPUColorTargetDescription { format = format };
         if (blend.HasValue)
@@ -508,10 +518,11 @@ public sealed unsafe class Renderer : IDisposable
                 alpha_blend_op = SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD,
             };
         }
+        if (geo) EnsureGeoShaders();
         var ci = new SDL_GPUGraphicsPipelineCreateInfo
         {
-            vertex_shader = _vs,
-            fragment_shader = _ps,
+            vertex_shader = geo ? _vsGeo : _vs,
+            fragment_shader = geo ? _psGeo : _ps,
             primitive_type = SDL_GPUPrimitiveType.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
             // Depth clip, not clamp: SDL maps enable_depth_clip=false to Vulkan depthClampEnable, which needs the depthClamp
             // feature, and FNA3D creates its device without it (VUID-VkPipelineRasterizationStateCreateInfo-depthClampEnable-00782).
@@ -522,6 +533,7 @@ public sealed unsafe class Renderer : IDisposable
             },
             depth_stencil_state = new SDL_GPUDepthStencilState
             {
+                // geo too: a mobile's layers share one geometric depth and, as with their equal keys, the first emitted wins
                 compare_op = SDL_GPUCompareOp.SDL_GPU_COMPAREOP_LESS,
                 enable_depth_test = true,
                 enable_depth_write = !translucent,
@@ -790,7 +802,8 @@ public sealed unsafe class Renderer : IDisposable
         }
         TargetW = tw; TargetH = th;
         EnsureDepth(tw, th);
-        var (opaque, translucentPipe) = Pipelines(format);
+        bool geo = f.Uniforms.DepthModel != 0;
+        var (opaque, translucentPipe) = Pipelines(format, geo);
 
         int vx = 0, vy = 0, vw = (int)tw, vh = (int)th;
         if (f.ViewportWidth > 0 && f.ViewportHeight > 0) { vx = f.ViewportX; vy = f.ViewportY; vw = f.ViewportWidth; vh = f.ViewportHeight; }
@@ -848,7 +861,7 @@ public sealed unsafe class Renderer : IDisposable
                 var run = f.TransRuns[r];
                 int count = Math.Min(run.Count, transCount - run.Start);
                 if (count <= 0) continue;
-                var pipe = run.Blend is InstanceBlend.Normal or InstanceBlend.NormalOrdered or InstanceBlend.Screen ? translucentPipe : BlendPipeline(format, run.Blend);
+                var pipe = run.Blend is InstanceBlend.Normal or InstanceBlend.NormalOrdered or InstanceBlend.Screen ? translucentPipe : BlendPipeline(format, run.Blend, geo);
                 if (pipe != bound) { Bind(pass, pipe, ref f, vx, vy, vw, vh); bound = pipe; }
                 u.TransBase = TransBase + (uint)run.Start;
                 SDL_PushGPUVertexUniformData(cmd, 0, (IntPtr)(&u), (uint)sizeof(FrameUniforms));
@@ -1096,6 +1109,8 @@ public sealed unsafe class Renderer : IDisposable
         foreach (var p in _blendPipelines) Pipe(Device, p.Pipeline);
         Shd(Device, _vs);
         Shd(Device, _ps);
+        Shd(Device, _vsGeo);
+        Shd(Device, _psGeo);
         if (_windowClaimed) SDL_ReleaseWindowFromGPUDevice(Device, Window);
         if (OwnsDevice) SDL_DestroyGPUDevice(Device);
     }

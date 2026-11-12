@@ -80,6 +80,7 @@ public sealed class BakeJob : Job
 
         bool wobble = Pack.WaterWobble;
         bool bakeTranslucent = Pack.BakeTranslucentAlpha;
+        bool geo = Pack.BakeGeo;
         int need = 128 + statics.Length; // land, its animated-water copies, statics
         if (_keys.Length < need) _keys = new long[need * 2];
         if (Instances.Length < need) Instances = new SpriteInstance[need * 2];
@@ -220,7 +221,7 @@ public sealed class BakeJob : Job
                 uint light = SpriteInstance.StaticTileBits(tx, ty);
                 bool translucent = bakeTranslucent && (staticData[g].Flags & TileFlags.Translucent) != 0;
                 if (translucent) light |= 255u - TranslucentAlpha;
-                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, light, ZInfo(g, s.Z, staticData));
+                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, light, ZInfo(g, s.Z, staticData, land[cell].Z, geo));
                 Keys[Count - 1] = ObjectKey(cell, true, s.Z, s.Graphic);
                 if (translucent) AddTranslucent(Count - 1);
                 Bounds(x, y, x + sp.W, y + sp.H);
@@ -240,17 +241,24 @@ public sealed class BakeJob : Job
     public static int TileMismatches;
 
     /// <summary>Corners of a <see cref="SpriteInstance.FlagZTest"/> static: (u8)z | height &lt;&lt; 8 | Z* bits &lt;&lt; 16, with
-    /// Static._canBeTransparent (Static.Create) as <see cref="SpriteInstance.ZCotCapable"/>.</summary>
-    static uint ZInfo(int g, int z, StaticTileData[] staticData)
+    /// Static._canBeTransparent (Static.Create) as <see cref="SpriteInstance.ZCotCapable"/>. <paramref name="landZ"/>: the
+    /// tile's land z (clip-2 <see cref="SpriteInstance.ZGeoBuried"/>). <paramref name="geo"/>: add the clip-2 shape bits
+    /// (<see cref="PackSet.BakeGeo"/>); off, the bits are the key model's alone.</summary>
+    public static uint ZInfo(int g, int z, StaticTileData[] staticData, int landZ, bool geo)
     {
         ref readonly var d = ref staticData[g];
         ulong f = d.Flags;
         bool roof = (f & TileFlags.Roof) != 0, surface = (f & TileFlags.Surface) != 0, background = (f & TileFlags.Background) != 0;
         bool cotCapable = d.Height > 5 || d.Height == 0 || roof || surface && background || (f & TileFlags.Wall) != 0
             || d.Height == 5 && surface && !background;
-        var noCot = Pack.StaticNoCot;
+        var noCot = Pack?.StaticNoCot;
         bool exempt = (f & TileFlags.Foliage) != 0 || noCot != null && g < noCot.Length && noCot[g];
         uint bits = (roof ? SpriteInstance.ZRoof : 0) | (cotCapable ? SpriteInstance.ZCotCapable : 0) | (exempt ? SpriteInstance.ZNoCot : 0);
+        if (geo)
+        {
+            uint shape = SpriteInstance.GeoShapeBits((f & TileFlags.Wall) != 0, background, surface, d.Height);
+            bits |= shape | (shape != SpriteInstance.ZGeoFlat && z + d.Height <= landZ ? SpriteInstance.ZGeoBuried : 0);
+        }
         return (uint)(byte)(sbyte)z | (uint)d.Height << 8 | bits << 16;
     }
 

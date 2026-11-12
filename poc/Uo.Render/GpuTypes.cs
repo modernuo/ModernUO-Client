@@ -35,6 +35,79 @@ public struct SpriteInstance
     /// <summary>Corners bits 16-23 of <see cref="FlagZTest"/> instances.</summary>
     public const uint ZLand = 1, ZRoof = 2, ZCotCapable = 4, ZNoCot = 8;
 
+    /// <summary>Corners bits 16-23 of <see cref="FlagZTest"/> statics (clip-2 depth model): the static is a wall (tiledata Wall:
+    /// vertical faces on the tile's back edges, GeoDepth.Wall); without it a box over the tile (GeoDepth.Box).</summary>
+    public const uint ZGeoWall = 16;
+
+    /// <summary>Corners bits 16-23 of <see cref="FlagZTest"/> statics (clip-2 depth model): a flat (height 0, Background or
+    /// Surface): its plane, lowered like land (GeoDepth.Flat).</summary>
+    public const uint ZGeoFlat = 32;
+
+    /// <summary>Corners bits 16-23 of <see cref="FlagZTest"/> statics (clip-2 depth model): not a flat, and its top (z + height)
+    /// at or under its tile's land: lowered like the flats (GeoDepth.BuriedDrop), so the land in front still covers it.</summary>
+    public const uint ZGeoBuried = 64;
+
+    /// <summary>Corners bits 16-23 of a dynamic (not <see cref="FlagZTest"/>) art instance (clip-2 depth model): it carries a
+    /// static's shape encoding (<see cref="GeoTile"/>) for items, multis and captured statics; the max-Z, roof and circle of
+    /// transparency uniforms still ignore it, as they ignore every dynamic sprite.</summary>
+    public const uint ZGeoTile = 128;
+
+    /// <summary>The clip-2 shape bits of a static or item with these tiledata properties (<see cref="ZGeoWall"/> or
+    /// <see cref="ZGeoFlat"/>, else none: a box). One rule for the baker and the dynamic sprites.</summary>
+    public static uint GeoShapeBits(bool wall, bool background, bool surface, int height)
+        => wall ? ZGeoWall : height == 0 && (background || surface) ? ZGeoFlat : 0u;
+
+    /// <summary>Gives a dynamic art instance a static's geometric depth (clip-2, only with depth_model on): tile (tx, ty) at
+    /// z with <paramref name="height"/> and the <see cref="GeoShapeBits"/>, in the baked statics' layout (Light bits 16-31 the
+    /// tile's low bytes, Corners = (u8)z | height &lt;&lt; 8 | bits &lt;&lt; 16) plus <see cref="ZGeoTile"/>. False (unchanged)
+    /// for instances whose Light or Corners upper bits are in use: baked, lit, indexed, deformed, rotated or wobbling.</summary>
+    public bool GeoTile(int tx, int ty, int z, int height, uint bits)
+    {
+        if ((Flags & (FlagZTest | FlagLit | FlagStretch | FlagIndexed | FlagDeform)) != 0 || (Light & (LightRotated | LightWobble)) != 0)
+        {
+            return false;
+        }
+
+        Light = (Light & 0xFFFFu) | StaticTileBits(tx, ty);
+        Corners = (uint)(byte)(sbyte)Math.Clamp(z, -128, 127) | (uint)Math.Clamp(height, 0, 255) << 8 | ((bits & 0x7Fu) | ZGeoTile) << 16;
+        return true;
+    }
+
+    /// <summary>Whether <see cref="GeoTile"/> marked this instance.</summary>
+    public readonly bool IsGeoTile => (Flags & (FlagZTest | FlagLit | FlagIndexed | FlagDeform)) == 0
+        && (Light & LightGeoMobile) != LightGeoMobile && (Corners >> 16 & ZGeoTile) != 0;
+
+    /// <summary>Light bits 13 and 15 together (<see cref="LightRotated"/> | <see cref="LightWobble"/>, never combined
+    /// otherwise): a mobile layer carrying its composite's anchor for the clip-2 depth model (<see cref="GeoMobile"/>).</summary>
+    public const uint LightGeoMobile = 0xA000;
+
+    /// <summary>Marks an animation instance as a layer of a mobile composite whose anchor (the body's anchor pixel) lies
+    /// (<paramref name="adx"/>, <paramref name="ady"/>) from the instance's top-left, at tile z <paramref name="z"/>:
+    /// Light bits 16-27 = adx (s12), 28-31 = z bits 0-3; Corners bits 16-27 = ady (s12), 28-31 = z bits 4-7. Not for
+    /// <see cref="FlagDeform"/> (its Corners bits 16-31) or rotated/wobbling instances. False (unchanged) when out of range.</summary>
+    public bool GeoMobile(int adx, int ady, int z)
+    {
+        if (adx < -2048 || adx > 2047 || ady < -2048 || ady > 2047 || (Flags & (FlagDeform | FlagLit)) != 0) return false;
+        uint zb = (uint)(byte)(sbyte)Math.Clamp(z, -128, 127);
+        Light = (Light & 0x5FFFu) | LightGeoMobile | ((uint)adx & 0xFFF) << 16 | (zb & 0xF) << 28;
+        Corners = (Corners & 0xFFFFu) | ((uint)ady & 0xFFF) << 16 | (zb >> 4) << 28;
+        return true;
+    }
+
+    /// <summary>The anchor and z <see cref="GeoMobile"/> stored, or false when the instance carries none.</summary>
+    public readonly bool TryGeoMobile(out int adx, out int ady, out int z)
+    {
+        if ((Flags & FlagLit) != 0 || (Light & LightGeoMobile) != LightGeoMobile)
+        {
+            adx = ady = z = 0;
+            return false;
+        }
+        adx = (int)(Light << 4) >> 20;
+        ady = (int)(Corners << 4) >> 20;
+        z = (sbyte)(byte)((Light >> 28) | (Corners >> 28) << 4);
+        return true;
+    }
+
     /// <summary>Light bits of non-lit instances: <see cref="LightCot"/> = the circle of transparency applies (dynamic
     /// sprites; baked statics derive it from their z); <see cref="LightRotated"/> = rotate the quad about its top-left
     /// corner by bits 16-31 (u16 turns); <see cref="LightAdditive"/> = add to the target (ClassicUO's Screen effect blend).</summary>
@@ -219,6 +292,13 @@ public struct FrameUniforms
     // Chebyshev distance to (RangeX, RangeY) exceeds RangeDist. Wins over TintRow, as in ApplyMeshHue.
     public uint RangeTintRow;
     public int RangeX, RangeY, RangeDist;
+    // clip-2 depth model (switch depth_model, default off): 1 = per-pixel geometric depth (sprite.hlsl PSMainGeo, GeoDepth).
+    // GeoOff = CamPxY / 22 - the tile sum CamDepth was made from, so geometric and key depths share one origin; GeoScale maps
+    // tile-sum units to target depth.
+    public uint DepthModel;
+    public float GeoOff;
+    public float GeoScale;
+    public uint GeoPad;
 }
 
 /// <summary>Slot of the per-frame override hash (in the frame table): <see cref="Index1"/> = instance index + 1

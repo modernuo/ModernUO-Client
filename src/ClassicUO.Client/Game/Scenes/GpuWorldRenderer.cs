@@ -43,6 +43,8 @@ namespace ClassicUO.Game.Scenes
         private SpriteInstance[] _dynamic = new SpriteInstance[4096];
         private int _dynamicCount;
         private GameObject _object;
+        // clip-2: depth_model at BeginFrame; captured multis and statics carry the shape bits only then
+        private bool _geo;
         private bool _shadowOnly;
         private bool _wobble;
         private int _offsetX, _offsetY;
@@ -273,6 +275,7 @@ namespace ClassicUO.Game.Scenes
         {
             _dynamicCount = 0;
             _object = null;
+            _geo = DepthModel.On;
             CaptureFallbacks = 0;
             UpdateWaterWobble();
 #if CUO_DEVTOOLS
@@ -339,6 +342,12 @@ namespace ClassicUO.Game.Scenes
             }
 
             return remap;
+        }
+
+        /// <summary>clip-2 depth model (DepthModel): per-pixel geometric depth on the world renderer.</summary>
+        public bool GeometricDepth
+        {
+            set => _world.GeometricDepth = value;
         }
 
         /// <summary>GameScene's _maxZ / _maxGroundZ / _noDrawRoofs, applied to baked land and statics in the shader.</summary>
@@ -847,8 +856,25 @@ namespace ClassicUO.Game.Scenes
                 inst.Alpha = (byte)Math.Clamp((int)(alpha * 255f + 0.5f), 1, 254);
             }
 
+            // clip-2 depth model: captured multis and statics get the baked statics' shape (not shadows, not the water copy,
+            // whose Light bits Draw sets after this)
+            if (_geo && _emitKind == FallbackKind.Normal && hueMode != HueMode.Shadow)
+            {
+                if (_object is Multi multi)
+                {
+                    GeoTile(ref inst, multi, ref multi.ItemData);
+                }
+                else if (_object is Static stat)
+                {
+                    GeoTile(ref inst, stat, ref stat.ItemData);
+                }
+            }
+
             return true;
         }
+
+        private static void GeoTile(ref SpriteInstance inst, GameObject obj, ref StaticTiles td) =>
+            inst.GeoTile(obj.X, obj.Y, obj.Z, td.Height, SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.Height));
 
         /// <summary>The last Render drew everything its view needs (WorldRenderer.VisibleReady).</summary>
         public bool VisibleReady => _world != null && _world.VisibleReady;
