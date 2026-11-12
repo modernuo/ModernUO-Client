@@ -6784,3 +6784,22 @@ Base 5812d469a. Two items from the CrossUO scout (perf-opportunities.md), checke
   (scene measure/clip-2/c2-items.txt).
 - **Accepted costs.** Switch off: one bool per item record and per captured sprite, a few tiledata byte reads per gathered
   item (ItemSpriteInput.Y/Z/TileHeight/TileGeoBits), negligible. Switch on: unchanged (to be measured quietly).
+
+## 2026-11-11 clip-2, part 4: Codex audit clip-12 fixes (bg/clip-2)
+
+Codex reviewed clip-1 + clip-2 up to 6e3e867f0 (cuo-poc-state/audits/clip-12/out.md): four findings, all fixed.
+- **P2 baked data with the switch off** (398ed67a5): ChunkBaker put ZGeoWall/ZGeoFlat/ZGeoBuried into every qualifying
+  static's Corners even with depth_model off (masked by the default shader, but not the base's bytes). PackSet.BakeGeo
+  gates them; WorldRenderer.GeometricDepth sets it and evicts the chunks when it flips (as SetWaterWobble does), and
+  ChangeFacet carries it. Off, BakeJob.ZInfo returns the key model's bits only (test: on = off | shape bits).
+- **P2 mounted anchors** (010ed9d39): the mount was emitted before `drawY += mountOffset`, rider and equipment after, so
+  each got its own anchor and a seat offset of 18 px split their geometric depth by 18/22 tile sum. One composite anchor
+  per mobile is now taken before the seat offset (a sitting offset still moves it, as before); CUO_CLIP_ORDER_CHECK uses
+  it too. Test: the mounted case's layers share one anchor, equal to the unmounted one.
+- **P2 GEO shaders loaded while off** (4548dfa04): created with the first GEO pipeline instead of in every constructor.
+- **P3 off-path work**: RebuildAbs re-stamps a recorded z only for records made with the switch on (MobileFrameCache.Geo);
+  GeoOff/GeoScale are computed only with the switch on (0 otherwise; the default shader does not read them).
+- The items commits (ad23d58bf, 74579c562) already gate their geo work on the switch (item cache keyed, corpse layers share
+  the corpse's draw point), so the findings did not apply there.
+- **Verification.** Dev suite 3629 passed / 6 skipped (+7 tests); jobs on aot-clip2g (4548dfa04) in the handoff.
+- **Accepted costs.** None new. Switch flips rebake the visible chunks (dev builds only flip at runtime).
