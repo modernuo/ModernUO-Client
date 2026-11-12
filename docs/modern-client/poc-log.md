@@ -6755,3 +6755,110 @@ Phase 1 of the owner-agreed cache design (dynamic LRU budget, not a fixed idle t
 - **Tests.** `AnimAtlasLruTests` (20): eviction order, open and young pages kept, low water, growth on thrash with cooldown/ceiling/memory gate, shrink focused/unfocused/floor, switch on/off, every page of a three-page direction touched, times past the uint wrap.
 - **Jobs** (prepared, not submitted; small budget forced: 2048^2 pages, 32 MiB budget, 5 s min age): lane gates gpu/legacy and pick with switch and checker on, alloc base/new/newon, golden; main-runner `job-lru-bodies.sh` (Legacy bodies sweep with wrap + Britain walk, Gpu bodies; pass = 0 mismatches and evictions > 0).
 - Results: pending. Default stays off.
+
+## 2026-11-12 clip-1: render order / clipping milestone, phase 1 (bg/clip-1)
+
+- **Acceptance scenes** (measure/clip-1: gen_scenes.py writes c1-feet, c1-large, c1-maxz; job-clip-shots.sh and
+  job-clip-dump.sh run on lane L5; sheet.py makes Gpu/Legacy contact sheets). Tip build 6748f4d29, job bench6-000014:
+  acceptance #1 reproduces on BOTH renderers, identically. At Felucca 1453 1668 z 10 the player's feet (all facings) and,
+  mounted, the horse's hooves are drawn on the art studio's corner walls. Daemon and balron hooves, the dragon's tail and the
+  titan's whole legs do the same. Outside the walls everything orders correctly.
+- **Root cause #1** (formulas: cuo-poc-state/surveys/clip-design-2026-11-12.md, section 2): not the anchor. Mobile frames are
+  cut at the anchor row; the rows below it (strip 1) are drawn at depth + 3 (Gpu D + 200 over strip 0), which beats walls up
+  to two diagonals in front (south/east wall +1.5, corner +2.5 relative to the player's tile). The bonus exists so feet beat
+  the floors of the next tiles; one depth per sprite cannot separate floors from walls on the same diagonal.
+- **Walk max-Z cut fixed behind `walk_maxz_continue`** (default off); checker CUO_WALK_MAXZ_CHECK=1, override CUO_WALK_MAXZ,
+  driver `walkmaxz on|off`; WalkMaxZTests (both states). Dev tool: driver `clipdump <name> [radius]` (render-order inputs).
+- **Verification.** Dev unit suite 3575 passed, 6 skipped; client build OK with and without CuoDevTools. Scene c1-maxz and
+  the clipdump numbers: job bench6-000015 (pending at handoff).
+- No accepted costs: the switch is off by default, the off path adds no work, and the cut path is out of line and rare.
+
+## 2026-11-11 clip-2: geometric depth prototype, Gpu renderer (bg/clip-2)
+
+- **Root cause confirmed with the dump** (bench6-000015, design note section 2): the anchor is MobileView's posY + 19, 3 rows
+  above the tile centre, the same for every layer; the body's strip 1 is its last 4 rows (the feet; mounted: the horse's
+  last 11 rows) at 3125.38 against the walls' 3123.88 / corner 3124.88. The +3 strip bonus is the bug, not the anchor.
+- **c1-maxz had 0 cuts** because `[add` + `target ground` placed both statics at the land's z 0. gen_scenes.py now places
+  them with `[TileXYZ` at z 125 / 130. Re-run queued (clip-dump).
+- **Switch `depth_model`** (default off; CUO_DEPTH_MODEL=1|0, driver `depthmodel on|off`): the Gpu renderer writes X + Y of
+  the visible 3D point per pixel (Uo.Render/GeoDepth.cs, sprite.hlsl PSMainGeo, own pipelines). Classes from tiledata at
+  bake time, no pack change and no per-graphic cases: land and flat statics are planes (lowered 1.5 tile sums), walls are
+  vertical faces on the tile's back edges (orientation free), other statics are boxes, and a mobile's body, mount and
+  equipment share one anchor (a billboard, a ground plane below the centre, capped by the own tile's front faces). Items,
+  multis, effects, shadows and seated mobiles still use their key. Legacy is unchanged (plan: per-vertex depth, the
+  classes are piecewise linear).
+- **Verification.** Dev unit suite 3592 passed, 6 skipped (17 new DepthModelTests: acceptance #1's geometry with feet
+  and hooves behind the walls and over the floors, boxes, the anchor encoding, both switch states). Client builds with and
+  without CuoDevTools. Shots with the switch on (bench6-000018) and the default-path golden/gates (bench6-000020,
+  bench2-000018, bench3-000012) were pending at handoff (cuo-poc-state/handoffs/clip-2.md).
+- **Accepted costs** (estimates, machine not quiet): switch off, the vertex shader writes 8 more interpolants and tests one
+  more bit (well under 1 % of VS time). Switch on, depth from the fragment shader turns off early depth rejection in the
+  opaque pass: expected the main cost, to be measured on the large scene.
+
+## 2026-11-11 clip-2, part 2: default path restored, buried statics, order checker (bg/clip-2)
+
+- **Golden with the switch off was different** (bench6-000020, 6a4f0ce60): the mobile extract stamped the composite
+  anchor into every mobile layer's instance (Light/Corners upper bits) whatever the switch, so 79-89 mobile draws per gls
+  Gpu capture differed from base (pixels identical). 909ab3d34: the anchor is written only with depth_model on (read at
+  the extract's Begin; MobileFrameCache records the state and re-records on a flip), and the geometric VS/PS work is a
+  GEO-compiled variant of sprite.hlsl (sprite_vsgeo / sprite_psgeo, only in the geo pipelines), so the default vertex
+  shader has neither the extra test nor the 8 interpolants. **bench6-000023: GOLDEN SAME** (54 pairs). The 93 px UI diff
+  of bench6-000020 (13,475-33,480, the four nomob UI shots: a glyph at the chat line in the new run only) did not recur:
+  run noise, not the world renderer.
+- **Shots with the switch on** (bench6-000021, 8662c52ef): acceptance #1 passes on Gpu (no feet or hooves on the studio's
+  wall faces, unmounted and mounted; body/robe order right). Out poses south and east of the studio showed the wall bases
+  in teeth over the land: a lower storey's walls (z -11, height 20) lie under the land (z 10), and with flats lowered 1.5
+  tile sums a static less than ~8 z under the land ahead beat it. c62cc2aad: the baker marks non-flat statics whose top is
+  at or under their tile's land (ZGeoBuried, Corners bit 22) and the geo VS lowers them like the flats. Partly buried
+  statics keep their shape (open). Re-run: bench6-000024.
+- **c1-maxz** (bench6-000022): the walk max-Z cut fires on the scene now, drops the coins with walk_maxz_continue off and
+  keeps them with it on (shots and `[walk-maxz]` lines agree); clip-1's fix confirmed.
+- **CUO_CLIP_ORDER_CHECK=1** (7cbfdee70, developer builds): about every 2 s one Gpu frame samples each standing mobile's
+  drawn layers every 4 px on the shapes of the land and statics within 2 tiles and compares the key order (strip vs tile
+  key) with the geometric one (GeoDepth.Static/Land/MobileBiased mirror the shader); `[clip-order]` pair lines (24 per
+  check at most) and a summary with the switch state. Items, multis and walking mobiles are not sampled yet.
+- **Verification.** See the handoff for the suite counts (both variants) and jobs.
+- **Accepted costs.** Switch off: none now (default VS as before the switch; one bool per mobile emission for the cache
+  key). Switch on: unchanged from part 1 (fragment depth disables early rejection; to be measured quietly).
+
+## 2026-11-11 clip-2, part 3: shot results, order checker results, items/multis/corpses (bg/clip-2)
+
+- **bench6-000024** (c62cc2aad, switch on): the out poses' teeth are gone (Gpu and Legacy alike); acceptance #1 still holds
+  on Gpu (no feet or hooves on the studio's wall faces; Legacy unchanged); large bodies look like Legacy.
+  **bench6-000025** golden with the switch off on c62cc2aad: GOLDEN SAME.
+- **bench6-000026** (CUO_CLIP_ORDER_CHECK on c1-feet, 7cbfdee70): 14 446 pairs, 375 557 samples, 9 801 changed. 9 676
+  "now behind": the mobile against the studio's walls on its tile's front edges (acceptance #1's fix). 125 "now in front",
+  all against one land tile (1456,1669 z 9) with the mobile at 1456,1668 z 5: land rising in front of the feet; the shots
+  of that pose agree between renderers. Logged as a slope edge case.
+- **Merge gates on 7cbfdee70** (the code of clip-1 + clip-2 before part 3, switch off): gate-gpu bench2-000021,
+  gate-legacy bench3-000016 (results in the handoff).
+- **Items, multis, corpses** (ad23d58bf, switch on only): item art records (ItemSpriteExtract) and captured multi pieces
+  and statics (GpuWorldRenderer.Emit) carry the baked statics' layout plus a ZGeoTile marker (SpriteInstance.GeoTile), and
+  the geo VS draws them as walls, flats or boxes by tiledata (SpriteInstance.GeoShapeBits, also the baker's rule). They
+  never get FLAG_ZTEST, so max-Z, roofs and the circle of transparency are as before. Corpses take the mobile composite
+  (same anchor as MobileView). The item cache keys on the switch. Off, records and instances are unchanged (tests for
+  every item case). CUO_CLIP_ORDER_CHECK samples ground items and multis too (74579c562). Not done: buried marks for
+  items/multis, a visual check of multis (no house in the scenes).
+- **Verification.** Dev suite 3622 passed / 6 skipped; see the handoff for the CuoDevTools=false count and the shot job
+  (scene measure/clip-2/c2-items.txt).
+- **Accepted costs.** Switch off: one bool per item record and per captured sprite, a few tiledata byte reads per gathered
+  item (ItemSpriteInput.Y/Z/TileHeight/TileGeoBits), negligible. Switch on: unchanged (to be measured quietly).
+
+## 2026-11-11 clip-2, part 4: Codex audit clip-12 fixes (bg/clip-2)
+
+Codex reviewed clip-1 + clip-2 up to 6e3e867f0 (cuo-poc-state/audits/clip-12/out.md): four findings, all fixed.
+- **P2 baked data with the switch off** (398ed67a5): ChunkBaker put ZGeoWall/ZGeoFlat/ZGeoBuried into every qualifying
+  static's Corners even with depth_model off (masked by the default shader, but not the base's bytes). PackSet.BakeGeo
+  gates them; WorldRenderer.GeometricDepth sets it and evicts the chunks when it flips (as SetWaterWobble does), and
+  ChangeFacet carries it. Off, BakeJob.ZInfo returns the key model's bits only (test: on = off | shape bits).
+- **P2 mounted anchors** (010ed9d39): the mount was emitted before `drawY += mountOffset`, rider and equipment after, so
+  each got its own anchor and a seat offset of 18 px split their geometric depth by 18/22 tile sum. One composite anchor
+  per mobile is now taken before the seat offset (a sitting offset still moves it, as before); CUO_CLIP_ORDER_CHECK uses
+  it too. Test: the mounted case's layers share one anchor, equal to the unmounted one.
+- **P2 GEO shaders loaded while off** (4548dfa04): created with the first GEO pipeline instead of in every constructor.
+- **P3 off-path work**: RebuildAbs re-stamps a recorded z only for records made with the switch on (MobileFrameCache.Geo);
+  GeoOff/GeoScale are computed only with the switch on (0 otherwise; the default shader does not read them).
+- The items commits (ad23d58bf, 74579c562) already gate their geo work on the switch (item cache keyed, corpse layers share
+  the corpse's draw point), so the findings did not apply there.
+- **Verification.** Dev suite 3629 passed / 6 skipped (+7 tests); jobs on aot-clip2g (4548dfa04) in the handoff.
+- **Accepted costs.** None new. Switch flips rebake the visible chunks (dev builds only flip at runtime).

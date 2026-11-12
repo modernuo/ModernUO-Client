@@ -29,6 +29,8 @@
   <ItemGroup>
     <ShaderVariant Include="sprite_vs" Source="Shaders/sprite.hlsl" Profile="vs_6_0" Entry="VSMain" File="sprite.vs" Defines="" />
     <ShaderVariant Include="sprite_ps" Source="Shaders/sprite.hlsl" Profile="ps_6_0" Entry="PSMain" File="sprite.ps" Defines="" />
+    <ShaderVariant Include="sprite_vsgeo" Source="Shaders/sprite.hlsl" Profile="vs_6_0" Entry="VSMain" File="sprite.vsgeo" Defines="-D GEO=1" />
+    <ShaderVariant Include="sprite_psgeo" Source="Shaders/sprite.hlsl" Profile="ps_6_0" Entry="PSMainGeo" File="sprite.psgeo" Defines="-D GEO=1" />
   </ItemGroup>
 
   <!-- The compiled shaders are committed, so a build needs no dxc or Windows SDK (NativeAOT publish embeds them the same way).

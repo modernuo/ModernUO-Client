@@ -358,7 +358,22 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        private static byte CalculateObjectHeight(ref int maxObjectZ, ref StaticTiles itemData)
+        // clip-1 (walk_maxz_continue, WalkMaxZ): an unmeshed object over the walk's max Z. True: it ends the tile's walk (the
+        // old rule, which also dropped the lower objects after it in PriorityZ order); false: only it is skipped.
+        // CUO_WALK_MAXZ_CHECK notes the objects behind the cut. Out of line: rare.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool MaxZCut(GameObject obj, int topZ, TileListObject list, bool merged, in TileWalk walk, int maxZ)
+        {
+#if CUO_DEVTOOLS
+            if (WalkMaxZ.Check)
+            {
+                WalkMaxZ.NoteCut(obj, topZ, list?.TNext, merged, walk, maxZ);
+            }
+#endif
+            return WalkMaxZ.EndsWalk();
+        }
+
+        internal static byte CalculateObjectHeight(ref int maxObjectZ, ref StaticTiles itemData)
         {
             if (
                 itemData.Height != 0xFF /*&& itemData.Flags != 0*/
@@ -712,6 +727,9 @@ namespace ClassicUO.Game.Scenes
 
             _walkObjects = 0;
             _walkPickTests = 0;
+#if CUO_DEVTOOLS
+            WalkMaxZ.FrameEnd(_drawFrame);
+#endif
         }
 
         // CUO_PREP_CHECK: a kept RealScreenPosition must equal a fresh one. Out of line: with this string formatting in
@@ -1140,7 +1158,11 @@ namespace ClassicUO.Game.Scenes
 
                             int cf = ProcessStaticLikeTail(obj, ref itemData, allowSelection, screenY, ref maxObjectZ, maxZ, out bool retVal, mesh);
                             if (cf == 1) continue;
-                            if (cf == 2) return retVal;
+                            if (cf == 2)
+                            {
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return retVal;
+                                continue;
+                            }
                             break;
                         }
 
@@ -1179,7 +1201,11 @@ namespace ClassicUO.Game.Scenes
 
                             int cf = ProcessStaticLikeTail(obj, ref itemData, allowSelection, screenY, ref maxObjectZ, maxZ, out bool retVal, mesh);
                             if (cf == 1) continue;
-                            if (cf == 2) return retVal;
+                            if (cf == 2)
+                            {
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return retVal;
+                                continue;
+                            }
                             break;
                         }
 
@@ -1191,7 +1217,8 @@ namespace ClassicUO.Game.Scenes
 
                             if (maxObjectZ > maxZ)
                             {
-                                return false;
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return false;
+                                continue;
                             }
 
                             StaticTiles empty = default;
@@ -1288,7 +1315,8 @@ namespace ClassicUO.Game.Scenes
 
                             if (maxObjectZ > maxZ)
                             {
-                                return itemData.Height != 0 && maxObjectZ - maxZ < height;
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return itemData.Height != 0 && maxObjectZ - maxZ < height;
+                                continue;
                             }
 
                             if (screenY < _minPixel.Y || screenY > _maxPixel.Y)

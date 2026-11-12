@@ -214,6 +214,17 @@ namespace ClassicUO.Configuration
         // CUO_OPL_SPREAD_CHECK=1 checks every send against the requests). Default off.
         [JsonPropertyName("opl_request_budget")] public int OplRequestBudget { get; set; }
 
+        // clip-1: the world walk skips only an object over its max Z instead of ending the tile's walk there (the tile list is
+        // in PriorityZ order, not PriorityZ + height, so the old rule dropped lower objects after a tall one). Read at every
+        // cut (CUO_WALK_MAXZ=1|0 overrides it and CUO_WALK_MAXZ_CHECK=1 compares the drawn set with the old walk's, in
+        // developer builds; WalkMaxZ). Default off.
+        [JsonPropertyName("walk_maxz_continue")] public bool WalkMaxZContinue { get; set; }
+
+        // clip-2: per-pixel geometric depth by shape class instead of one depth key per sprite (feet and large bodies
+        // through walls; Game/Scenes/DepthModel). Gpu renderer only so far. CUO_DEPTH_MODEL=1|0 overrides it in developer
+        // builds. Default off.
+        [JsonPropertyName("depth_model")] public bool DepthModel { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

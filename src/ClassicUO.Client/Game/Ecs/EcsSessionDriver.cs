@@ -919,6 +919,26 @@ namespace ClassicUO.Game
                     return false;
                 }
 
+                // clipdump <name> [radius]: the render-order inputs around the player (clip-1, ClipDump)
+                case "clipdump" when args.Length > 0:
+                    ClipDump.Run(world, args[0], args.Length > 1 ? int.Parse(args[1]) : 2);
+
+                    return false;
+
+                // walkmaxz on|off: walk_maxz_continue (clip-1, WalkMaxZ; CUO_WALK_MAXZ overrides it)
+                case "walkmaxz" when args.Length > 0:
+                    Settings.GlobalSettings.WalkMaxZContinue = args[0] == "on";
+                    Log.Info($"[ECS] driver: walk_maxz_continue {Settings.GlobalSettings.WalkMaxZContinue} (effective {WalkMaxZ.On})");
+
+                    return false;
+
+                // depthmodel on|off: depth_model (clip-2, DepthModel; CUO_DEPTH_MODEL overrides it)
+                case "depthmodel" when args.Length > 0:
+                    Settings.GlobalSettings.DepthModel = args[0] == "on";
+                    Log.Info($"[ECS] driver: depth_model {Settings.GlobalSettings.DepthModel} (effective {DepthModel.On})");
+
+                    return false;
+
                 // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
                 case "renderer" when args.Length > 0:
                 {

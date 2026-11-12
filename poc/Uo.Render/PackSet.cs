@@ -47,6 +47,11 @@ public sealed class PackSet
     /// <see cref="Renderer"/> directly without one leave it off, and those statics bake opaque.</summary>
     public bool BakeTranslucentAlpha;
 
+    /// <summary>Bake the clip-2 shape bits (<see cref="SpriteInstance.ZGeoWall"/>, <see cref="SpriteInstance.ZGeoFlat"/>,
+    /// <see cref="SpriteInstance.ZGeoBuried"/>) into the statics' Corners, for the geometric depth model. Set it through
+    /// <see cref="WorldRenderer.GeometricDepth"/>, which rebakes the chunks. Off: the instances are the key model's.</summary>
+    public bool BakeGeo;
+
     /// <summary>Logical page id → file. Art pages first, then texmap pages (offset by <see cref="TexPageBase"/>).</summary>
     public readonly string[] PagePaths;
     public readonly int TexPageBase;

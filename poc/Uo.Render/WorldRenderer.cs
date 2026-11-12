@@ -206,6 +206,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (!ReferenceEquals(pack.PagePaths, Pack.PagePaths) || !ReferenceEquals(pack.AnimPagePaths, Pack.AnimPagePaths) || pack.AnimPageBase != Pack.AnimPageBase)
             throw new ArgumentException("ChangeFacet needs the same pack on another facet (PackSet.WithFacet)", nameof(pack));
         pack.BakeTranslucentAlpha = true;
+        pack.BakeGeo = Pack.BakeGeo;
         Pack = pack;
         Chunks.ChangeFacet(pack);
         _waterX = _waterY = 1f;
@@ -313,6 +314,28 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>ClassicUO's roof and max-Z hiding for this frame, tested per baked instance in the shader: land with
     /// z &gt; <paramref name="maxGroundZ"/>, statics with z &gt;= <paramref name="maxZ"/>, and roofs when
     /// <paramref name="hideRoofs"/> are not drawn (unless a <c>forceShow</c> override keeps one).</summary>
+    /// <summary>clip-2 depth model (host switch depth_model): true = per-pixel geometric depth (sprite.hlsl PSMainGeo,
+    /// <see cref="GeoDepth"/>), false = one depth key per instance.
+    /// Flipping it rebakes every chunk (<see cref="PackSet.BakeGeo"/>: the statics' shape bits are baked only while it is
+    /// on, so the off state's instance data matches the key model's).</summary>
+    public bool GeometricDepth
+    {
+        get => Pack.BakeGeo;
+        set
+        {
+            if (value == Pack.BakeGeo) return;
+            Pack.BakeGeo = value;
+            Chunks.EvictAll();
+            GeoRebakes++;
+        }
+    }
+
+    /// <summary>Times <see cref="GeometricDepth"/> flipped and rebaked the chunks.</summary>
+    public int GeoRebakes;
+
+    /// <summary>Target depth per tile-sum unit of the geometric model: ±1250 units around the camera fit in [0, 1].</summary>
+    public const float GeoScale = 1f / 2500f;
+
     public void SetZHiding(int maxZ, int maxGroundZ, bool hideRoofs)
     {
         _maxZ = maxZ;
@@ -630,6 +653,7 @@ public sealed unsafe class WorldRenderer : IDisposable
 
         float scale = _scale;
         int camPxX = (int)Math.Floor(_cx), camPxY = (int)Math.Floor(_cy);
+        bool geo = Pack.BakeGeo;
         return new Renderer.FrameInput
         {
             Chunks = Chunks, Pages = Pages, AnimPages = AnimPages, AnimTableBase = Pack.AnimPageBase,
@@ -647,6 +671,10 @@ public sealed unsafe class WorldRenderer : IDisposable
                 CamFracX = (float)(_cx - camPxX), CamFracY = (float)(_cy - camPxY),
                 ScaleX = scale, ScaleY = scale,
                 CamDepth = BakeJob.CameraDepthKey((float)(_cy / 22.0)),
+                DepthModel = geo ? 1u : 0u,
+                // the tile sum CameraDepthKey truncates to, so a key-fallback instance and a geometric one share the origin
+                GeoOff = geo ? (float)(camPxY / 22.0 - (int)((float)(_cy / 22.0) * 100) / 100.0) : 0f,
+                GeoScale = geo ? GeoScale : 0f,
                 ChunkCount = (uint)chunkCount,
                 InvAtlas = 1f / Pack.PageSize,
                 FormatFlags = FormatFlagsOverride >= 0 ? (uint)FormatFlagsOverride : PageFormats.ShaderFlags(Pack.Format),
