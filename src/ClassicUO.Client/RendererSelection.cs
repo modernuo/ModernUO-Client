@@ -87,13 +87,25 @@ namespace ClassicUO
         /// <param name="userDriver">The FNA3D driver the user forced (force_driver, or FNA3D_FORCE_DRIVER set outside), or null.</param>
         /// <param name="probe">Runs the SDL_GPU/Vulkan probe; only called when the answer matters.</param>
         /// <param name="legacyDriver">The FNA3D driver for a Legacy fallback (D3D11 on Windows if it can run, else OpenGL).</param>
-        public static PreDeviceDecision BeforeDevice(WorldRendererMode mode, string userDriver, Func<DeviceProbe> probe, Func<string> legacyDriver)
+        /// <param name="spirvShaders">The build embeds Uo.Render's SPIR-V shaders (Renderer.SpirvShadersEmbedded); the Gpu world
+        /// runs on Vulkan only, so without them it can't run at all.</param>
+        public static PreDeviceDecision BeforeDevice(WorldRendererMode mode, string userDriver, Func<DeviceProbe> probe, Func<string> legacyDriver,
+            bool spirvShaders = true)
         {
             if (mode == WorldRendererMode.Legacy)
             {
                 // forced Legacy keeps today's device (FNA3D's own order: SDL_GPU first), so Legacy-vs-Gpu parity compares the
                 // same device; force_driver / FNA3D_FORCE_DRIVER still pick another one
                 return new PreDeviceDecision(mode, false, null, "forced", false);
+            }
+
+            if (!spirvShaders)
+            {
+                // a build without the compiled SPIR-V shaders (poc/Uo.Render/Shaders/compiled): no probe needed. Auto uses
+                // Legacy on D3D11/OpenGL; forced gpu fails after the device with this reason
+                const string reason = "this build has no SPIR-V world shaders (poc/Uo.Render/Shaders/compiled), which the Gpu world renderer needs on Vulkan";
+
+                return new PreDeviceDecision(mode, false, mode == WorldRendererMode.Auto && string.IsNullOrEmpty(userDriver) ? legacyDriver() : null, reason, false);
             }
 
             if (!string.IsNullOrEmpty(userDriver) && !IsSdlGpuDriver(userDriver))
