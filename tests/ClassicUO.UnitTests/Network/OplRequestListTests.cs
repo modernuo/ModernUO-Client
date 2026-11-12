@@ -103,6 +103,24 @@ namespace ClassicUO.UnitTests.Network
         }
 
         [Fact]
+        public void A_Request_Made_Again_Before_Its_Stale_Slot_Drains_Keeps_Its_New_Place()
+        {
+            _l.Request(1, OplRequestKind.Revision, 1, 0);
+            _l.Request(2, OplRequestKind.Revision, 1, 0);
+            _l.Remove(1);
+            _l.Request(1, OplRequestKind.Revision, 1, 5).Should().BeTrue();
+            // answered while pending, then wanted for a new revision
+            _l.Request(3, OplRequestKind.Revision, 1, 0);
+            _l.Request(4, OplRequestKind.Revision, 1, 0);
+            _l.Answered(3, 1);
+            _l.Request(3, OplRequestKind.Revision, 2, 6).Should().BeTrue();
+
+            _l.PendingCount.Should().Be(4);
+            Take(10).Should().Be(4);
+            _sent.Should().Equal(2u, 1u, 4u, 3u);
+        }
+
+        [Fact]
         public void An_Answer_For_Another_Revision_Keeps_The_Pending_Request()
         {
             _l.Request(1, OplRequestKind.Revision, 1, 0);

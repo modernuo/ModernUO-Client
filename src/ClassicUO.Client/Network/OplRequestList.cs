@@ -14,7 +14,8 @@ namespace ClassicUO.Network
     /// request retries after <see cref="OplRequestQueue.RetryMs"/>). ModernUO repeats 0xDC with an unchanged revision on
     /// every Mobile.ProcessDelta to each viewer (a step, a hits change), so without this a moving mobile was re-requested on
     /// each step until its answer arrived. World's removal of the object and an answer that satisfies a pending request
-    /// drop it; their slots stay in the list and are skipped when they come up. CUO_OPL_DEBOUNCE_CHECK=1 counts the result.
+    /// drop it; their slots stay in the list and are skipped when they come up (a slot is live only with the
+    /// request's sequence number, so a request made again keeps its new place). CUO_OPL_DEBOUNCE_CHECK=1 counts the result.
     /// </summary>
     internal sealed class OplRequestList
     {
@@ -22,14 +23,22 @@ namespace ClassicUO.Network
         {
             public uint Revision;
             public uint SentTick;
+            public uint Seq;
             public bool Pending;
             public bool HasRevision;
         }
 
         private readonly Dictionary<uint, Entry> _entries = new Dictionary<uint, Entry>(256);
-        private readonly List<uint> _order = new List<uint>(256);
+        private struct Slot
+        {
+            public uint Serial;
+            public uint Seq;
+        }
+
+        private readonly List<Slot> _order = new List<Slot>(256);
         private int _head;
         private int _pending;
+        private uint _seq;
 
         public int PendingCount => _pending;
 
@@ -72,8 +81,9 @@ namespace ClassicUO.Network
             }
 
             e.Pending = true;
+            e.Seq = ++_seq;
             _pending++;
-            _order.Add(serial);
+            _order.Add(new Slot { Serial = serial, Seq = e.Seq });
 
             return true;
         }
@@ -85,10 +95,12 @@ namespace ClassicUO.Network
 
             while (n < batch.Length && _head < _order.Count)
             {
-                uint serial = _order[_head++];
+                Slot slot = _order[_head++];
+                uint serial = slot.Serial;
                 ref Entry e = ref CollectionsMarshal.GetValueRefOrNullRef(_entries, serial);
 
-                if (Unsafe.IsNullRef(ref e) || !e.Pending)
+                // a slot left by a removed or answered request is stale even when the serial was requested again
+                if (Unsafe.IsNullRef(ref e) || !e.Pending || e.Seq != slot.Seq)
                 {
                     continue;
                 }
