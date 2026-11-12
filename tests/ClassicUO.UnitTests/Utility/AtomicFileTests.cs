@@ -14,6 +14,7 @@ namespace ClassicUO.UnitTests.Utility
 {
     // Several client instances share profile, settings and cache files: writes replace the target in one rename,
     // readers and the writer wait for each other, and per-process names keep logs apart.
+    [Collection(nameof(WallClockCollection))]
     public sealed class AtomicFileTests : IDisposable
     {
         private readonly string _dir = Path.Combine(Path.GetTempPath(), "cuo-atomic-" + Guid.NewGuid().ToString("N"));
@@ -35,6 +36,10 @@ namespace ClassicUO.UnitTests.Utility
         private static Task Bg(Action a) => Task.Factory.StartNew(a, TaskCreationOptions.LongRunning);
 
         private string P(string name) => Path.Combine(_dir, name);
+
+        // the wait-out cases check that the replace waits for the reader, not the default budget (its own cases below): a
+        // long budget keeps a helper thread scheduled late on a loaded machine from failing them
+        private const int WaitOutBudgetMs = 5000;
 
         [Fact]
         public void WriteAllText_creates_the_directory_and_leaves_no_temp_file()
@@ -144,7 +149,7 @@ namespace ClassicUO.UnitTests.Utility
                 sr.Dispose();
             });
 
-            AtomicFile.WriteAllText(path, new string('b', 20000));
+            AtomicFile.WriteAllText(path, new string('b', 20000), WaitOutBudgetMs);
             read.Wait();
 
             seen.Should().Be(new string('a', 20000));
@@ -165,7 +170,7 @@ namespace ClassicUO.UnitTests.Utility
                 blocker.Dispose();
             });
 
-            AtomicFile.WriteAllText(path, "two");
+            AtomicFile.WriteAllText(path, "two", WaitOutBudgetMs);
             release.Wait();
 
             File.ReadAllText(path).Should().Be("two");
