@@ -331,12 +331,15 @@ namespace ClassicUO.UnitTests.Network
             PacketHandlers.AddMegaClilocRequest(0x40000001, OplRequestKind.Revision, 3);
             PacketHandlers.AddMegaClilocRequest(0x40000002);
 
-            PacketHandlers.OldClilocRequests.Should().Equal(0x40000001u, 0x40000002u);
+            PacketHandlers.OldRequests.PendingCount.Should().Be(2);
             PacketHandlers.OplQueue.Should().BeNull();
 
-            // the old path does not drop removed objects
+            // a removed object is not requested; an answer ends the in-flight request
             PacketHandlers.OnOplRemoved(0x40000001);
-            PacketHandlers.OldClilocRequests.Should().HaveCount(2);
+            PacketHandlers.OldRequests.PendingCount.Should().Be(1);
+            PacketHandlers.OldRequests.IsPending(0x40000002).Should().BeTrue();
+            PacketHandlers.OnOplCleared();
+            PacketHandlers.OldRequests.PendingCount.Should().Be(0);
         }
 
         [Fact]
@@ -347,7 +350,7 @@ namespace ClassicUO.UnitTests.Network
             PacketHandlers.AddMegaClilocRequest(0x40000001, OplRequestKind.Revision, 3);
             PacketHandlers.AddMegaClilocRequest(0x40000002);
 
-            PacketHandlers.OldClilocRequests.Should().BeEmpty();
+            PacketHandlers.OldRequests.PendingCount.Should().Be(0);
             PacketHandlers.OplQueue.PendingCount.Should().Be(2);
 
             PacketHandlers.OnOplRemoved(0x40000001);
