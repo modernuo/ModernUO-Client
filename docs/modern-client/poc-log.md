@@ -6735,3 +6735,29 @@ Base 5812d469a. Two items from the CrossUO scout (perf-opportunities.md), checke
 - **Accepted costs** (estimates, machine not quiet): switch off, the vertex shader writes 8 more interpolants and tests one
   more bit (well under 1 % of VS time). Switch on, depth from the fragment shader turns off early depth rejection in the
   opaque pass: expected the main cost, to be measured on the large scene.
+
+## 2026-11-11 clip-2, part 2: default path restored, buried statics, order checker (bg/clip-2)
+
+- **Golden with the switch off was different** (bench6-000020, 6a4f0ce60): the mobile extract stamped the composite
+  anchor into every mobile layer's instance (Light/Corners upper bits) whatever the switch, so 79-89 mobile draws per gls
+  Gpu capture differed from base (pixels identical). 909ab3d34: the anchor is written only with depth_model on (read at
+  the extract's Begin; MobileFrameCache records the state and re-records on a flip), and the geometric VS/PS work is a
+  GEO-compiled variant of sprite.hlsl (sprite_vsgeo / sprite_psgeo, only in the geo pipelines), so the default vertex
+  shader has neither the extra test nor the 8 interpolants. **bench6-000023: GOLDEN SAME** (54 pairs). The 93 px UI diff
+  of bench6-000020 (13,475-33,480, the four nomob UI shots: a glyph at the chat line in the new run only) did not recur:
+  run noise, not the world renderer.
+- **Shots with the switch on** (bench6-000021, 8662c52ef): acceptance #1 passes on Gpu (no feet or hooves on the studio's
+  wall faces, unmounted and mounted; body/robe order right). Out poses south and east of the studio showed the wall bases
+  in teeth over the land: a lower storey's walls (z -11, height 20) lie under the land (z 10), and with flats lowered 1.5
+  tile sums a static less than ~8 z under the land ahead beat it. c62cc2aad: the baker marks non-flat statics whose top is
+  at or under their tile's land (ZGeoBuried, Corners bit 22) and the geo VS lowers them like the flats. Partly buried
+  statics keep their shape (open). Re-run: bench6-000024.
+- **c1-maxz** (bench6-000022): the walk max-Z cut fires on the scene now, drops the coins with walk_maxz_continue off and
+  keeps them with it on (shots and `[walk-maxz]` lines agree); clip-1's fix confirmed.
+- **CUO_CLIP_ORDER_CHECK=1** (7cbfdee70, developer builds): about every 2 s one Gpu frame samples each standing mobile's
+  drawn layers every 4 px on the shapes of the land and statics within 2 tiles and compares the key order (strip vs tile
+  key) with the geometric one (GeoDepth.Static/Land/MobileBiased mirror the shader); `[clip-order]` pair lines (24 per
+  check at most) and a summary with the switch state. Items, multis and walking mobiles are not sampled yet.
+- **Verification.** See the handoff for the suite counts (both variants) and jobs.
+- **Accepted costs.** Switch off: none now (default VS as before the switch; one bool per mobile emission for the cache
+  key). Switch on: unchanged from part 1 (fragment depth disables early rejection; to be measured quietly).
