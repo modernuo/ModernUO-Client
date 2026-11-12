@@ -6761,3 +6761,26 @@ Base 5812d469a. Two items from the CrossUO scout (perf-opportunities.md), checke
 - **Verification.** See the handoff for the suite counts (both variants) and jobs.
 - **Accepted costs.** Switch off: none now (default VS as before the switch; one bool per mobile emission for the cache
   key). Switch on: unchanged from part 1 (fragment depth disables early rejection; to be measured quietly).
+
+## 2026-11-11 clip-2, part 3: shot results, order checker results, items/multis/corpses (bg/clip-2)
+
+- **bench6-000024** (c62cc2aad, switch on): the out poses' teeth are gone (Gpu and Legacy alike); acceptance #1 still holds
+  on Gpu (no feet or hooves on the studio's wall faces; Legacy unchanged); large bodies look like Legacy.
+  **bench6-000025** golden with the switch off on c62cc2aad: GOLDEN SAME.
+- **bench6-000026** (CUO_CLIP_ORDER_CHECK on c1-feet, 7cbfdee70): 14 446 pairs, 375 557 samples, 9 801 changed. 9 676
+  "now behind": the mobile against the studio's walls on its tile's front edges (acceptance #1's fix). 125 "now in front",
+  all against one land tile (1456,1669 z 9) with the mobile at 1456,1668 z 5: land rising in front of the feet; the shots
+  of that pose agree between renderers. Logged as a slope edge case.
+- **Merge gates on 7cbfdee70** (the code of clip-1 + clip-2 before part 3, switch off): gate-gpu bench2-000021,
+  gate-legacy bench3-000016 (results in the handoff).
+- **Items, multis, corpses** (ad23d58bf, switch on only): item art records (ItemSpriteExtract) and captured multi pieces
+  and statics (GpuWorldRenderer.Emit) carry the baked statics' layout plus a ZGeoTile marker (SpriteInstance.GeoTile), and
+  the geo VS draws them as walls, flats or boxes by tiledata (SpriteInstance.GeoShapeBits, also the baker's rule). They
+  never get FLAG_ZTEST, so max-Z, roofs and the circle of transparency are as before. Corpses take the mobile composite
+  (same anchor as MobileView). The item cache keys on the switch. Off, records and instances are unchanged (tests for
+  every item case). CUO_CLIP_ORDER_CHECK samples ground items and multis too (74579c562). Not done: buried marks for
+  items/multis, a visual check of multis (no house in the scenes).
+- **Verification.** Dev suite 3622 passed / 6 skipped; see the handoff for the CuoDevTools=false count and the shot job
+  (scene measure/clip-2/c2-items.txt).
+- **Accepted costs.** Switch off: one bool per item record and per captured sprite, a few tiledata byte reads per gathered
+  item (ItemSpriteInput.Y/Z/TileHeight/TileGeoBits), negligible. Switch on: unchanged (to be measured quietly).
