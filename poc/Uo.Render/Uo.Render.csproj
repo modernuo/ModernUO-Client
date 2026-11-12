@@ -11,11 +11,12 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <!-- Class library: the renderer, streaming and pack tables. Uo.Render.App (benches, screenshots) and Uo.Client are the exes. -->
+    <!-- Shader compilers, used only by the opt-in regenerate (-p:CompileShaders=true). DXIL: the Windows SDK dxc.
+         SPIR-V: an official DXC release (v1.9.2609; the SDK dxc has no SPIR-V backend). -->
     <Dxc Condition="'$(Dxc)' == ''">C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\dxc.exe</Dxc>
-    <!-- SPIR-V needs an official DXC release (the SDK dxc has no SPIR-V backend); kept outside the repo. Without it the
-         build skips SPIR-V and only the D3D12 driver is available. -->
     <DxcSpirv Condition="'$(DxcSpirv)' == ''">C:\Repositories\tools\dxc\v1.9.2609\bin\x64\dxc.exe</DxcSpirv>
-    <ShaderOut>$(MSBuildProjectDirectory)\obj\shaders\</ShaderOut>
+    <!-- forward slashes in the shader paths: .NET on Linux/macOS takes a backslash as part of a file name -->
+    <CompiledShaderDir>Shaders/compiled/</CompiledShaderDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,33 +24,64 @@
     <ProjectReference Include="..\..\external\FNA\lib\SDL3-CS\SDL3\SDL3.Core.csproj" />
   </ItemGroup>
 
+  <!-- The shader variants, in one list: each is compiled to <File>.dxil and <File>.spv in Shaders\compiled\ and embedded as
+       <Identity>.dxil / <Identity>.spv (Renderer.CreateShader). Defines (optional) are extra dxc arguments, e.g. -D GEO=1. -->
   <ItemGroup>
-    <HlslSource Include="Shaders\*.hlsl" />
+    <ShaderVariant Include="sprite_vs" Source="Shaders/sprite.hlsl" Profile="vs_6_0" Entry="VSMain" File="sprite.vs" Defines="" />
+    <ShaderVariant Include="sprite_ps" Source="Shaders/sprite.hlsl" Profile="ps_6_0" Entry="PSMain" File="sprite.ps" Defines="" />
   </ItemGroup>
 
-  <!-- HLSL -> DXIL at build time with the Windows SDK dxc. The DXIL is embedded as a resource
-       (works for NativeAOT publish too). SDL_GPU register conventions are documented in sprite.hlsl. -->
-  <Target Name="CompileShaders" BeforeTargets="BeforeBuild" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.dxil;$(ShaderOut)sprite.ps.dxil">
-    <MakeDir Directories="$(ShaderOut)" />
-    <Exec Command="&quot;$(Dxc)&quot; -nologo -T vs_6_0 -E VSMain -O3 -Fo &quot;$(ShaderOut)sprite.vs.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
-    <Exec Command="&quot;$(Dxc)&quot; -nologo -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
-  </Target>
+  <!-- The compiled shaders are committed, so a build needs no dxc or Windows SDK (NativeAOT publish embeds them the same way).
+       ShaderBundleTests fails when a Shaders\*.hlsl no longer matches its Shaders\compiled\<name>.hlsl.sha256.
+       SDL_GPU register conventions are documented in sprite.hlsl. -->
+  <ItemGroup>
+    <HlslSource Include="Shaders/*.hlsl" />
+  </ItemGroup>
 
-  <!-- HLSL -> SPIR-V (Vulkan) with the same source; SDL_GPU's SPIR-V set/binding conventions are in sprite.hlsl. -->
-  <Target Name="CompileShadersSpirv" BeforeTargets="BeforeBuild" Condition="Exists('$(DxcSpirv)')" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.spv;$(ShaderOut)sprite.ps.spv">
-    <MakeDir Directories="$(ShaderOut)" />
-    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T vs_6_0 -E VSMain -O3 -Fo &quot;$(ShaderOut)sprite.vs.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
-    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
-  </Target>
-
-  <Target Name="EmbedShaders" AfterTargets="CompileShaders;CompileShadersSpirv" BeforeTargets="BeforeBuild">
-    <Warning Condition="!Exists('$(DxcSpirv)')" Text="DXC with SPIR-V not found at $(DxcSpirv): building without Vulkan shaders" />
+  <Target Name="EmbedShaders" BeforeTargets="BeforeBuild" DependsOnTargets="CompileShaders">
     <ItemGroup>
-      <EmbeddedResource Include="$(ShaderOut)sprite.vs.dxil" LogicalName="sprite_vs.dxil" WithCulture="false" />
-      <EmbeddedResource Include="$(ShaderOut)sprite.ps.dxil" LogicalName="sprite_ps.dxil" WithCulture="false" />
-      <EmbeddedResource Include="$(ShaderOut)sprite.vs.spv" LogicalName="sprite_vs.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
-      <EmbeddedResource Include="$(ShaderOut)sprite.ps.spv" LogicalName="sprite_ps.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
+      <_ShaderBinary Include="$(CompiledShaderDir)%(ShaderVariant.File).dxil" Resource="%(ShaderVariant.Identity).dxil" />
+      <_ShaderBinary Include="$(CompiledShaderDir)%(ShaderVariant.File).spv" Resource="%(ShaderVariant.Identity).spv" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_ShaderBinary.Identity)')" Text="Compiled shader %(_ShaderBinary.Identity) is missing. Regenerate with: dotnet build poc/Uo.Render -p:CompileShaders=true (docs/dev/runbook.md, Shader toolchain)." />
+    <ItemGroup>
+      <EmbeddedResource Include="@(_ShaderBinary)" LogicalName="%(_ShaderBinary.Resource)" WithCulture="false" />
     </ItemGroup>
   </Target>
+
+  <!-- Regenerate (opt-in): dotnet build poc/Uo.Render -p:CompileShaders=true. Rewrites the compiled files and the source
+       hashes: sha256 of the source with CR removed, so CRLF and LF checkouts agree (dxc's output doesn't depend on them). -->
+  <Target Name="CompileShaders" Condition="'$(CompileShaders)' == 'true'">
+    <Error Condition="!Exists('$(Dxc)')" Text="CompileShaders: the DXIL compiler is not at '$(Dxc)'. Install the Windows SDK 10.0.26100.0 or pass -p:Dxc=&lt;path to its dxc.exe&gt;." />
+    <Error Condition="!Exists('$(DxcSpirv)')" Text="CompileShaders: the SPIR-V compiler is not at '$(DxcSpirv)'. Get the official DXC release v1.9.2609 from https://github.com/microsoft/DirectXShaderCompiler/releases and pass -p:DxcSpirv=&lt;path to its dxc.exe&gt;." />
+    <MakeDir Directories="$(CompiledShaderDir)" />
+    <Exec Command="&quot;$(Dxc)&quot; -nologo -T %(ShaderVariant.Profile) -E %(ShaderVariant.Entry) %(ShaderVariant.Defines) -O3 -Fo &quot;$(CompiledShaderDir)%(ShaderVariant.File).dxil&quot; &quot;%(ShaderVariant.Source)&quot;" />
+    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T %(ShaderVariant.Profile) -E %(ShaderVariant.Entry) %(ShaderVariant.Defines) -O3 -Fo &quot;$(CompiledShaderDir)%(ShaderVariant.File).spv&quot; &quot;%(ShaderVariant.Source)&quot;" />
+    <WriteShaderSourceHash Sources="@(HlslSource)" OutputDir="$(MSBuildProjectDirectory)/$(CompiledShaderDir)" />
+  </Target>
+
+  <UsingTask TaskName="WriteShaderSourceHash" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Sources ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <OutputDir ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        foreach (var item in Sources)
+        {
+            string path = item.GetMetadata("FullPath");
+            string text = System.IO.File.ReadAllText(path).Replace("\r", "");
+            byte[] hash;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(text));
+            }
+            string hex = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            string name = System.IO.Path.GetFileName(path);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(OutputDir, name + ".sha256"), hex + "  " + name + "\n");
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
 
 </Project>

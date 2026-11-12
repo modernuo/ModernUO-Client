@@ -52,7 +52,7 @@ namespace ClassicUO
                 userDriver = null;
             }
 
-            _pre = RendererSelection.BeforeDevice(mode, userDriver, ProbeDevice, LegacyDriver);
+            _pre = RendererSelection.BeforeDevice(mode, userDriver, ProbeDevice, LegacyDriver, global::Uo.Render.Renderer.SpirvShadersEmbedded);
 
             if (userDriver != null)
             {

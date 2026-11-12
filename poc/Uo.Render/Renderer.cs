@@ -82,10 +82,14 @@ public sealed unsafe class Renderer : IDisposable
 
     static SDL_GPUShaderFormat EmbeddedFormats()
     {
-        var formats = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
-        if (typeof(Renderer).Assembly.GetManifestResourceInfo("sprite_vs.spv") != null) formats |= SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
+        SDL_GPUShaderFormat formats = 0;
+        if (typeof(Renderer).Assembly.GetManifestResourceInfo("sprite_vs.dxil") != null) formats |= SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
+        if (SpirvShadersEmbedded) formats |= SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
         return formats;
     }
+
+    /// <summary>The build embeds the SPIR-V shaders (Shaders\compiled\*.spv), which a Vulkan device needs.</summary>
+    public static bool SpirvShadersEmbedded => typeof(Renderer).Assembly.GetManifestResourceInfo("sprite_vs.spv") != null;
 
     static IntPtr CreateDevice(string driver)
     {
