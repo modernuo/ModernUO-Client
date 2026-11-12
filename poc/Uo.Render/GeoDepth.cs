@@ -34,6 +34,12 @@ public static class GeoDepth
     /// <summary>Tile sums flats (land, floors) sit behind their plane (sprite.hlsl FLAT_DROP).</summary>
     public const float FlatDrop = 1.5f;
 
+    /// <summary>Tile sums a buried static (not a flat, top at or under its tile's land: SpriteInstance.ZGeoBuried) sits behind
+    /// its shape, as the flats do, so the land in front keeps covering it (a lower storey's walls under the ground, Felucca
+    /// 1451-1454 1669 z -11 under land z 10, poked through the land ahead in bench6-000021's out poses). A static only partly
+    /// under the ground keeps its shape: its buried part less than FlatDrop · 5.5 z under the land ahead still shows.</summary>
+    public const float BuriedDrop = FlatDrop;
+
     /// <summary>A flat at height <paramref name="z"/> under world pixel row <paramref name="sy"/>.</summary>
     public static float Flat(float sy, int z) => Plane(sy, z) - FlatDrop;
 

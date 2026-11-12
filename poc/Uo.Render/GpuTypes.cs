@@ -43,6 +43,10 @@ public struct SpriteInstance
     /// Surface): its plane, lowered like land (GeoDepth.Flat).</summary>
     public const uint ZGeoFlat = 32;
 
+    /// <summary>Corners bits 16-23 of <see cref="FlagZTest"/> statics (clip-2 depth model): not a flat, and its top (z + height)
+    /// at or under its tile's land: lowered like the flats (GeoDepth.BuriedDrop), so the land in front still covers it.</summary>
+    public const uint ZGeoBuried = 64;
+
     /// <summary>Light bits 13 and 15 together (<see cref="LightRotated"/> | <see cref="LightWobble"/>, never combined
     /// otherwise): a mobile layer carrying its composite's anchor for the clip-2 depth model (<see cref="GeoMobile"/>).</summary>
     public const uint LightGeoMobile = 0xA000;

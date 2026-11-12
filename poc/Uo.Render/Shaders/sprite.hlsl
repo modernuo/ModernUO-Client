@@ -71,6 +71,7 @@
 #define GEO_MOBILE    3u      // mobile composite: billboard through the tile centre, ground plane below, own tile's front faces
 #define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land
 #define Z_GEOFLAT     32u
+#define Z_GEOBURIED   64u     // a non-flat static whose top is at or under its tile's land: lowered by FLAT_DROP like the flats
 #define FLAT_DROP     1.5     // flats sit FLAT_DROP tile sums back: a mobile's lower rows beat the floors they hang over
 #define GEO_ZBIAS     2e-3    // GeoDepth.ZBias: ties (one plane) go to the higher object
 #define GEO_RANKBIAS  2.5e-4  // GeoDepth.RankBias: baked land / statics, then the key's rank (insertion order at equal tile and z)
@@ -413,6 +414,8 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             float sum = (ny + 22.0 + 4.0 * z) / 22.0 + GeoOff;
             o.geoP = float4(wall ? GEO_WALL : flat ? GEO_FLAT : GEO_BOX, nx, ny - 4.0 * height, sum);
             o.geoB.x = (wall ? 0.02 : 0.0) + z * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
+            if (((inst.corners >> 16) & Z_GEOBURIED) != 0)
+                o.geoB.x -= FLAT_DROP;
         }
         else if (geoMob)
         {

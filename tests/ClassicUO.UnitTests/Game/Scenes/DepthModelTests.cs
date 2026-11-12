@@ -149,6 +149,49 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
         }
 
+        // bench6-000021 c1u_out_1453_1671_d0: the lower storey's walls (0x0034, z -11, height 20) on 1451-1454 1669 lie under
+        // the land (z 10). Lowered like the land, the land ahead (1452 1670, z 10) covers every point of the face again.
+        [Fact]
+        public void BuriedWallStaysUnderTheLandAhead()
+        {
+            const int wz = -11, wh = 20, lz = 10;
+            var (nx, ny) = GeoDepth.NorthVertex(1452, 1669, wz);
+            int poked = 0;
+
+            for (int col = -22; col <= 22; col++)
+            {
+                for (int zp = wz; zp <= wz + wh; zp++)
+                {
+                    // the face point on the back edges at height zp
+                    float sx = nx + col, sy = ny + System.Math.Abs(col) - 4 * (zp - wz);
+                    float land = GeoDepth.Flat(sy, lz) + (lz - 2) * GeoDepth.ZBias;
+                    float wall = GeoDepth.Wall(1452, 1669, sx) + GeoDepth.WallBias + wz * GeoDepth.ZBias;
+                    poked += wall > land ? 1 : 0;
+                    (wall - GeoDepth.BuriedDrop).Should().BeLessThan(land, $"column {col}, z {zp}");
+                }
+            }
+
+            poked.Should().BeGreaterThan(0, "without the drop the face's upper part beat the land (the shots' teeth)");
+        }
+
+        [Theory]
+        [InlineData(-11, 20, 10, true)] // top 9 under land 10
+        [InlineData(-10, 20, 10, true)] // top 10 at the land
+        [InlineData(-9, 20, 10, false)] // top 11 above it
+        [InlineData(10, 20, 10, false)]
+        public void BuriedBitFromTheTilesLand(int z, int height, int landZ, bool buried)
+        {
+            var data = new Uo.Pack.StaticTileData[2];
+            data[1] = new Uo.Pack.StaticTileData { Flags = Uo.Render.TileFlags.Wall, Height = (byte)height };
+            uint bits = BakeJob.ZInfo(1, z, data, landZ) >> 16;
+            ((bits & SpriteInstance.ZGeoBuried) != 0).Should().Be(buried);
+            (bits & SpriteInstance.ZGeoWall).Should().Be(SpriteInstance.ZGeoWall);
+
+            // flats are lowered anyway and never marked
+            data[1] = new Uo.Pack.StaticTileData { Flags = Uo.Render.TileFlags.Surface, Height = 0 };
+            ((BakeJob.ZInfo(1, z, data, landZ) >> 16) & SpriteInstance.ZGeoBuried).Should().Be(0u);
+        }
+
         [Fact]
         public void BoxOnTheTileAheadHidesTheMobilesLowerBody()
         {
