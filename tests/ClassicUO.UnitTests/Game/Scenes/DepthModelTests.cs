@@ -192,6 +192,45 @@ namespace ClassicUO.UnitTests.Game.Scenes
             ((BakeJob.ZInfo(1, z, data, landZ) >> 16) & SpriteInstance.ZGeoBuried).Should().Be(0u);
         }
 
+        // CUO_CLIP_ORDER_CHECK's view of the shader classes (sprite.hlsl VSMain GEO, GeoDepth)
+        [Fact]
+        public void StaticMirrorsTheShaderClasses()
+        {
+            const int tx = 100, ty = 100, z = 5;
+            var (nx, ny) = GeoDepth.NorthVertex(tx, ty, z);
+            float sx = nx + 7, sy = ny + 10;
+
+            GeoDepth.Static(tx, ty, z, 20, true, false, false, sx, sy).Should().Be(GeoDepth.Wall(tx, ty, sx) + GeoDepth.WallBias + z * GeoDepth.ZBias);
+            GeoDepth.Static(tx, ty, z, 0, false, true, false, sx, sy).Should().Be(GeoDepth.Plane(sy, z) - GeoDepth.FlatDrop + z * GeoDepth.ZBias);
+            GeoDepth.Static(tx, ty, z, 6, false, false, false, sx, sy).Should().Be(GeoDepth.Box(tx, ty, z, 6, sx, sy) + z * GeoDepth.ZBias);
+            GeoDepth.Static(tx, ty, z, 6, false, false, true, sx, sy)
+                .Should().BeApproximately(GeoDepth.Static(tx, ty, z, 6, false, false, false, sx, sy) - GeoDepth.BuriedDrop, 1e-4f);
+            GeoDepth.Land(sy, z).Should().Be(GeoDepth.Flat(sy, z) + (z - 2) * GeoDepth.ZBias);
+            GeoDepth.MobileBiased(nx, ny + 19, z, sx, sy).Should().Be(GeoDepth.Mobile(nx, ny + 19, z, sx, sy) + GeoDepth.MobileBias + z * GeoDepth.ZBias);
+        }
+
+        [Fact]
+        public void OnShapeCoversTheClassShapes()
+        {
+            var (nx, ny) = GeoDepth.NorthVertex(100, 100, 0);
+
+            // wall, height 20: the faces on the back edges, 80 px tall
+            GeoDepth.OnShape(100, 100, 0, 20, true, false, nx, ny).Should().BeTrue();
+            GeoDepth.OnShape(100, 100, 0, 20, true, false, nx, ny - 80).Should().BeTrue();
+            GeoDepth.OnShape(100, 100, 0, 20, true, false, nx, ny + 1).Should().BeFalse();
+            GeoDepth.OnShape(100, 100, 0, 20, true, false, nx + 22, ny + 22).Should().BeTrue();
+            GeoDepth.OnShape(100, 100, 0, 20, true, false, nx + 23, ny + 22).Should().BeFalse();
+
+            // box, height 10: top diamond to the south vertex
+            GeoDepth.OnShape(100, 100, 0, 10, false, false, nx, ny - 40).Should().BeTrue();
+            GeoDepth.OnShape(100, 100, 0, 10, false, false, nx, ny + 44).Should().BeTrue();
+            GeoDepth.OnShape(100, 100, 0, 10, false, false, nx, ny - 41).Should().BeFalse();
+
+            // flat: the diamond
+            GeoDepth.OnShape(100, 100, 0, 0, false, true, nx, ny + 22).Should().BeTrue();
+            GeoDepth.OnShape(100, 100, 0, 0, false, true, nx + 20, ny + 1).Should().BeFalse();
+        }
+
         [Fact]
         public void BoxOnTheTileAheadHidesTheMobilesLowerBody()
         {

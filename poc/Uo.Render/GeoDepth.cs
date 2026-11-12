@@ -69,6 +69,37 @@ public static class GeoDepth
         return MathF.Max(b, MathF.Min(ground, front));
     }
 
+    /// <summary>A baked static's depth with its biases, as the geo VS/PS give it (rank left out): wall, flat or box over tile
+    /// (tx, ty) at z, lowered by <see cref="BuriedDrop"/> when <paramref name="buried"/>.</summary>
+    public static float Static(int tx, int ty, int z, int height, bool wall, bool flat, bool buried, float sx, float sy)
+    {
+        float d;
+        if (wall) d = Wall(tx, ty, sx) + WallBias;
+        else if (flat) d = Plane(sy, z) - FlatDrop;
+        else d = Box(tx, ty, z, height, sx, sy);
+        return d + z * ZBias - (buried ? BuriedDrop : 0f);
+    }
+
+    /// <summary>A land tile's depth at height <paramref name="z"/> under world pixel row <paramref name="sy"/>, with its bias.</summary>
+    public static float Land(float sy, int z) => Flat(sy, z) + (z - 2) * ZBias;
+
+    /// <summary>A mobile composite's depth with its biases (see <see cref="Mobile"/>).</summary>
+    public static float MobileBiased(float ax, float ay, int z, float sx, float sy) => Mobile(ax, ay, z, sx, sy) + MobileBias + z * ZBias;
+
+    /// <summary>Whether world pixel (sx, sy) lies on a static's shape over tile (tx, ty) at z (CUO_CLIP_ORDER_CHECK samples
+    /// only there): a wall's faces on the back edges up to z + height, a box's top diamond and front faces down to z, a flat's
+    /// diamond. Art beyond the shape (tree crowns, wall caps) is not sampled.</summary>
+    public static bool OnShape(int tx, int ty, int z, int height, bool wall, bool flat, float sx, float sy)
+    {
+        var (nx, ny) = NorthVertex(tx, ty, z);
+        float s = MathF.Abs(sx - nx);
+        if (s > 22f) return false;
+        float h = 4f * height;
+        if (wall) return sy <= ny + s && sy >= ny + s - h;
+        if (flat) return sy >= ny + s && sy <= ny + 44f - s;
+        return sy >= ny - h + s && sy <= ny + 44f - s;
+    }
+
     /// <summary>World pixel of tile (tx, ty, z)'s north vertex.</summary>
     public static (int X, int Y) NorthVertex(int tx, int ty, int z) => ((tx - ty) * 22, (tx + ty) * 22 - 22 - 4 * z);
 

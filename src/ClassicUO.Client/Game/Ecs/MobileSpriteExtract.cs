@@ -196,6 +196,10 @@ namespace ClassicUO.Game
             ref readonly EquipmentSlots eq = ref data.Get<EquipmentSlots>();
             _objX = data.Get<Position>().X;
             _objZ = data.Get<Position>().Z;
+#if CUO_DEVTOOLS
+            _objY = data.Get<Position>().Y;
+            _objStill = rs.OffsetX == 0 && rs.OffsetY == 0;
+#endif
             _fiX = _fiY = _fiW = _fiH = 0;
             ushort bodyHue = data.Get<Hue>().Value;
 
@@ -420,6 +424,11 @@ namespace ClassicUO.Game
             {
                 Scenes.ClipDump.Layer(_objX, id, group, dir, frameIndex, isMount, isEquip, w, h, fe.CenterX, fe.CenterY, anchorX, anchorY, x, y, mountOffset, depth);
             }
+
+            if (Scenes.ClipOrderCheck.Armed && !isShadow && _objStill && !_selectOnly)
+            {
+                Scenes.ClipOrderCheck.Layer(_objX, _objY, _objZ, id, anchorX, anchorY, x, y, w, h, fe.CenterY, mountOffset, depth);
+            }
 #endif
 
             if (!isShadow)
@@ -557,6 +566,11 @@ namespace ClassicUO.Game
 
         // clip-2: depth_model (DepthModel.On) at Begin; MobileFrameCache.Geo keys recorded instances on it
         private bool _geo;
+#if CUO_DEVTOOLS
+        // CUO_CLIP_ORDER_CHECK: the mobile's tile y and whether it stands still (ClipOrderCheck.Layer)
+        private int _objY;
+        private bool _objStill;
+#endif
         private ushort _selBody;
         private byte _selGroup, _selDir, _selFrame;
         private bool _selEquip;
@@ -609,6 +623,7 @@ namespace ClassicUO.Game
                 cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo
 #if CUO_DEVTOOLS
                 && !Scenes.ClipDump.Active // clip-1: the dump reads the layers as Layer draws them
+                && !Scenes.ClipOrderCheck.Armed // clip-2: so does the order check
 #endif
                 )
             {

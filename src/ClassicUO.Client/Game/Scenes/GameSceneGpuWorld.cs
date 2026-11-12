@@ -367,6 +367,9 @@ namespace ClassicUO.Game.Scenes
             Point viewMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
             _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);
             gpu.BeginFrame();
+#if CUO_DEVTOOLS
+            ClipOrderCheck.BeginFrame(_world);
+#endif
             gpu.SetLandSeason(_world.Season);
             GpuUpdateStaticSeason(gpu);
             FrameStats.AddSince(FramePhase.PrepSetup, stamp);
