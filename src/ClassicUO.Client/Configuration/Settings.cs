@@ -183,6 +183,13 @@ namespace ClassicUO.Configuration
         // at every call). Default off.
         [JsonPropertyName("anim_frame_count_tables")] public bool AnimFrameCountTables { get; set; }
 
+        // cache-lru: the Legacy animation atlas (RGBA8 pages, 64 MiB each) frees its least recently used pages above a byte
+        // budget that grows a page on thrash while memory allows and shrinks after minutes without (sooner when unfocused);
+        // evicted directions load again on use (AnimAtlasLru). Read once at startup (CUO_ANIM_LRU=1|0 and the
+        // CUO_ANIM_LRU_* sizes override it in developer builds; CUO_ANIM_LRU_CHECK=1 checks reloads and freed pages).
+        // Default off: the atlas only grows.
+        [JsonPropertyName("anim_atlas_lru")] public bool AnimAtlasLru { get; set; }
+
         // perf-audit #2: the world text list keeps its tail (where the draw pass starts) while its links change, validated by a
         // link-version counter, instead of walking every DRight link in each of the three passes per frame. Read at every use
         // (CUO_TEXT_TAIL=1|0 overrides it and CUO_TEXT_ORDER_CHECK=1 compares the kept tail and the link order with the full

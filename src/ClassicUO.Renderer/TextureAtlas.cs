@@ -27,6 +27,31 @@ namespace ClassicUO.Renderer
 
         public int TexturesCount => _textureList.Count;
 
+        /// <summary>anim_atlas_lru: new pages get an <see cref="Animations.AtlasPage"/> as their Tag.</summary>
+        public bool TrackPages { get; set; }
+
+        public long PageBytes => (long)_width * _height * 4;
+
+        public Texture2D GetPage(int index) => _textureList[index];
+
+        private int _pageSerial;
+
+        /// <summary>
+        /// anim_atlas_lru: frees a page that is not the open one (only the open page has a packer, so a freed page's space
+        /// is never handed out again). Callers drop every reference to the texture first.
+        /// </summary>
+        public void RemovePage(int index)
+        {
+            if (index < 0 || index >= _textureList.Count - 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), $"page {index} of {_textureList.Count} can't be removed (the last page is open)");
+            }
+
+            Texture2D texture = _textureList[index];
+            _textureList.RemoveAt(index);
+            texture.Dispose();
+        }
+
         public unsafe Texture2D AddSprite(
             ReadOnlySpan<uint> pixels,
             int width,
@@ -74,6 +99,12 @@ namespace ClassicUO.Renderer
         {
             Utility.Logging.Log.Trace($"creating texture: {_width}x{_height} {_format}");
             Texture2D texture = new Texture2D(_device, _width, _height, false, _format);
+
+            if (TrackPages)
+            {
+                texture.Tag = new Animations.AtlasPage(_pageSerial++, Animations.AtlasPageClock.NowMs);
+            }
+
             _textureList.Add(texture);
 
             _packer?.Dispose();

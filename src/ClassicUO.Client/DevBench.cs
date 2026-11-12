@@ -19,6 +19,7 @@ namespace ClassicUO
     //     bwalk: [go 1495 1528, then walk to 1495 1542 and back (a region edge, two chunk edges, a z 40 -> 30 slope),
     //     logging each leg's end position against the map's land z and the server's walk denials
     //   CUO_BENCH_NOSHOT=1  no screenshot when a plan entry starts measuring (keeps the PNG encode out of hitch counts)
+    //   CUO_BENCH_BODIES_WRAP=1  the bodies mode starts over after the last body instead of stopping
     //   CUO_BENCH_SIZE=1920x1080  resize the window client area to this many pixels with the game viewport filling it
     //   CUO_BENCH_EXIT=1    walk a few steps, take screenshots and quit when done
     //   CUO_BENCH_SPOTS="x y;x y"  screenshot each spot at zoom 1 and full light, then quit
@@ -68,6 +69,7 @@ namespace ClassicUO
         private static readonly string _shots = Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS");
         // the screenshot taken as a plan entry starts lands in its first measurement window (a PNG encode on the main thread)
         private static readonly bool _noShot = Environment.GetEnvironmentVariable("CUO_BENCH_NOSHOT") == "1";
+        private static readonly bool _bodiesWrap = Environment.GetEnvironmentVariable("CUO_BENCH_BODIES_WRAP") == "1";
         private static readonly int _planWindows = int.TryParse(Environment.GetEnvironmentVariable("CUO_BENCH_WINDOWS"), out int w) ? w : 3;
         private static readonly (int X, int Y)[] _travel =
         {
@@ -1697,6 +1699,12 @@ namespace ClassicUO
                     if (_bodyRestore == 0)
                     {
                         _bodyRestore = world.Player.Graphic;
+                    }
+
+                    // CUO_BENCH_BODIES_WRAP=1: start over after the last body (anim_atlas_lru gates: bodies whose pages were evicted load again)
+                    if (_bodiesWrap && _bodyNext >= anims.BodyCount - 1)
+                    {
+                        _bodyNext = 0;
                     }
 
                     while (++_bodyNext < anims.BodyCount)
