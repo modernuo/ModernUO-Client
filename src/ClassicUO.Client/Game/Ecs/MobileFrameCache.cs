@@ -87,11 +87,14 @@ namespace ClassicUO.Game
         /// The Legacy sink (LegacySpriteSink): the Legacy batcher calls the last select resolved to, relative to the draw
         /// origin (position + walking offset), with the recipe of their depth, plus FrameInfo and the lights. Recorded only
         /// when the selection is cacheable, the mobile is not seated and every layer and record had its atlas texture (the
-        /// atlas only gains textures, so a recorded texture and rect stay valid). Replayed while the selection
+        /// atlas only gains textures, except that anim_atlas_lru frees pages and bumps Animations.AtlasEpoch, which this
+        /// recording keeps in <see cref="LegacyAtlasEpoch"/>). Replayed while the selection
         /// (<see cref="SelectGen"/>), alpha, override hue, body hue and the sprite source are the same.
         /// </summary>
         public bool LegacyValid;
         public uint LegacySelectGen;
+        // anim_atlas_lru: Animations.AtlasEpoch when recorded; a freed atlas page makes every recording stale
+        public int LegacyAtlasEpoch;
         public byte LegacyAlpha;
         public ushort LegacyOverrideHue, LegacyBodyHue;
         public ILegacySpriteSource LegacySource;

@@ -92,6 +92,11 @@ namespace ClassicUO.Renderer
             return false;
         }
 
+        /// <summary>anim_atlas_lru: forgets an atlas page that is being freed.</summary>
+        public static void Unregister(Texture2D texture) => _map.Remove(texture);
+
+        public static bool Contains(Texture2D texture) => _map.ContainsKey(texture);
+
         public static void Clear() => _map.Clear();
     }
 }
