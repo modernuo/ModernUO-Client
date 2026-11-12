@@ -201,6 +201,12 @@ namespace ClassicUO.Configuration
         // runs with the bool path's). Default off.
         [JsonPropertyName("mesh_vis_bits")] public bool MeshVisBits { get; set; }
 
+        // opl-spread: property-list requests (0xD6) leave at this many serials per second from a queue ordered hovered/gump
+        // first, then by distance from the player (OplRequestQueue), and requests for removed objects are dropped. 0 = off:
+        // one list, 15 per frame. Read once at startup (CUO_OPL_REQUEST_BUDGET=<n> overrides it in developer builds;
+        // CUO_OPL_SPREAD_CHECK=1 checks every send against the requests). Default off.
+        [JsonPropertyName("opl_request_budget")] public int OplRequestBudget { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

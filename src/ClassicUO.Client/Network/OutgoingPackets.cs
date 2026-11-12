@@ -3125,6 +3125,43 @@ namespace ClassicUO.Network
             writer.Dispose();
         }
 
+        // opl_request_budget: the queue's batch of up to 15 serials
+        public static void Send_MegaClilocRequest(this NetClient socket, ReadOnlySpan<uint> serials)
+        {
+            const byte ID = 0xD6;
+
+            int length = socket.PacketsTable.GetPacketLength(ID);
+
+            var writer = new StackDataWriter(length < 0 ? 64 : length);
+
+            writer.WriteUInt8(ID);
+
+            if (length < 0)
+            {
+                writer.WriteZero(2);
+            }
+
+            int count = Math.Min(15, serials.Length);
+
+            for (int i = 0; i < count; ++i)
+            {
+                writer.WriteUInt32BE(serials[i]);
+            }
+
+            if (length < 0)
+            {
+                writer.Seek(1, SeekOrigin.Begin);
+                writer.WriteUInt16BE((ushort) writer.BytesWritten);
+            }
+            else
+            {
+                writer.WriteZero(length - writer.BytesWritten);
+            }
+
+            socket.Send(writer.BufferWritten);
+            writer.Dispose();
+        }
+
         public static void Send_StatLockStateRequest(this NetClient socket, byte stat, Lock state)
         {
             const byte ID = 0xBF;
