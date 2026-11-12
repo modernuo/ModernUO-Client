@@ -187,6 +187,54 @@ namespace ClassicUO.UnitTests
         }
 
         [Fact]
+        public void Auto_NoSpirvShaders_IsLegacyOnTheLegacyDriver_WithoutProbe()
+        {
+            bool probed = false;
+            var pre = RendererSelection.BeforeDevice(WorldRendererMode.Auto, null, Probe(ProbeOk, () => probed = true), D3D11, spirvShaders: false);
+
+            probed.Should().BeFalse();
+            pre.GpuCandidate.Should().BeFalse();
+            pre.Fna3dDriver.Should().Be("D3D11");
+            pre.Reason.Should().Contain("SPIR-V");
+
+            var post = RendererSelection.AfterDevice(pre, "vulkan", () => throw new InvalidOperationException());
+            post.Outcome.Should().Be(RendererOutcome.Legacy);
+            post.Reason.Should().Contain("SPIR-V");
+        }
+
+        [Fact]
+        public void Auto_NoSpirvShaders_UserForcedVulkan_KeepsTheUsersDriver_IsLegacy()
+        {
+            var pre = RendererSelection.BeforeDevice(WorldRendererMode.Auto, "Vulkan", Probe(ProbeOk), D3D11, spirvShaders: false);
+
+            pre.Fna3dDriver.Should().BeNull();
+            RendererSelection.AfterDevice(pre, "vulkan", () => null).Outcome.Should().Be(RendererOutcome.Legacy);
+        }
+
+        [Fact]
+        public void ForcedGpu_NoSpirvShaders_FailsWithTheReason()
+        {
+            bool probed = false;
+            var pre = RendererSelection.BeforeDevice(WorldRendererMode.Gpu, null, Probe(ProbeOk, () => probed = true), D3D11, spirvShaders: false);
+
+            probed.Should().BeFalse();
+            pre.Fna3dDriver.Should().BeNull();
+
+            var post = RendererSelection.AfterDevice(pre, "vulkan", () => null);
+            post.Outcome.Should().Be(RendererOutcome.Fail);
+            post.Reason.Should().Contain("SPIR-V");
+        }
+
+        [Fact]
+        public void ForcedLegacy_NoSpirvShaders_IsLegacy()
+        {
+            var pre = RendererSelection.BeforeDevice(WorldRendererMode.Legacy, null, Probe(ProbeOk), D3D11, spirvShaders: false);
+
+            pre.Fna3dDriver.Should().BeNull();
+            RendererSelection.AfterDevice(pre, "vulkan", () => null).Should().Be(new PostDeviceDecision(RendererOutcome.Legacy, "forced"));
+        }
+
+        [Fact]
         public void ForcedGpu_WithForcedOpenGL_Fails()
         {
             var pre = RendererSelection.BeforeDevice(WorldRendererMode.Gpu, "OpenGL", Probe(ProbeOk), D3D11);
