@@ -90,6 +90,12 @@ namespace ClassicUO.Game
         public sbyte GeoZ;
         public bool Geo;
 
+        /// <summary>clip-2 depth model: an art record (item, multi) drawn with a static's shape over tile
+        /// (<see cref="GeoTx"/>, <see cref="GeoTy"/>) at <see cref="GeoZ"/> (SpriteInstance.GeoTile); false for everything else.</summary>
+        public bool GeoTile;
+        public ushort GeoTx, GeoTy;
+        public byte GeoHeight, GeoBits;
+
         public readonly bool Flipped => (Flags & DynamicSpriteFlags.Flip) != 0;
     }
 
@@ -135,7 +141,14 @@ namespace ClassicUO.Game
                     return;
                 }
 
+                int before0 = count;
                 Art(in t, s.Id, s.X + offsetX, s.Y + offsetY, s.Hue, s.Depth, s.ObjX, s.Rank, ref buffer, ref count);
+
+                // clip-2 depth model: the static's shape (read only by the geometric pipelines; not shadows)
+                if (s.GeoTile && count > before0 && (int)s.Hue.Y != ShaderHueTranslator.SHADER_SHADOW)
+                {
+                    buffer[count - 1].GeoTile(s.GeoTx, s.GeoTy, s.GeoZ, s.GeoHeight, s.GeoBits);
+                }
 
                 return;
             }

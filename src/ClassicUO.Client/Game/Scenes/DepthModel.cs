@@ -9,9 +9,10 @@ namespace ClassicUO.Game.Scenes
     /// clip-2: the world's depth model. Off (default): one depth key per sprite, (x + y) + (127 + PriorityZ) / 100, with the
     /// mobile strips' + 1 + 2i; the strip under the anchor (+ 3) beats walls up to two diagonals ahead (feet through walls,
     /// Felucca 1453 1668). On: per-pixel geometric depth by shape class (Uo.Render.GeoDepth): walls, boxes, land planes and the
-    /// mobile composite (body, mount and equipment around one anchor). Gpu only so far; Legacy keeps the keys. Switch
-    /// <c>depth_model</c>; <c>CUO_DEPTH_MODEL=1|0</c> overrides it in developer builds. The comparison so far is visual (the
-    /// clip scenes' shots with the switch off and on); a per-pair checker (CUO_CLIP_ORDER_CHECK) is the next step.
+    /// mobile composite (body, mount and equipment around one anchor; corpses too); items, multis and captured statics take
+    /// the baked statics' shapes (SpriteInstance.GeoTile). Gpu only so far; Legacy keeps the keys. Switch
+    /// <c>depth_model</c>; <c>CUO_DEPTH_MODEL=1|0</c> overrides it in developer builds. CUO_CLIP_ORDER_CHECK compares the two
+    /// orders on the pairs around standing mobiles.
     /// </summary>
     internal static class DepthModel
     {

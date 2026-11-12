@@ -72,6 +72,7 @@
 #define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land
 #define Z_GEOFLAT     32u
 #define Z_GEOBURIED   64u     // a non-flat static whose top is at or under its tile's land: lowered by FLAT_DROP like the flats
+#define Z_GEOTILE     128u    // a dynamic art instance (item, multi, captured static) in the statics' shape layout (SpriteInstance.GeoTile)
 #define FLAT_DROP     1.5     // flats sit FLAT_DROP tile sums back: a mobile's lower rows beat the floors they hang over
 #define GEO_ZBIAS     2e-3    // GeoDepth.ZBias: ties (one plane) go to the higher object
 #define GEO_RANKBIAS  2.5e-4  // GeoDepth.RankBias: baked land / statics, then the key's rank (insertion order at equal tile and z)
@@ -397,8 +398,10 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             o.geoLin = (wc.y + 22.0 + 4.0 * z) / 22.0 + GeoOff - FLAT_DROP;
             o.geoB.x = (z - 2) * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
         }
-        else if (zTest)
+        else if (zTest || (!lit && !indexed && (flags & FLAG_DEFORM) == 0 && !geoMob && ((inst.corners >> 16) & Z_GEOTILE) != 0))
         {
+            // baked statics, and dynamic art the host gave the same layout (Z_GEOTILE; it never sets FLAG_ZTEST, so the
+            // max-Z, roof and circle-of-transparency tests above stay off for it)
             // must match SpriteInstance.Tile (GpuTypes.cs): the static's tile from its rectangle and low bytes
             int a = inst.x + (int)((inst.whf & 0xFFFu) >> 1) + 11;
             int b = inst.y + (int)((inst.whf >> 12) & 0xFFFu) + z * 4 - 11;

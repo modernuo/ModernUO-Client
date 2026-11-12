@@ -182,7 +182,7 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects;
+        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects, _gpuItemKeyGeo;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
         private Uo.Render.PackSet _gpuItemKeyPack;
         private Item _gpuSelContainer;
@@ -223,10 +223,14 @@ namespace ClassicUO.Game.Scenes
             bool mixed = Settings.GlobalSettings.GpuPrepareItemCacheMixed;
             bool effects = want && Settings.GlobalSettings.GpuPrepareItemCacheEffects;
             var world = _gpuWorld.World;
+            // clip-2: cached item instances carry the depth model's shape bits only when depth_model is on
+            bool geo = DepthModel.On;
 
             if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || mixed != _gpuItemKeyMixed ||
-                effects != _gpuItemKeyEffects || !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
+                effects != _gpuItemKeyEffects || geo != _gpuItemKeyGeo || !ReferenceEquals(world, _gpuItemKeyWorld) ||
+                !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
             {
+                _gpuItemKeyGeo = geo;
                 _gpuItemGeneration++;
                 _gpuItemKeyOn = want;
                 _gpuItemKeyGray = gray;

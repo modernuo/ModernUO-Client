@@ -413,7 +413,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         // ---- item select ----
 
-        private static (ArtLoader Arts, GpuSpriteTables Tables) ArtFixture()
+        internal static (ArtLoader Arts, GpuSpriteTables Tables) ArtFixture()
         {
             var rnd = new Random(21);
             SpriteEntry[] sprites = RandomSprites(rnd, 0x4000 + 0x4000);
@@ -443,7 +443,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         public static TheoryData<string> ItemCases => new TheoryData<string> { "plain", "hued", "partial", "stack", "coins", "hidden", "highlight", "preview", "light", "multi", "fading" };
 
-        private static ItemSpriteInput ItemCase(string name)
+        internal static ItemSpriteInput ItemCase(string name)
         {
             ItemSpriteInput i = ArtItem(0x0E75);
 

@@ -47,6 +47,36 @@ public struct SpriteInstance
     /// at or under its tile's land: lowered like the flats (GeoDepth.BuriedDrop), so the land in front still covers it.</summary>
     public const uint ZGeoBuried = 64;
 
+    /// <summary>Corners bits 16-23 of a dynamic (not <see cref="FlagZTest"/>) art instance (clip-2 depth model): it carries a
+    /// static's shape encoding (<see cref="GeoTile"/>) for items, multis and captured statics; the max-Z, roof and circle of
+    /// transparency uniforms still ignore it, as they ignore every dynamic sprite.</summary>
+    public const uint ZGeoTile = 128;
+
+    /// <summary>The clip-2 shape bits of a static or item with these tiledata properties (<see cref="ZGeoWall"/> or
+    /// <see cref="ZGeoFlat"/>, else none: a box). One rule for the baker and the dynamic sprites.</summary>
+    public static uint GeoShapeBits(bool wall, bool background, bool surface, int height)
+        => wall ? ZGeoWall : height == 0 && (background || surface) ? ZGeoFlat : 0u;
+
+    /// <summary>Gives a dynamic art instance a static's geometric depth (clip-2, only with depth_model on): tile (tx, ty) at
+    /// z with <paramref name="height"/> and the <see cref="GeoShapeBits"/>, in the baked statics' layout (Light bits 16-31 the
+    /// tile's low bytes, Corners = (u8)z | height &lt;&lt; 8 | bits &lt;&lt; 16) plus <see cref="ZGeoTile"/>. False (unchanged)
+    /// for instances whose Light or Corners upper bits are in use: baked, lit, indexed, deformed, rotated or wobbling.</summary>
+    public bool GeoTile(int tx, int ty, int z, int height, uint bits)
+    {
+        if ((Flags & (FlagZTest | FlagLit | FlagStretch | FlagIndexed | FlagDeform)) != 0 || (Light & (LightRotated | LightWobble)) != 0)
+        {
+            return false;
+        }
+
+        Light = (Light & 0xFFFFu) | StaticTileBits(tx, ty);
+        Corners = (uint)(byte)(sbyte)Math.Clamp(z, -128, 127) | (uint)Math.Clamp(height, 0, 255) << 8 | ((bits & 0x7Fu) | ZGeoTile) << 16;
+        return true;
+    }
+
+    /// <summary>Whether <see cref="GeoTile"/> marked this instance.</summary>
+    public readonly bool IsGeoTile => (Flags & (FlagZTest | FlagLit | FlagIndexed | FlagDeform)) == 0
+        && (Light & LightGeoMobile) != LightGeoMobile && (Corners >> 16 & ZGeoTile) != 0;
+
     /// <summary>Light bits 13 and 15 together (<see cref="LightRotated"/> | <see cref="LightWobble"/>, never combined
     /// otherwise): a mobile layer carrying its composite's anchor for the clip-2 depth model (<see cref="GeoMobile"/>).</summary>
     public const uint LightGeoMobile = 0xA000;
