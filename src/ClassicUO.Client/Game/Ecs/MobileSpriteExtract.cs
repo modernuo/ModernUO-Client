@@ -205,6 +205,10 @@ namespace ClassicUO.Game
 
             int drawX = posX + rs.OffsetX + 22;
             int drawY = posY - 3 + rs.OffsetY + 22;
+            // clip-2: one composite anchor for every layer, taken before the mount's seat offset moves the rider and its
+            // equipment, so mount, rider and equipment get the same geometric depth (depth_model)
+            _geoAnchorX = drawX;
+            _geoAnchorY = drawY;
             float alpha = rs.Alpha / 255f;
             bool mirror = (s.Flags & AnimStateFlags.Mirror) != 0;
             bool shadow = (s.Flags & AnimStateFlags.Shadow) != 0;
@@ -229,6 +233,8 @@ namespace ClassicUO.Game
             {
                 drawX += s.SitX;
                 drawY += s.SitY;
+                _geoAnchorX = drawX;
+                _geoAnchorY = drawY;
             }
             else if (shadow)
             {
@@ -414,8 +420,6 @@ namespace ClassicUO.Game
             }
 
             int anchorX = x, anchorY = y;
-            _geoAnchorX = anchorX;
-            _geoAnchorY = anchorY;
             x -= mirror ? w - fe.CenterX : fe.CenterX;
             y -= h + fe.CenterY;
 
@@ -427,7 +431,7 @@ namespace ClassicUO.Game
 
             if (Scenes.ClipOrderCheck.Armed && !isShadow && _objStill && !_selectOnly)
             {
-                Scenes.ClipOrderCheck.Layer(_objX, _objY, _objZ, id, anchorX, anchorY, x, y, w, h, fe.CenterY, mountOffset, depth);
+                Scenes.ClipOrderCheck.Layer(_objX, _objY, _objZ, id, _geoAnchorX, _geoAnchorY, x, y, w, h, fe.CenterY, mountOffset, depth);
             }
 #endif
 
@@ -560,7 +564,7 @@ namespace ClassicUO.Game
         private SitDeform.BodyRows _sitRows;
         private bool _human;
 
-        // clip-2 depth model: the current Layer's anchor and the mobile's z (DynamicSprite.GeoAx/GeoAy/GeoZ)
+        // clip-2 depth model: the mobile's composite anchor (all its layers) and its z (DynamicSprite.GeoAx/GeoAy/GeoZ)
         private int _geoAnchorX, _geoAnchorY;
         private sbyte _objZ;
 
@@ -782,6 +786,9 @@ namespace ClassicUO.Game
 
         private static void RebuildAbs(MobileFrameCache cache, SpriteInstance[] abs, int n, int dx, int dy, float depth, int objX, sbyte z)
         {
+            // only records made with depth_model on carry anchors (MobileFrameCache.Geo)
+            bool geo = cache.Geo;
+
             for (int i = 0; i < n; i++)
             {
                 ref readonly MobileFrameCache.Entry entry = ref cache.Entries[i];
@@ -792,7 +799,7 @@ namespace ClassicUO.Game
                 inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(DepthOf(depth, entry.Kind, entry.Add) * 100f) - 50, objX, RANK_MOBILE);
 
                 // clip-2: the recorded layers carry the z of their record; a z change also changes the depth, so it lands here
-                if (inst.TryGeoMobile(out int adx, out int ady, out int rz) && rz != z)
+                if (geo && inst.TryGeoMobile(out int adx, out int ady, out int rz) && rz != z)
                 {
                     inst.GeoMobile(adx, ady, z);
                 }

@@ -93,6 +93,38 @@ namespace ClassicUO.UnitTests.Game.Scenes
             onSel.Should().Contain(s => s.Geo);
         }
 
+        // audit clip-12 P2: the mount was emitted before drawY += mountOffset and the rider after, so their anchors differed by
+        // the seat offset. One composite anchor (the unmounted draw point) for every layer.
+        [Fact]
+        public void Mounted_Layers_Share_One_Composite_Anchor()
+        {
+            (_, _, DynamicSprite[] mounted) = Run(true, "mounted");
+            (_, _, DynamicSprite[] plain) = Run(true, "plain");
+            int geo = 0;
+            (int X, int Y)? anchor = null;
+            var bodies = new System.Collections.Generic.HashSet<ushort>();
+
+            foreach (DynamicSprite s in mounted)
+            {
+                if (!s.Geo)
+                {
+                    continue;
+                }
+
+                geo++;
+                bodies.Add(s.Body);
+                (int X, int Y) a = (s.X + s.GeoAx, s.Y + s.GeoAy);
+                anchor ??= a;
+                a.Should().Be(anchor.Value, $"body {s.Body}");
+            }
+
+            geo.Should().BeGreaterThan(1);
+            bodies.Should().HaveCountGreaterThan(1, "mount and rider");
+
+            DynamicSprite p = Array.Find(plain, s => s.Geo);
+            anchor.Should().Be((p.X + p.GeoAx, p.Y + p.GeoAy), "the anchor is taken before the seat offset (-9 here)");
+        }
+
         [Fact]
         public void Frame_Cache_Records_Again_When_The_Switch_Flips()
         {
