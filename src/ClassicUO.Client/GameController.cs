@@ -8,6 +8,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Input;
+using ClassicUO.Loop;
 using ClassicUO.Network;
 using ClassicUO.Network.Encryption;
 using ClassicUO.Renderer;
@@ -91,11 +92,130 @@ namespace ClassicUO
 
         public readonly uint[] FrameDelay = new uint[2];
 
-        private readonly List<(uint, Action)> _queuedActions = new ();
+        private readonly QueuedActions _queuedActions = new QueuedActions();
 
         public void EnqueueAction(uint time, Action action)
         {
-            _queuedActions.Add((Time.Ticks + time, action));
+            _queuedActions.Add(Time.Ticks + time, action);
+        }
+
+        // ---- event_loop (evloop-1 arm A) ----
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the jobs' override of the settings (CUO_EVENT_LOOP=1|0, CUO_EVENT_LOOP_MAX_WAIT_MS)
+        private static readonly bool? _eventLoopEnv = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+        private static readonly int _eventLoopMaxWaitEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MAX_WAIT_MS"), out var mw) && mw > 0 ? mw : 0;
+        private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
+#else
+        private static readonly bool? _eventLoopEnv = null;
+        private const int _eventLoopMaxWaitEnv = 0;
+#endif
+
+        private LoopWaiter _waiter;
+        private bool _waiterTried;
+        private readonly LateWakeMonitor _lateWake = new LateWakeMonitor();
+        private LoopMode _tickMode, _loggedMode = (LoopMode)(-1);
+        private double _tickInterval;
+        private bool _tickDrawSkipped;
+        private long _updateStartTs, _lastDrainTs;
+
+        private static bool EventLoopSwitch => _eventLoopEnv ?? Settings.GlobalSettings.EventLoop;
+
+        private LoopMode DecideLoopMode()
+        {
+            bool on = EventLoopSwitch;
+
+            if (on && !_waiterTried && OperatingSystem.IsWindows())
+            {
+                _waiterTried = true;
+                _waiter = new Win32LoopWaiter();
+
+                if (_waiter.Ready)
+                {
+                    NetClient.MainThreadId = Environment.CurrentManagedThreadId;
+                    Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
+                }
+            }
+
+            if (_waiter != null && _waiter.Ready && _lateWake.Sample(Environment.TickCount64))
+            {
+                Log.Warn($"event_loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
+            }
+
+            var mode = LoopTiming.Decide(on, OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+
+            if (mode != _loggedMode)
+            {
+                _loggedMode = mode;
+                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : on ? " (event_loop on, not available)" : "")}");
+                LoopStats.Mode = mode == LoopMode.Event ? "event" : "legacy";
+            }
+
+            return mode;
+        }
+
+        // ms until the earliest timer the loop knows of: a queued action or the player's next step
+        private double MsUntilNextTimer(double msSinceUpdate)
+        {
+            double ms = LoopTiming.MsUntilTick(_queuedActions.TryEarliest(out uint due), due, Time.Ticks, msSinceUpdate);
+
+            if (UO.World is { InGame: true, Player: { } player } && player.Walker.LastStepRequestTime > Time.Ticks)
+            {
+                // a step is allowed once Time.Ticks reaches LastStepRequestTime
+                ms = Math.Min(ms, LoopTiming.MsUntilTick(true, player.Walker.LastStepRequestTime - 1, Time.Ticks, msSinceUpdate));
+            }
+
+            return ms;
+        }
+
+        // The wait between frames: at the end of a tick that does not draw (Update) or after the present (EndDraw).
+        private void EventLoopWait()
+        {
+            double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
+            double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            double wait = LoopTiming.WaitMs(
+                LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                MsUntilNextTimer(since),
+                maxWait
+            );
+
+            if (wait <= 0)
+            {
+                if (LoopStats.On)
+                {
+                    LoopStats.NoteWait(WakeReason.None, 0, false, false);
+                }
+
+                return;
+            }
+
+            long start = Stopwatch.GetTimestamp();
+            var reason = _waiter.Wait(wait);
+            long end = Stopwatch.GetTimestamp();
+            double waited = (end - start) * 1000.0 / Stopwatch.Frequency;
+            bool timed = reason == WakeReason.Timer;
+            bool late = timed && LateWakeMonitor.IsLate(waited - wait);
+
+            if (timed)
+            {
+                _lateWake.RecordWait(late);
+            }
+
+            FrameStats.Inc(FrameCounter.LoopWaits);
+
+            if (LoopStats.On)
+            {
+                if (reason == WakeReason.Net && waited > 0.2)
+                {
+                    LoopStats.NoteNetWake(end);
+                }
+
+                LoopStats.NoteWait(reason, (long)((waited - wait) * Stopwatch.Frequency / 1000.0), timed, late);
+            }
         }
 
         protected override void Initialize()
@@ -301,6 +421,15 @@ namespace ClassicUO
         // 0 = uncapped (no frame limiter)
         public void SetRefreshRate(int rate)
         {
+#if CUO_DEVTOOLS
+            // CLEANUP(release): CUO_FPS=<n> caps a driver session (started with -fps 0) so the evloop-1 gates exercise the
+            // event loop's waits
+            if (_fpsEnv > 0)
+            {
+                rate = _fpsEnv;
+            }
+#endif
+
             if (rate <= 0)
             {
                 rate = 0;
@@ -503,6 +632,15 @@ namespace ClassicUO
         protected override void Update(GameTime gameTime)
         {
             FrameStats.Begin(FramePhase.Update);
+            FrameStats.Inc(FrameCounter.LoopTicks);
+            _updateStartTs = Stopwatch.GetTimestamp();
+            _tickMode = DecideLoopMode();
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteTick();
+                LoopStats.NoteUpdateStart(SDL_GetTicksNS());
+            }
 
             if (Profiler.InContext(Profiler.ProfilerContext.OUT_OF_CONTEXT))
             {
@@ -528,8 +666,26 @@ namespace ClassicUO
 
             FrameStats.Begin(FramePhase.Packets);
             _parseSlice ??= ParseSlice;
-            var drainStart = _netTrace ? Stopwatch.GetTimestamp() : 0;
-            var packetsCount = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets, _netCapMs);
+            var drainStart = _netTrace || LoopStats.On ? Stopwatch.GetTimestamp() : 0;
+            int capBytes = _netCapBytes, capPackets = _netCapPackets;
+
+            if (_tickMode == LoopMode.Event)
+            {
+                _waiter.BindNet(NetClient.Socket);
+
+                // one drain per frame or wake instead of one per ~1 ms: the byte and packet caps scale with the time since the last
+                double sinceDrain = _lastDrainTs == 0 ? 0 : (_updateStartTs - _lastDrainTs) * 1000.0 / Stopwatch.Frequency;
+                capBytes = LoopTiming.ScaleCap(capBytes, sinceDrain);
+                capPackets = LoopTiming.ScaleCap(capPackets, sinceDrain);
+            }
+
+            _lastDrainTs = _updateStartTs;
+            var packetsCount = NetClient.Socket.Drain(_parseSlice, capBytes, capPackets, _netCapMs);
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteDrain(drainStart, Stopwatch.GetTimestamp(), NetClient.Socket.LastDrainBytes);
+            }
 
             if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
             {
@@ -585,6 +741,8 @@ namespace ClassicUO
             double x = _intervalFixedUpdate[inactive ? 1 : 0];
             _suppressedDraw = false;
             bool minimized = IsMinimizedForDrawSkip();
+            _tickInterval = x;
+            _tickDrawSkipped = minimized;
 
             // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
             // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
@@ -599,14 +757,27 @@ namespace ClassicUO
                 SuppressDraw();
                 (Scene as GameScene)?.OnDrawSkipped(gameTime.ElapsedGameTime.TotalMilliseconds);
 
-                if (!gameTime.IsRunningSlowly)
+                if (_tickMode == LoopMode.Legacy && !gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(idleSleepMs);
+                    LegacySleep(idleSleepMs);
                 }
             }
             else if (x <= 0)
             {
                 _totalElapsed = 0;
+            }
+            else if (_tickMode == LoopMode.Event)
+            {
+                // the wait at the end of the tick (EventLoopWait) runs until the next draw is due
+                if (LoopTiming.DrawDue(_totalElapsed, x, out double carried))
+                {
+                    _totalElapsed = carried;
+                }
+                else
+                {
+                    _suppressedDraw = true;
+                    SuppressDraw();
+                }
             }
             else if (_totalElapsed > x)
             {
@@ -619,7 +790,7 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(idleSleepMs);
+                    LegacySleep(idleSleepMs);
                 }
             }
 
@@ -632,21 +803,29 @@ namespace ClassicUO
             }
 
 
-            for (var i = _queuedActions.Count - 1; i >= 0; i--)
-            {
-                (var time, var fn) = _queuedActions[i];
-
-                if (Time.Ticks > time)
-                {
-                    fn();
-                    _queuedActions.RemoveAt(i);
-                    break;
-                }
-            }
+            // event_loop on: every due action (one Update per frame or wake); off: one per Update, as before
+            _queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch);
 
             base.Update(gameTime);
 
             FrameStats.End(FramePhase.Update);
+
+            if (_tickMode == LoopMode.Event && _suppressedDraw)
+            {
+                EventLoopWait();
+            }
+        }
+
+        private static void LegacySleep(int ms)
+        {
+            FrameStats.Inc(FrameCounter.LoopWaits);
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteSleep();
+            }
+
+            Thread.Sleep(ms);
         }
 
 #if CUO_DEVTOOLS
@@ -804,6 +983,16 @@ namespace ClassicUO
             }
 
             GpuDeviceLost.AfterPresent();
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteDraw();
+            }
+
+            if (_tickMode == LoopMode.Event)
+            {
+                EventLoopWait();
+            }
         }
 
         private float _screenScale = Settings.GlobalSettings.ScreenScale;
@@ -871,6 +1060,11 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
+            if (LoopStats.On)
+            {
+                LoopStats.NoteInputEvent(sdlEvent->type, sdlEvent->common.timestamp);
+            }
+
             // Don't pass SDL events to the plugin host before the plugins are initialized
             // or the garbage collector can get screwed up
             if (_pluginsInitialized && Plugin.ProcessWndProc(sdlEvent) != 0)
@@ -1212,6 +1406,9 @@ namespace ClassicUO
         protected override void OnExiting(object sender, EventArgs args)
         {
             Scene?.Dispose();
+
+            Volatile.Write(ref NetClient.SendQueuedWake, null); // a captured wake after this is a no-op (Wake checks disposal)
+            _waiter?.Dispose();
 
             base.OnExiting(sender, args);
         }

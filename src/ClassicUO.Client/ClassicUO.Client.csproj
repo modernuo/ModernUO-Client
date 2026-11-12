@@ -64,6 +64,12 @@
     <Folder Include="Properties\" />
   </ItemGroup>
 
+  <!-- Third-party license texts for code copied into this project (BSD-3: binaries must carry the notice). They go
+       next to the executable in licenses\ for every build and publish. -->
+  <ItemGroup>
+    <None Include="..\..\licenses\*" Link="licenses\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\external\FNA\FNA.Core.csproj" />
     <ProjectReference Include="..\ClassicUO.Assets\ClassicUO.Assets.csproj" />
