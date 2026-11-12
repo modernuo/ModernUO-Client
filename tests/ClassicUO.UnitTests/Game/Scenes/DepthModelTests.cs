@@ -183,13 +183,32 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             var data = new Uo.Pack.StaticTileData[2];
             data[1] = new Uo.Pack.StaticTileData { Flags = Uo.Render.TileFlags.Wall, Height = (byte)height };
-            uint bits = BakeJob.ZInfo(1, z, data, landZ) >> 16;
+            uint bits = BakeJob.ZInfo(1, z, data, landZ, true) >> 16;
             ((bits & SpriteInstance.ZGeoBuried) != 0).Should().Be(buried);
             (bits & SpriteInstance.ZGeoWall).Should().Be(SpriteInstance.ZGeoWall);
 
             // flats are lowered anyway and never marked
             data[1] = new Uo.Pack.StaticTileData { Flags = Uo.Render.TileFlags.Surface, Height = 0 };
-            ((BakeJob.ZInfo(1, z, data, landZ) >> 16) & SpriteInstance.ZGeoBuried).Should().Be(0u);
+            ((BakeJob.ZInfo(1, z, data, landZ, true) >> 16) & SpriteInstance.ZGeoBuried).Should().Be(0u);
+        }
+
+        // switch off (PackSet.BakeGeo false): the baked Corners are the key model's alone, bit for bit (audit clip-12 P2)
+        [Theory]
+        [InlineData(Uo.Render.TileFlags.Wall, 20, -11)]
+        [InlineData(Uo.Render.TileFlags.Wall | Uo.Render.TileFlags.Roof, 20, 30)]
+        [InlineData(Uo.Render.TileFlags.Surface, 0, 4)]
+        [InlineData(Uo.Render.TileFlags.Background, 0, -20)]
+        [InlineData(Uo.Render.TileFlags.Foliage, 7, 0)]
+        [InlineData(0UL, 3, -40)]
+        public void ZInfoOffHasNoGeoBits(ulong flags, int height, int z)
+        {
+            var data = new Uo.Pack.StaticTileData[2];
+            data[1] = new Uo.Pack.StaticTileData { Flags = flags, Height = (byte)height };
+            const uint geoBits = (SpriteInstance.ZGeoWall | SpriteInstance.ZGeoFlat | SpriteInstance.ZGeoBuried | SpriteInstance.ZGeoTile) << 16;
+            uint off = BakeJob.ZInfo(1, z, data, 10, false);
+            (off & geoBits).Should().Be(0u);
+            uint on = BakeJob.ZInfo(1, z, data, 10, true);
+            (on & ~geoBits).Should().Be(off, "the switch adds the shape bits and changes nothing else");
         }
 
         // CUO_CLIP_ORDER_CHECK's view of the shader classes (sprite.hlsl VSMain GEO, GeoDepth)
