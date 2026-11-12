@@ -18,8 +18,9 @@ namespace ClassicUO.Game.Scenes
     /// within 2 tiles (GeoDepth.OnShape). At each sample the old order (the Gpu keys: the layer's strip against the tile's
     /// key, ties to the static) and the new one (GeoDepth, ties to the static) are worked out; pairs with changed samples are
     /// logged as <c>[clip-order]</c> lines (at most 24 per armed frame) and the frame ends with a summary line with the switch
-    /// state. Items, multis and walking mobiles are not sampled (items and multis still draw by key in both models). Both
-    /// orders are computed from positions and tiledata, not read back from the GPU, so the check runs with the switch off or
+    /// state. Ground items (not corpses or multi placeholders) and multi pieces are sampled as statics without the buried
+    /// mark (the item extract and the capture give them the statics' shape, SpriteInstance.GeoTile); walking mobiles are
+    /// not sampled. Both orders are computed from positions and tiledata, not read back from the GPU, so the check runs with the switch off or
     /// on; samples where the art is transparent count too.
     /// </summary>
     internal static class ClipOrderCheck
@@ -111,22 +112,25 @@ namespace ClassicUO.Game.Scenes
                     for (GameObject o = TileWalk.Begin(chunk, cell, out TileWalk walk); o != null; o = walk.Next())
                     {
                         bool land = o is Land;
-
-                        if (!land && o is not Static)
-                        {
-                            continue;
-                        }
-
                         int z = o.Z, height = 0;
                         bool wall = false, flat = land, buried = false;
 
                         if (o is Static st)
                         {
-                            ref StaticTiles data = ref st.ItemData;
-                            height = data.Height;
-                            wall = data.IsWall;
-                            flat = !wall && height == 0 && (data.IsBackground || data.IsSurface);
+                            Shape(ref st.ItemData, out height, out wall, out flat);
                             buried = !flat && landZ != int.MinValue && z + height <= landZ;
+                        }
+                        else if (o is Item it && !it.IsDestroyed && it.OnGround && !it.IsCorpse && !it.IsMulti)
+                        {
+                            Shape(ref it.ItemData, out height, out wall, out flat);
+                        }
+                        else if (o is Multi mu)
+                        {
+                            Shape(ref mu.ItemData, out height, out wall, out flat);
+                        }
+                        else if (!land)
+                        {
+                            continue;
                         }
 
                         // the static's key as baked (ClipDump's gpuD)
@@ -135,6 +139,15 @@ namespace ClassicUO.Game.Scenes
                     }
                 }
             }
+        }
+
+        // SpriteInstance.GeoShapeBits, as the baker and the dynamic sprites use it
+        private static void Shape(ref StaticTiles data, out int height, out bool wall, out bool flat)
+        {
+            height = data.Height;
+            uint bits = SpriteInstance.GeoShapeBits(data.IsWall, data.IsBackground, data.IsSurface, data.Height);
+            wall = bits == SpriteInstance.ZGeoWall;
+            flat = bits == SpriteInstance.ZGeoFlat;
         }
 
         private static void Sample(GameObject o, int tx, int ty, int z, int height, bool wall, bool flat, bool buried, bool land, int staticD,
@@ -219,7 +232,7 @@ namespace ClassicUO.Game.Scenes
             if (_lines < MAX_LINES && _seen.Add(key))
             {
                 _lines++;
-                string cls = land ? "land" : wall ? "wall" : flat ? "flat" : "box";
+                string cls = (o is Item ? "item " : o is Multi ? "multi " : "") + (land ? "land" : wall ? "wall" : flat ? "flat" : "box");
                 Log.Warn($"[clip-order] mobile {mx},{my},{mz} body {body} vs {cls} 0x{o.Graphic:X4} {tx},{ty},{z} h {height}{(buried ? " buried" : "")}: " +
                          $"samples {samples}, changed {toFront + toBack} (now in front {toFront}, now behind {toBack})");
             }
