@@ -409,7 +409,7 @@ namespace ClassicUO.UnitTests.Network
             client.Disconnected += (_, _) => closed++;
 
             client.Disconnect();
-            socket.RaiseClose(); // a WebSocket's receive loop ending after our own Close
+            socket.RaiseClose(); // a late close report arriving after our own Close
             client.Drain(d => 0, maxMs: 0);
 
             closed.Should().Be(0);

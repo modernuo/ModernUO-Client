@@ -6862,3 +6862,24 @@ Codex reviewed clip-1 + clip-2 up to 6e3e867f0 (cuo-poc-state/audits/clip-12/out
   the corpse's draw point), so the findings did not apply there.
 - **Verification.** Dev suite 3629 passed / 6 skipped (+7 tests); jobs on aot-clip2g (4548dfa04) in the handoff.
 - **Accepted costs.** None new. Switch flips rebake the visible chunks (dev builds only flip at runtime).
+
+## Event loop phase 1: TCP only, loop stats, arm A (2026-11-11, `bg/evloop-1`)
+
+Base 6748f4d29. Design `cuo-poc-state/surveys/event-loop-2026-11-11.md`; handoff `cuo-poc-state/handoffs/evloop-1.md`; jobs `cuo-poc-state/measure/evloop-1/`.
+
+- **WebSocket deleted** (owner decision): WebSocketWrapper, OrderedAsyncWriter and the ws/wss selection. NetClient attaches a TcpSocketWrapper for every address, as it already did for non-ws addresses.
+- **Loop stats** (dev, `CUO_LOOP_STATS=1`): a `[loop]` line every 5 s with Update calls/s, draws/s, sleeps/s, waits/s by wake reason, late wakes and process CPU ms/s. It also has histograms for network readiness to handled, SDL input timestamp to Update, frame pacing and wait lateness. FrameStats gains `loop_ticks` and `loop_waits`. No per-frame allocation.
+- **Arm A** (`event_loop`, default off, Windows): between frames the loop makes one `MsgWaitForMultipleObjectsEx(QS_ALLINPUT)` call. It waits on the socket's WSAEventSelect event, a sticky wake event and a high-resolution waitable timer set to the next deadline (draw, queued action, player step, or `event_loop_max_wait_ms` = 16). FNA's Run cannot be overridden, so the wait sits at the end of the tick: after the present, or after an Update that skips the draw.
+  - The loop falls back to the legacy loop off Windows, when the 1 ms wait probe comes back late, and while the late-wake backoff is in force. The backoff is ModernUO's concept in our own code.
+  - With the switch on, all due queued actions run in each Update, the drain caps scale 1x-4x with the time since the last drain, and a send from a plugin thread wakes the wait.
+  - The selected socket is non-blocking, so the TCP wrapper skips its blocking toggle and handles WouldBlock on send.
+  - `LoopWaiter` is the seam for arms B and C.
+- **Copied (owner-approved BSD reuse)**: from IORingGroup 1a54cff23, the event, timer and wait declarations of `Windows/RIOInterop.cs` (now `Loop/LoopWin32.cs`), and the WaitForCompletion/Wake bodies and timer creation of `Windows/WindowsManagedRIOGroup.cs`, adapted (now `Loop/Win32LoopWaiter.cs`). Nothing from ModernUO's GPL code.
+- **Memory**: none with the switch off; with it on, three kernel handles.
+- **Tests**: `EventLoopTests` (23). Dev suite: 3588 passed, 6 skipped. Release suite: 3575 passed, 6 skipped, 1 failed. The failure is `WeatherSkippedDrawTests.Expired_Weather_Ends_Even_With_Particles_Left`: it depends on a random roll (`RollWind`, then `PlaySound` with no game) and comes from the base, not this branch.
+- **Jobs** (prepared, not submitted):
+  - Lane gates (gpu and legacy) with the event loop on at 60 fps, plus evcheck: the event loop ran, waits were seen, and the large-scene arrival did not disconnect.
+  - alloc-g and alloc-l with base, new, and new with the event loop on.
+  - A counts job on the main runner: the legacy and event loops interleaved in one session at the spot, inactive, minimized and in the large scene, with a max wait of 16 ms and then 100 ms.
+
+  Counts are indicative on a busy machine. Latency and pacing comparisons wait for a quiet machine.

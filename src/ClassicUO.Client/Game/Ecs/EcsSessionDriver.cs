@@ -984,6 +984,20 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // fps <n>: the frame cap (the driver starts uncapped with -fps 0); eventloop on|off: the event_loop setting (an
+                // env CUO_EVENT_LOOP still wins). Both for the evloop-1 counts jobs, which compare the loops in one session.
+                case "fps" when args.Length > 0 && int.TryParse(args[0], out int fpsCap):
+                    Client.Game.SetRefreshRate(fpsCap);
+                    Log.Info($"[ECS] driver: fps cap {fpsCap}");
+
+                    return true;
+
+                case "eventloop" when args.Length > 0:
+                    Settings.GlobalSettings.EventLoop = args[0] == "on";
+                    Log.Info($"[ECS] driver: event_loop {args[0]}");
+
+                    return true;
+
                 // throttleupd on|off: throttle_update_when_inactive
                 case "throttleupd" when args.Length > 0:
                     Settings.GlobalSettings.ThrottleUpdateWhenInactive = args[0] == "on";

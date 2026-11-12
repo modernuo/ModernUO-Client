@@ -180,6 +180,9 @@ namespace ClassicUO
         // and the corpse layer table's builds), and the Items.Get lookups those scans make
         ChildLayerScans,
         ChildLayerGets,
+        // evloop-1: main-loop iterations (Update calls) and sleeps or waits since the last drawn frame
+        LoopTicks,
+        LoopWaits,
         Count
     }
 
@@ -241,7 +244,7 @@ namespace ClassicUO
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
-            "child_layer_scans", "child_layer_gets" };
+            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

@@ -1,6 +1,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using ClassicUO.Loop;
 using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Network.Socket;
@@ -8,6 +9,10 @@ namespace ClassicUO.Network.Socket;
 sealed class TcpSocketWrapper : SocketWrapper
 {
     private TcpClient _socket;
+
+    // event_loop: WSAEventSelect has put the socket in non-blocking mode for good (it cannot be switched back while the
+    // association lasts), so reads skip the blocking toggle and sends go round WouldBlock themselves.
+    private bool _eventSelect;
 
     public override bool IsConnected => _socket?.Client?.Connected ?? false;
 
@@ -49,9 +54,76 @@ sealed class TcpSocketWrapper : SocketWrapper
 
     public override void Send(byte[] buffer, int offset, int count)
     {
+        if (_eventSelect)
+        {
+            SendNonBlocking(buffer, offset, count);
+
+            return;
+        }
+
         var stream = _socket.GetStream();
         stream.Write(buffer, offset, count);
         stream.Flush();
+    }
+
+    // The socket is non-blocking: a full send buffer returns WouldBlock, so wait for it to drain (up to 5 s in all) and go on.
+    private void SendNonBlocking(byte[] buffer, int offset, int count)
+    {
+        var client = _socket.Client;
+        long deadline = Environment.TickCount64 + 5000;
+
+        while (count > 0)
+        {
+            int sent = client.Send(buffer, offset, count, SocketFlags.None, out var error);
+
+            if (error == SocketError.Success)
+            {
+                offset += sent;
+                count -= sent;
+
+                continue;
+            }
+
+            if (error != SocketError.WouldBlock || Environment.TickCount64 - deadline > 0)
+            {
+                throw new SocketException((int)(error == SocketError.WouldBlock ? SocketError.TimedOut : error));
+            }
+
+            client.Poll(100_000, SelectMode.SelectWrite);
+        }
+    }
+
+    public override bool TryEventSelect(IntPtr evt)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        var client = _socket?.Client;
+
+        if (client == null || !client.Connected)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (LoopWin32.WSAEventSelect(client.Handle, evt, LoopWin32.FD_READ | LoopWin32.FD_CLOSE) != 0)
+            {
+                Log.Warn($"event_loop: WSAEventSelect failed ({System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+
+                return false;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+
+        _eventSelect = true;
+
+        return true;
     }
 
     public override int Available
@@ -93,6 +165,14 @@ sealed class TcpSocketWrapper : SocketWrapper
 
             if (!client.Poll(0, SelectMode.SelectRead))
                 return 0;
+
+            if (_eventSelect)
+            {
+                // already non-blocking (WSAEventSelect)
+                var probed = client.Receive(buffer, 0, 1, SocketFlags.None, out var probeError);
+
+                return Finish(probed, probeError);
+            }
 
             client.Blocking = false;
 
