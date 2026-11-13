@@ -25,7 +25,7 @@ if not pw: sys.exit('CUO_TEST_PASSWORD not set')
 work = tempfile.mkdtemp(prefix=f'cuo-aotpgo-{a.tag}-')
 os.makedirs(os.path.join(work, 'profiles'))
 settings = dict(username=a.user, password=enc_password(pw), ip='127.0.0.1', port=2593, ultimaonlinedirectory=r'C:\Ultima Online Classic',
-                clientversion='7.0.103.0', lastservernum=1, fps=0, vsync=False, is_win_maximized=False, saveaccount=False, autologin=True,
+                clientversion='7.0.103.0', lastservernum=1, fps=0, vsync=False, settings_version=1, present_at_display_rate=False, is_win_maximized=False, saveaccount=False, autologin=True,
                 login_music=False, plugins=[], pack=r'C:\Repositories\uo-packs\classic-1.0', world_renderer=a.mode)
 spath = os.path.join(work, 'settings.json')
 json.dump(settings, open(spath, 'w'))

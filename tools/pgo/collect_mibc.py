@@ -80,7 +80,7 @@ def main():
     try:
         os.makedirs(os.path.join(work, 'profiles'))
         settings = dict(username=a.user, password=enc_password(pw), ip=a.server, port=a.port, ultimaonlinedirectory=a.uo_path,
-                        clientversion=a.client_version, lastservernum=1, fps=0, vsync=False, is_win_maximized=False, saveaccount=False,
+                        clientversion=a.client_version, lastservernum=1, fps=0, vsync=False, settings_version=1, present_at_display_rate=False, is_win_maximized=False, saveaccount=False,
                         autologin=True, login_music=False, plugins=[], pack=a.pack, world_renderer='gpu')
         spath = os.path.join(work, 'settings.json')
         with open(spath, 'w') as f:
