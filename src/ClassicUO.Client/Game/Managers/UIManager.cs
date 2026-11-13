@@ -372,9 +372,15 @@ namespace ClassicUO.Game.Managers
             FrameStats.Begin(FramePhase.UiTraverse);
             for (LinkedListNode<Gump> last = Gumps.Last; last != null; last = last.Previous)
             {
-                Control g = last.Value;
+                Gump g = last.Value;
                 layerDepth+=10;
-                g.AddToRenderLists(_renderLists, g.X, g.Y, ref layerDepth);
+                if (!UiGumpRecording.TryQueue(g, _renderLists, ref layerDepth, Settings.GlobalSettings.UiGumpDirty, batcher.IsRecording))
+                {
+                    // Dropping recordings on disable makes a later re-enable independent of off-period uploads.
+                    g.Recording = null;
+                    FrameStats.Inc(FrameCounter.GumpsWalked);
+                    g.AddToRenderLists(_renderLists, g.X, g.Y, ref layerDepth);
+                }
             }
             FrameStats.End(FramePhase.UiTraverse);
 
@@ -483,6 +489,11 @@ namespace ClassicUO.Game.Managers
                 gump.InvokeMouseOver(Mouse.Position);
             }
 
+            if (MouseOverControl != gump)
+            {
+                MouseOverControl?.InvalidateDraw();
+                gump?.InvalidateDraw();
+            }
             MouseOverControl = gump;
 
             //for (int i = 0; i < (int) MouseButtonType.Size; i++)

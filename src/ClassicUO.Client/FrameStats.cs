@@ -185,10 +185,17 @@ namespace ClassicUO
         // evloop-1: main-loop iterations (Update calls) and sleeps or waits since the last drawn frame
         LoopTicks,
         LoopWaits,
-        GlyphQuads,
-        PrepareRuns,
+        FillListFullRuns,
+        FillListReuseHits, // zero at M5 base: no FillGameObjectList reuse path exists yet
+        GumpsWalked,
+        GumpsReplayed,
+        UiVerticesGenerated,
         FnaUploadCalls,
         FnaUploadBytes,
+        GlyphQuadsBuilt,
+        GlyphQuadsReused,
+        GlyphQuads,
+        PrepareRuns,
         Count
     }
 
@@ -250,7 +257,9 @@ namespace ClassicUO
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
-            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits", "glyph_quads", "prepare_runs", "fna_upload_calls", "fna_upload_bytes" };
+            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits",
+            "fill_list_full_runs", "fill_list_reuse_hits", "gumps_walked", "gumps_replayed", "ui_vertices_generated",
+            "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

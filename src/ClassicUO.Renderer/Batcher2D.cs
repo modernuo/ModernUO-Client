@@ -97,6 +97,8 @@ namespace ClassicUO.Renderer
         private int _suppressedSprites;
 
         /// <summary>Sprites queued and not yet drawn.</summary>
+        public long GeneratedSprites { get; private set; }
+
         public int PendingSprites => _numSprites;
 
         public void BeginSuppress()
@@ -1010,6 +1012,9 @@ namespace ClassicUO.Renderer
 
             _textureInfo[_numSprites] = texture;
             ++_numSprites;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
         }
 
 
@@ -1226,6 +1231,9 @@ namespace ClassicUO.Renderer
 
             EnsureSize();
             _textureInfo[_numSprites++] = texture;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
 
             return true;
         }
@@ -1297,6 +1305,9 @@ namespace ClassicUO.Renderer
 
             _textureInfo[_numSprites] = tex;
             _numSprites++;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
         }
 
         public void DirectDraw(Texture2D texture, int spriteStart, int spriteCount)

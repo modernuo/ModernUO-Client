@@ -65,7 +65,7 @@ namespace ClassicUO.Game.UI.Gumps
         public void Begin(Control gump, bool reuse)
         {
             _spare.Clear();
-            List<Control> children = gump.Children;
+            var children = gump.Children;
 
             if (reuse)
             {
@@ -228,7 +228,7 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
         /// <summary>Null when <paramref name="live"/>[start..end) holds what <paramref name="rebuilt"/> holds, else the first difference.</summary>
-        internal static string Compare(List<Control> live, int start, int end, List<Control> rebuilt)
+        internal static string Compare(IReadOnlyList<Control> live, int start, int end, IReadOnlyList<Control> rebuilt)
         {
             if (end - start != rebuilt.Count)
             {

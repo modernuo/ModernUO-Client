@@ -22,6 +22,8 @@ namespace ClassicUO.Game.UI.Gumps
             AcceptKeyboardInput = false;
         }
 
+        internal UiGumpRecording Recording;
+
         public World World { get; }
 
         public bool CanBeSaved => GumpType != Gumps.GumpType.None;
