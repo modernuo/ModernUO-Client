@@ -30,6 +30,17 @@ namespace ClassicUO.Game
             {
                 case "uidirty": Settings.GlobalSettings.UiGumpDirty = on; break;
                 case "textquads": Settings.GlobalSettings.TextQuadCache = on; break;
+                case "uicountstate":
+                    // Monotonic boundaries let the counts harness exclude switch/scene transitions.
+                    bool dirty = Settings.GlobalSettings.UiGumpDirty;
+                    bool text = Settings.GlobalSettings.TextQuadCache;
+                    if (args.Length != 3 || dirty != (args[1] == "on") || text != (args[2] == "on"))
+                        throw new System.InvalidOperationException("UI counts arm does not match runtime switches");
+                    Log.Info($"[ui-count-state] phase={args[0]} ui_gump_dirty={dirty} text_quad_cache={text} qpc={System.Diagnostics.Stopwatch.GetTimestamp()}");
+                    foreach (Gump root in UIManager.Gumps)
+                        Log.Info($"[ui-count-root] phase={args[0]} type={root.GetType().Name} supported={UiGumpRecording.IsTreeSupported(root)} visible={root.IsVisible} disposed={root.IsDisposed} x={root.X} y={root.Y}");
+                    Log.Info($"[ui-count-journal] entries={JournalManager.Entries.Count}");
+                    break;
                 case "uiresize": Client.Game.SetWindowSize(int.Parse(args[0]), int.Parse(args[1])); break;
                 case "uidirtymutate":
                     if (_uiDirtyFixture != null)
@@ -44,7 +55,14 @@ namespace ClassicUO.Game
                             if (control is Button button) button.IsClicked = !button.IsClicked;
                         }
                     break;
-                case "uinames": GameActions.AllNames(world); break;
+                case "uinames":
+                    if (args.Length > 0 && args[0] == "persistent")
+                    {
+                        world.NameOverHeadManager.TypeAllowed = NameOverheadTypeAllowed.AllMobiles;
+                        world.NameOverHeadManager.IsToggled = true;
+                    }
+                    GameActions.AllNames(world);
+                    break;
                 case "uihover": return ExecuteMouse(string.Join(" ", args));
                 case "uijournal":
                     if (on && UIManager.GetGump<JournalGump>() == null)
