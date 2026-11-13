@@ -5,7 +5,6 @@ Use this branch's Release client with developer tools enabled (the default). No 
 From the repository root, build the JIT variant:
 
 ```bat
-set DOTNET_GCHeapHardLimit=0x200000000
 dotnet build src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -p:CuoDevTools=true
 tools\diag\run-diag.bat
 ```
@@ -15,7 +14,6 @@ tools\diag\run-diag.bat
 For a standalone NativeAOT variant, use the runbook's publish command (requires .NET 10 and Visual Studio C++ tools):
 
 ```bat
-set DOTNET_GCHeapHardLimit=0x200000000
 dotnet publish src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -r win-x64 -p:CuoDevTools=true -o bin/diag-aot
 tools\diag\run-diag.bat "%CD%\bin\diag-aot"
 ```
@@ -27,7 +25,7 @@ The alternative plugin-host layout in the runbook is `cd scripts` then `bash bui
 1. Set up the normal settings and pack in each binary folder, using identical renderer, FPS/vsync, window size, UI, character and server settings. Keep the client focused. For the reported uncapped case, use FPS 0 and vsync off.
 2. Run the JIT variant for about **2 minutes standing still in the same spot**, then **1 minute walking**. Close the client normally to flush its final partial window.
 3. Repeat with NativeAOT in the same spot and scenario. The report's `runtime` line confirms JIT versus NativeAOT; disregard the first warmup windows when comparing stationary throughput.
-4. Run Mecs with **`MECS_PRESENT_HZ=0`** and the same uncapped/vsync settings. This disables its display-rate present cap so its FPS is comparable. Note the Mecs version and FPS, and **your monitor refresh rate**.
+4. Run Mecs with **`MECS_PRESENT_HZ=0`** (needs a Mecs build that includes the display-rate present cap; older builds present every frame anyway) and the same uncapped/vsync settings. This disables its display-rate present cap so its FPS is comparable. Note the Mecs version and FPS, and **your monitor refresh rate**.
 5. Send both `Logs\diag-*.txt` files from the respective binary folders, with the approximate time walking started and your refresh rate. Filenames include local start time and PID, so simultaneous clients have separate files. Review environment/path information before sharing; password/token/secret-named environment values are redacted.
 
 ## Reading the report
