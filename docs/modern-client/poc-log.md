@@ -3309,7 +3309,7 @@ Codex reviewed the converter safety work (`PublishedPacks`, `ReplacingFile`) and
 
 **Cost.** Each file write now opens two or three handles and checks for `CURRENT` in each ancestor folder, at create and again at commit. Converting `--only hues` still takes 0.27 s in total. Not measured on a full conversion, which is dominated by compression. Memory: none.
 
-**Left on disk (for the owner).** While testing the UNC case from Git Bash, a mangled argument (`\localhost\C$\...`, one leading backslash) was a rooted path on the current drive. The converter wrote a 3-file `--only hues` pack under `C:\localhost\C$\Users\kamron\AppData\Local\Temp\claude\...\scratchpad\hues-r2\fake-packs\v1\x`. The guard was right to allow it, because that is an ordinary folder. A safety check blocked my `rm -rf` of `C:\localhost`, so the owner should delete that folder. The forward-slash form `//localhost/C$/...` was then used and refused as expected.
+**Left on disk (for the owner).** While testing the UNC case from Git Bash, a mangled argument (`\localhost\C$\...`, one leading backslash) was a rooted path on the current drive. The converter wrote a 3-file `--only hues` pack under `C:\localhost\C$\<agent scratch>\hues-r2\fake-packs\v1\x`. The guard was right to allow it, because that is an ordinary folder. A safety check blocked my `rm -rf` of `C:\localhost`, so the owner should delete that folder. The forward-slash form `//localhost/C$/...` was then used and refused as expected.
 
 **Verification.** Client builds Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter and Uo.Render.App: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 808 passed, 1 skipped (the symlink test), 0 failed, 809 total (9 new).
 
@@ -4523,7 +4523,7 @@ Packets/s is the client's `net_packets` counter over the windows (about 15 KB/s;
 
 **Left behind (owner's decision: no second wipe, no save count).** bench-000073's checks: centre 5156 2230 `mobiles=1`, 5120 2230 `mobiles=1`, but 5156 2200 `mobiles=23`, 5156 2260 `mobiles=44`, 5190 2230 `mobiles=34`. About 100 Balrons (AI on) that wandered outside the wipe box 5116..5196 × 2190..2270 remain around 5156 2230 and keep wandering. Later tests near there will meet them.
 
-**Memory:** none (measure only). **Scratch:** `C:/Users/kamron/AppData/Local/Temp/claude/C--Repositories-classicuo/c951be14-91b9-4850-98ea-3f5baf8b4cf1/scratchpad/balron-stress/` (binaries, run.py, drivers, analyze.py); job logs in `~/.claude/rf-agent/jobs/bench/done/bench-000070` to `bench-000073`.
+**Memory:** none (measure only). **Scratch:** `<agent scratch>` (binaries, run.py, drivers, analyze.py); job logs in `~/.claude/rf-agent/jobs/bench/done/bench-000070` to `bench-000073`.
 
 ## Stationary Balron scene: a spawner with CantWalk (2026-10-31, `poc/balron-spawner`)
 
@@ -4539,7 +4539,7 @@ Owner request: "create a spawner, 7500 balrons, under properties do cantwalk tru
 - **Stragglers:** none inside the new square before the spawn. About 184 Balrons from the earlier stress spawn are still alive somewhere (222 world-wide against 38 before it; AI on). Left alone, per the owner.
 - **Open for the owner:** the scene as built is a 7,500-Balron *stack* on one tile, stationary and reproducible. To get the old 32×32 spread and keep it stationary, either `[TileXYZ` the 7,500 as before and then `[Area Set CantWalk true` over the square (the result isn't tied to a spawner), or patch ModernUO's `CanSpawnMobile` and still accept one Balron per tile. Not done; the owner decides.
 
-**Memory:** none (no client change). **Scratch:** `C:/Users/kamron/AppData/Local/Temp/claude/C--Repositories-classicuo/b7bdeff6-9c7e-4507-909c-6ea45711dc60/scratchpad/balron-spawner/` (run.py, spawner.txt, job-spawner.sh); the binary is the balron-stress NativeAOT 072f9a6f8; job log `~/.claude/rf-agent/jobs/bench/done/bench-000076`.
+**Memory:** none (no client change). **Scratch:** `<agent scratch>` (run.py, spawner.txt, job-spawner.sh); the binary is the balron-stress NativeAOT 072f9a6f8; job log `~/.claude/rf-agent/jobs/bench/done/bench-000076`.
 
 ## Stationary Balron scene rebuilt as a spread: TileXYZ with CantWalk (2026-10-31, `poc/balron-spawner`)
 
@@ -4557,7 +4557,7 @@ Owner decision: the spawner's random placement and the CantWalk stacking bug are
 - **ModernUO:** coordinator note: the spawner stacking bug and the `[EditSpawner` set/where slicing bug are fixed upstream in ModernUO #2737 (29f1c8290); the bench server still runs the pre-fix build. Learned here: `where` handles serial comparisons (`Serial >= 0x…`), and `[TileXYZ … set <prop> <value>` sets properties before placement. Both are useful for scene scripts.
 - **cuo-poc-state:** deleted `scenes/balron-spawner.json`; `scenes/README.md` says why.
 
-**Memory:** none (no client change). **Scratch:** `C:/Users/kamron/AppData/Local/Temp/claude/C--Repositories-classicuo/b7bdeff6-9c7e-4507-909c-6ea45711dc60/scratchpad/balron-scene/` (run.py, scene.txt, del.txt, build.txt, job scripts); the binary is the balron-stress NativeAOT 072f9a6f8; job logs in `~/.claude/rf-agent/jobs/bench/done/bench-000077` and `bench-000080` (bench-000079 was cancelled 8 s in, before any command).
+**Memory:** none (no client change). **Scratch:** `<agent scratch>` (run.py, scene.txt, del.txt, build.txt, job scripts); the binary is the balron-stress NativeAOT 072f9a6f8; job logs in `~/.claude/rf-agent/jobs/bench/done/bench-000077` and `bench-000080` (bench-000079 was cancelled 8 s in, before any command).
 
 ## T1 funnel, part 6: the 0x77 placement cost, status and hits, the server's animations, the boat and the spellbook (2026-10-31, `bg/ecs-t1-funnel-6`)
 
@@ -7128,7 +7128,7 @@ Settings now carry `settings_version=1`. Source-generated deserialization treats
 
 Debug FPS labels say presented, with loop rate separate. DevBench reports loops/s, completed-present FPS and effect applies/present; FrameStats human text says presented frames/FPS while its JSON fields retain their existing meaning. CUO_DIAG adds `fps_kind=presented` and retains separate updates/draws/presents/drains and CPU counters. Throughput, PGO, parity and fault-repro drivers explicitly write current-version pacing-off settings; fps-test also requests `presentcap:off` in its plan. DevBench/FrameStats themselves keep the caller's state.
 
-Durable harness: external `measure/present-default/`; scratch: `C:/Users/kamron/AppData/Local/Temp/claude/present-default/`. Gate starts with the presentation key absent, validates default-on before the switch/policy phases, and keeps both-renderer actual-present picking. Counts interleave off/on in one binary/session/spot per renderer, polling and event loop. Allocations compare same-binary off/default/on in handles/tour with reverse order in tour. Checkers are off for counts/allocations. Timing off/on series remain PARKED with tiered compilation disabled. Jobs read pack CURRENT at execution and use existing account lane locks/owner holds.
+Durable harness: external `measure/present-default/`; scratch: `<agent scratch>`. Gate starts with the presentation key absent, validates default-on before the switch/policy phases, and keeps both-renderer actual-present picking. Counts interleave off/on in one binary/session/spot per renderer, polling and event loop. Allocations compare same-binary off/default/on in handles/tour with reverse order in tour. Checkers are off for counts/allocations. Timing off/on series remain PARKED with tiered compilation disabled. Jobs read pack CURRENT at execution and use existing account lane locks/owner holds.
 
 Accepted costs: default-on inherits the display-period visual-picking delay and busy polling Update loop documented for M1; no new sleep, cache or retained asset storage. Added state is one settings int and one developer-only static ulong (12 bytes payload/client process plus padding). Existing overlay/summary strings are longer; no new per-frame allocation site. Runtime allocation evidence is pending and allocations/present must be read alongside allocations/second because the denominator changes. Revisit event-loop policy separately if polling CPU matters.
 
