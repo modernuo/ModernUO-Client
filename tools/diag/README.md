@@ -5,7 +5,6 @@ Use this branch's Release client with developer tools enabled (the default). No 
 From the repository root, build the JIT variant:
 
 ```bat
-set DOTNET_GCHeapHardLimit=0x200000000
 dotnet build src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -p:CuoDevTools=true
 tools\diag\run-diag.bat
 ```
@@ -15,7 +14,6 @@ tools\diag\run-diag.bat
 For a standalone NativeAOT variant, use the runbook's publish command (requires .NET 10 and Visual Studio C++ tools):
 
 ```bat
-set DOTNET_GCHeapHardLimit=0x200000000
 dotnet publish src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -r win-x64 -p:CuoDevTools=true -o bin/diag-aot
 tools\diag\run-diag.bat "%CD%\bin\diag-aot"
 ```
