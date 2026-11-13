@@ -150,6 +150,10 @@ namespace ClassicUO.Configuration
         // Default off.
         [JsonPropertyName("event_loop")] public bool EventLoop { get; set; }
 
+        // M1: uncapped, vsync off, without inactive FPS reduction: skip Draw and Present until the display's next deadline.
+        // Explicit FPS caps and inactive/minimized policies keep precedence. Unknown refresh uses the original path.
+        [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; }
+
         // event_loop: the longest wait without an Update, for timers the loop does not track (plugin ticks, macros, audio
         // streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients
         // (CUO_EVENT_LOOP_MAX_WAIT_MS overrides it in developer builds).

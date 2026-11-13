@@ -302,6 +302,16 @@ namespace ClassicUO.Game.Scenes
 
         // set by FillGameObjectList while the world settle gate holds: fades complete at once
         private static bool _snapAlphas;
+        private static int _alphaStepSize = 25;
+
+        internal static int FadeSteps(long now, ref long next, bool displayPaced)
+        {
+            if (now <= next) return 0;
+            long steps = displayPaced && next != 0 ? (now - next) / Constants.ALPHA_TIME + 1 : 1;
+            next = displayPaced && next != 0 ? next + steps * Constants.ALPHA_TIME : now + Constants.ALPHA_TIME;
+            // Eleven steps already traverse the full byte range. Bound work after stalls or a long pause.
+            return (int)Math.Min(11, steps);
+        }
 
         private static bool CalculateAlpha(ref byte alphaHue, int maxAlpha)
         {
@@ -327,7 +337,7 @@ namespace ClassicUO.Game.Scenes
 
             if (alpha > maxAlpha)
             {
-                alpha -= 25;
+                alpha -= _alphaStepSize;
 
                 if (alpha < maxAlpha)
                 {
@@ -338,7 +348,7 @@ namespace ClassicUO.Game.Scenes
             }
             else if (alpha < maxAlpha)
             {
-                alpha += 25;
+                alpha += _alphaStepSize;
 
                 if (alpha > maxAlpha)
                 {

@@ -86,6 +86,10 @@ namespace ClassicUO.Game.UI.Gumps
                 GameScene scene = Client.Game.GetScene<GameScene>();
                 Span<char> span = stackalloc char[256];
                 ValueStringBuilder sb = new ValueStringBuilder(span);
+                Span<char> loopRate = stackalloc char[10];
+                if (CUOEnviroment.CurrentLoopRate.TryFormat(loopRate, out int loopChars))
+                    sb.Append(loopRate.Slice(0, loopChars));
+                sb.Append(" loops/s | ");
 
                 if (IsMinimized && scene != null)
                 {
