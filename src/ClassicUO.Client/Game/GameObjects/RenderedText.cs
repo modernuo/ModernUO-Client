@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.Assets;
+using ClassicUO.Configuration;
+using ClassicUO.Utility.Logging;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
@@ -43,6 +45,16 @@ namespace ClassicUO.Game
 
         private MultilinesFontInfo _info;
         private string _text;
+        private List<TextQuadRun> _quadRuns;
+        private TextQuadCacheKey _quadKey;
+        private bool _quadRunsValid;
+#if CUO_DEVTOOLS
+        // CLEANUP(release): fresh layout/atlas traversal next to text_quad_cache.
+        private static readonly bool _textQuadCheck = Environment.GetEnvironmentVariable("CUO_TEXT_QUAD_CHECK") == "1";
+        private List<TextQuadRun> _quadCheckRuns;
+        private static long _quadChecks, _quadMismatches;
+        private static uint _quadLogAt;
+#endif
 
         public bool IsUnicode { get; set; }
 
@@ -100,6 +112,9 @@ namespace ClassicUO.Game
             {
                 if (_text != value)
                 {
+                    _quadRunsValid = false;
+                    _quadKey = default;
+                    _quadRuns?.Clear();
                     _text = value;
 
                     if (string.IsNullOrEmpty(value))
@@ -542,6 +557,112 @@ namespace ClassicUO.Game
                 hueVector = new Vector3(0, 0, alpha);
             }
 
+            return DrawQuadRuns(atlas, baseColor, hueVector, batcher, destX, destY, depth,
+                scale, clipOffsetX, clipOffsetY, clipWidth, clipHeight);
+        }
+
+        private bool DrawQuadRuns(FontGlyphAtlas atlas, uint baseColor, Vector3 hueVector,
+            UltimaBatcher2D batcher, int destX, int destY, float depth,
+            float scale, int clipOffsetX, int clipOffsetY, int clipWidth, int clipHeight)
+        {
+            bool cacheOn = Settings.GlobalSettings.TextQuadCache;
+            bool useRuns = cacheOn;
+#if CUO_DEVTOOLS
+            useRuns |= _textQuadCheck;
+#endif
+            if (!useRuns)
+            {
+                BuildOrDrawGlyphs(atlas, baseColor, hueVector, null, batcher, destX, destY, depth,
+                    scale, clipOffsetX, clipOffsetY, clipWidth, clipHeight);
+                return true;
+            }
+
+            var key = new TextQuadCacheKey(_info, atlas, Width, Font, IsUnicode, IsHTML, FontStyle, Hue, Cell);
+            bool reuse = key.CanReuse(cacheOn, _quadRunsValid, _quadKey);
+            if (reuse)
+            {
+                // Atlas pages currently live until Dispose; reject disposed pages if eviction is added.
+                foreach (var run in _quadRuns)
+                {
+                    if (run.Texture.IsDisposed)
+                    {
+                        reuse = false;
+                        break;
+                    }
+                }
+            }
+            _quadRuns ??= new List<TextQuadRun>();
+            if (!reuse)
+            {
+                _quadRuns.Clear();
+                BuildOrDrawGlyphs(atlas, baseColor, hueVector, _quadRuns, batcher, destX, destY, depth,
+                    scale, clipOffsetX, clipOffsetY, clipWidth, clipHeight);
+                _quadKey = key;
+                _quadRunsValid = true;
+            }
+
+            List<TextQuadRun> emittedRuns = _quadRuns;
+#if CUO_DEVTOOLS
+            if (_textQuadCheck)
+            {
+                _quadCheckRuns ??= new List<TextQuadRun>();
+                _quadCheckRuns.Clear();
+                BuildOrDrawGlyphs(atlas, baseColor, hueVector, _quadCheckRuns, batcher, destX, destY, depth,
+                    scale, clipOffsetX, clipOffsetY, clipWidth, clipHeight);
+                bool matches = _quadRuns.Count == _quadCheckRuns.Count;
+                for (int i = 0; matches && i < _quadRuns.Count; i++)
+                {
+                    var cached = _quadRuns[i];
+                    var fresh = _quadCheckRuns[i];
+                    matches = cached.Matches(in fresh)
+                        && cached.Visible(clipOffsetX, clipOffsetY, clipWidth, clipHeight)
+                            == fresh.Visible(clipOffsetX, clipOffsetY, clipWidth, clipHeight)
+                        && cached.Project(destX, destY, scale, clipOffsetX, clipOffsetY)
+                            == fresh.Project(destX, destY, scale, clipOffsetX, clipOffsetY);
+                }
+                ++_quadChecks;
+                if (!matches)
+                {
+                    ++_quadMismatches;
+                    Log.Warn($"[text-quad-check] run/command mismatch: font={Font}, unicode={IsUnicode}, html={IsHTML}, runs={_quadRuns.Count}/{_quadCheckRuns.Count}");
+                }
+                if (Time.Ticks >= _quadLogAt)
+                {
+                    _quadLogAt = Time.Ticks + 5000;
+                    Log.Info($"[text-quad-check] text_quad_cache={cacheOn}, checks={_quadChecks}, mismatches={_quadMismatches}");
+                }
+                if (!cacheOn)
+                    emittedRuns = _quadCheckRuns;
+            }
+#endif
+            foreach (var run in emittedRuns)
+                EmitQuad(batcher, in run, destX, destY, scale, clipOffsetX, clipOffsetY,
+                    clipWidth, clipHeight, hueVector, depth, cacheOn && reuse);
+            return true;
+        }
+
+        private static void EmitQuad(UltimaBatcher2D batcher, in TextQuadRun run,
+            int destX, int destY, float scale, int clipX, int clipY, int clipWidth, int clipHeight,
+            Vector3 hue, float depth, bool reused)
+        {
+            if (!run.Visible(clipX, clipY, clipWidth, clipHeight))
+                return;
+            var destination = run.Project(destX, destY, scale, clipX, clipY);
+            if (run.Underline)
+                batcher.Draw(run.Texture, destination, hue, depth);
+            else
+            {
+                FrameStats.Inc(FrameCounter.GlyphQuads);
+                if (reused)
+                    FrameStats.Inc(FrameCounter.GlyphQuadsReused);
+                batcher.Draw(run.Texture, destination, run.UV, hue, depth);
+            }
+        }
+
+        private void BuildOrDrawGlyphs(FontGlyphAtlas atlas, uint baseColor, Vector3 hueVector,
+            List<TextQuadRun> runs, UltimaBatcher2D batcher, int destX, int destY, float depth,
+            float scale, int clipOffsetX, int clipOffsetY, int clipWidth, int clipHeight)
+        {
             // Base style flags from FontStyle (non-HTML uses these for all chars)
             bool hasBorder = (FontStyle & FontStyle.BlackBorder) != 0;
             bool isSolid = (FontStyle & FontStyle.Solid) != 0;
@@ -654,26 +775,17 @@ namespace ClassicUO.Game
                         int localX = w + entry.BearingX;
                         int localY = lineOffsY + entry.BearingY;
 
-                        // Clip check
-                        if (localX + entry.GlyphWidth > clipOffsetX
-                            && localX < clipOffsetX + clipWidth
-                            && localY + entry.GlyphHeight > clipOffsetY
-                            && localY < clipOffsetY + clipHeight)
+                        var run = new TextQuadRun
                         {
-                            int drawX = destX + (int)(localX * scale) - (int)(clipOffsetX * scale);
-                            int drawY = destY + (int)(localY * scale) - (int)(clipOffsetY * scale);
-                            int drawW = (int)(entry.GlyphWidth * scale);
-                            int drawH = (int)(entry.GlyphHeight * scale);
-
-                            FrameStats.Inc(FrameCounter.GlyphQuads);
-                            batcher.Draw(
-                                entry.Texture,
-                                new Rectangle(drawX, drawY, drawW, drawH),
-                                entry.UV,
-                                charHueVector,
-                                depth
-                            );
-                        }
+                            Texture = entry.Texture, UV = entry.UV, X = localX, Y = localY,
+                            Width = entry.GlyphWidth, Height = entry.GlyphHeight
+                        };
+                        FrameStats.Inc(FrameCounter.GlyphQuadsBuilt);
+                        if (runs != null)
+                            runs.Add(run);
+                        else
+                            EmitQuad(batcher, in run, destX, destY, scale, clipOffsetX, clipOffsetY,
+                                clipWidth, clipHeight, charHueVector, depth, false);
                     }
 
                     w += entry.AdvanceWidth;
@@ -685,19 +797,18 @@ namespace ClassicUO.Game
                     var aEntry = atlas.GetEntry(Font, 'a', IsUnicode, false, false, false);
                     int underlineY = lineOffsY + aEntry.BearingY + aEntry.GlyphHeight;
 
-                    if (underlineY >= clipOffsetY && underlineY < clipOffsetY + clipHeight)
+                    var run = new TextQuadRun
                     {
-                        int drawUX = destX - (int)(clipOffsetX * scale);
-                        int drawUY = destY + (int)(underlineY * scale) - (int)(clipOffsetY * scale);
-                        int drawUW = (int)(ptr.Width * scale);
-
-                        batcher.Draw(
-                            SolidColorTextureCache.GetTexture(Color.White),
-                            new Rectangle(drawUX, drawUY, drawUW, 1),
-                            hueVector,
-                            depth
-                        );
-                    }
+                        Texture = runs != null || (underlineY >= clipOffsetY && underlineY < clipOffsetY + clipHeight)
+                            ? SolidColorTextureCache.GetTexture(Color.White) : null,
+                        Y = underlineY,
+                        Width = ptr.Width, Underline = true
+                    };
+                    if (runs != null)
+                        runs.Add(run);
+                    else
+                        EmitQuad(batcher, in run, destX, destY, scale, clipOffsetX, clipOffsetY,
+                            clipWidth, clipHeight, hueVector, depth, false);
                 }
 
                 // Match GeneratePixelsASCII: font 6 reduces line spacing by 7px
@@ -705,8 +816,6 @@ namespace ClassicUO.Game
                 lineOffsY += ptr.MaxHeight - font6OffsetY;
                 ptr = ptr.Next;
             }
-
-            return true;
         }
 
         // ── Draw overloads (all use atlas-based glyph rendering) ──
@@ -775,6 +884,9 @@ namespace ClassicUO.Game
 
         public unsafe void CreateTexture()
         {
+            _quadRunsValid = false;
+            _quadKey = default;
+            _quadRuns?.Clear();
             // Atlas path: generate FontInfo for Width/Height/LinesCount/Links,
             // but don't create a per-string Texture2D — glyphs are drawn from the shared atlas.
             if (Texture != null && !Texture.IsDisposed)
@@ -862,6 +974,12 @@ namespace ClassicUO.Game
             }
 
             IsDestroyed = true;
+            _quadRunsValid = false;
+            _quadKey = default;
+            _quadRuns?.Clear();
+#if CUO_DEVTOOLS
+            _quadCheckRuns?.Clear();
+#endif
 
             if (Texture != null && !Texture.IsDisposed)
             {

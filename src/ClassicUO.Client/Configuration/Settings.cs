@@ -133,6 +133,8 @@ namespace ClassicUO.Configuration
 
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
+        [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
+        [JsonPropertyName("text_quad_cache")] public bool TextQuadCache { get; set; }
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
 
         // A minimized window skips world prepare, draw and present (GameController.Update); packets, update and audio keep running.
@@ -152,6 +154,10 @@ namespace ClassicUO.Configuration
         // CUO_LOOP_STATS=1 measures both loops. Read every frame (CUO_EVENT_LOOP=1|0 overrides it in developer builds).
         // Default off.
         [JsonPropertyName("event_loop")] public bool EventLoop { get; set; }
+
+        // M1: uncapped, vsync off, without inactive FPS reduction: skip Draw and Present until the display's next deadline.
+        // Explicit FPS caps and inactive/minimized policies keep precedence. Unknown refresh uses the original path.
+        [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; }
 
         // event_loop: the longest wait without an Update, for timers the loop does not track (plugin ticks, macros, audio
         // streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients

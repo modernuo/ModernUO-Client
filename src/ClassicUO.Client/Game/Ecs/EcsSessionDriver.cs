@@ -20,7 +20,7 @@ namespace ClassicUO.Game
     // Commands: wait <s> | say <text> | walk <dir 0-7> <steps> [run] | backpack | pick worn|backpack|held|near <hex graphic>
     //           | drop backpack|ground|equip | check | logout | quit | log <text>
     //           | target self|ground <dx> <dy>|worn <layer> | parity | use self|held|mobile <dx> <dy> | mount
-    internal sealed class EcsSessionDriver
+    internal sealed partial class EcsSessionDriver
     {
         private DriverGump _gump;
 
@@ -50,6 +50,7 @@ namespace ClassicUO.Game
 
         internal void ReleaseMouse()
         {
+            ReleaseUiHeld();
             if (_ownsMouse)
             {
                 _ownsMouse = false;
@@ -194,6 +195,7 @@ namespace ClassicUO.Game
             string cmd = sp < 0 ? line : line.Substring(0, sp);
             string arg = sp < 0 ? string.Empty : line.Substring(sp + 1).Trim();
             string[] args = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (ExecuteUiDirty(world, cmd, args)) return true;
             Item backpack = player.FindItemByLayer(Layer.Backpack);
 
             switch (cmd)
@@ -1004,6 +1006,18 @@ namespace ClassicUO.Game
                 case "eventloop" when args.Length > 0:
                     Settings.GlobalSettings.EventLoop = args[0] == "on";
                     Log.Info($"[ECS] driver: event_loop {args[0]}");
+
+                    return true;
+
+                case "presentcap" when args.Length > 0:
+                    Settings.GlobalSettings.PresentAtDisplayRate = args[0] == "on";
+                    Log.Info($"[ECS] driver: present_at_display_rate {args[0]}");
+
+                    return true;
+
+                case "vsync" when args.Length > 0:
+                    Client.Game.SetVSync(args[0] == "on");
+                    Log.Info($"[ECS] driver: vsync {args[0]}");
 
                     return true;
 

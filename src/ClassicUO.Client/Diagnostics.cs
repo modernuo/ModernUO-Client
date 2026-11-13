@@ -141,6 +141,14 @@ namespace ClassicUO
             s.LastUpdate = now;
         }
         public static void Draw() { if (_state != null) _state.Current.Draws++; }
+        public static void UpdateEnd()
+        {
+            var s = _state;
+            if (s == null) return;
+            long elapsed = Stopwatch.GetTimestamp() - s.LastUpdate;
+            foreach (ref var p in s.ActivePings.AsSpan())
+                if (p.Owner != null) p.MaxUpdate = Math.Max(p.MaxUpdate, elapsed);
+        }
         public static void Frame(long now, long presentTicks, long[] phases, int[] counters)
         {
             var s = _state;
@@ -164,7 +172,6 @@ namespace ClassicUO
                 ref var p = ref s.ActivePings[i];
                 if (p.Owner == null) continue;
                 p.MaxPresent = Math.Max(p.MaxPresent, presentTicks);
-                p.MaxUpdate = Math.Max(p.MaxUpdate, phases[(int)FramePhase.Update]);
                 p.MaxDraw = Math.Max(p.MaxDraw, phases[(int)FramePhase.Draw]);
             }
             if (now - w.Start < Stopwatch.Frequency * 5) return;
@@ -263,7 +270,7 @@ namespace ClassicUO
         {
             double seconds = (w.End - w.Start) / (double)Stopwatch.Frequency;
             writer.WriteLine(FormattableString.Invariant($"measurement label={w.Label} mixed={w.MixedLabel} cpu_ms_per_sec={TimeSpan.FromTicks(w.CpuTicks).TotalMilliseconds / seconds:F3} (CPU timing indicative only)"));
-            writer.WriteLine(FormattableString.Invariant($"window start={w.Start} end={w.End} sec={seconds:F3} fps={w.Draws / seconds:F1} updates={w.Updates} draws={w.Draws} presents={w.Presents} gc={w.Gc0}/{w.Gc1}/{w.Gc2} pause_ms={TimeSpan.FromTicks(w.PauseTicks).TotalMilliseconds:F3} alloc/frame={w.Alloc / (double)Math.Max(1, w.Frames):F1} process_alloc_bytes={w.ProcessAlloc} foreign_ping_sends_total={System.Threading.Interlocked.Read(ref _state.ForeignPingSends)} ping_dropped={w.PingDropped}"));
+            writer.WriteLine(FormattableString.Invariant($"window start={w.Start} end={w.End} sec={seconds:F3} cpu_ms_per_s={TimeSpan.FromTicks(w.CpuTicks).TotalMilliseconds / seconds:F1} fps={w.Presents / seconds:F1} loops/s={w.Updates / seconds:F1} updates={w.Updates} draws={w.Draws} presents={w.Presents} gc={w.Gc0}/{w.Gc1}/{w.Gc2} pause_ms={TimeSpan.FromTicks(w.PauseTicks).TotalMilliseconds:F3} alloc/frame={w.Alloc / (double)Math.Max(1, w.Frames):F1} process_alloc_bytes={w.ProcessAlloc} foreign_ping_sends_total={System.Threading.Interlocked.Read(ref _state.ForeignPingSends)} ping_dropped={w.PingDropped}"));
             writer.WriteLine(w.Display); writer.WriteLine(w.Loop);
             Histogram(writer, "frame", w.Frame); Histogram(writer, "present", w.Present); Histogram(writer, "update_interval", w.Interval);
             for (int i = 0; i < w.Phases.Length; i++) Histogram(writer, "phase " + (FramePhase)i, w.Phases[i]);

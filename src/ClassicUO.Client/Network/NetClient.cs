@@ -182,9 +182,6 @@ namespace ClassicUO.Network
         /// <summary>event_loop: wakes the main loop's wait (null with the legacy loop).</summary>
         internal static Action SendQueuedWake;
 
-        /// <summary>The main loop's thread: sends made there are flushed by the same Update and need no wake.</summary>
-        internal static int MainThreadId;
-
         /// <summary>Bumped whenever a new socket is attached (the event loop binds each one to its wait once).</summary>
         internal int TransportVersion { get; private set; }
 
@@ -700,11 +697,11 @@ namespace ClassicUO.Network
                 }
             }
 
-            // event_loop: a plugin thread's send is flushed by the main loop, so end its wait now. Read once: OnExiting clears
-            // it from the main thread while a plugin thread may be here.
+            // event_loop: sends after the end-of-Update flush (including Draw hooks on the main thread) must end the next
+            // wait too. The auto-reset wake is sticky. Read once: OnExiting may clear it concurrently.
             var wake = Volatile.Read(ref SendQueuedWake);
 
-            if (!dropped && wake != null && Environment.CurrentManagedThreadId != MainThreadId)
+            if (!dropped && wake != null)
             {
                 wake();
             }

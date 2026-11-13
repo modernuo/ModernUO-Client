@@ -25,6 +25,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _graphic;
             set
             {
+                if (_graphic != value) InvalidateDraw();
                 _graphic = value;
 
                 ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(_graphic);
@@ -41,8 +42,32 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        public ushort Hue { get; set; }
-        public bool IsPartialHue { get; set; }
+        private ushort _hue;
+        public ushort Hue
+        {
+            get => _hue;
+            set
+            {
+                if (_hue != value)
+                {
+                    _hue = value;
+                    InvalidateDraw();
+                }
+            }
+        }
+        private bool _isPartialHue;
+        public bool IsPartialHue
+        {
+            get => _isPartialHue;
+            set
+            {
+                if (_isPartialHue != value)
+                {
+                    _isPartialHue = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
 
         public override bool Contains(int x, int y)
