@@ -1000,6 +1000,18 @@ namespace ClassicUO.Game
 
                     return true;
 
+                case "presentcap" when args.Length > 0:
+                    Settings.GlobalSettings.PresentAtDisplayRate = args[0] == "on";
+                    Log.Info($"[ECS] driver: present_at_display_rate {args[0]}");
+
+                    return true;
+
+                case "vsync" when args.Length > 0:
+                    Client.Game.SetVSync(args[0] == "on");
+                    Log.Info($"[ECS] driver: vsync {args[0]}");
+
+                    return true;
+
                 // throttleupd on|off: throttle_update_when_inactive
                 case "throttleupd" when args.Length > 0:
                     Settings.GlobalSettings.ThrottleUpdateWhenInactive = args[0] == "on";

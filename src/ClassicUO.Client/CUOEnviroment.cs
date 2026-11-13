@@ -17,6 +17,7 @@ namespace ClassicUO
         public static bool Debug;
         public static bool IsHighDPI;
         public static uint CurrentRefreshRate;
+        public static uint CurrentLoopRate;
         public static bool SkipLoginScreen;
         public static bool NoServerPing;
         public static bool NoMessageBox;

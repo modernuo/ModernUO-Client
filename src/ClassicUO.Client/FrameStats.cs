@@ -195,6 +195,7 @@ namespace ClassicUO
         GlyphQuadsBuilt,
         GlyphQuadsReused,
         GlyphQuads,
+        PrepareRuns,
         Count
     }
 
@@ -258,7 +259,7 @@ namespace ClassicUO
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
             "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits",
             "fill_list_full_runs", "fill_list_reuse_hits", "gumps_walked", "gumps_replayed", "ui_vertices_generated",
-            "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads" };
+            "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -275,6 +276,7 @@ namespace ClassicUO
 
         private static int _count;
         private static long _lastEnd, _windowStart, _endDrawStart, _allocThread, _allocTotalStart;
+        private static long _pumpFrom;
         private static int _gc0, _gc1, _gc2;
         private static TimeSpan _pauseStart;
         private static bool _recording;
@@ -303,7 +305,10 @@ namespace ClassicUO
         {
             if (On)
             {
-                _start[(int)phase] = Stopwatch.GetTimestamp();
+                long now = Stopwatch.GetTimestamp();
+                _start[(int)phase] = now;
+                if (phase == FramePhase.Update && _pumpFrom != 0)
+                    _acc[(int)FramePhase.Pump] += now - _pumpFrom;
 #if CUO_DEVTOOLS
                 if (AllocPhases)
                 {
@@ -318,7 +323,9 @@ namespace ClassicUO
         {
             if (On)
             {
-                _acc[(int)phase] += Stopwatch.GetTimestamp() - _start[(int)phase];
+                long now = Stopwatch.GetTimestamp();
+                _acc[(int)phase] += now - _start[(int)phase];
+                if (phase == FramePhase.Update) _pumpFrom = now;
 #if CUO_DEVTOOLS
                 if (AllocPhases)
                 {
@@ -461,6 +468,7 @@ namespace ClassicUO
         public static void AfterEndDraw()
         {
             long now = Stopwatch.GetTimestamp();
+            _pumpFrom = now;
 #if CUO_DEVTOOLS
             if (Diagnostics.On)
             {
@@ -558,7 +566,6 @@ namespace ClassicUO
 
         private static void CompletePhases()
         {
-            _acc[(int)FramePhase.Pump] = _lastEnd == 0 ? 0 : _start[(int)FramePhase.Update] - _lastEnd;
             _acc[(int)FramePhase.SceneUpdateRest] = _acc[(int)FramePhase.SceneUpdate] - _acc[(int)FramePhase.WorldMobiles] -
                                                     _acc[(int)FramePhase.WorldItems] - _acc[(int)FramePhase.WorldEffectsText] -
                                                     _acc[(int)FramePhase.WorldEcs];

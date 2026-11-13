@@ -136,7 +136,6 @@ namespace ClassicUO
 
                 if (_waiter.Ready)
                 {
-                    NetClient.MainThreadId = Environment.CurrentManagedThreadId;
                     Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
                 }
             }
@@ -178,7 +177,7 @@ namespace ClassicUO
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
             double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
             double wait = LoopTiming.WaitMs(
-                LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
                 MsUntilNextTimer(since),
                 maxWait
             );
@@ -653,6 +652,7 @@ namespace ClassicUO
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
             Time.Frame++;
+            _totalUpdates++;
             // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
             UO.Arts?.AdvanceFrame();
             // anim_atlas_lru: the page clock, and with the switch on the budget and evictions (nothing holds atlas textures
@@ -698,13 +698,13 @@ namespace ClassicUO
             if (FrameStats.On)
             {
                 FrameStats.Set(FrameCounter.NetAvail, NetClient.Socket.LastDrainAvailable);
-                FrameStats.Set(FrameCounter.NetBytes, NetClient.Socket.LastDrainBytes);
-                FrameStats.Set(FrameCounter.NetSlices, NetClient.Socket.LastDrainSlices);
-                FrameStats.Set(FrameCounter.NetPackets, packetsCount);
+                FrameStats.Add(FrameCounter.NetBytes, NetClient.Socket.LastDrainBytes);
+                FrameStats.Add(FrameCounter.NetSlices, NetClient.Socket.LastDrainSlices);
+                FrameStats.Add(FrameCounter.NetPackets, packetsCount);
             }
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packetsCount;
-            NetClient.Socket.Flush();
+            if (_tickMode != LoopMode.Event) NetClient.Socket.Flush();
             FrameStats.End(FramePhase.Packets);
 
             FrameStats.Begin(FramePhase.PluginTick);
@@ -731,9 +731,11 @@ namespace ClassicUO
 
             if (_currentFpsTime >= 1000)
             {
-                CUOEnviroment.CurrentRefreshRate = _totalFrames;
+                CUOEnviroment.CurrentRefreshRate = (uint)(_totalFrames * 1000.0 / _currentFpsTime);
+                CUOEnviroment.CurrentLoopRate = (uint)(_totalUpdates * 1000.0 / _currentFpsTime);
 
                 _totalFrames = 0;
+                _totalUpdates = 0;
                 _currentFpsTime = 0;
             }
 
@@ -746,6 +748,8 @@ namespace ClassicUO
             bool minimized = IsMinimizedForDrawSkip();
             _tickInterval = x;
             _tickDrawSkipped = minimized;
+            bool displayDue = DisplayDrawDue(inactive, minimized);
+            _displayDrawDue = displayDue;
 
             // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
             // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
@@ -763,6 +767,15 @@ namespace ClassicUO
                 if (_tickMode == LoopMode.Legacy && !gameTime.IsRunningSlowly)
                 {
                     LegacySleep(idleSleepMs);
+                }
+            }
+            else if (_displayCapActive)
+            {
+                _totalElapsed = 0;
+                if (!displayDue)
+                {
+                    _suppressedDraw = true;
+                    SuppressDraw();
                 }
             }
             else if (x <= 0)
@@ -797,6 +810,10 @@ namespace ClassicUO
                 }
             }
 
+#if CUO_DEVTOOLS
+            // Shadow the original draw decision on the same loop input, including the original cap/minimized policies.
+            if (PresentCapCheck.On) PresentCapCheck.OldDecision(!_suppressedDraw || _displayCapActive);
+#endif
             UO.GameCursor?.Update();
             Audio?.Update();
 
@@ -811,7 +828,13 @@ namespace ClassicUO
 
             base.Update(gameTime);
 
+            // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
+            if (_tickMode == LoopMode.Event) NetClient.Socket.Flush();
+
             FrameStats.End(FramePhase.Update);
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.UpdateEnd();
+#endif
 
             if (_tickMode == LoopMode.Event && _suppressedDraw)
             {
@@ -856,6 +879,7 @@ namespace ClassicUO
 
         protected override void Draw(GameTime gameTime)
         {
+            if (LoopStats.On) LoopStats.NoteDraw();
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
 
@@ -894,7 +918,9 @@ namespace ClassicUO
 
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME);
 
-            _totalFrames++;
+#if CUO_DEVTOOLS
+            if (PresentCapCheck.On) PresentCapCheck.Draw(_displayDrawDue);
+#endif
 
             GraphicsDevice.Clear(Color.Black);
             FrameStats.End(FramePhase.DrawSetup);
@@ -993,10 +1019,15 @@ namespace ClassicUO
             }
 
             GpuDeviceLost.AfterPresent();
+            _totalFrames++;
+#if CUO_DEVTOOLS
+            PresentedFrameCount++;
+            if (PresentCapCheck.On) PresentCapCheck.Present(Stopwatch.GetTimestamp());
+#endif
 
             if (LoopStats.On)
             {
-                LoopStats.NoteDraw();
+                LoopStats.NotePresent();
             }
 
             if (_tickMode == LoopMode.Event)

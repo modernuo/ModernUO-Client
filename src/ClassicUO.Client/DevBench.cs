@@ -1462,6 +1462,8 @@ namespace ClassicUO
         }
 
         private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanWait, _scanSame, _scanDiff, _scanEmpty;
+        private static ulong _scanLastPresent;
+        private static ulong _flipLastPresent;
         private static string _scanOff;
         // pickscan's pick_records mode (T7b part 2b): picking from the extract's records (SpritePickTable.ReadOverride) off, then on
         private static bool _scanPickRecords;
@@ -1479,6 +1481,9 @@ namespace ClassicUO
         // pickscan: per grid point, 3 frames with skipping off, then skipping on until it is active plus 3 frames
         private static void UpdatePickScan(GameController game, Game.Scenes.GameScene gs)
         {
+            // Picking is produced by Draw. Polling Updates between two presents must not advance the comparison.
+            if (_scanLastPresent == game.PresentedFrameCount) return;
+            _scanLastPresent = game.PresentedFrameCount;
             if (gs == null)
             {
                 EndPickScan();
@@ -1623,7 +1628,9 @@ namespace ClassicUO
                     _travelAt = now + sec / 2;
                 }
 
-                if (++_flipFrame >= _flipEvery)
+                bool framePresented = _flipLastPresent != game.PresentedFrameCount;
+                _flipLastPresent = game.PresentedFrameCount;
+                if (framePresented && ++_flipFrame >= _flipEvery)
                 {
                     _flipFrame = 0;
                     _flipLeft--;
@@ -1823,6 +1830,14 @@ namespace ClassicUO
                         return;
                     }
 
+                    if (_plan[_planIndex].StartsWith("presentcap:"))
+                    {
+                        Configuration.Settings.GlobalSettings.PresentAtDisplayRate = _plan[_planIndex] == "presentcap:on";
+                        Log.Info($"[bench] present_at_display_rate {Configuration.Settings.GlobalSettings.PresentAtDisplayRate}");
+                        _planIndex++;
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("vsync:"))
                     {
                         game.SetVSync(_plan[_planIndex] == "vsync:on");
@@ -1929,6 +1944,7 @@ namespace ClassicUO
                         _scanLeft = _scanCols * _scanRows;
                         _scanPhase = 0;
                         _scanFrames = 0;
+                        _scanLastPresent = game.PresentedFrameCount;
                         _scanWait = 0;
                         _scanSame = _scanDiff = _scanEmpty = 0;
                         Log.Info($"[bench-scan] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs.Camera.Zoom:0.0}");
