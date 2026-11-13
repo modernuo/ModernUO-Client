@@ -86,6 +86,13 @@ public sealed unsafe class WorldRenderer : IDisposable
     // the translucent list grows on demand up to Renderer.TranslucentLimit (the frame table follows before the frame)
     uint[] _trans;
     ulong[] _transSort;
+    readonly TranslucentOrderCache _transOrder;
+    public bool UploadSkipUnchanged;
+#if CUO_DEVTOOLS
+    static readonly bool UploadSkipCheck = Environment.GetEnvironmentVariable("CUO_UPLOAD_SKIP_CHECK") == "1";
+    ulong[] _sortCheck;
+    long _sortChecks, _sortMismatches, _sortCheckLog;
+#endif
     static readonly Comparison<ulong> TransKeyOrder = static (a, b) => a.CompareTo(b);
 
     /// <summary>The translucent list's ascending key sort. NativeAOT's Span&lt;ulong&gt;.Sort() makes a comparison delegate per
@@ -132,6 +139,15 @@ public sealed unsafe class WorldRenderer : IDisposable
     long _lastTicks;
     bool _prepared;
     int _chunkCount, _instances;
+    public bool RenderViewReuse;
+    RenderViewReuse _viewReuse;
+    DynamicPageTouchCache _dynamicPageTouches;
+#if CUO_DEVTOOLS
+    // CLEANUP(release): shadow work is enabled only by the checker, never by the switch alone.
+    static readonly bool ViewReuseCheck = Environment.GetEnvironmentVariable("CUO_RENDER_VIEW_REUSE_CHECK") == "1";
+    ChunkDraw[] _checkTable;
+    long _viewChecks, _viewDynamicChecks, _viewMismatches, _viewCheckLog;
+#endif
 
     public long Frame;
     /// <summary>Last frame: overrides that matched a baked instance, missed (chunk not ready or no such object), dropped
@@ -188,6 +204,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (o.MaxDynamic > 0) _dynFirst = (uint)Chunks.Alloc.Alloc(o.MaxDynamic); // reserved before any chunk: never fails
         _trans = new uint[Math.Max(1, renderer.MaxTranslucent)];
         _transSort = new ulong[_trans.Length];
+        _transOrder = new TranslucentOrderCache(_trans.Length);
         _transRuns = new TransRun[_trans.Length];
         _ovTable = new OverrideEntry[Math.Max(1, renderer.OverrideSlots)];
         _ovUsed = new int[_ovTable.Length];
@@ -259,16 +276,94 @@ public sealed unsafe class WorldRenderer : IDisposable
                 case PageJob pj: pj.Owner.OnLoaded(pj); break;
             }
         }
-        if (_o.StreamMap) Chunks.Update(Frame, in _view, in need);
+        bool reuse = _viewReuse.Matches(RenderViewReuse, _view, need, scale, Chunks.ChangeEpoch,
+            Pages.TotalUploads, AnimPages?.TotalUploads ?? 0,
+            Chunks.CanReuseMaintenance && !Pages.Pending && Pages.MissingVisible == 0
+                && (AnimPages == null || !AnimPages.Pending && AnimPages.MissingVisible == 0));
+        if (_o.StreamMap)
+        {
+            if (reuse) Chunks.ReuseMaintenance(Frame);
+            else Chunks.Update(Frame, in _view, in need);
+        }
         Pages.BeginFrame();
         AnimPages?.BeginFrame();
         // leave one table entry for the dynamic range
         RenderDiagnostics.Elapsed(DiagMetric.StreamingTicks, diagStreaming);
         long diagTable = RenderDiagnostics.Stamp();
-        _chunkCount = Chunks.BuildDrawList(in _view, _table.AsSpan(0, _table.Length - 1), Pages, Frame, out _instances);
+        if (reuse)
+        {
+            Chunks.TouchVisiblePages(Pages, Frame);
+            RenderDiagnostics.Add(DiagMetric.ChunkTableReuses, 1);
+#if CUO_DEVTOOLS
+            if (ViewReuseCheck) CheckReusedView();
+#endif
+        }
+        else
+        {
+            _chunkCount = Chunks.BuildDrawList(in _view, _table.AsSpan(0, _table.Length - 1), Pages, Frame, out _instances, RenderViewReuse);
+            RenderDiagnostics.Add(DiagMetric.ChunkTableRebuilds, 1);
+        }
+        if (RenderViewReuse) _viewReuse.Remember(_view, need, scale, Chunks.ChangeEpoch, Pages.TotalUploads, AnimPages?.TotalUploads ?? 0);
+        else _viewReuse = default;
+#if CUO_DEVTOOLS
+        if (ViewReuseCheck && now - _viewCheckLog >= Stopwatch.Frequency * 5)
+        {
+            Console.WriteLine($"[render-view-reuse-check] on={RenderViewReuse} checked={_viewChecks} mismatches={_viewMismatches} dynamic_checked={_viewDynamicChecks}");
+            _viewCheckLog = now;
+        }
+#endif
         RenderDiagnostics.Elapsed(DiagMetric.ChunkTableTicks, diagTable);
         _prepared = true;
     }
+
+#if CUO_DEVTOOLS
+    void CheckReusedView()
+    {
+        _checkTable ??= new ChunkDraw[_table.Length];
+        ulong touches = Pages.TouchDecisionHash();
+        int transCount = Chunks.VisibleTranslucentCount;
+        int missing = Chunks.MissingNear, visible = Chunks.MissingVisible;
+        // The full walk also refreshes the cached page set and translucent slots in exactly their original order.
+        ulong slots = VisibleSlotHash();
+        int count = Chunks.BuildDrawList(_view, _checkTable.AsSpan(0, _table.Length - 1), Pages, Frame, out int instances);
+        bool same = count == _chunkCount && instances == _instances && touches == Pages.TouchDecisionHash()
+            && transCount == Chunks.VisibleTranslucentCount && slots == VisibleSlotHash()
+            && missing == Chunks.MissingNear && visible == Chunks.MissingVisible;
+        for (int i = 0; same && i < count; i++)
+            same = _table[i].First == _checkTable[i].First && _table[i].Prefix == _checkTable[i].Prefix;
+        _viewChecks++;
+        if (!same)
+        {
+            _viewMismatches++;
+            Console.WriteLine($"[render-view-reuse-check] MISMATCH frame={Frame} chunks={_chunkCount}/{count} instances={_instances}/{instances} touches={touches}/{Pages.TouchDecisionHash()}");
+        }
+    }
+
+    void CheckDynamicPageTouches()
+    {
+        _viewDynamicChecks++;
+        ulong art = Pages.TouchDecisionHash(), anim = AnimPages?.TouchDecisionHash() ?? 0;
+        for (int i = 0; i < _dynCount; i++)
+        {
+            ref readonly var d = ref _dynamic[i];
+            if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
+            else Pages.Touch(d.Page, Frame);
+        }
+        _viewChecks++;
+        if (art != Pages.TouchDecisionHash() || anim != (AnimPages?.TouchDecisionHash() ?? 0))
+        {
+            _viewMismatches++;
+            Console.WriteLine($"[render-view-reuse-check] MISMATCH dynamic-pages frame={Frame}");
+        }
+    }
+
+    ulong VisibleSlotHash()
+    {
+        ulong h = 0;
+        foreach (int slot in Chunks.VisibleTranslucentSlots) h = (h ^ (uint)slot) * 1099511628211UL;
+        return h;
+    }
+#endif
 
     /// <summary>Everything visible is drawable: no chunk, page or upload pending (screenshots and tests wait for this).</summary>
     public bool Settled => Chunks.PendingChunks == 0 && Chunks.UploadQueueLength == 0 && !Pages.Pending && Pages.MissingVisible == 0
@@ -528,11 +623,24 @@ public sealed unsafe class WorldRenderer : IDisposable
         int ownBlend = 0;
         if (_dynCount > 0)
         {
+            bool touched = false;
+            if (RenderViewReuse)
+            {
+                _dynamicPageTouches ??= new DynamicPageTouchCache(_dynamic.Length);
+                touched = _dynamicPageTouches.TouchResident(_dynamic.AsSpan(0, _dynCount), Pages, AnimPages,
+                    Pack.AnimPageBase, Frame, true);
+#if CUO_DEVTOOLS
+                if (touched && ViewReuseCheck) CheckDynamicPageTouches();
+#endif
+            }
             for (int i = 0; i < _dynCount; i++)
             {
                 ref readonly var d = ref _dynamic[i];
-                if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
-                else Pages.Touch(d.Page, Frame);
+                if (!touched)
+                {
+                    if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
+                    else Pages.Touch(d.Page, Frame);
+                }
                 if (d.Alpha == 0) continue;
                 // translucent, or opaque with a circle-of-transparency ring to blend (the shader discards the rest)
                 if (!d.Translucent && !(cot && (d.Light & SpriteInstance.LightCot) != 0 && InCotRect(d))) continue;
@@ -635,7 +743,38 @@ public sealed unsafe class WorldRenderer : IDisposable
 
         // back to front: ascending depth key; equal keys (a mobile's layers) in reverse emission order, body first
         long diagSort = RenderDiagnostics.Stamp();
-        if (_transCount > 1) SortTransKeys(_transSort.AsSpan(0, _transCount));
+        var sortKeys = _transSort.AsSpan(0, _transCount);
+#if CUO_DEVTOOLS
+        if (UploadSkipCheck)
+        {
+            if (_sortCheck == null || _sortCheck.Length < _transSort.Length) _sortCheck = new ulong[_transSort.Length];
+            sortKeys.CopyTo(_sortCheck);
+        }
+#endif
+        bool reusedSort = _transOrder.Sort(sortKeys, UploadSkipUnchanged);
+        RenderDiagnostics.Add(reusedSort ? DiagMetric.TranslucentSortReuses : DiagMetric.TranslucentSorts, _transCount > 1 ? 1 : 0);
+#if CUO_DEVTOOLS
+        if (UploadSkipCheck && reusedSort)
+        {
+            var fresh = _sortCheck.AsSpan(0, _transCount);
+            SortTransKeys(fresh);
+            _sortChecks++;
+            if (!fresh.SequenceEqual(sortKeys))
+            {
+                _sortMismatches++;
+                Console.WriteLine($"[upload-skip-check] SORT MISMATCH frame={Frame} count={_transCount}");
+            }
+        }
+        if (UploadSkipCheck)
+        {
+            long sortNow = Stopwatch.GetTimestamp();
+            if (sortNow - _sortCheckLog >= Stopwatch.Frequency * 5)
+            {
+                Console.WriteLine($"[upload-skip-check] sort on={UploadSkipUnchanged} checked={_sortChecks} mismatches={_sortMismatches}");
+                _sortCheckLog = sortNow;
+            }
+        }
+#endif
         for (int i = 0; i < _transCount; i++) _trans[i] = uint.MaxValue - (uint)_transSort[i];
         RenderDiagnostics.Elapsed(DiagMetric.TranslucentSortTicks, diagSort);
         TranslucentCount = _transCount;
@@ -761,6 +900,7 @@ public sealed unsafe class WorldRenderer : IDisposable
     bool Submit(ref Renderer.FrameInput fi)
     {
         fi.Hold = _jumped;
+        Renderer.UploadSkipUnchanged = UploadSkipUnchanged;
         GrowInstancesIfNeeded(fi.StreamOnly || _jumped);
         bool ok = Renderer.RenderFrame(ref fi);
         for (int i = 0; i < _ovUsedCount; i++) _ovTable[_ovUsed[i]] = default;

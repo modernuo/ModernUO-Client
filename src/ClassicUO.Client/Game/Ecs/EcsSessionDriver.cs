@@ -639,6 +639,15 @@ namespace ClassicUO.Game
                     return false;
 
                 case "log":
+                    if (Diagnostics.On) Diagnostics.Mark(string.Join(' ', args));
+                    return false;
+
+                case "renderreuse" when args.Length > 0:
+                    Settings.GlobalSettings.RenderViewReuse = args[0] == "on";
+                    return false;
+
+                case "uploadskip" when args.Length > 0:
+                    Settings.GlobalSettings.UploadSkipUnchanged = args[0] == "on";
                     return false;
 
                 // light <hex level>|off: the profile's custom light level, as DevBench's light: entry (night = lights drawn)

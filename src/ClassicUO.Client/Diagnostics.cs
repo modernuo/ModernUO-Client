@@ -29,7 +29,6 @@ namespace ClassicUO
     internal static partial class Diagnostics
     {
         private static State _state;
-        private static readonly Process _process = Process.GetCurrentProcess();
         private sealed class Window
         {
             // Main thread owns Active; worker owns Ready. Publication uses volatile state.
@@ -42,11 +41,13 @@ namespace ClassicUO
             public readonly long[] Render = new long[(int)global::Uo.Render.DiagMetric.Count];
             public readonly Ping[] Pings = new Ping[256];
             public readonly long[] DrainStops = new long[5];
-            public long CpuTicks;
             public long Start, End, Frames, Draws, Updates, Presents, Alloc, ProcessAlloc, PauseTicks;
             public int Gc0, Gc1, Gc2, PingCount, PingDropped, BacklogMax;
             public long DrainBytes, DrainPackets, Drains, DrainTicks;
             public string Display, Loop;
+            public string Label;
+            public bool MixedLabel;
+            public long CpuTicks;
             public void Clear()
             {
                 foreach (var h in Phases) h.Clear();
@@ -57,6 +58,7 @@ namespace ClassicUO
                 Frames = Draws = Updates = Presents = Alloc = DrainBytes = DrainPackets = Drains = DrainTicks = 0;
                 PingCount = PingDropped = BacklogMax = 0;
                 Display = Loop = null;
+                Label = null; MixedLabel = false; CpuTicks = 0;
             }
         }
         private sealed class State
@@ -65,6 +67,7 @@ namespace ClassicUO
             public readonly Ping[] ActivePings = new Ping[16];
             public readonly AutoResetEvent Wake = new(false);
             public readonly Thread Writer;
+            public readonly Process Process = Process.GetCurrentProcess();
             public readonly string Header, Path;
             public Window Current;
             public readonly int ThreadId = Environment.CurrentManagedThreadId;
@@ -78,7 +81,7 @@ namespace ClassicUO
                 Directory.CreateDirectory(folder);
                 Path = System.IO.Path.Combine(folder, $"diag-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.txt");
                 Current = Windows[0]; Current.Status = 1;
-                Baseline(Current, Stopwatch.GetTimestamp());
+                Baseline(Current, Stopwatch.GetTimestamp(), Process.TotalProcessorTime.Ticks);
                 LastAlloc = GC.GetAllocatedBytesForCurrentThread();
                 Writer = new Thread(WriteLoop) { IsBackground = true, Name = "CUO diagnostics" };
             }
@@ -103,10 +106,10 @@ namespace ClassicUO
                 ClassicUO.Utility.Logging.Log.Warn($"Diagnostics could not start: {ex.Message}");
             }
         }
-        private static void Baseline(Window w, long now)
+        private static void Baseline(Window w, long now, long cpuTicks)
         {
             w.Start = now;
-            w.CpuTicks = _process.TotalProcessorTime.Ticks;
+            w.CpuTicks = cpuTicks;
             w.Gc0 = GC.CollectionCount(0); w.Gc1 = GC.CollectionCount(1); w.Gc2 = GC.CollectionCount(2);
             w.PauseTicks = GC.GetTotalPauseDuration().Ticks;
             w.ProcessAlloc = GC.GetTotalAllocatedBytes();
@@ -114,7 +117,7 @@ namespace ClassicUO
         private static void Finish(Window w, long now)
         {
             w.End = now;
-            w.CpuTicks = _process.TotalProcessorTime.Ticks - w.CpuTicks;
+            w.CpuTicks = _state.Process.TotalProcessorTime.Ticks - w.CpuTicks;
             w.Gc0 = GC.CollectionCount(0) - w.Gc0; w.Gc1 = GC.CollectionCount(1) - w.Gc1; w.Gc2 = GC.CollectionCount(2) - w.Gc2;
             w.PauseTicks = GC.GetTotalPauseDuration().Ticks - w.PauseTicks;
             w.ProcessAlloc = GC.GetTotalAllocatedBytes() - w.ProcessAlloc;
@@ -175,7 +178,8 @@ namespace ClassicUO
             foreach (var next in s.Windows)
             {
                 if (Volatile.Read(ref next.Status) != 0) continue;
-                next.Status = 1; Baseline(next, now); s.Current = next;
+                next.Status = 1; Baseline(next, now, s.Process.TotalProcessorTime.Ticks); s.Current = next;
+                next.Label = _label;
                 Finish(w, now); Volatile.Write(ref w.Status, 2); s.Wake.Set();
                 return;
             }
@@ -184,6 +188,12 @@ namespace ClassicUO
         public static bool NeedsDisplay => _state != null && _state.Current.Display == null;
         public static void Display(string value) { if (_state != null) _state.Current.Display = value; }
         public static void Loop(string value) { if (_state != null) _state.Current.Loop = value; }
+        private static string _label;
+        public static void Mark(string label)
+        {
+            _label = label;
+            if (_state != null) _state.Current.MixedLabel = true;
+        }
         public static void RecordRender(global::Uo.Render.DiagMetric metric, long value)
         {
             if (_state != null)
@@ -259,6 +269,7 @@ namespace ClassicUO
         private static void WriteWindow(TextWriter writer, Window w)
         {
             double seconds = (w.End - w.Start) / (double)Stopwatch.Frequency;
+            writer.WriteLine(FormattableString.Invariant($"measurement label={w.Label} mixed={w.MixedLabel} cpu_ms_per_sec={TimeSpan.FromTicks(w.CpuTicks).TotalMilliseconds / seconds:F3} (CPU timing indicative only)"));
             writer.WriteLine(FormattableString.Invariant($"window start={w.Start} end={w.End} sec={seconds:F3} cpu_ms_per_s={TimeSpan.FromTicks(w.CpuTicks).TotalMilliseconds / seconds:F1} fps={w.Presents / seconds:F1} loops/s={w.Updates / seconds:F1} updates={w.Updates} draws={w.Draws} presents={w.Presents} gc={w.Gc0}/{w.Gc1}/{w.Gc2} pause_ms={TimeSpan.FromTicks(w.PauseTicks).TotalMilliseconds:F3} alloc/frame={w.Alloc / (double)Math.Max(1, w.Frames):F1} process_alloc_bytes={w.ProcessAlloc} foreign_ping_sends_total={System.Threading.Interlocked.Read(ref _state.ForeignPingSends)} ping_dropped={w.PingDropped}"));
             writer.WriteLine(w.Display); writer.WriteLine(w.Loop);
             Histogram(writer, "frame", w.Frame); Histogram(writer, "present", w.Present); Histogram(writer, "update_interval", w.Interval);

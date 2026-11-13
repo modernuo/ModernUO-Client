@@ -362,9 +362,12 @@ public sealed unsafe class PageResidency
         ? $"{PageFormats.Name(Format)} expanded to {PageFormats.Name(UploadFormat)} on workers (native 16-bit supported: {NativeSupported})"
         : PageFormats.Name(Format);
 
+    public bool IsResident(int page) => (uint)page < (uint)LogicalCount && _layerOf[page] >= 0;
+
     /// <summary>A visible sprite uses this page this frame.</summary>
     public void Touch(int page, long frame)
     {
+        RenderDiagnostics.Add(DiagMetric.PageTouches, 1);
         if ((uint)page >= (uint)LogicalCount) return;
         int layer = _layerOf[page];
         if (layer >= 0) { _layerUsed[layer] = frame; return; }
@@ -383,6 +386,22 @@ public sealed unsafe class PageResidency
         UploadsThisFrame = 0;
         MissingVisible = 0;
     }
+
+#if CUO_DEVTOOLS
+    // CLEANUP(release): the reuse checker verifies that a full touch walk cannot change any eviction input.
+    internal ulong TouchDecisionHash()
+    {
+        ulong h = (ulong)MissingVisible;
+        for (int i = 0; i < _layerUsed.Length; i++) h = (h ^ (ulong)_layerUsed[i]) * 1099511628211UL;
+        for (int i = 0; i < LogicalCount; i++)
+        {
+            h = (h ^ (ulong)_requested[i]) * 1099511628211UL;
+            h = (h ^ (ulong)_state[i]) * 1099511628211UL;
+            h = (h ^ Table[i]) * 1099511628211UL;
+        }
+        return h;
+    }
+#endif
 
     /// <summary>The renderer's copy tracker (set by <see cref="Renderer.RenderFrame"/>): staging slots are reused only
     /// after their last copy retired, and mapped without cycling (<see cref="StagingSlots"/>).</summary>

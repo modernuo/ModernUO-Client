@@ -90,6 +90,8 @@ namespace ClassicUO
         // world prepare: incremented during the frame, cleared after it
         Tiles,
         Objects,
+        PrepareFullRuns,
+        PrepareReuseHits,
         BakedLand,
         BakedStatics,
         Unmeshed,
@@ -247,7 +249,7 @@ namespace ClassicUO
         };
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
-            "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
+            "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "prepare_full_runs", "prepare_reuse_hits", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",

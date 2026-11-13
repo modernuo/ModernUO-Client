@@ -74,6 +74,26 @@ public sealed unsafe class ChunkStore
     public int MissingNear;
     public bool OutOfGpuSpace;
 
+    public long ChangeEpoch { get; private set; }
+    // Only skip eviction when every active chunk was needed and ready at the last full scan.
+    public bool CanReuseMaintenance { get; private set; }
+    long _lastMaintenanceFrame, _reuseFrame, _reuseTicks;
+    readonly ushort[] _visiblePages = new ushort[ushort.MaxValue + 1];
+    readonly bool[] _pageSeen = new bool[ushort.MaxValue + 1];
+    int _visiblePageCount;
+
+    public void ReuseMaintenance(long frame)
+    {
+        _reuseFrame = frame;
+        _reuseTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        if ((frame & 63) == 0) EvictRegions(frame);
+    }
+
+    public void TouchVisiblePages(PageResidency residency, long frame)
+    {
+        for (int i = 0; i < _visiblePageCount; i++) residency.Touch(_visiblePages[i], frame);
+    }
+
     public ChunkStore(PackSet pack, WorkerPool workers, int instanceCapacity)
     {
         _pack = pack;
@@ -93,16 +113,32 @@ public sealed unsafe class ChunkStore
     public void Update(long frame, in RectI view, in RectI need)
     {
         _nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_reuseFrame > _lastMaintenanceFrame)
+        {
+            // On resumed motion, the old view's chunks were needed through the LAST reused frame.
+            for (int i = 0; i < _activeCount; i++)
+            {
+                int slot = _active[i];
+                if (_lastNeeded[slot] != _lastMaintenanceFrame) continue;
+                _lastNeeded[slot] = _reuseFrame;
+                _lastNeededTicks[slot] = _reuseTicks;
+            }
+        }
+        _lastMaintenanceFrame = frame;
+        RenderDiagnostics.Add(DiagMetric.StreamingMarks, 2);
         // Visible chunks first so they win the in-flight bake budget, then the prefetch ring.
         MarkRange(frame, view);
         MarkRange(frame, need);
 
         // evict stale chunks
         PendingChunks = 0; ReadyChunks = 0;
+        CanReuseMaintenance = true;
+        RenderDiagnostics.Add(DiagMetric.EvictionScans, 1);
         for (int i = _activeCount - 1; i >= 0; i--)
         {
             int slot = _active[i];
             var st = _state[slot];
+            if (st != State.Ready || _lastNeeded[slot] != frame) CanReuseMaintenance = false;
             if (st == State.Ready) ReadyChunks++; else PendingChunks++;
             if (_lastNeeded[slot] >= frame - EvictAfterFrames || st == State.Baking) continue;
             if (_nowTicks - _lastNeededTicks[slot] < (long)(EvictAfterSeconds * System.Diagnostics.Stopwatch.Frequency)) continue;
@@ -118,6 +154,8 @@ public sealed unsafe class ChunkStore
     /// bake inputs, e.g. <see cref="PackSet.LandRemap"/>. Bakes in flight are discarded when they finish.</summary>
     public void EvictAll()
     {
+        ChangeEpoch++;
+        CanReuseMaintenance = false;
         for (int i = _activeCount - 1; i >= 0; i--)
         {
             int slot = _active[i];
@@ -180,6 +218,7 @@ public sealed unsafe class ChunkStore
                     _map[key] = slot;
                     _key[slot] = key; _bx[slot] = bx; _by[slot] = by;
                     _state[slot] = State.WaitRegions;
+                    ChangeEpoch++;
                     _activePos[slot] = _activeCount;
                     _active[_activeCount++] = slot;
                 }
@@ -191,6 +230,7 @@ public sealed unsafe class ChunkStore
 
     void FreeSlot(int slot)
     {
+        ChangeEpoch++;
         _map.Remove(_key[slot]);
         _state[slot] = State.Free;
         int pos = _activePos[slot];
@@ -231,6 +271,7 @@ public sealed unsafe class ChunkStore
         job.Slot = slot; job.Bx = bx; job.By = by;
         _job[slot] = job;
         _state[slot] = State.Baking;
+        ChangeEpoch++;
         BakesInFlight++;
         _workers.Enqueue(job, high: false);
     }
@@ -277,6 +318,7 @@ public sealed unsafe class ChunkStore
 
     public void OnRegionLoaded(RegionJob job)
     {
+        ChangeEpoch++;
         RegionStats.Add(job);
         job.Region.Loaded = true;
         job.Region = null;
@@ -287,6 +329,7 @@ public sealed unsafe class ChunkStore
     /// Used by --hue-sheet with map streaming disabled.</summary>
     public void InjectDebugChunk(SpriteInstance[] instances, int count)
     {
+        ChangeEpoch++;
         int slot = _freeSlots[--_freeCount];
         _map[-1] = slot;
         _key[slot] = -1;
@@ -325,6 +368,7 @@ public sealed unsafe class ChunkStore
 
     public void OnBaked(BakeJob job)
     {
+        ChangeEpoch++;
         BakeStats.Add(job);
         BakesInFlight--;
         for (int i = 0; i < 9; i++) if (job.Regions[i] != null) job.Regions[i].Pins--;
@@ -373,6 +417,7 @@ public sealed unsafe class ChunkStore
             _pageCount[slot] = (byte)pc;
             job.Pages.AsSpan(0, pc).CopyTo(_pages.AsSpan(slot * MaxPagesPerChunk, pc));
             _state[slot] = State.Ready;
+            ChangeEpoch++;
             _job[slot] = null;
             int tn = n > 0 ? job.TranslucentCount : 0;
             _transCount[slot] = tn;
@@ -468,8 +513,13 @@ public sealed unsafe class ChunkStore
     public int CpuMirrorLength => _cpuInst.Length;
 
     /// <summary>Visible chunk table for this frame. Touches the pages of every visible chunk in the residency manager.</summary>
-    public int BuildDrawList(in RectI view, Span<ChunkDraw> table, PageResidency residency, long frame, out int instances)
+    public int BuildDrawList(in RectI view, Span<ChunkDraw> table, PageResidency residency, long frame, out int instances, bool cachePages = true)
     {
+        if (cachePages)
+        {
+            for (int i = 0; i < _visiblePageCount; i++) _pageSeen[_visiblePages[i]] = false;
+            _visiblePageCount = 0;
+        }
         int n = 0;
         uint total = 0;
         MissingVisible = 0;
@@ -493,7 +543,14 @@ public sealed unsafe class ChunkStore
             if (_maxX[slot] < view.X0 || _minX[slot] > view.X1 || _maxY[slot] < view.Y0 || _minY[slot] > view.Y1) continue;
             int pc = _pageCount[slot];
             int pb = slot * MaxPagesPerChunk;
-            for (int p = 0; p < pc; p++) residency.Touch(_pages[pb + p], frame);
+            for (int p = 0; p < pc; p++)
+            {
+                ushort page = _pages[pb + p];
+                residency.Touch(page, frame);
+                if (!cachePages || _pageSeen[page]) continue;
+                _pageSeen[page] = true;
+                _visiblePages[_visiblePageCount++] = page;
+            }
             table[n].First = (uint)_first[slot];
             table[n].Prefix = total;
             total += (uint)_count[slot];
