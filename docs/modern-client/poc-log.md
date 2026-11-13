@@ -6914,3 +6914,36 @@ Validation: `dotnet test tests/ClassicUO.UnitTests -c Release` passed 3,821, ski
 
 Counts/alloc/gates remain pending, with job identifiers/results carried by the external ui-dirty handoff. Both renderers have base/default-off UI shots plus same-binary off/on checks, eligible fixture hover/mutations/resize, real pickup/drop, open/close and journal scrolling. Coverage failures/timeouts are reported separately from correctness mismatches; screenshot inspection is still required when results return. PARKED scripts are `measure/ui-dirty/job-timing-gpu-PARKED.sh` and `job-timing-legacy-PARKED.sh` in cuo-poc-state; none submitted. No push or merge.
 
+
+## 2026-11-12: M5 counts follow-up (ui-dirty, part 2)
+
+Rewritten base `520acc784`, branch `bg/ui-dirty`; previous quiet point maps to `c9ccc6fbb`. This follow-up leaves production cache eligibility unchanged. Dev-only `uicountstate` asserts both actual runtime switches and records monotonic phase boundaries, root types/eligibility and journal population. `uinames persistent` selects the existing mobile-only overhead-name handles. Neither command runs per frame. The durable counts scene opens a backpack, paperdoll, status, health bar and populated journal at Britain, then measures off / dirty-only / text-only / both, reversing the order while hovering. A dedicated summary excludes transition and shutdown windows, rejects missing state/scene coverage or switch-off glyph reuse, and emits normalized work, upload, allocation/GC, loop/drain and indicative CPU/FPS rates. Fixture results remain separate. Scripts live in the external `measure/ui-dirty/` directory; no timing jobs submitted.
+
+The earlier jobs did execute the switches: `counts.log` explicitly contains all four runtime combinations. The phrase "switches default off" was binary build metadata, not a statement about every measured arm. In bench-000750, tagged rows 13/14 are dirty-on/text-on and 17/18 dirty-off/text-on. The only increment of GlyphQuadsReused is gated by `cacheOn && reuse` in RenderedText. Both-off complete windows have zero reuse; the 3.2-3.4 million reused glyphs belong to text-on windows. There is no evidence of an off-path cache or counter bug. The original parser did leave the final phase open through shutdown; the new monotonic start/stop markers fix this reporting error.
+
+Existing production counts (first two complete tagged windows per arm; all timing indicative on the busy machine):
+
+| Renderer/arm | Gumps walked/replayed per draw | Glyphs built/reused per draw | UI vertices/draw | B/frame | draws/s |
+|---|---:|---:|---:|---:|---:|
+| GPU off | 8/0 | 367/0 | 2352 | 519.60 | 1798.7 |
+| GPU dirty | 8/0 | 367/0 | 2352 | 457.35 | 1806.0 |
+| GPU text | 8/0 | 0/367 | 2352 | 457.25 | 1798.3 |
+| GPU both | 8/0 | 0/367 | 2352 | 457.55 | 1803.8 |
+| Legacy off | 8/0 | 393.15/0 | 2456.60 | 458.31 | 1609.8 |
+| Legacy dirty | 8/0 | 395/0 | 2464 | 460.37 | 1704.7 |
+| Legacy text | 8/0 | 0/395 | 2464 | 457.55 | 1710.2 |
+| Legacy both | 8/0 | 0/395 | 2464 | 457.90 | 1691.3 |
+
+Old hover windows likewise show zero root replay and text reuse only while text caching is on; text/vertex counts grow as journal content changes, so those FPS values cannot establish an optimization benefit. Normalized old data is retained in external `previous-arms.jsonl`. New jobs will provide persistent-name coverage, actual-state assertions, root census snapshots and complete per-arm summaries in `arms.jsonl`.
+
+Root replay coverage is zero because every derived root is always dirty. The scene's container, paperdoll, health bar, status and journal are outside the allowlist; pending census snapshots establish the actual type multiplicities rather than infer them from total walks. Proposed follow-ups, not implemented: cache static container/paperdoll chrome separately while retaining ItemGump, equipment, hover and SelectedObject work; health-bar fragments invalidated by vitals/notoriety/name/hover; journal text fragments keyed by entries/layout/filter/scroll/viewport, preserving clipping and deferred execution. Simply adding those derived roots to the allowlist would skip required draw-time side effects.
+
+Previous gates bench-000748/749 returned status ok with empty correctness_mismatches and coverage_errors. Previous allocation jobs bench-000752/753 also returned ok. Draw-weighted aggregate B/frame, base/off/both: GPU 458.63/510.68/485.68 (GC 0/0/0 for each arm); Legacy 453.12/454.28/481.61 (GC 2/0/0 for each arm). Elevated early windows account for much of those means: GPU off719/on603 and Legacy first on534/502/505; later windows return to roughly456-463. These results do not establish a sustained regression or prove its absence; fresh alloc jobs repeat the check against the follow-up binary.
+
+Verification and new jobs are recorded below after the final build/test commands and submission. Full quiet timing remains PARKED, with exact code commit and script paths in the handoff. No write-site budget regeneration, push or merge. No production replay expansion.
+
+Accepted costs: no new retained memory or per-frame path. Strings and census traversal occur only at scripted phase boundaries; complete-window filtering excludes those boundaries. Existing cache memory estimates remain unchanged: about 0.20 MB/1000 retained sprite capacity, 0.05-0.10 MB/1000 glyph runs, and 32-40 bytes/control wrapper. Text-on skips glyph traversal/building but still emits the same UI vertices; dirty-on buys no common-root replay in this scene.
+
+Final verification: full `dotnet test tests/ClassicUO.UnitTests -c Release`: Failed 0, Passed 3823, Skipped 6, Total 3829, duration 4m52s. Release client builds: CuoDevTools=false 80 warnings/0 errors (32.06s), true 73 warnings/0 errors (36.12s); existing analyzer/dependency warnings. All dotnet commands used agentnice and the heap cap. Existing switch-state tests ran in the full suite. Synthetic parser regression checks pass eight arms, normalization, transition/shutdown exclusion, off-arm reuse rejection, missing-data rejection and actual-state disagreement rejection. Re-parsing bench-000750 confirms exactly two fully tagged windows per arm after closing the final phase. Shell syntax, required output redirection, LF endings and git diff checks passed. No tests added for the low-impact driver logging commands.
+
+Code/quiet commit point: `4a32bdd1ba0d63bfa91493e162c3d198695fa7b0`. PARKED scripts: external `measure/ui-dirty/job-timing-gpu-PARKED.sh` and `job-timing-legacy-PARKED.sh`, base/off/both interleaved with DOTNET_TieredCompilation=0. New gate/counts/alloc job ids and remaining screenshot review are carried by the external ui-dirty handoff.
