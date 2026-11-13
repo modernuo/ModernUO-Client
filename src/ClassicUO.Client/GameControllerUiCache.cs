@@ -73,6 +73,7 @@ namespace ClassicUO
 
         private void DrawSceneUiAndGumps()
         {
+            long generatedBefore = _uoSpriteBatch.GeneratedSprites;
             FrameStats.Begin(FramePhase.SceneDrawUi);
             _uoSpriteBatch.Begin();
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
@@ -85,6 +86,7 @@ namespace ClassicUO
             FrameStats.Begin(FramePhase.UiDraw);
             UIManager.Draw(_uoSpriteBatch);
             FrameStats.End(FramePhase.UiDraw);
+            FrameStats.Add(FrameCounter.UiVerticesGenerated, (int)(_uoSpriteBatch.GeneratedSprites - generatedBefore) * 4);
         }
 
         private void DrawCursor()

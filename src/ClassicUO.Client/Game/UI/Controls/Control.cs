@@ -17,6 +17,14 @@ namespace ClassicUO.Game.UI.Controls
 {
     internal abstract class Control
     {
+        internal long DrawVersion { get; private set; }
+
+        internal void InvalidateDraw()
+        {
+            unchecked { DrawVersion++; }
+            _parent?.InvalidateDraw();
+        }
+
         protected const float CHILD_LAYER_INCREMENT = 0.01f;
         internal static int _StepsDone = 1;
         internal static int _StepChanger = 1;
@@ -32,7 +40,7 @@ namespace ClassicUO.Game.UI.Controls
         protected Control(Control parent = null)
         {
             Parent = parent;
-            Children = new List<Control>();
+            Children = new ControlChildren(this);
             AllowedToDraw = true;
             AcceptMouseInput = true;
             Page = 0;
@@ -49,7 +57,19 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsFromServer { get; set; }
 
-        public int Page { get; set; }
+        private int _page = 0;
+        public int Page
+        {
+            get => _page;
+            set
+            {
+                if (_page != value)
+                {
+                    _page = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public Point Location
         {
@@ -62,15 +82,50 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        public ref Rectangle Bounds => ref _bounds;
+        public Rectangle Bounds
+        {
+            get => _bounds;
+            set
+            {
+                if (_bounds != value)
+                {
+                    _bounds = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public Point Offset => _offset;
 
         public bool IsDisposed { get; private set; }
 
-        public bool IsVisible { get; set; } = true;
+        private bool _isVisible = true;
+        public bool IsVisible
+        {
+            get => _isVisible;
+            set
+            {
+                if (_isVisible != value)
+                {
+                    _isVisible = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public bool IsEnabled { get; set; }
+        private bool _isEnabled = false;
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                if (_isEnabled != value)
+                {
+                    _isEnabled = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public bool HasKeyboardFocus => UIManager.KeyboardFocusControl == this;
 
@@ -86,9 +141,21 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsFocused { get; set; }
 
-        public float Alpha { get; set; } = 1.0f;
+        private float _alpha = 1.0f;
+        public float Alpha
+        {
+            get => _alpha;
+            set
+            {
+                if (_alpha != value)
+                {
+                    _alpha = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public List<Control> Children { get; }
+        public ControlChildren Children { get; }
 
         public object Tag { get; set; }
 
@@ -108,13 +175,57 @@ namespace ClassicUO.Game.UI.Controls
             set => _acceptMouseInput = value;
         }
 
-        public ref int X => ref _bounds.X;
+        public int X
+        {
+            get => _bounds.X;
+            set
+            {
+                if (_bounds.X != value)
+                {
+                    _bounds.X = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public ref int Y => ref _bounds.Y;
+        public int Y
+        {
+            get => _bounds.Y;
+            set
+            {
+                if (_bounds.Y != value)
+                {
+                    _bounds.Y = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public ref int Width => ref _bounds.Width;
+        public int Width
+        {
+            get => _bounds.Width;
+            set
+            {
+                if (_bounds.Width != value)
+                {
+                    _bounds.Width = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public ref int Height => ref _bounds.Height;
+        public int Height
+        {
+            get => _bounds.Height;
+            set
+            {
+                if (_bounds.Height != value)
+                {
+                    _bounds.Height = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public int ParentX => Parent != null ? Parent.X + Parent.ParentX : 0;
 
@@ -136,6 +247,7 @@ namespace ClassicUO.Game.UI.Controls
                 value?.Children.Add(this);
 
                 _parent = value;
+                InvalidateDraw();
             }
         }
 
@@ -224,6 +336,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _activePage;
             set
             {
+                if (_activePage != value) InvalidateDraw();
                 _activePage = value;
 
                 OnPageChanged();
@@ -852,6 +965,7 @@ namespace ClassicUO.Game.UI.Controls
             }
 
             IsDisposed = true;
+            InvalidateDraw();
         }
     }
 }

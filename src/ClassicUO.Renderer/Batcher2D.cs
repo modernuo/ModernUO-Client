@@ -97,6 +97,8 @@ namespace ClassicUO.Renderer
         private int _suppressedSprites;
 
         /// <summary>Sprites queued and not yet drawn.</summary>
+        public long GeneratedSprites { get; private set; }
+
         public int PendingSprites => _numSprites;
 
         public void BeginSuppress()
@@ -138,12 +140,12 @@ namespace ClassicUO.Renderer
 
         public static readonly bool CollectFrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
                                                         && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
-        public static int FrameFlushes, FrameDrawCalls;
+        public static int FrameFlushes, FrameDrawCalls, FrameUploadCalls, FrameUploadBytes;
         public static long FrameGpuTicks;
 
         public static void ResetFrameCounters()
         {
-            FrameFlushes = FrameDrawCalls = 0;
+            FrameFlushes = FrameDrawCalls = FrameUploadCalls = FrameUploadBytes = 0;
             FrameGpuTicks = 0;
         }
         private bool _worldOffsetActive;
@@ -1004,6 +1006,9 @@ namespace ClassicUO.Renderer
 
             _textureInfo[_numSprites] = texture;
             ++_numSprites;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
         }
 
 
@@ -1220,6 +1225,9 @@ namespace ClassicUO.Renderer
 
             EnsureSize();
             _textureInfo[_numSprites++] = texture;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
 
             return true;
         }
@@ -1291,6 +1299,9 @@ namespace ClassicUO.Renderer
 
             _textureInfo[_numSprites] = tex;
             _numSprites++;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
         }
 
         public void DirectDraw(Texture2D texture, int spriteStart, int spriteCount)
@@ -1662,6 +1673,13 @@ namespace ClassicUO.Renderer
                 );
             }
 
+#if CUO_DEVTOOLS
+            if (CollectFrameStats)
+            {
+                FrameUploadCalls++;
+                FrameUploadBytes += count * PositionNormalTextureColor4.SIZE_IN_BYTES;
+            }
+#endif
             _currentBufferPosition = offset + count;
 
             return offset;

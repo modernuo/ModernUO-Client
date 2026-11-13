@@ -298,6 +298,9 @@ namespace ClassicUO.Game.Scenes
             _gumpTexts.Add(new GumpCommand(toRender));
         }
 
+        internal void DrawGumpLayer(UltimaBatcher2D batcher, bool text)
+            => DrawGumpCommands(batcher, text ? _gumpTexts : _gumpSprites);
+
         // Test accessors. Kept internal; allow unit tests to inspect what was queued
         // without requiring a live graphics device to invoke the flush path.
         internal int GumpTextsCount => _gumpTexts.Count;

@@ -59,6 +59,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _gText.Text;
             set
             {
+                if (_gText.Text != value) InvalidateDraw();
                 _gText.Text = value;
                 Width = _gText.Width;
                 Height = _gText.Height;
@@ -73,6 +74,7 @@ namespace ClassicUO.Game.UI.Controls
             {
                 if (_gText.Hue != value)
                 {
+                    InvalidateDraw();
                     _gText.Hue = value;
                     _gText.CreateTexture();
                 }

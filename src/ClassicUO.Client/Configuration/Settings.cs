@@ -130,6 +130,7 @@ namespace ClassicUO.Configuration
 
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
+        [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
         [JsonPropertyName("text_quad_cache")] public bool TextQuadCache { get; set; }
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
 

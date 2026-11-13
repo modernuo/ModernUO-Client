@@ -185,6 +185,13 @@ namespace ClassicUO
         // evloop-1: main-loop iterations (Update calls) and sleeps or waits since the last drawn frame
         LoopTicks,
         LoopWaits,
+        FillListFullRuns,
+        FillListReuseHits, // zero at M5 base: no FillGameObjectList reuse path exists yet
+        GumpsWalked,
+        GumpsReplayed,
+        UiVerticesGenerated,
+        FnaUploadCalls,
+        FnaUploadBytes,
         GlyphQuadsBuilt,
         GlyphQuadsReused,
         GlyphQuads,
@@ -250,7 +257,8 @@ namespace ClassicUO
             "net_avail", "net_bytes", "net_slices", "net_packets",
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
             "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits",
-            "glyph_quads_built", "glyph_quads_reused", "glyph_quads" };
+            "fill_list_full_runs", "fill_list_reuse_hits", "gumps_walked", "gumps_replayed", "ui_vertices_generated",
+            "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -572,6 +580,8 @@ namespace ClassicUO
 
             _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
             _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
+            _cur[(int)FrameCounter.FnaUploadCalls] = UltimaBatcher2D.FrameUploadCalls;
+            _cur[(int)FrameCounter.FnaUploadBytes] = UltimaBatcher2D.FrameUploadBytes;
             _cur[(int)FrameCounter.Gumps] = UIManager.Gumps.Count;
             SampleMapLoading();
         }

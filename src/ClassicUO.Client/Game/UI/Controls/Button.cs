@@ -99,7 +99,19 @@ namespace ClassicUO.Game.UI.Controls
             IsFromServer = true;
         }
 
-        public bool IsClicked { get; set; }
+        private bool _isClicked;
+        public bool IsClicked
+        {
+            get => _isClicked;
+            set
+            {
+                if (_isClicked != value)
+                {
+                    _isClicked = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public int ButtonID { get; }
 
@@ -114,6 +126,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _normal;
             set
             {
+                if (_normal != value) InvalidateDraw();
                 _normal = value;
 
                 ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(value);
@@ -128,6 +141,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _pressed;
             set
             {
+                if (_pressed != value) InvalidateDraw();
                 _pressed = value;
 
                 ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(value);
@@ -142,6 +156,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _over;
             set
             {
+                if (_over != value) InvalidateDraw();
                 _over = value;
 
                 ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(value);
@@ -151,22 +166,48 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        public int Hue { get; set; }
+        private int _hue;
+        public int Hue
+        {
+            get => _hue;
+            set
+            {
+                if (_hue != value)
+                {
+                    _hue = value;
+                    InvalidateDraw();
+                }
+            }
+        }
         public ushort FontHue { get; }
 
         public ushort HueHover { get; }
 
-        public bool FontCenter { get; set; }
+        private bool _fontCenter;
+        public bool FontCenter
+        {
+            get => _fontCenter;
+            set
+            {
+                if (_fontCenter != value)
+                {
+                    _fontCenter = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public bool ContainsByBounds { get; set; }
 
         protected override void OnMouseEnter(int x, int y)
         {
+            if (!_entered) InvalidateDraw();
             _entered = true;
         }
 
         protected override void OnMouseExit(int x, int y)
         {
+            if (_entered) InvalidateDraw();
             _entered = false;
         }
 
