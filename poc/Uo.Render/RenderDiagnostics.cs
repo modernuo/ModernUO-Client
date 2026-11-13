@@ -8,7 +8,12 @@ public enum DiagMetric
 {
     StreamingTicks, ChunkTableTicks, BuildFrameTicks, TranslucentSortTicks,
     UploadTicks, BufferUploadBytes, BufferUploadCalls, TextureUploadBytes, TextureUploadCalls,
-    ChunkTableRebuilds, ChunkTableReuses, StreamingMarks, EvictionScans, PageTouches, Count
+    ChunkTableRebuilds, ChunkTableReuses, StreamingMarks, EvictionScans, PageTouches,
+    ChunkTableUploadCalls, ChunkTableUploadBytes, ChunkTableUploadSkips,
+    DynamicUploadCalls, DynamicUploadBytes, DynamicUploadSkips,
+    TranslucentUploadCalls, TranslucentUploadBytes, TranslucentUploadSkips,
+    OverrideUploadCalls, OverrideUploadBytes, OverrideUploadSkips,
+    PageTableUploadCalls, PageTableUploadBytes, PageTableUploadSkips, TranslucentSorts, TranslucentSortReuses, FrameTransferMaps, Count
 }
 
 public static class RenderDiagnostics

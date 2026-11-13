@@ -894,6 +894,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             _world.RenderViewReuse = Settings.GlobalSettings.RenderViewReuse;
+            _world.UploadSkipUnchanged = Settings.GlobalSettings.UploadSkipUnchanged;
             _world.Prepare(in camera);
 #if CUO_DEVTOOLS
             GoldenCapture.EndGpu(DynamicInstances);

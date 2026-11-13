@@ -598,6 +598,7 @@ namespace ClassicUO.Game.Scenes
 
         private void FillGameObjectList()
         {
+            FrameStats.Inc(FrameCounter.PrepareFullRuns);
             _renderLists.Clear();
             _visibleChunks.Clear();
 

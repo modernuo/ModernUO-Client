@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using static SDL3.SDL;
 
 namespace Uo.Render;
@@ -326,7 +327,7 @@ public sealed unsafe class Renderer : IDisposable
 
     /// <summary>Makes room for <paramref name="count"/> translucent entries (at most <see cref="TranslucentLimit"/>) by
     /// recreating the frame table at the next power of two; call between frames. The old buffer is released (SDL_GPU
-    /// destroys it after the command buffers using it finish), and the table is uploaded in full every frame. Returns
+    /// destroys it after the command buffers using it finish); every live section is uploaded again after replacement. Returns
     /// false when <paramref name="count"/> exceeds the limit (the capacity is then the limit).</summary>
     public bool EnsureTranslucentCapacity(int count)
     {
@@ -336,6 +337,7 @@ public sealed unsafe class Renderer : IDisposable
         var buf = CreateBuffer((uint)((ChunkTableCapacity + cap + OverrideSlots) * sizeof(ChunkDraw)), "frame table");
         SDL_ReleaseGPUBuffer(Device, _frameTableBuf);
         _frameTableBuf = buf;
+        _tableContent.Invalidate(); _transContent.Invalidate(); _overrideContent.Invalidate();
         MaxTranslucent = cap;
         TranslucentGrowths++;
         return count <= cap;
@@ -368,6 +370,7 @@ public sealed unsafe class Renderer : IDisposable
         }
         int from = InstanceCapacity;
         InstanceBuffer = b;
+        _dynamicContent.Invalidate();
         InstanceCapacity = capacity;
         InstanceGrowth.Add((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency, from, capacity);
         return true;
@@ -683,6 +686,13 @@ public sealed unsafe class Renderer : IDisposable
     }
 
     public int LastChunkUploads, DrawCalls;
+    public bool UploadSkipUnchanged;
+    readonly UploadContentCache _tableContent = new(), _dynamicContent = new(), _transContent = new(), _overrideContent = new();
+    ChunkDraw[] _transUpload = [];
+#if CUO_DEVTOOLS
+    static readonly bool UploadSkipCheck = Environment.GetEnvironmentVariable("CUO_UPLOAD_SKIP_CHECK") == "1";
+    long _uploadChecks, _uploadMismatches, _uploadCheckLog;
+#endif
     public long AcquireWaitTicks;
     public bool ForcePoint;
     public SDL_FColor ClearColor = new() { r = 0.02f, g = 0.02f, b = 0.03f, a = 1 };
@@ -705,28 +715,52 @@ public sealed unsafe class Renderer : IDisposable
 
         long diagUpload = RenderDiagnostics.Stamp();
         // ---- stage instance uploads + frame table into the frame transfer buffer
-        var mapped = (byte*)SDL_MapGPUTransferBuffer(Device, _frameTransfer, true);
         uint tableBytes = (uint)(f.ChunkCount * sizeof(ChunkDraw));
         uint dynBytes = (uint)(f.DynamicCount * sizeof(SpriteInstance));
         int transCount = Math.Min(f.TranslucentCount, MaxTranslucent);
         uint transBytes = (uint)(transCount * sizeof(ChunkDraw));
         uint ovBytes = f.Overrides != null && OverrideSlots > 0 ? (uint)(OverrideSlots * sizeof(OverrideEntry)) : 0;
+        if (UploadSkipUnchanged)
+        {
+            _tableContent.EnsureCapacity(f.Table.Length * sizeof(ChunkDraw));
+            _dynamicContent.EnsureCapacity((f.Dynamic?.Length ?? 0) * sizeof(SpriteInstance));
+            _transContent.EnsureCapacity(MaxTranslucent * sizeof(ChunkDraw));
+            _overrideContent.EnsureCapacity(OverrideSlots * sizeof(OverrideEntry));
+            if (_transUpload.Length < MaxTranslucent) _transUpload = new ChunkDraw[MaxTranslucent];
+            for (int i = 0; i < transCount; i++) _transUpload[i] = new ChunkDraw { First = f.Translucent[i] };
+        }
+        var tableData = MemoryMarshal.AsBytes(f.Table.AsSpan(0, f.ChunkCount));
+        var dynamicData = MemoryMarshal.AsBytes(f.Dynamic.AsSpan(0, f.DynamicCount));
+        ReadOnlySpan<byte> transData = UploadSkipUnchanged ? MemoryMarshal.AsBytes(_transUpload.AsSpan(0, transCount)) : default;
+        var overrideData = MemoryMarshal.AsBytes(f.Overrides.AsSpan(0, (int)ovBytes / sizeof(OverrideEntry)));
+        bool uploadTable = PrepareUpload(_tableContent, tableData, _frameTableBuf, 0, tableBytes, DiagMetric.ChunkTableUploadSkips);
+        bool uploadDynamic = PrepareUpload(_dynamicContent, dynamicData, InstanceBuffer, f.DynamicFirst * (uint)sizeof(SpriteInstance), dynBytes, DiagMetric.DynamicUploadSkips);
+        bool uploadTrans = PrepareUpload(_transContent, transData, _frameTableBuf, TransBase * 8, transBytes, DiagMetric.TranslucentUploadSkips);
+        bool uploadOverride = PrepareUpload(_overrideContent, overrideData, _frameTableBuf, OverrideBase * 8, ovBytes, DiagMetric.OverrideUploadSkips);
+        bool map = f.Chunks.UploadQueueLength > 0 || uploadTable || uploadDynamic || uploadTrans || uploadOverride;
+        byte* mapped = null;
+        if (map)
+        {
+            mapped = (byte*)SDL_MapGPUTransferBuffer(Device, _frameTransfer, true);
+            RenderDiagnostics.Add(DiagMetric.FrameTransferMaps, 1);
+        }
         uint offset = 0;
         LastChunkUploads = f.Chunks.StageUploads(mapped, ref offset, FrameTransferSize - tableBytes - dynBytes - transBytes - ovBytes - 1024, f.ChunkUploadBudget);
         offset = (offset + 255) & ~255u;
         uint tableOffset = offset;
-        if (tableBytes > 0)
+        if (uploadTable)
             fixed (ChunkDraw* src = f.Table) Buffer.MemoryCopy(src, mapped + tableOffset, tableBytes, tableBytes);
         uint dynOffset = (tableOffset + tableBytes + 255) & ~255u;
-        if (dynBytes > 0)
+        if (uploadDynamic)
             fixed (SpriteInstance* src = f.Dynamic) Buffer.MemoryCopy(src, mapped + dynOffset, dynBytes, dynBytes);
         uint transOffset = (dynOffset + dynBytes + 255) & ~255u;
         var tdst = (uint*)(mapped + transOffset);
-        for (int i = 0; i < transCount; i++) { tdst[2 * i] = f.Translucent[i]; tdst[2 * i + 1] = 0; }
+        if (uploadTrans)
+            for (int i = 0; i < transCount; i++) { tdst[2 * i] = f.Translucent[i]; tdst[2 * i + 1] = 0; }
         uint ovOffset = (transOffset + transBytes + 255) & ~255u;
-        if (ovBytes > 0)
+        if (uploadOverride)
             fixed (OverrideEntry* src = f.Overrides) Buffer.MemoryCopy(src, mapped + ovOffset, ovBytes, ovBytes);
-        SDL_UnmapGPUTransferBuffer(Device, _frameTransfer);
+        if (map) SDL_UnmapGPUTransferBuffer(Device, _frameTransfer);
 
         var copy = SDL_BeginGPUCopyPass(cmd);
         CopyGrownInstances(copy); // before this frame's instance uploads, which may land inside the old range
@@ -739,18 +773,32 @@ public sealed unsafe class Renderer : IDisposable
             RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, dst.size);
             RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
         }
-        // The first frame-table upload cycles the buffer (the previous frame may still read it); later ones fill the new one.
-        bool cycle = true;
-        if (tableBytes > 0) UploadFrameTable(copy, tableOffset, 0, tableBytes, ref cycle);
-        if (transBytes > 0) UploadFrameTable(copy, transOffset, TransBase * 8, transBytes, ref cycle);
-        if (ovBytes > 0) UploadFrameTable(copy, ovOffset, OverrideBase * 8, ovBytes, ref cycle);
-        if (dynBytes > 0)
+        // A cycled backing has unspecified contents. Partial uploads MUST preserve the existing backing; SDL orders
+        // the writes after earlier reads. The off path still cycles and invalidates every history above.
+        bool cycle = !UploadSkipUnchanged;
+        if (uploadTable)
+        {
+            UploadFrameTable(copy, tableOffset, 0, tableBytes, ref cycle);
+            CountUpload(DiagMetric.ChunkTableUploadCalls, DiagMetric.ChunkTableUploadBytes, tableBytes);
+        }
+        if (uploadTrans)
+        {
+            UploadFrameTable(copy, transOffset, TransBase * 8, transBytes, ref cycle);
+            CountUpload(DiagMetric.TranslucentUploadCalls, DiagMetric.TranslucentUploadBytes, transBytes);
+        }
+        if (uploadOverride)
+        {
+            UploadFrameTable(copy, ovOffset, OverrideBase * 8, ovBytes, ref cycle);
+            CountUpload(DiagMetric.OverrideUploadCalls, DiagMetric.OverrideUploadBytes, ovBytes);
+        }
+        if (uploadDynamic)
         {
             var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = dynOffset };
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = f.DynamicFirst * (uint)sizeof(SpriteInstance), size = dynBytes };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
             RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, dst.size);
             RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
+            CountUpload(DiagMetric.DynamicUploadCalls, DiagMetric.DynamicUploadBytes, dynBytes);
         }
         _copies.Poll();
         f.Pages.Retire = _copies;
@@ -774,8 +822,10 @@ public sealed unsafe class Renderer : IDisposable
             SDL_UploadToGPUBuffer(copy, in src2, in dst, true);
             RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, dst.size);
             RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
+            CountUpload(DiagMetric.PageTableUploadCalls, DiagMetric.PageTableUploadBytes, dst.size);
             f.Pages.TableDirty = false;
         }
+        else RenderDiagnostics.Add(DiagMetric.PageTableUploadSkips, 1);
         SDL_EndGPUCopyPass(copy);
         RenderDiagnostics.Elapsed(DiagMetric.UploadTicks, diagUpload);
 
@@ -884,7 +934,11 @@ public sealed unsafe class Renderer : IDisposable
         SDL_EndGPURenderPass(pass);
 
         if (f.ScreenshotPath != null && Offscreen)
-            return SubmitAndSave(cmd, f.ScreenshotPath, _offscreen, tw, th, ColorFormat, frame: true);
+        {
+            bool saved = SubmitAndSave(cmd, f.ScreenshotPath, _offscreen, tw, th, ColorFormat, frame: true);
+            if (!saved) InvalidateUploadContents();
+            return saved;
+        }
 
         if (Offscreen && Throttle)
         {
@@ -895,6 +949,7 @@ public sealed unsafe class Renderer : IDisposable
             long serial = _copies.Submit();
             if (fence == IntPtr.Zero)
             {
+                InvalidateUploadContents();
                 _copies.Failed(serial); // no proof either way: its copies stay pending (CopyRetirement.Failed)
                 SubmitFailures++;
                 LastSubmitError = SDL_GetError();
@@ -944,12 +999,58 @@ public sealed unsafe class Renderer : IDisposable
         if (!_copies.NeedsFence)
         {
             bool ok = SDL_SubmitGPUCommandBuffer(cmd);
+            if (!ok) InvalidateUploadContents();
             _copies.Submit();
             return ok;
         }
         var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+        if (fence == IntPtr.Zero) InvalidateUploadContents();
         _copies.Track(_copies.Submit(), fence);
         return fence != IntPtr.Zero;
+    }
+
+    void InvalidateUploadContents()
+    {
+        _tableContent.Invalidate(); _dynamicContent.Invalidate(); _transContent.Invalidate(); _overrideContent.Invalidate();
+    }
+
+    bool PrepareUpload(UploadContentCache cache, ReadOnlySpan<byte> bytes, IntPtr buffer, uint offset, uint size, DiagMetric skips)
+    {
+        bool upload = cache.Prepare(bytes, UploadSkipUnchanged, buffer, offset);
+        if (size == 0) return false;
+        if (!upload)
+        {
+            RenderDiagnostics.Add(skips, 1);
+#if CUO_DEVTOOLS
+            if (UploadSkipCheck)
+            {
+                _uploadChecks++;
+                if (!cache.EqualsStored(bytes))
+                {
+                    _uploadMismatches++;
+                    Console.WriteLine($"[upload-skip-check] BYTES MISMATCH category={skips} bytes={size}");
+                }
+            }
+#endif
+        }
+#if CUO_DEVTOOLS
+        if (UploadSkipCheck)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (now - _uploadCheckLog >= System.Diagnostics.Stopwatch.Frequency * 5)
+            {
+                Console.WriteLine($"[upload-skip-check] bytes on={UploadSkipUnchanged} checked={_uploadChecks} mismatches={_uploadMismatches}");
+                _uploadCheckLog = now;
+            }
+        }
+#endif
+        return upload;
+    }
+
+    static void CountUpload(DiagMetric calls, DiagMetric bytes, uint size)
+    {
+        RenderDiagnostics.Add(calls, 1);
+        RenderDiagnostics.Add(bytes, size);
     }
 
     void UploadFrameTable(IntPtr copy, uint srcOffset, uint dstOffset, uint bytes, ref bool cycle)

@@ -86,6 +86,13 @@ public sealed unsafe class WorldRenderer : IDisposable
     // the translucent list grows on demand up to Renderer.TranslucentLimit (the frame table follows before the frame)
     uint[] _trans;
     ulong[] _transSort;
+    readonly TranslucentOrderCache _transOrder;
+    public bool UploadSkipUnchanged;
+#if CUO_DEVTOOLS
+    static readonly bool UploadSkipCheck = Environment.GetEnvironmentVariable("CUO_UPLOAD_SKIP_CHECK") == "1";
+    ulong[] _sortCheck;
+    long _sortChecks, _sortMismatches, _sortCheckLog;
+#endif
     static readonly Comparison<ulong> TransKeyOrder = static (a, b) => a.CompareTo(b);
 
     /// <summary>The translucent list's ascending key sort. NativeAOT's Span&lt;ulong&gt;.Sort() makes a comparison delegate per
@@ -196,6 +203,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (o.MaxDynamic > 0) _dynFirst = (uint)Chunks.Alloc.Alloc(o.MaxDynamic); // reserved before any chunk: never fails
         _trans = new uint[Math.Max(1, renderer.MaxTranslucent)];
         _transSort = new ulong[_trans.Length];
+        _transOrder = new TranslucentOrderCache(_trans.Length);
         _transRuns = new TransRun[_trans.Length];
         _ovTable = new OverrideEntry[Math.Max(1, renderer.OverrideSlots)];
         _ovUsed = new int[_ovTable.Length];
@@ -703,7 +711,38 @@ public sealed unsafe class WorldRenderer : IDisposable
 
         // back to front: ascending depth key; equal keys (a mobile's layers) in reverse emission order, body first
         long diagSort = RenderDiagnostics.Stamp();
-        if (_transCount > 1) SortTransKeys(_transSort.AsSpan(0, _transCount));
+        var sortKeys = _transSort.AsSpan(0, _transCount);
+#if CUO_DEVTOOLS
+        if (UploadSkipCheck)
+        {
+            if (_sortCheck == null || _sortCheck.Length < _transSort.Length) _sortCheck = new ulong[_transSort.Length];
+            sortKeys.CopyTo(_sortCheck);
+        }
+#endif
+        bool reusedSort = _transOrder.Sort(sortKeys, UploadSkipUnchanged);
+        RenderDiagnostics.Add(reusedSort ? DiagMetric.TranslucentSortReuses : DiagMetric.TranslucentSorts, _transCount > 1 ? 1 : 0);
+#if CUO_DEVTOOLS
+        if (UploadSkipCheck && reusedSort)
+        {
+            var fresh = _sortCheck.AsSpan(0, _transCount);
+            SortTransKeys(fresh);
+            _sortChecks++;
+            if (!fresh.SequenceEqual(sortKeys))
+            {
+                _sortMismatches++;
+                Console.WriteLine($"[upload-skip-check] SORT MISMATCH frame={Frame} count={_transCount}");
+            }
+        }
+        if (UploadSkipCheck)
+        {
+            long sortNow = Stopwatch.GetTimestamp();
+            if (sortNow - _sortCheckLog >= Stopwatch.Frequency * 5)
+            {
+                Console.WriteLine($"[upload-skip-check] sort on={UploadSkipUnchanged} checked={_sortChecks} mismatches={_sortMismatches}");
+                _sortCheckLog = sortNow;
+            }
+        }
+#endif
         for (int i = 0; i < _transCount; i++) _trans[i] = uint.MaxValue - (uint)_transSort[i];
         RenderDiagnostics.Elapsed(DiagMetric.TranslucentSortTicks, diagSort);
         TranslucentCount = _transCount;
@@ -829,6 +868,7 @@ public sealed unsafe class WorldRenderer : IDisposable
     bool Submit(ref Renderer.FrameInput fi)
     {
         fi.Hold = _jumped;
+        Renderer.UploadSkipUnchanged = UploadSkipUnchanged;
         GrowInstancesIfNeeded(fi.StreamOnly || _jumped);
         bool ok = Renderer.RenderFrame(ref fi);
         for (int i = 0; i < _ovUsedCount; i++) _ovTable[_ovUsed[i]] = default;
