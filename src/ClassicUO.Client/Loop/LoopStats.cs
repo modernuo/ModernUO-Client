@@ -35,7 +35,7 @@ namespace ClassicUO.Loop
     internal static class LoopStats
     {
 #if CUO_DEVTOOLS
-        public static readonly bool On = Environment.GetEnvironmentVariable("CUO_LOOP_STATS") == "1";
+        public static readonly bool On = Diagnostics.On || Environment.GetEnvironmentVariable("CUO_LOOP_STATS") == "1";
 #else
         public const bool On = false;
 #endif
@@ -207,6 +207,10 @@ namespace ClassicUO.Loop
             Input.Append(sb, " input");
             FramePacing.Append(sb, " frame");
             WaitLateness.Append(sb, " wait_late");
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.Loop(sb.ToString());
+            else
+#endif
             Log.Info(sb.ToString());
 
             _ticks = _draws = _sleeps = _waits = _lateWakes = 0;

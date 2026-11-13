@@ -58,7 +58,7 @@ namespace ClassicUO
     //   frames (default 8) after every teleport or recreation as dir/tpNN_fMM.png (what each frame shows: held or new)
     internal static class DevBench
     {
-        public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
+        public static readonly bool FrameStats = Diagnostics.On || Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
         private static readonly string _go = Environment.GetEnvironmentVariable("CUO_BENCH_GO");
         private static readonly bool _exit = Environment.GetEnvironmentVariable("CUO_BENCH_EXIT") == "1";
         private static readonly string[] _spots = Environment.GetEnvironmentVariable("CUO_BENCH_SPOTS")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
@@ -286,7 +286,7 @@ namespace ClassicUO
             game.SetScene(new Game.Scenes.LoginScene(w));
         }
 
-        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui || _plan != null || _pick || _relog != null;
+        public static bool Enabled => (FrameStats && !Diagnostics.On) || _go != null || _spots != null || _ui || _plan != null || _pick || _relog != null;
 
         public static void Update(GameController game)
         {

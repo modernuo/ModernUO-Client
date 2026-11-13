@@ -114,22 +114,30 @@ namespace ClassicUO
             // 1. scene UI and gumps
             device.SetRenderTarget(cacheTarget);
             batcher.BeginRecording(_uiCache.Gumps, Color.Transparent);
+            FrameStats.Begin(FramePhase.UiCacheRecord);
             DrawSceneUiAndGumps();
+            FrameStats.End(FramePhase.UiCacheRecord);
+            FrameStats.Begin(FramePhase.UiCacheCompare);
             RecordingResult gumps = UiCacheState.Resolve(batcher.StopRecording(), envSame, epoch, TextureUploads.Epoch);
 
+            FrameStats.End(FramePhase.UiCacheCompare);
             Submit(gumps, _uiCache.Gumps);
 
             // 2. the copy and the cursor
             device.SetRenderTarget(uiTarget);
             batcher.BeginRecording(_uiCache.Final, Color.Transparent);
+            FrameStats.Begin(FramePhase.UiCacheRecord);
             batcher.Begin();
             batcher.SetBlendState(BlendState.Opaque);
             batcher.Draw(cacheTarget, new Rectangle(0, 0, cacheTarget.Width, cacheTarget.Height), Vector3.UnitZ, 0f);
             batcher.SetBlendState(null);
             batcher.End();
             DrawCursor();
+            FrameStats.End(FramePhase.UiCacheRecord);
+            FrameStats.Begin(FramePhase.UiCacheCompare);
             RecordingResult final = UiCacheState.Resolve(batcher.StopRecording(), gumps == RecordingResult.Same, epoch, TextureUploads.Epoch);
 
+            FrameStats.End(FramePhase.UiCacheCompare);
             Submit(final, _uiCache.Final);
 
             FrameStats.Set(FrameCounter.UiCached, gumps == RecordingResult.Same ? 1 : 0);

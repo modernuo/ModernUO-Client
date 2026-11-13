@@ -445,7 +445,7 @@ namespace ClassicUO
 
             float frameDelay;
 
-            if (rate == 0 || DevBench.FrameStats)
+            if (rate == 0 || (DevBench.FrameStats && !Diagnostics.On))
             {
                 frameDelay = 0;
             }
@@ -631,6 +631,9 @@ namespace ClassicUO
 
         protected override void Update(GameTime gameTime)
         {
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.Update();
+#endif
             FrameStats.Begin(FramePhase.Update);
             FrameStats.Inc(FrameCounter.LoopTicks);
             _updateStartTs = Stopwatch.GetTimestamp();
@@ -874,6 +877,13 @@ namespace ClassicUO
                 Log.Trace($"WorldRenderTarget SDL_GPUTexture: 0x{GpuInterop.GetTexture(_renderTargets.WorldRenderTarget):X}");
             }
 
+#if CUO_DEVTOOLS
+            if (Diagnostics.On)
+            {
+                DiagDisplay();
+                Diagnostics.Draw();
+            }
+#endif
             Profiler.EndFrame();
             Profiler.BeginFrame();
 
@@ -1405,6 +1415,9 @@ namespace ClassicUO
 
         protected override void OnExiting(object sender, EventArgs args)
         {
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.Stop();
+#endif
             Scene?.Dispose();
 
             Volatile.Write(ref NetClient.SendQueuedWake, null); // a captured wake after this is a no-op (Wake checks disposal)

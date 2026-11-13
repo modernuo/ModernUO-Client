@@ -19,6 +19,10 @@
     <CompiledShaderDir>Shaders/compiled/</CompiledShaderDir>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(CuoDevTools)' != 'false'">
+    <DefineConstants>$(DefineConstants);CUO_DEVTOOLS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Uo.Pack\Uo.Pack.csproj" />
     <ProjectReference Include="..\..\external\FNA\lib\SDL3-CS\SDL3\SDL3.Core.csproj" />

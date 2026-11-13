@@ -508,6 +508,8 @@ public sealed unsafe class PageResidency
                 var src = new SDL_GPUTextureTransferInfo { transfer_buffer = _staging[s], offset = offset, pixels_per_row = dim, rows_per_layer = dim };
                 var dst = new SDL_GPUTextureRegion { texture = Texture, mip_level = (uint)m, layer = (uint)layer, w = dim, h = dim, d = 1 };
                 SDL_UploadToGPUTexture(copyPass, in src, in dst, false);
+                RenderDiagnostics.Add(DiagMetric.TextureUploadBytes, PageFormats.MipBytes(job.Size, m, UploadFormat));
+                RenderDiagnostics.Add(DiagMetric.TextureUploadCalls, 1);
                 offset += (uint)PageFormats.MipBytes(job.Size, m, UploadFormat);
             }
             _slots.Copied(s);

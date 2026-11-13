@@ -261,6 +261,8 @@ public sealed unsafe class Renderer : IDisposable
                     var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
                     var region = new SDL_GPUBufferRegion { buffer = buf, offset = off, size = n };
                     SDL_UploadToGPUBuffer(copy, in src2, in region, false);
+                    RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, region.size);
+                    RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
                     SDL_EndGPUCopyPass(copy);
                     var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
                     if (fence == IntPtr.Zero) throw new Exception("palette upload submit: " + SDL_GetError());
@@ -573,6 +575,8 @@ public sealed unsafe class Renderer : IDisposable
         var src2 = new SDL_GPUTextureTransferInfo { transfer_buffer = tb, pixels_per_row = 32, rows_per_layer = (uint)rows };
         var dst = new SDL_GPUTextureRegion { texture = tex, w = 32, h = (uint)rows, d = 1 };
         SDL_UploadToGPUTexture(copy, in src2, in dst, false);
+        RenderDiagnostics.Add(DiagMetric.TextureUploadBytes, bytes);
+        RenderDiagnostics.Add(DiagMetric.TextureUploadCalls, 1);
         SDL_EndGPUCopyPass(copy);
         SDL_SubmitGPUCommandBuffer(cmd);
         SDL_ReleaseGPUTransferBuffer(Device, tb);
@@ -699,6 +703,7 @@ public sealed unsafe class Renderer : IDisposable
             return false;
         }
 
+        long diagUpload = RenderDiagnostics.Stamp();
         // ---- stage instance uploads + frame table into the frame transfer buffer
         var mapped = (byte*)SDL_MapGPUTransferBuffer(Device, _frameTransfer, true);
         uint tableBytes = (uint)(f.ChunkCount * sizeof(ChunkDraw));
@@ -731,6 +736,8 @@ public sealed unsafe class Renderer : IDisposable
             var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = ch.UploadSrc[i] };
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = ch.UploadDst[i], size = ch.UploadSize[i] };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
+            RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, dst.size);
+            RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
         }
         // The first frame-table upload cycles the buffer (the previous frame may still read it); later ones fill the new one.
         bool cycle = true;
@@ -742,6 +749,8 @@ public sealed unsafe class Renderer : IDisposable
             var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = dynOffset };
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = f.DynamicFirst * (uint)sizeof(SpriteInstance), size = dynBytes };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
+            RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, dst.size);
+            RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
         }
         _copies.Poll();
         f.Pages.Retire = _copies;
@@ -763,9 +772,12 @@ public sealed unsafe class Renderer : IDisposable
             var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = _pageTableTransfer };
             var dst = new SDL_GPUBufferRegion { buffer = _pageTableBuf, size = (uint)_pageTableBytes };
             SDL_UploadToGPUBuffer(copy, in src2, in dst, true);
+            RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, dst.size);
+            RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
             f.Pages.TableDirty = false;
         }
         SDL_EndGPUCopyPass(copy);
+        RenderDiagnostics.Elapsed(DiagMetric.UploadTicks, diagUpload);
 
         if (f.StreamOnly)
         {
@@ -945,6 +957,8 @@ public sealed unsafe class Renderer : IDisposable
         var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = srcOffset };
         var dst = new SDL_GPUBufferRegion { buffer = _frameTableBuf, offset = dstOffset, size = bytes };
         SDL_UploadToGPUBuffer(copy, in src, in dst, cycle);
+        RenderDiagnostics.Add(DiagMetric.BufferUploadBytes, bytes);
+        RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
         cycle = false;
     }
 

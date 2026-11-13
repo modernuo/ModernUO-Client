@@ -69,6 +69,8 @@ namespace ClassicUO
         UiPass,
         // E6: inside world draw, the effects list captured into the world pass
         WorldDrawEffects,
+        UiCacheRecord,
+        UiCacheCompare,
         Count
     }
 
@@ -183,13 +185,14 @@ namespace ClassicUO
         // evloop-1: main-loop iterations (Update calls) and sleeps or waits since the last drawn frame
         LoopTicks,
         LoopWaits,
+        GlyphQuads,
         Count
     }
 
     // Per-phase frame timing for CUO_FRAMESTATS=1 (CUO_FRAMESTATS_PHASES=0 keeps only the frame total, to measure hook overhead).
     internal static class FrameStats
     {
-        public static readonly bool On = DevBench.FrameStats && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
+        public static readonly bool On = DevBench.FrameStats && (Diagnostics.On || Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0");
 
         // CUO_FRAMESTATS_PREP=1 (or the DevBench plan entry prepdetail:on) also splits the tile walk into exclusive buckets
         // (Walk*) and times a bare walk of the same tile lists. It takes a timestamp per bucket change, so it adds overhead:
@@ -219,7 +222,7 @@ namespace ClassicUO
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
             "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
             "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame",
-            "  UI tree walk", "  UI batcher FNA", "UI pass total", "  world draw: effects"
+            "  UI tree walk", "  UI batcher FNA", "UI pass total", "  world draw: effects", "UI cache record", "UI cache compare"
         };
 
         private static readonly string[] _phaseKeys =
@@ -230,7 +233,7 @@ namespace ClassicUO
             "prep_item_cache", "prep_cap_cached", "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
             "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame",
-            "ui_traverse", "ui_fna", "ui_pass", "draw_fx"
+            "ui_traverse", "ui_fna", "ui_pass", "draw_fx", "ui_cache_record", "ui_cache_compare"
         };
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
@@ -244,7 +247,7 @@ namespace ClassicUO
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
-            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits" };
+            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits", "glyph_quads" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -256,8 +259,8 @@ namespace ClassicUO
         private static readonly int[] _cur = new int[COUNTERS];
         private static readonly float[][] _phase = CreateArrays<float>(PHASES);
         private static readonly int[][] _counter = CreateArrays<int>(COUNTERS);
-        private static readonly float[] _sortScratch = DevBench.FrameStats ? new float[CAPACITY] : null;
-        private static readonly int[] _sortScratchI = DevBench.FrameStats ? new int[CAPACITY] : null;
+        private static readonly float[] _sortScratch = DevBench.FrameStats && !Diagnostics.On ? new float[CAPACITY] : null;
+        private static readonly int[] _sortScratchI = DevBench.FrameStats && !Diagnostics.On ? new int[CAPACITY] : null;
 
         private static int _count;
         private static long _lastEnd, _windowStart, _endDrawStart, _allocThread, _allocTotalStart;
@@ -269,7 +272,7 @@ namespace ClassicUO
 
         private static T[][] CreateArrays<T>(int n)
         {
-            if (!DevBench.FrameStats)
+            if (!DevBench.FrameStats || Diagnostics.On)
             {
                 return Array.Empty<T[]>();
             }
@@ -447,6 +450,20 @@ namespace ClassicUO
         public static void AfterEndDraw()
         {
             long now = Stopwatch.GetTimestamp();
+#if CUO_DEVTOOLS
+            if (Diagnostics.On)
+            {
+                CompletePhases();
+                _acc[(int)FramePhase.Present] = now - _endDrawStart;
+                _acc[(int)FramePhase.Frame] = _lastEnd == 0 ? 0 : now - _lastEnd;
+                Diagnostics.Frame(now, now - _endDrawStart, _acc, _cur);
+                _lastEnd = now;
+                Array.Clear(_acc);
+                ClearFrameCounters();
+                UltimaBatcher2D.ResetFrameCounters();
+                return;
+            }
+#endif
             SessionTick(now);
 
             if (!_recording)
@@ -493,33 +510,7 @@ namespace ClassicUO
                 _acc[(int)FramePhase.Present] = now - _endDrawStart;
                 _acc[(int)FramePhase.Frame] = now - _lastEnd;
 
-                if (On)
-                {
-                    _acc[(int)FramePhase.Pump] = _start[(int)FramePhase.Update] - _lastEnd;
-                    _acc[(int)FramePhase.SceneUpdateRest] = _acc[(int)FramePhase.SceneUpdate] - _acc[(int)FramePhase.WorldMobiles] -
-                                                            _acc[(int)FramePhase.WorldItems] - _acc[(int)FramePhase.WorldEffectsText] -
-                                                            _acc[(int)FramePhase.WorldEcs];
-                    _acc[(int)FramePhase.UpdateOther] = _acc[(int)FramePhase.Update] - _acc[(int)FramePhase.Packets] -
-                                                        _acc[(int)FramePhase.PluginTick] - _acc[(int)FramePhase.SceneUpdate] -
-                                                        _acc[(int)FramePhase.UiUpdate];
-                    _acc[(int)FramePhase.DrawOther] = _acc[(int)FramePhase.Draw] - _acc[(int)FramePhase.DrawSetup] - _acc[(int)FramePhase.Lights] -
-                                                      _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.WorldDraw] -
-                                                      _acc[(int)FramePhase.SceneDrawUi] - _acc[(int)FramePhase.UiDraw] -
-                                                      _acc[(int)FramePhase.Cursor] - _acc[(int)FramePhase.Composite] -
-                                                      _acc[(int)FramePhase.PluginDraw];
-                    _acc[(int)FramePhase.BatcherGpuCalls] = UltimaBatcher2D.FrameGpuTicks;
-                    _acc[(int)FramePhase.PrepRest] = _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.PrepSetup] - _acc[(int)FramePhase.PrepWalk] - _acc[(int)FramePhase.PrepGpuMasks] -
-                                                     _acc[(int)FramePhase.PrepHidden] - _acc[(int)FramePhase.PrepFoliageFinish] -
-                                                     _acc[(int)FramePhase.PrepText] - _acc[(int)FramePhase.PrepCaptureMulti] -
-                                                     _acc[(int)FramePhase.PrepCaptureStatic] - _acc[(int)FramePhase.PrepCaptureItem] -
-                                                     _acc[(int)FramePhase.PrepCaptureMobile] - _acc[(int)FramePhase.PrepCaptureOther] -
-                                                     _acc[(int)FramePhase.PrepItemCache] - _acc[(int)FramePhase.PrepCaptureCached];
-
-                    _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
-                    _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
-                    _cur[(int)FrameCounter.Gumps] = UIManager.Gumps.Count;
-                    SampleMapLoading();
-                }
+                if (On) CompletePhases();
 
                 long alloc = GC.GetAllocatedBytesForCurrentThread();
                 _cur[(int)FrameCounter.AllocBytes] = (int)Math.Min(int.MaxValue, alloc - _allocThread);
@@ -552,6 +543,34 @@ namespace ClassicUO
                 _windowStart = 0;
                 _lastEnd = Stopwatch.GetTimestamp();
             }
+        }
+
+        private static void CompletePhases()
+        {
+            _acc[(int)FramePhase.Pump] = _lastEnd == 0 ? 0 : _start[(int)FramePhase.Update] - _lastEnd;
+            _acc[(int)FramePhase.SceneUpdateRest] = _acc[(int)FramePhase.SceneUpdate] - _acc[(int)FramePhase.WorldMobiles] -
+                                                    _acc[(int)FramePhase.WorldItems] - _acc[(int)FramePhase.WorldEffectsText] -
+                                                    _acc[(int)FramePhase.WorldEcs];
+            _acc[(int)FramePhase.UpdateOther] = _acc[(int)FramePhase.Update] - _acc[(int)FramePhase.Packets] -
+                                                _acc[(int)FramePhase.PluginTick] - _acc[(int)FramePhase.SceneUpdate] -
+                                                _acc[(int)FramePhase.UiUpdate];
+            _acc[(int)FramePhase.DrawOther] = _acc[(int)FramePhase.Draw] - _acc[(int)FramePhase.DrawSetup] - _acc[(int)FramePhase.Lights] -
+                                              _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.WorldDraw] -
+                                              _acc[(int)FramePhase.SceneDrawUi] - _acc[(int)FramePhase.UiDraw] -
+                                              _acc[(int)FramePhase.Cursor] - _acc[(int)FramePhase.Composite] -
+                                              _acc[(int)FramePhase.PluginDraw];
+            _acc[(int)FramePhase.BatcherGpuCalls] = UltimaBatcher2D.FrameGpuTicks;
+            _acc[(int)FramePhase.PrepRest] = _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.PrepSetup] - _acc[(int)FramePhase.PrepWalk] - _acc[(int)FramePhase.PrepGpuMasks] -
+                                             _acc[(int)FramePhase.PrepHidden] - _acc[(int)FramePhase.PrepFoliageFinish] -
+                                             _acc[(int)FramePhase.PrepText] - _acc[(int)FramePhase.PrepCaptureMulti] -
+                                             _acc[(int)FramePhase.PrepCaptureStatic] - _acc[(int)FramePhase.PrepCaptureItem] -
+                                             _acc[(int)FramePhase.PrepCaptureMobile] - _acc[(int)FramePhase.PrepCaptureOther] -
+                                             _acc[(int)FramePhase.PrepItemCache] - _acc[(int)FramePhase.PrepCaptureCached];
+
+            _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
+            _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
+            _cur[(int)FrameCounter.Gumps] = UIManager.Gumps.Count;
+            SampleMapLoading();
         }
 
         private static int _lastSync, _lastPrefetch;
