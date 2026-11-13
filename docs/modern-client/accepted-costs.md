@@ -57,3 +57,4 @@ Columns: change (commit), cost, what it buys, revisit idea. "After-T9 pass" mean
 | Large-scale fixes (a122f2cc1) | Gpu capacity 131,072 sprites and 128 animation layers: +64 MB | no silently dropped sprites, no page flicker | - |
 | Login warm-up (11174c3cf) | 22-31 ms and ~32 MB at login (chunk pool 300, land/static recycler pools) | natural collections in the first minute 4-7 to 0-1 | per-process only; see 4K pool caps (owner-review) |
 | Cliloc uncompressed (owner, 2026-10-31) | +11.5 MiB on disk | startup load 1.6 vs 8.6 ms | `--cliloc-brotli` available |
+| CUO_DIAG diagnostics (fbd7422c8) | only with CUO_DIAG=1: ~6.3 MiB (histogram windows, ping records) plus a writer thread; probe CPU unmeasured; off: static gates, collector compiled out without devtools | external comparison reports (present, ping timeline, phases, uploads) | sample probes if reports show the instrumentation skews results |

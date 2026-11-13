@@ -26,6 +26,18 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 | `FirstSightDecoder.RequestAndWait` overshoots its stall slice on a loaded machine | FirstSightDecoder.cs:217, DecodeQueue.cs ~136 | 2 ms slice measured 1.2-3.5 s with starved workers | open, check the `ManualResetEventSlim` spin and worker priority |
 | Pause FAudio mixing while minimized | audio | CPU | open, with the minimized-priority work |
 
+## Pacing-gap items (2026-11-12)
+
+From a comparison with a reference client (reports in cuo-poc-state/audits (pacing gap)). An external user measured ours at ~1362 FPS, ping 2-7 ms, and a reference client at 1750-1850 FPS, ping 1-2 ms (it counts draws and presents only at the display rate). Order of work: M1 and M2 now, then M3-M5. Each lands behind a switch (default off) with a checker, plus a counts job (draws, presents, updates, objects walked, upload calls/bytes, alloc/frame) run now and a PARKED timing job for the quiet pass.
+
+| What | Where | Estimate | Status |
+|---|---|---|---|
+| M1: uncapped and no vsync: draw and present at the display rate, run Update (network, input) every loop; report loop rate separately from presented FPS. Probably the ping jitter (see "Present stalls" under Rendering) | GameController.cs:445 (frame delay), :972 (EndDraw) | removes draw+present of unseen frames; steadier ping | in progress (bg/present-cap) |
+| M2: skip world prep (`FillGameObjectList`) when the view and the world are unchanged; `WorldWriter` gives a change epoch; The reference client also throttles its pick/text walk to ~30 Hz | GameScene.cs:599, GameSceneGpuWorld.cs:377 | largest per-frame CPU item when standing still | in progress (bg/prep-reuse) |
+| M3: Uo.Render per-frame maintenance (streaming marks, eviction scan, visible chunk table, page touches) reused while the view rect and chunks are unchanged | WorldRenderer.cs:261, ChunkStore.cs:93/471 | CPU per frame | open, after M1/M2 |
+| M4: skip unchanged per-frame uploads (chunk table, dynamic instances, translucent list) and keep the sorted translucent order until something changes | Renderer.cs:703-751, WorldRenderer.cs:521/570 | upload calls/bytes per frame; see "dynamic instances re-upload" under Rendering | open, after M1/M2 |
+| M5: UI cache still walks gumps, builds glyph quads and compares the recording every frame; per-gump dirty version to skip recording; one quad per glyph in RenderedText | GameControllerUiCache.cs:114, RenderedText.cs:668 | CPU with text-heavy UI | open, after M1/M2 |
+
 ## Allocation (per-frame and scene-scaling)
 
 | What | Where | Estimate | Status |

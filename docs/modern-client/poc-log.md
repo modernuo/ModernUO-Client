@@ -6883,3 +6883,14 @@ Base 6748f4d29. Design `cuo-poc-state/surveys/event-loop-2026-11-11.md`; handoff
   - A counts job on the main runner: the legacy and event loops interleaved in one session at the spot, inactive, minimized and in the large scene, with a max wait of 16 ms and then 100 ms.
 
   Counts are indicative on a busy machine. Latency and pacing comparisons wait for a quiet machine.
+
+## 2026-11-12: Pacing-gap investigation and CUO_DIAG
+
+An external user measured our clean branch (GPU renderer, fresh clone, localhost ModernUO, uncapped) at ~1362 FPS with ping 2-7 ms, and a reference client at 1750-1850 FPS with ping 1-2 ms. Four read-only Codex investigations (gpt-6.1-sol medium; cuo-poc-state/audits (pacing gap)/p*.out.md) found:
+- The reference client presents only at the display rate when uncapped but counts draws as FPS; ours presents every draw. Not comparable until it presents every frame.
+- Its launcher always publishes NativeAOT; our runbook's `dotnet build` is JIT.
+- Ping measurement is byte-identical in both (`NetStatistics.cs`: frame clock, integer ms, five-sample average); both NoDelay, both poll on the main thread. One present stall while a ping is out explains 2-7 ms readings (backlog: present stalls 4-5 ms on ~4 % of frames above ~1000 fps).
+- We do more per-frame work when stationary: world prep, Uo.Render maintenance, uploads, UI recording (backlog M1-M5).
+
+`CUO_DIAG=1` (fbd7422c8, built by a Codex builder on a diagnostics branch from the clean branch, cherry-picked here): one `Logs/diag-<time>-<pid>.txt` per run with a startup header (JIT/AOT, GC, env, loaded natives, driver, inferred present mode, pixel sizes, refresh), 5 s windows (draws vs presents, frame/present/phase percentiles, GC, alloc, drain stats, upload and glyph counters) and one line per ping (creation, enqueue, socket write, read, dequeue, handler, overlapping stalls). User steps in tools/diag/README.md. Release builds in both CuoDevTools variants, 3804 tests pass (also with CUO_DIAG=1). Not yet run against a live client.
+
