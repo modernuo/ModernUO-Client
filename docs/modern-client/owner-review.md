@@ -4,6 +4,11 @@ Open owner decisions, decisions already made, and queued work. History (what mer
 
 ## 1. Needs you
 
+- **Pacing-gap milestone (M1-M5, 2026-11-13; details in poc-log):** M1, M3, M4, M5 merged with every switch default off; timing waits for the quiet pass (commit points: cuo-poc-state/measure/quiet-queue-pacing-gap.md). Decisions for you:
+  1. **M2 `prep_reuse` parked** (bg/prep-reuse, 3 rounds): busy scenes never reuse because the ChunkRetry clock needs a full fill every draw; the quiet spot reuses ~98 %. *Default:* leave parked until a retry clock that runs outside the fill exists.
+  2. **M5 GPU fps with both UI switches on:** pre-merge counts showed 1707 -> 1159 draws/s on GPU (Legacy flat) on the busy machine. *Default:* verify in the quiet pass before any default-on.
+  3. **Flip `present_at_display_rate` default on?** Ping drops to the real round trip and unseen frames go away; the FPS counter then shows presented frames (display rate) and the loop rate separately. *Default:* off until the quiet pass.
+  4. **Test shard autosave turned off** (`modernuo.json` `autosave.enabled` False; backup cuo-poc-state/modernuo.json.bak-20261113): world-save broadcasts were landing in UI golden shots. *Default:* keep off on the test shard.
 - **FPS test:** the coordinator now runs it unattended as a bench job (`CUO_FPS_TEST_PASSWORD` from the runner's environment) with no agent builds or jobs running, after the T9 work and before the quiet timing pass. Nothing to do unless you want to run it yourself.
 - **Bodies, `sequences` = target (bg/bodies-lbr, not merged):** in-game check bench-000621 (contact sheet `cuo-poc-state/measure/bodies-lbr-check/out-621/bodies_gpu.png`, current pack left, test pack right per action). Every action draws a valid frame on both renderers, but with the target sequences daemon (9), ice fiend (43) and wraith (26) show their standing frame for server actions 17, 18 and 20, which the current pack animates; giant spider (28) gains action 13. Is that loss acceptable (it is what the target groups contain), or should `sequences` stay `none` for bodies whose replaced groups have fewer actions? The merge and pack classic-1.5 wait for your answer.
 - **Rest of T9: the hot caches** (survey `cuo-poc-state/surveys/t9-remaining-2026-11-11.md`). Proceeding with the defaults below unless you say otherwise:
