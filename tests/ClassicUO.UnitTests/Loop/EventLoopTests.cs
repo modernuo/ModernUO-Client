@@ -392,6 +392,32 @@ namespace ClassicUO.UnitTests.Loop
                 // drained: the next wait sleeps until the deadline
                 w.Wait(30).Should().Be(WakeReason.Timer);
 
+                // Repeat after an empty drain, including arrival while a wait is in progress.
+                // A single initial FD_READ does not prove that later reads re-enable notification.
+                for (int i = 0; i < 3; i++)
+                {
+                    w.BindNet(client);
+                    client.Drain(_ => 0, maxMs: 0);
+                    var sender = new Thread(() =>
+                    {
+                        Thread.Sleep(20);
+                        server.Send(new byte[] { 42 });
+                    });
+                    sender.Start();
+                    try
+                    {
+                        w.Wait(2000).Should().Be(WakeReason.Net);
+                    }
+                    finally
+                    {
+                        sender.Join();
+                    }
+                    w.BindNet(client);
+                    int received = 0;
+                    client.Drain(seg => { received += seg.Count; return 0; }, maxMs: 0);
+                    received.Should().Be(1);
+                }
+
                 // the socket is non-blocking now; sends go through the wrapper's non-blocking path
                 var token = client.BeginLoginHandshake(0); // sends open once the handshake is queued
                 client.Send(new byte[] { 0x73, 9, 9 }, ignorePlugin: true);

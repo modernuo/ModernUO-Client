@@ -43,7 +43,7 @@ namespace ClassicUO.Loop
         private static readonly double _periodSec =
             double.TryParse(Environment.GetEnvironmentVariable("CUO_LOOP_STATS_SEC"), out var s) && s > 0 ? s : 5;
 
-        private static long _ticks, _draws, _sleeps, _waits, _lateWakes;
+        private static long _ticks, _draws, _presents, _drains, _sleeps, _waits, _lateWakes;
         private static readonly long[] _wakes = new long[(int)WakeReason.Count];
         private static long _periodStart;
         private static TimeSpan _cpuStart;
@@ -94,9 +94,11 @@ namespace ClassicUO.Loop
             }
         }
 
-        public static void NoteDraw()
+        public static void NoteDraw() => _draws++;
+
+        public static void NotePresent()
         {
-            _draws++;
+            _presents++;
             long now = Stopwatch.GetTimestamp();
 
             if (_lastPresent != 0)
@@ -119,6 +121,7 @@ namespace ClassicUO.Loop
         /// <summary>One drain: <paramref name="bytes"/> raw bytes read between <paramref name="start"/> and <paramref name="end"/>.</summary>
         public static void NoteDrain(long start, long end, int bytes)
         {
+            _drains++;
             if (bytes <= 0)
             {
                 _netEmptySince = start;
@@ -191,6 +194,8 @@ namespace ClassicUO.Loop
               .Append(" sec=").Append(sec.ToString("0.0"))
               .Append(" ticks/s=").Append((_ticks / sec).ToString("0.0"))
               .Append(" draws/s=").Append((_draws / sec).ToString("0.0"))
+              .Append(" presents/s=").Append((_presents / sec).ToString("0.0"))
+              .Append(" drains/s=").Append((_drains / sec).ToString("0.0"))
               .Append(" sleeps/s=").Append((_sleeps / sec).ToString("0.0"))
               .Append(" waits/s=").Append((_waits / sec).ToString("0.0"))
               .Append(" wakes(none/timer/net/input/wake/failed)=");
@@ -213,7 +218,7 @@ namespace ClassicUO.Loop
 #endif
             Log.Info(sb.ToString());
 
-            _ticks = _draws = _sleeps = _waits = _lateWakes = 0;
+            _ticks = _draws = _presents = _drains = _sleeps = _waits = _lateWakes = 0;
             Array.Clear(_wakes);
             NetWait.Clear();
             NetHandled.Clear();

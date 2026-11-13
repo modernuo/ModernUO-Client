@@ -136,14 +136,20 @@ namespace ClassicUO.Renderer
 
         public int TextureSwitches, FlushesDone;
 
-        public static readonly bool CollectFrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
-                                                        && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
+        public static readonly bool CollectFrameStats =
+#if CUO_DEVTOOLS
+            Environment.GetEnvironmentVariable("CUO_DIAG") == "1" ||
+#endif
+            Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
+               && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
         public static int FrameFlushes, FrameDrawCalls;
+        public static int FrameUploadCalls, FrameUploadBytes;
         public static long FrameGpuTicks;
 
         public static void ResetFrameCounters()
         {
             FrameFlushes = FrameDrawCalls = 0;
+            FrameUploadCalls = FrameUploadBytes = 0;
             FrameGpuTicks = 0;
         }
         private bool _worldOffsetActive;
@@ -1663,6 +1669,11 @@ namespace ClassicUO.Renderer
             }
 
             _currentBufferPosition = offset + count;
+            if (CollectFrameStats)
+            {
+                FrameUploadCalls++;
+                FrameUploadBytes += count * PositionNormalTextureColor4.SIZE_IN_BYTES;
+            }
 
             return offset;
         }

@@ -24,6 +24,31 @@ namespace ClassicUO.UnitTests.Network
     public class NetSendLockTests
     {
         private const uint Seed = 0x7F000001;
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Queued_Send_Wakes_Event_Loop_Even_On_Main_Thread(bool eventLoop)
+        {
+            var (client, socket) = Make(EncryptionType.NONE);
+            var previous = NetClient.SendQueuedWake;
+            int wakes = 0;
+            try
+            {
+                NetClient.SendQueuedWake = eventLoop ? () => wakes++ : null;
+                client.Flush(); // packet phase has already run
+                client.Send(new byte[] { 0x73, 1 }, ignorePlugin: true);
+                wakes.Should().Be(eventLoop ? 1 : 0);
+                socket.Bytes.Should().BeEmpty();
+                client.Flush();
+                socket.Bytes.Should().Equal(0x73, 1);
+            }
+            finally
+            {
+                NetClient.SendQueuedWake = previous;
+                client.Disconnect();
+            }
+        }
         private static readonly TimeSpan Bounded = TimeSpan.FromSeconds(30);
 
         private sealed class Worker
