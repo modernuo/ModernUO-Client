@@ -185,6 +185,8 @@ namespace ClassicUO
         // evloop-1: main-loop iterations (Update calls) and sleeps or waits since the last drawn frame
         LoopTicks,
         LoopWaits,
+        GlyphQuadsBuilt,
+        GlyphQuadsReused,
         GlyphQuads,
         Count
     }
@@ -247,7 +249,8 @@ namespace ClassicUO
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
-            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits", "glyph_quads" };
+            "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits",
+            "glyph_quads_built", "glyph_quads_reused", "glyph_quads" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
