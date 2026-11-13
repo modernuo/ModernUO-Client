@@ -7119,3 +7119,39 @@ Follows the 2026-11-12 pacing-gap entry. All builders were Codex gpt-6.1-sol med
 - **M5 `text_quad_cache` + `ui_gump_dirty`** (merged 5ead9ecae): glyph quads reused 100 % while text is unchanged (367 GPU / 395 Legacy per draw); gump replay covers only plain gumps, so 0 on a real UI (8 gumps, all always-dirty). Gates 759/760 and allocs 763/764 pass. Pre-merge counts showed GPU draws/s 1707 -> 1159 with both on (Legacy flat): verify in the quiet pass.
 - Test shard: ModernUO rebuilt for .NET 11 (Distribution was missing its runtimeconfig) and autosave turned off (`modernuo.json`), since save broadcasts landed in UI golden shots.
 
+
+## 2026-11-13: M5 GPU throughput investigation, first interleaved series
+
+Base and measured code/quiet commit point `e5ce0a0b2d0b26ad2c51275baa502462228c18c6`, branch `bg/m5-gpu-perf`. No production change or fix: the reported 32% regression did not reproduce consistently, so no causal mechanism is established. All switches remain default off, including `text_quad_cache` and `ui_gump_dirty`; existing developer checkers `CUO_TEXT_QUAD_CHECK`, `CUO_UI_DIRTY_CHECK`, `CUO_UI_CACHE_CHECK` are retained unchanged. No new switch, checker, allocation site or retained memory was introduced.
+
+Owner explicitly authorized indicative busy-machine timing for this investigation. Job **bench-000782** passed (exit 0, 271.9 seconds): one GPU session/binary, original ui-dirty stationary spot and UI, four arms, three rounds with orders off/text/dirty/both, both/dirty/text/off, dirty/off/both/text. Each arm settled three seconds then measured eighteen seconds; only whole diagnostic windows inside verified QPC arm boundaries were included. CUO_FRAMESTATS, CUO_DIAG and CUO_LOOP_STATS enabled; tiering disabled. Runtime pack CURRENT and the existing account/credential safeguards were used. Our low-priority build/test processes overlapped the series, contributing additional load; external load was uncontrolled. Journal/name content and nearby objects also varied. These are indicative rates, not a throughput improvement claim.
+
+| Arm | Draws/s in rounds 1 / 2 / 3 | Aggregate draws=presents=updates=network drains /s | CPU ms/s | Main-thread B/frame | GC 0/1/2 |
+|---|---|---:|---:|---:|---|
+| off | 1624.7 / 2734.3 / 3028.9 | 2428.7 | 1330.0 | 457.59 | 3/0/0 |
+| text only | 1500.2 / 2632.0 / 3387.1 | 2506.4 | 1307.6 | 456.99 | 5/0/0 |
+| dirty only | 2836.6 / 3093.5 / 2736.2 | 2918.0 | 1539.7 | 473.64 | 2/0/0 |
+| both | 2933.1 / 3084.8 / 3137.3 | 3066.6 | 1548.4 | 457.09 | 4/0/0 |
+
+| Work per draw | off | text only | dirty only | both |
+|---|---:|---:|---:|---:|
+| FillGameObjectList full/reuse | 1/0 | 1/0 | 1/0 | 1/0 |
+| Objects walked | 105.73 | 105.45 | 105.40 | 105.38 |
+| Glyph quads built/reused | 487.67/0 | 0.001/477.64 | 499.92/0 | 0.001/482.85 |
+| UI vertices | 2830.44 | 2826.58 | 2884.59 | 2847.39 |
+| FNA uploads calls/bytes | 5.008/69083.5 | 5.010/69137.1 | 5.007/69077.3 | 5.000/68935.8 |
+| GPU buffer uploads calls/bytes | 4.000/131861.1 | 4.000/131861.1 | 4.000/131860.4 | 4.000/131860.5 |
+| Gumps replayed | 0 | 0 | 0 | 0 |
+| UI recording cache hits | 99.888% | 99.850% | 99.893% | 99.994% |
+
+Each state has three rounds. Across complete windows, median histogram upper bounds (microseconds) were: UI record off 47-50, text 39-43, dirty 47-50, both 40-41; UI compare off 5, text 5-6, dirty 5, both 5. UI FNA median/p95/p99 were zero for every included window. GPU upload medians were 12-14 throughout; batcher GPU-call medians 23-28. Present medians off 81-87, text 79-89, dirty 79-82, both 80-82. Frame medians off 301-336, text 274-340, dirty 297-305, both 286-295. First off/text windows had present p99 bounds about 7.2-7.3 ms; later states/windows generally had much smaller tails. Full p50/p95/p99/max, per-round counts and root census remain in job arms.jsonl/counts.diag; percentile bounds were not averaged. There is no switch-correlated growing CPU phase in this series.
+
+Historical bench-000761 actually had stationary dirty-only 1708.1 versus off 1707.7 draws/s, text-only 1222.6, both 1159.1. All hover arms were 1412-1443. That scene measured each stationary arm once in the sequence off/dirty/text/both and reversed it for hover; it is vulnerable to time-varying machine load. Historical text-on also increased unrelated UI traversal/update, world/upload and batcher phases. Fresh repetition does not establish that the historical slowdown was caused by M5, nor prove which external factor caused it.
+
+Source trace rejects the proposed unconditional UI resubmission mechanism: `RenderedText.cs:575` calls BuildOrDrawGlyphs directly when disabled, while `:638` emits cached runs when enabled; both reach the same `EmitQuad` and batcher Draw overload (`:660`). `GameControllerUiCache.cs:118-125` records and compares either path; `:154-165` drops equal recordings and submits changed ones. `Batcher2D.Recording.cs:202-210` compares state, texture identity and vertex bytes. Fresh cache-hit counts above confirm that cached glyphs still participate in unchanged detection. `UiGumpRecording.cs:46` rejects derived production roots immediately, so no fragment/tree scan runs for those roots. `Uo.Render/Renderer.cs:850` uses the external target; swapchain acquisition and the offscreen fence-throttle branch (`:943`) are outside this mode. Native upload/submit/present stalls remain possible. Existing probes do not separately time glyph emission or GPU execution waits, so no claim about those subphases is made.
+
+Verification via agentnice and required heap cap: isolated Release CuoDevTools=true self-contained JIT publish succeeded; Release CuoDevTools=false build **81 warnings, 0 errors**, 47.48 s. Full `dotnet test tests/ClassicUO.UnitTests -c Release -p:UseSharedCompilation=false`: **3858 passed, 6 skipped, 0 failed, 3864 total**, 3 m 27 s. Existing tests exercise both M5 switch states. External helper checks all three gitlinks; worktree diff check passed. New measurement parser reproduced all eight historical arms, exact off rate and percentile bounds. No write-site budget regeneration. First rules read mistakenly used default PowerShell; acknowledged and corrected to bash for all subsequent commands; no denied commands.
+
+Pending required jobs on the unchanged baseline: **bench-000783** correctness gate, both renderers; **bench-000784** GPU allocations; **bench-000785** Legacy allocations. Dedicated allocations will distinguish the dirty-only aggregate allocation burst from a reproducible switch effect. No checker-green or dedicated allocation pass is claimed yet. No post-fix series exists because there is no justified fix. Investigation remains unresolved pending these results and any coordinator-approved follow-up.
+
+Durable scripts, summaries, logs and scenes: external `measure/m5-gpu-perf/`; scratch binary under session scratchpad `m5-gpu-perf/bin-base`. Handoff external `handoffs/m5-gpu-perf.md`. Quiet scripts `job-timing-gpu-PARKED.sh` and `job-timing-legacy-PARKED.sh` remain unsubmitted and target exact code point above. No push/merge. Accepted costs: none added. Source-only opportunity: repeated per-glyph disposed-texture validation in `RenderedText.cs:585-593` could instead validate distinct atlas pages; benefit unmeasured and not established as the reported cause.
