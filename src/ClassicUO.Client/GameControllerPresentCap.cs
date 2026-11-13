@@ -14,6 +14,7 @@ namespace ClassicUO
         private uint _displayId;
         private double _displayHz;
         private bool _displayCapActive;
+        private bool _displayDrawDue;
         private uint _totalUpdates;
         internal bool DisplayCapActive => _displayCapActive;
 #if CUO_DEVTOOLS

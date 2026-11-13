@@ -136,7 +136,6 @@ namespace ClassicUO
 
                 if (_waiter.Ready)
                 {
-                    NetClient.MainThreadId = Environment.CurrentManagedThreadId;
                     Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
                 }
             }
@@ -705,7 +704,7 @@ namespace ClassicUO
             }
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packetsCount;
-            NetClient.Socket.Flush();
+            if (_tickMode != LoopMode.Event) NetClient.Socket.Flush();
             FrameStats.End(FramePhase.Packets);
 
             FrameStats.Begin(FramePhase.PluginTick);
@@ -750,6 +749,7 @@ namespace ClassicUO
             _tickInterval = x;
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
+            _displayDrawDue = displayDue;
 
             // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
             // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
@@ -827,6 +827,9 @@ namespace ClassicUO
             _queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch);
 
             base.Update(gameTime);
+
+            // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
+            if (_tickMode == LoopMode.Event) NetClient.Socket.Flush();
 
             FrameStats.End(FramePhase.Update);
 #if CUO_DEVTOOLS
@@ -916,7 +919,7 @@ namespace ClassicUO
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME);
 
 #if CUO_DEVTOOLS
-            if (PresentCapCheck.On) PresentCapCheck.Draw();
+            if (PresentCapCheck.On) PresentCapCheck.Draw(_displayDrawDue);
 #endif
 
             GraphicsDevice.Clear(Color.Black);

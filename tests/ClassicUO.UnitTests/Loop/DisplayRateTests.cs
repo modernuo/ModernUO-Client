@@ -37,6 +37,31 @@ public class DisplayRateTests
         Assert.False(PresentCapCheck.OverRate(315, 5, 60));
         Assert.True(PresentCapCheck.OverRate(316, 5, 60));
     }
+
+    [Fact]
+    public void CheckerAcceptsLatePresentsButRejectsInvalidDrawPresentPairs()
+    {
+        // Changing eligibility resets the static checker between scenarios.
+        PresentCapCheck.Update(1, false, false, 60, 10000);
+        PresentCapCheck.Update(2, true, true, 60, 10000);
+        PresentCapCheck.Draw(true);
+        PresentCapCheck.Present(3);
+        PresentCapCheck.Draw(true);
+        PresentCapCheck.Present(System.Diagnostics.Stopwatch.Frequency / 2);
+        Assert.Equal(0, PresentCapCheck.Mismatches);
+        PresentCapCheck.Draw(false);
+        PresentCapCheck.Present(4);
+        Assert.Equal(1, PresentCapCheck.Mismatches);
+        PresentCapCheck.Present(5);
+        Assert.Equal(2, PresentCapCheck.Mismatches);
+        PresentCapCheck.Draw(true);
+        PresentCapCheck.Draw(true);
+        Assert.Equal(3, PresentCapCheck.Mismatches);
+        PresentCapCheck.Update(6, false, false, 60, 10000);
+        PresentCapCheck.Draw(false); // cap off: ordinary draw is eligible
+        PresentCapCheck.Present(7);
+        Assert.Equal(0, PresentCapCheck.Mismatches);
+    }
 #endif
     [Theory]
     [InlineData(false, 0, false, false, false)]
