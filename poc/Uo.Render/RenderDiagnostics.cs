@@ -7,7 +7,8 @@ namespace Uo.Render;
 public enum DiagMetric
 {
     StreamingTicks, ChunkTableTicks, BuildFrameTicks, TranslucentSortTicks,
-    UploadTicks, BufferUploadBytes, BufferUploadCalls, TextureUploadBytes, TextureUploadCalls, Count
+    UploadTicks, BufferUploadBytes, BufferUploadCalls, TextureUploadBytes, TextureUploadCalls,
+    ChunkTableRebuilds, ChunkTableReuses, StreamingMarks, EvictionScans, PageTouches, Count
 }
 
 public static class RenderDiagnostics

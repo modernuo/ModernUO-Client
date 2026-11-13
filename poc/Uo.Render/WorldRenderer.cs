@@ -132,6 +132,14 @@ public sealed unsafe class WorldRenderer : IDisposable
     long _lastTicks;
     bool _prepared;
     int _chunkCount, _instances;
+    public bool RenderViewReuse;
+    RenderViewReuse _viewReuse;
+#if CUO_DEVTOOLS
+    // CLEANUP(release): shadow work is enabled only by the checker, never by the switch alone.
+    static readonly bool ViewReuseCheck = Environment.GetEnvironmentVariable("CUO_RENDER_VIEW_REUSE_CHECK") == "1";
+    ChunkDraw[] _checkTable;
+    long _viewChecks, _viewMismatches, _viewCheckLog;
+#endif
 
     public long Frame;
     /// <summary>Last frame: overrides that matched a baked instance, missed (chunk not ready or no such object), dropped
@@ -259,16 +267,76 @@ public sealed unsafe class WorldRenderer : IDisposable
                 case PageJob pj: pj.Owner.OnLoaded(pj); break;
             }
         }
-        if (_o.StreamMap) Chunks.Update(Frame, in _view, in need);
+        bool reuse = _viewReuse.Matches(RenderViewReuse, _view, need, scale, Chunks.ChangeEpoch,
+            Pages.TotalUploads, AnimPages?.TotalUploads ?? 0,
+            Chunks.CanReuseMaintenance && !Pages.Pending && Pages.MissingVisible == 0
+                && (AnimPages == null || !AnimPages.Pending && AnimPages.MissingVisible == 0));
+        if (_o.StreamMap)
+        {
+            if (reuse) Chunks.ReuseMaintenance(Frame);
+            else Chunks.Update(Frame, in _view, in need);
+        }
         Pages.BeginFrame();
         AnimPages?.BeginFrame();
         // leave one table entry for the dynamic range
         RenderDiagnostics.Elapsed(DiagMetric.StreamingTicks, diagStreaming);
         long diagTable = RenderDiagnostics.Stamp();
-        _chunkCount = Chunks.BuildDrawList(in _view, _table.AsSpan(0, _table.Length - 1), Pages, Frame, out _instances);
+        if (reuse)
+        {
+            Chunks.TouchVisiblePages(Pages, Frame);
+            RenderDiagnostics.Add(DiagMetric.ChunkTableReuses, 1);
+#if CUO_DEVTOOLS
+            if (ViewReuseCheck) CheckReusedView();
+#endif
+        }
+        else
+        {
+            _chunkCount = Chunks.BuildDrawList(in _view, _table.AsSpan(0, _table.Length - 1), Pages, Frame, out _instances, RenderViewReuse);
+            RenderDiagnostics.Add(DiagMetric.ChunkTableRebuilds, 1);
+        }
+        if (RenderViewReuse) _viewReuse.Remember(_view, need, scale, Chunks.ChangeEpoch, Pages.TotalUploads, AnimPages?.TotalUploads ?? 0);
+        else _viewReuse = default;
+#if CUO_DEVTOOLS
+        if (ViewReuseCheck && now - _viewCheckLog >= Stopwatch.Frequency * 5)
+        {
+            Console.WriteLine($"[render-view-reuse-check] on={RenderViewReuse} checked={_viewChecks} mismatches={_viewMismatches}");
+            _viewCheckLog = now;
+        }
+#endif
         RenderDiagnostics.Elapsed(DiagMetric.ChunkTableTicks, diagTable);
         _prepared = true;
     }
+
+#if CUO_DEVTOOLS
+    void CheckReusedView()
+    {
+        _checkTable ??= new ChunkDraw[_table.Length];
+        ulong touches = Pages.TouchDecisionHash();
+        int transCount = Chunks.VisibleTranslucentCount;
+        int missing = Chunks.MissingNear, visible = Chunks.MissingVisible;
+        // The full walk also refreshes the cached page set and translucent slots in exactly their original order.
+        ulong slots = VisibleSlotHash();
+        int count = Chunks.BuildDrawList(_view, _checkTable.AsSpan(0, _table.Length - 1), Pages, Frame, out int instances);
+        bool same = count == _chunkCount && instances == _instances && touches == Pages.TouchDecisionHash()
+            && transCount == Chunks.VisibleTranslucentCount && slots == VisibleSlotHash()
+            && missing == Chunks.MissingNear && visible == Chunks.MissingVisible;
+        for (int i = 0; same && i < count; i++)
+            same = _table[i].First == _checkTable[i].First && _table[i].Prefix == _checkTable[i].Prefix;
+        _viewChecks++;
+        if (!same)
+        {
+            _viewMismatches++;
+            Console.WriteLine($"[render-view-reuse-check] MISMATCH frame={Frame} chunks={_chunkCount}/{count} instances={_instances}/{instances} touches={touches}/{Pages.TouchDecisionHash()}");
+        }
+    }
+
+    ulong VisibleSlotHash()
+    {
+        ulong h = 0;
+        foreach (int slot in Chunks.VisibleTranslucentSlots) h = (h ^ (uint)slot) * 1099511628211UL;
+        return h;
+    }
+#endif
 
     /// <summary>Everything visible is drawable: no chunk, page or upload pending (screenshots and tests wait for this).</summary>
     public bool Settled => Chunks.PendingChunks == 0 && Chunks.UploadQueueLength == 0 && !Pages.Pending && Pages.MissingVisible == 0

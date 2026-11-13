@@ -893,6 +893,7 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+            _world.RenderViewReuse = Settings.GlobalSettings.RenderViewReuse;
             _world.Prepare(in camera);
 #if CUO_DEVTOOLS
             GoldenCapture.EndGpu(DynamicInstances);

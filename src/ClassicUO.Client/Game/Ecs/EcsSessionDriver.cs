@@ -639,6 +639,10 @@ namespace ClassicUO.Game
                 case "log":
                     return false;
 
+                case "renderreuse" when args.Length > 0:
+                    Settings.GlobalSettings.RenderViewReuse = args[0] == "on";
+                    return false;
+
                 // light <hex level>|off: the profile's custom light level, as DevBench's light: entry (night = lights drawn)
                 case "light" when args.Length > 0 && ProfileManager.CurrentProfile is { } lightProfile:
                     lightProfile.UseCustomLightLevel = args[0] != "off";
