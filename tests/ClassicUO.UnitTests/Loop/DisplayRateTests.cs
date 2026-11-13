@@ -9,9 +9,9 @@ namespace ClassicUO.UnitTests.Loop;
 public class DisplayRateTests
 {
     [Fact]
-    public void SettingIsOffByDefaultAndRoundTrips()
+    public void SettingIsOnByDefaultAndRoundTrips()
     {
-        Assert.False(new Settings().PresentAtDisplayRate);
+        Assert.True(new Settings().PresentAtDisplayRate);
         Assert.True(JsonSerializer.Deserialize<Settings>("{\"present_at_display_rate\":true}").PresentAtDisplayRate);
     }
 

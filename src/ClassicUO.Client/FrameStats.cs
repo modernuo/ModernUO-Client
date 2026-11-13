@@ -854,7 +854,7 @@ namespace ClassicUO
             var json = new StringBuilder(4096);
             var inv = CultureInfo.InvariantCulture;
 
-            sb.Append(inv, $"[framestats] {_tag} window {_windowIndex}: {n} frames in {seconds:0.00} s = {n / seconds:0} fps; ")
+            sb.Append(inv, $"[framestats] {_tag} window {_windowIndex}: {n} presented frames in {seconds:0.00} s = {n / seconds:0} presented fps; ")
               .Append(inv, $"gc gen0 {gc0} gen1 {gc1} gen2 {gc2}, pause {pauseMs:0.00} ms, alloc {allocTotal / Math.Max(1, n)} B/frame (all threads)\n")
               .Append("  phase                      avg      p50      p95      p99      max  (ms)\n");
 

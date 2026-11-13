@@ -203,6 +203,7 @@ namespace ClassicUO
             return list.Count > skip ? list[skip] : null;
         }
         private static long _appliesAtStart;
+        private static ulong _presentsAtStart;
         private static string _planMode;
         private static long _planStart;
         private static int _spot;
@@ -1422,7 +1423,7 @@ namespace ClassicUO
             var cam = (game.Scene as Game.Scenes.GameScene)?.Camera.Bounds;
             Log.Info(
                 $"[bench] window client {cb.Width}x{cb.Height}, backbuffer {game.GraphicManager.PreferredBackBufferWidth}x{game.GraphicManager.PreferredBackBufferHeight}, " +
-                $"dpi scale {game.DpiScale:0.00}, camera {cam}, vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, fps setting {Configuration.Settings.GlobalSettings.FPS}"
+                $"dpi scale {game.DpiScale:0.00}, camera {cam}, vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, fps setting {Configuration.Settings.GlobalSettings.FPS}, present_at_display_rate {Configuration.Settings.GlobalSettings.PresentAtDisplayRate}"
             );
         }
 
@@ -1791,7 +1792,7 @@ namespace ClassicUO
                     }
 
                     Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
-                             $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count), {(Renderer.UltimaBatcher2D.EffectApplies - _appliesAtStart) / (double)Math.Max(1, _planFrames):0.0} effect applies/frame");
+                             $"{_planFrames * (double)sec / (now - _planStart):0} loops/s, {(game.PresentedFrameCount - _presentsAtStart) * (double)sec / (now - _planStart):0} presented fps, {(Renderer.UltimaBatcher2D.EffectApplies - _appliesAtStart) / (double)Math.Max(1UL, game.PresentedFrameCount - _presentsAtStart):0.0} effect applies/present");
                     LogSettle(gs, _plan[_planIndex]);
                     _planIndex++;
                     _step = 1;
@@ -2449,6 +2450,7 @@ namespace ClassicUO
                     _planStart = now;
                     _planFrames = 0;
                     _appliesAtStart = Renderer.UltimaBatcher2D.EffectApplies;
+                    _presentsAtStart = game.PresentedFrameCount;
                     _planMode = _plan[_planIndex].Split(':')[1].Trim(); // read every measured frame: split once
                     _stepAt = now + sec * 5 * _planWindows;
 

@@ -34,7 +34,14 @@ namespace ClassicUO.Configuration
                 RegexOptions.IgnorePatternWhitespace
             );
 
-            return JsonSerializer.Deserialize(text, ctx);
+            T result = JsonSerializer.Deserialize(text, ctx);
+            if (result is Settings settings && settings.Migrate())
+            {
+                // Persist before command-line overrides or session changes, so a later explicit choice survives reload.
+                Save(result, file, ctx);
+            }
+
+            return result;
         }
 
         public static void Save<T>(T obj, string file, JsonTypeInfo<T> ctx) where T : class

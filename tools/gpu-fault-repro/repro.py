@@ -113,7 +113,7 @@ for run in range(1, a.runs + 1):
     work = tempfile.mkdtemp(prefix=f'cuo-repro-{a.tag}-')
     os.makedirs(os.path.join(work, 'profiles'))
     settings = dict(username=a.account, password=encrypt_password(pw), ip='127.0.0.1', port=2593,
-                    ultimaonlinedirectory=r'C:\Ultima Online Classic', clientversion='7.0.103.0', lastservernum=1, fps=0, vsync=False,
+                    ultimaonlinedirectory=r'C:\Ultima Online Classic', clientversion='7.0.103.0', lastservernum=1, fps=0, vsync=False, settings_version=1, present_at_display_rate=False,
                     is_win_maximized=False, saveaccount=False, autologin=True, login_music=False, plugins=[],
                     pack=r'C:\Repositories\uo-packs\classic-1.0', world_renderer=a.world)
     settings_path = os.path.join(work, 'settings.json')

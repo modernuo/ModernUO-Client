@@ -23,9 +23,27 @@ namespace ClassicUO.Configuration
             });
     }
 
-    internal sealed class Settings
+    internal sealed class Settings : IJsonOnDeserializing
     {
         public const string SETTINGS_FILENAME = "settings.json";
+        public const int CurrentSettingsVersion = 1;
+
+        [JsonPropertyName("settings_version")] public int SettingsVersion { get; set; } = CurrentSettingsVersion;
+
+        // New objects carry the current version; files without a version predate all migrations.
+        void IJsonOnDeserializing.OnDeserializing() => SettingsVersion = 0;
+
+        internal bool Migrate()
+        {
+            if (SettingsVersion >= CurrentSettingsVersion)
+                return false;
+
+            // Before version 1 this hidden switch was saved as false by default. Apply the owner's new default once.
+            PresentAtDisplayRate = true;
+            SettingsVersion = CurrentSettingsVersion;
+            return true;
+        }
+
         public static Settings GlobalSettings = new Settings();
         public static string CustomSettingsFilepath = null;
 
@@ -157,7 +175,7 @@ namespace ClassicUO.Configuration
 
         // M1: uncapped, vsync off, without inactive FPS reduction: skip Draw and Present until the display's next deadline.
         // Explicit FPS caps and inactive/minimized policies keep precedence. Unknown refresh uses the original path.
-        [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; }
+        [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; } = true;
 
         // event_loop: the longest wait without an Update, for timers the loop does not track (plugin ticks, macros, audio
         // streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients

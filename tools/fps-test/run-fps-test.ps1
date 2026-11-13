@@ -8,7 +8,7 @@
     then the large-scale test scene (about 2,000 mobiles and 19,500 items, Felucca 5156 2150) at 1920x1080, each spot
     under the Legacy and then the Gpu world renderer. The scene spot needs a GameMaster+ account: it says
     [go 5156 2150 before and [go 1495 1629 after (the running ModernUO build has no [TestScene command; the scene's
-    objects persist on Felucca), so the character ends at Britain. FrameStats is on, FPS uncapped, VSync off, inactive throttling off and the window stays on top. Do not
+    objects persist on Felucca), so the character ends at Britain. FrameStats is on, presented FPS uncapped (present_at_display_rate=false), VSync off, inactive throttling off and the window stays on top. Do not
     touch the mouse or keyboard while it runs.
 
     Writes results-<timestamp>.md to -ResultsDir and prints the same tables. The client is closed and the temp
@@ -66,6 +66,7 @@ $modeName = @{ legacy = 'Legacy'; gpu = 'Gpu' }
 
 $planEntries = New-Object System.Collections.Generic.List[string]
 $planEntries.Add('vsync:off')
+$planEntries.Add('presentcap:off')
 $runs = New-Object System.Collections.Generic.List[object]
 $largeAdded = $false
 # plan entries that are not measured spots, in seconds (DevBench waits 4 s after say:, 3 s after size:)
@@ -183,6 +184,7 @@ $settingsPath = Join-Path $work 'settings.json'
 $settings = [ordered]@{
     username = $Username; password = (Protect-Password $password)
     ip = $Server; port = $Port; ultimaonlinedirectory = $UoPath; clientversion = $ClientVersion; lastservernum = 1
+    settings_version = 1; present_at_display_rate = $false
     fps = 0; vsync = $false; is_win_maximized = $false; saveaccount = $false; autologin = $true; login_music = $false
     plugins = @(); pack = $Pack; world_renderer = 'gpu'
 }
@@ -456,7 +458,7 @@ foreach ($g in $gpus) {
     $mode = if ($g.CurrentHorizontalResolution) { ", display $($g.CurrentHorizontalResolution)x$($g.CurrentVerticalResolution) @ $($g.CurrentRefreshRate) Hz" } else { '' }
     $out.Add("- GPU: $($g.Name), driver $($g.DriverVersion)$mode")
 }
-$out.Add("- Client: device $(if ($driver) { $driver } else { 'not SDL_GPU (Gpu falls back to Legacy)' }), DPI scale $dpi; FPS uncapped, VSync off, inactive throttling off, window on top")
+$out.Add("- Client: device $(if ($driver) { $driver } else { 'not SDL_GPU (Gpu falls back to Legacy)' }), DPI scale $dpi; presented FPS uncapped (present_at_display_rate=false), VSync off, inactive throttling off, window on top")
 $out.Add("- Server ${Server}:$Port, pack $Pack, $Windows windows of 5 s per spot")
 $out.Add('')
 $out.Add('## Summary')

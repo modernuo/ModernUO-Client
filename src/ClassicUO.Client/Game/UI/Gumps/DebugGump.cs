@@ -15,13 +15,13 @@ namespace ClassicUO.Game.UI.Gumps
 {
     internal class DebugGump : Gump
     {
-        private const string DEBUG_STRING_0 = "- FPS: {0} (Min={1}, Max={2}), Zoom: {3:0.00}, Total Objs: {4}\n";
+        private const string DEBUG_STRING_0 = "- Presented FPS: {0} (Min={1}, Max={2}), Zoom: {3:0.00}, Total Objs: {4}\n";
         private const string DEBUG_STRING_1 = "- Mobiles: {0}   Items: {1}   Statics: {2}   Multi: {3}   Lands: {4}   Effects: {5}\n";
         private const string DEBUG_STRING_2 = "- CharPos: {0}\n- Mouse: {1}\n- InGamePos: {2}\n";
         private const string DEBUG_STRING_3 = "- Selected: {0}\n";
 
-        private const string DEBUG_STRING_SMALL = "FPS: {0}\nZoom: {1:0.00}";
-        private const string DEBUG_STRING_SMALL_NO_ZOOM = "FPS: {0}";
+        private const string DEBUG_STRING_SMALL = "Presented FPS: {0}\nZoom: {1:0.00}";
+        private const string DEBUG_STRING_SMALL_NO_ZOOM = "Presented FPS: {0}";
         private static Point _last_position = new Point(-1, -1);
 
         private uint _timeToUpdate;
@@ -133,7 +133,7 @@ namespace ClassicUO.Game.UI.Gumps
                         (
                             $"    - Draw:{100d * (timeDraw / timeTotal):0.0}% (Prepare:{100d * (timeDrawWorldPrepare / timeTotal):0.0}% World:{100d * (timeDrawWorld / timeTotal):0.0}%, UI:{100d * (timeDrawUi / timeTotal):0.0}%)\n" +
                             $"    - Update:{100d * (timeUpdate / timeTotal):0.0}%\n" +
-                            $"    - AvgDraw:{avgDrawMs:0.0}ms {CUOEnviroment.CurrentRefreshRate} FPS\n"
+                            $"    - AvgDraw:{avgDrawMs:0.0}ms {CUOEnviroment.CurrentRefreshRate} presented FPS\n"
                         );
                     }
                 }
