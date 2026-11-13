@@ -6897,7 +6897,7 @@ An external user measured our clean branch (GPU renderer, fresh clone, localhost
 
 ## 2026-11-12: M3/M4 — settled Uo.Render maintenance and unchanged uploads (render-reuse)
 
-Base `5e3d049dc`, branch `bg/render-reuse`. M3 code `d08f01dc1`; M4 code `2c98a9f9b0cb464d3b48ea609682c46761129576`. Both settings default **off**: `render_view_reuse` and `upload_skip_unchanged`. Driver commands `renderreuse on|off` and `uploadskip on|off` let the same binary/session alternate controls.
+Base `520acc784`, branch `bg/render-reuse`. M3 code `f2b83335f`; M4 code `f5d6df7fbd755379a3d8297df2aa7bece6cbfc2f` (rewritten history). Both settings default **off**: `render_view_reuse` and `upload_skip_unchanged`. Driver commands `renderreuse on|off` and `uploadskip on|off` let the same binary/session alternate controls.
 
 M3 keys maintenance on view and motion-biased prefetch rectangles, zoom, chunk state epoch and art/animation residency upload epochs. It reuses only when every active chunk is ready and needed and page streaming is settled; stale eviction candidates, pending bakes/loads and camera changes retain the old full path. The old needed timestamps are advanced through the last reused frame before motion resumes, preserving both frame and wall-clock eviction hysteresis. Unique visible art pages still get their LRU timestamp refreshed every reused frame. Region eviction retains its existing 64-frame cadence. Off frames do not collect the reusable page set and invalidate the view key, so enabling starts with a full rebuild.
 
@@ -6911,8 +6911,50 @@ Verification: Release builds in both CuoDevTools states completed with 0 errors;
 
 Jobs and durable scripts: `C:/Repositories/cuo-poc-state/measure/render-reuse/`. Submitted and **waiting on jobs**: correctness/golden gate `bench-000744`, counts `bench-000745`, GPU allocation `bench-000746`, Legacy allocation `bench-000747`. Counts run the same binary/session off/M3/off/M4/both twice at quiet and busy spots, checkers off; allocation jobs do base/new/base with the new session interleaving both switches, separately for GPU and Legacy. The gate runs the established gtest/gls golden scenes through off, M3, M4 and both, capturing both renderers with the existing animation masks. Job results, allocations, upload skip rates and image review are pending; no performance or parity result is claimed before reading them. Scratch binaries and archived base source live under the `render-reuse` queue folder in the shared scratchpad, with build-info files. CURRENT is read at job run time.
 
-Quiet commit point: `2c98a9f9b0cb464d3b48ea609682c46761129576`. Prepared, **not submitted**: `job-timing-gpu-PARKED.sh` and `job-timing-legacy-PARKED.sh` in the durable folder, base/new/base interleaved with `DOTNET_TieredCompilation=0`. Keep timings parked until the owner calls the machine quiet.
+Original quiet commit point: `f5d6df7fbd755379a3d8297df2aa7bece6cbfc2f` (superseded below). Prepared, **not submitted**: `job-timing-gpu-PARKED.sh` and `job-timing-legacy-PARKED.sh` in the durable folder, base/new/base interleaved with `DOTNET_TieredCompilation=0`. Keep timings parked until the owner calls the machine quiet.
 
 Accepted costs (estimated array payload per GPU client, not a heap measurement): M3 retains 192 KiB for the unique-page cache; M4 initially retains 128 KiB for input/sorted keys even with both switches off (combined 0.3125 MiB). Enabling M4 at the client's starting capacities retains a further ~4.3125 MiB (4 MiB dynamic snapshot, 64 KiB chunk snapshot, 128 KiB override snapshot, 64 KiB translucent snapshot and 64 KiB serialized translucent scratch): ~4.625 MiB combined added cache payload. Translucent growth can increase combined payload to ~12.375 MiB at the 262144-entry ceiling, plus normal object headers and checker-only buffers when opted in. FrameStats-only recording also adds 256 KiB for the two new per-frame counter arrays; this diagnostic storage is absent when recording is off (and CUO_DIAG uses its existing window counters instead). These caches buy exact byte/order reuse without collision risk; runtime allocation benefit is pending the jobs. Exact byte walks and changed-content copies cost CPU bandwidth, and noncycling frame-table writes may introduce serialization on changing frames. No timing cost/benefit is claimed yet; revisit producer epochs or per-backing-buffer tracking after quiet measurements.
 
 Perf opportunity left in scope-adjacent code: WorldRenderer.BuildFrame still resolves overrides and generates translucent input keys on every draw even when the final sort is reused. Producer change epochs could avoid that walk and some exact-byte comparisons; work is visible in the source, benefit is unmeasured. Not changed here.
+
+## 2026-11-12: render-reuse gate diagnosis and distinct dynamic page refresh
+
+Rewritten base `520acc784ab44a4c2030636c3ea1e5ec38f6053c`, branch `bg/render-reuse`. Separate page-touch code commit and new quiet commit point: **`bd5269d0b8009eca2a5e13e78b746d44230259ff`**. Both settings remain default off: `render_view_reuse`, `upload_skip_unchanged`; developer-only checkers remain `CUO_RENDER_VIEW_REUSE_CHECK`, `CUO_UPLOAD_SKIP_CHECK`.
+
+Gate `bench-000744` stopped at M3 under errexit. Its 18 failures comprise four unmatched-mobile captures, two world images and twelve window/UI size mismatches. Inspection of both shots and the diff identifies the same wandering mobile, serial 0x65FC2, body 0xE4, crossing the upper view. A gt-only local rule uses the existing exact serial exclusion and expanded animation-mask mechanism from the golden comparator. Replaying with that rule removes all six mobile/image failures, retaining all twelve size failures; M4 and combined replays have eight size failures each and no others. Static/item draw identity and order agree. All eight original logs have zero mismatch events/nonzero totals and positive checker coverage in enabled arms. No real M3 output defect was found in these failure classes.
+
+Screen/UI height ratios stay 720/480 = 1.5 across arms; widths drift proportionally (1248/832, 960/640, 1255/836 with rounding). This supports uncontrolled window geometry rather than different DPI. The previous driver and tip-1112 driver omit window_size. The queue-local driver now supplies window_size 960x720, position 40,40, maximized false, with a screen-size assertion. No image resize/crop or wider pixel/item/order tolerance was added. Established gls animation/order allowances and speech masking remain.
+
+Durable `measure/render-reuse/job-gate.sh` records every capture, manifest, compare and checker result before its final exit. Each arm requires 10 GPU and 10 Legacy sprite frames, 10 states, 24 images, 54 compared pairs, and all applicable per-scene checker summaries (including new dynamic_checked coverage). Historical nonzero mismatch totals also fail. `run_scene` explicitly rejects a missing quit marker even without errexit. Fault injection against the actual control flow confirms a capture failure, missing image and checker mismatch cannot suppress later comparisons/checks; aggregate exit is 1. Harness scripts live in durable state outside this repository.
+
+The separate page-touch change caches the exact dynamic page-key sequence and unique set, separating art/indexed keys. Every draw rechecks residency and refreshes timestamps once per distinct page. Any missing page falls back to the complete old per-instance walk before any cached touches, preserving queue and duplicate MissingVisible accounting. Physical layer indices are not cached. The M3 checker repeats the original resident touch loop and compares eviction hashes. Tests cover both states, count/order changes, indexed offsets, null animation residency, eviction with unchanged input, timestamp ages, missing accounting and no steady allocations. Independent source/harness review found no important issues.
+
+Completed counts `bench-000745` describe rewritten M4 commit `f5d6df7fb`, before this page-touch change. Same binary/session, off/M3/off/M4/both twice in quiet/busy scenes, checkers off. Rates and CPU are noisy/indicative. Full eight-arm tables and all-thread allocation means remain in durable `measure/render-reuse/followup-results.md` and job artifacts.
+
+| metric | quiet off | quiet both | busy off | busy both |
+|---|---:|---:|---:|---:|
+| draws = presents = updates = drains /s | 2056.06 | 2096.85 | 647.92 | 691.88 |
+| process CPU ms/s | 1312.44 | 1295.24 | 1219.81 | 1240.43 |
+| full / reused prep per draw | 1 / 0 | 1 / 0 | 1 / 0 | 1 / 0 |
+| objects per draw | 1172.757 | 1173 | 1963.127 | 1962 |
+| glyph quads per draw | 111 | 111 | 111 | 111 |
+| table rebuild / reuse per draw | 1 / 0 | 0 / 1 | 1 / 0 | 0 / 1 |
+| eviction scans / streaming marks per draw | 1 / 2 | 0 / 0 | 1 / 2 | 0 / 0 |
+| page touches per draw | 1118 | 1104 | 9424.373 | 9411.971 |
+| sorts / reused sorts per draw | 1 / 0 | 0 / 1 | 1 / 0 | .032228 / .967772 |
+| buffer upload calls per draw | 3 | .003005 | 3.000062 | .258545 |
+| buffer upload bytes per draw | 35672 | 106.047 | 307660.600 | 68358.471 |
+| main allocation B/frame | .34 | .30 | 4.28 | 1.82 |
+| GC gen0/1/2 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 |
+
+Dynamic upload skipping: 99.699% quiet / 77.368% busy; chunk upload skipping 100%. Texture uploads are zero in settled windows except a sparse busy-off streaming event (.000062 calls/draw, 64.725 bytes/draw). No M2 exists here, hence full prep remains once per draw. Quiet M3 glyphs average 131.080 versus 111 in other quiet arms: live text noise; glyph emission is unchanged.
+
+Allocation jobs `bench-000746` GPU and `bench-000747` Legacy passed. Every parsed window, including archived-base controls and every feature state, has main-thread p50/p95 0/0 B/frame and GC 0/0/0. Sparse mean/all-thread allocations, including roughly 1 MiB bursts, also occur in archived-base/off arms. These are not a recurring per-frame addition. Fresh counts/alloc results for the distinct-page change remain pending.
+
+Verification: initial focused cases 10 passed; final `dotnet test tests/ClassicUO.UnitTests -c Release -p:UseSharedCompilation=false`: **3822 passed, 6 skipped, 0 failed, 3828 total, 4m50s**. Both Release CuoDevTools variants built with **0 errors** (existing warnings). Dev JIT publication succeeded with build-info naming the clean code commit above. All builds/tests used agentnice and DOTNET_GCHeapHardLimit=0x200000000. No ECS write budget changes. Fresh gate/counts/both-alloc jobs use this publication; IDs and next steps are in the queue handoff. Archived base metadata 5e3d049dc maps to rewritten 520acc784; future base publications use the rewritten hash.
+
+Accepted costs: the new cache adds **1.015625 MiB** array payload at client MaxDynamic=131072 (two 512 KiB key arrays and 16 KiB membership bits), allocated on first enabled use, retained after disabling. Never enabling M3 adds no new cache allocation. Combined enabled M3/M4 starting payload becomes **5.640625 MiB**, or **13.390625 MiB** at the previous translucent ceiling, plus headers/checker buffers and previously documented optional FrameStats storage. It buys distinct resident timestamp refreshes; runtime counts are pending. Exact sequence scans add a read pass and unique-page residency checks; CPU benefit/cost is unmeasured. Revisit producer epochs after quiet timing.
+
+Perf opportunities: producer page-membership epochs could remove DynamicPageTouchCache.Update's exact per-instance key scan; WorldRenderer.BuildFrame still resolves overrides and generates translucent keys despite near-total sort reuse. Source/count evidence only, no timing estimate.
+
+Prepared, **not submitted**: `measure/render-reuse/job-timing-gpu-PARKED.sh` and `job-timing-legacy-PARKED.sh`, base/new/base with tiering disabled and quiet commit validation. No push, merge, timing submission, shared binary publication or plaintext password file.
