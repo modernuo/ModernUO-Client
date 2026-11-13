@@ -362,6 +362,8 @@ public sealed unsafe class PageResidency
         ? $"{PageFormats.Name(Format)} expanded to {PageFormats.Name(UploadFormat)} on workers (native 16-bit supported: {NativeSupported})"
         : PageFormats.Name(Format);
 
+    public bool IsResident(int page) => (uint)page < (uint)LogicalCount && _layerOf[page] >= 0;
+
     /// <summary>A visible sprite uses this page this frame.</summary>
     public void Touch(int page, long frame)
     {

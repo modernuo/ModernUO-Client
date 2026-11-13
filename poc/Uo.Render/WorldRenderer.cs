@@ -141,11 +141,12 @@ public sealed unsafe class WorldRenderer : IDisposable
     int _chunkCount, _instances;
     public bool RenderViewReuse;
     RenderViewReuse _viewReuse;
+    DynamicPageTouchCache _dynamicPageTouches;
 #if CUO_DEVTOOLS
     // CLEANUP(release): shadow work is enabled only by the checker, never by the switch alone.
     static readonly bool ViewReuseCheck = Environment.GetEnvironmentVariable("CUO_RENDER_VIEW_REUSE_CHECK") == "1";
     ChunkDraw[] _checkTable;
-    long _viewChecks, _viewMismatches, _viewCheckLog;
+    long _viewChecks, _viewDynamicChecks, _viewMismatches, _viewCheckLog;
 #endif
 
     public long Frame;
@@ -307,7 +308,7 @@ public sealed unsafe class WorldRenderer : IDisposable
 #if CUO_DEVTOOLS
         if (ViewReuseCheck && now - _viewCheckLog >= Stopwatch.Frequency * 5)
         {
-            Console.WriteLine($"[render-view-reuse-check] on={RenderViewReuse} checked={_viewChecks} mismatches={_viewMismatches}");
+            Console.WriteLine($"[render-view-reuse-check] on={RenderViewReuse} checked={_viewChecks} mismatches={_viewMismatches} dynamic_checked={_viewDynamicChecks}");
             _viewCheckLog = now;
         }
 #endif
@@ -335,6 +336,24 @@ public sealed unsafe class WorldRenderer : IDisposable
         {
             _viewMismatches++;
             Console.WriteLine($"[render-view-reuse-check] MISMATCH frame={Frame} chunks={_chunkCount}/{count} instances={_instances}/{instances} touches={touches}/{Pages.TouchDecisionHash()}");
+        }
+    }
+
+    void CheckDynamicPageTouches()
+    {
+        _viewDynamicChecks++;
+        ulong art = Pages.TouchDecisionHash(), anim = AnimPages?.TouchDecisionHash() ?? 0;
+        for (int i = 0; i < _dynCount; i++)
+        {
+            ref readonly var d = ref _dynamic[i];
+            if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
+            else Pages.Touch(d.Page, Frame);
+        }
+        _viewChecks++;
+        if (art != Pages.TouchDecisionHash() || anim != (AnimPages?.TouchDecisionHash() ?? 0))
+        {
+            _viewMismatches++;
+            Console.WriteLine($"[render-view-reuse-check] MISMATCH dynamic-pages frame={Frame}");
         }
     }
 
@@ -604,11 +623,24 @@ public sealed unsafe class WorldRenderer : IDisposable
         int ownBlend = 0;
         if (_dynCount > 0)
         {
+            bool touched = false;
+            if (RenderViewReuse)
+            {
+                _dynamicPageTouches ??= new DynamicPageTouchCache(_dynamic.Length);
+                touched = _dynamicPageTouches.TouchResident(_dynamic.AsSpan(0, _dynCount), Pages, AnimPages,
+                    Pack.AnimPageBase, Frame, true);
+#if CUO_DEVTOOLS
+                if (touched && ViewReuseCheck) CheckDynamicPageTouches();
+#endif
+            }
             for (int i = 0; i < _dynCount; i++)
             {
                 ref readonly var d = ref _dynamic[i];
-                if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
-                else Pages.Touch(d.Page, Frame);
+                if (!touched)
+                {
+                    if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
+                    else Pages.Touch(d.Page, Frame);
+                }
                 if (d.Alpha == 0) continue;
                 // translucent, or opaque with a circle-of-transparency ring to blend (the shader discards the rest)
                 if (!d.Translucent && !(cot && (d.Light & SpriteInstance.LightCot) != 0 && InCotRect(d))) continue;
