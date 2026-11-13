@@ -206,6 +206,9 @@ namespace ClassicUO.Network
             {
                 _isCompressionEnabled = false;
                 _sendStream.Clear();
+#if CUO_DEVTOOLS
+                if (Diagnostics.On) _diagWritten = _diagQueued;
+#endif
                 _sendOpen = false;
                 _handshakeThread = 0;
                 _deferred.Clear();
@@ -309,6 +312,9 @@ namespace ClassicUO.Network
                 Encryption?.Initialize(false, seed);
                 _isCompressionEnabled = true;
                 _sendStream.Clear();
+#if CUO_DEVTOOLS
+                if (Diagnostics.On) _diagWritten = _diagQueued;
+#endif
                 _handshakeThread = Environment.CurrentManagedThreadId;
                 token = _sendEpoch;
             }
@@ -381,8 +387,20 @@ namespace ClassicUO.Network
         }
 
         // Under _sendLock: log (when the packet log is on), encrypt, queue and count one admitted packet.
+#if CUO_DEVTOOLS
+        private long _diagQueued, _diagWritten;
+        internal long DiagReadTimestamp;
+#endif
         private void EnqueueLocked(Span<byte> message, bool skipEncryption)
         {
+#if CUO_DEVTOOLS
+            if (Diagnostics.On)
+            {
+                _diagQueued += message.Length;
+                if (message.Length == 2 && message[0] == 0x73)
+                    Diagnostics.PingQueued(Statistics, message[1], _diagQueued);
+            }
+#endif
             PacketLogger.Default?.Log(message, true);
 
             if (!skipEncryption)
@@ -402,6 +420,9 @@ namespace ClassicUO.Network
             {
                 _isCompressionEnabled = true;
                 _sendStream.Clear();
+#if CUO_DEVTOOLS
+                if (Diagnostics.On) _diagWritten = _diagQueued;
+#endif
             }
 
             _huffman.Reset();
@@ -440,6 +461,10 @@ namespace ClassicUO.Network
         /// </summary>
         public int Drain(Func<ArraySegment<byte>, int> sink, int maxBytes = DefaultFrameByteCap, int maxPackets = DefaultFramePacketCap, double maxMs = 0)
         {
+#if CUO_DEVTOOLS
+            long diagStart = Diagnostics.On ? Stopwatch.GetTimestamp() : 0;
+            bool diagTimeCap = false;
+#endif
             LastDrainAvailable = 0;
             LastDrainBytes = 0;
             LastDrainSlices = 0;
@@ -461,6 +486,9 @@ namespace ClassicUO.Network
                 // always one slice, then stop once the frame's time budget is spent
                 if (LastDrainSlices > 0 && maxMs > 0 && Stopwatch.GetElapsedTime(start).TotalMilliseconds >= maxMs)
                 {
+#if CUO_DEVTOOLS
+                    diagTimeCap = true;
+#endif
                     break;
                 }
 
@@ -516,6 +544,13 @@ namespace ClassicUO.Network
                 packets += sink(ArraySegment<byte>.Empty);
             }
 
+#if CUO_DEVTOOLS
+            if (Diagnostics.On)
+            {
+                int stop = _socket == null || emptied ? 4 : LastDrainBytes >= maxBytes ? 1 : packets >= maxPackets ? 2 : diagTimeCap ? 3 : 0;
+                Diagnostics.Drain(diagStart, LastDrainBytes, packets, _socket?.Available ?? 0, stop);
+            }
+#endif
             return packets;
         }
 
@@ -539,6 +574,9 @@ namespace ClassicUO.Network
             try
             {
                 var size = _socket.Read(_compressedBuffer);
+#if CUO_DEVTOOLS
+                if (Diagnostics.On && size > 0) DiagReadTimestamp = Stopwatch.GetTimestamp();
+#endif
 
                 if (size <= 0)
                 {
@@ -703,7 +741,17 @@ namespace ClassicUO.Network
                             break;
                         }
 
+#if CUO_DEVTOOLS
+                        long diagSendStart = Diagnostics.On ? Stopwatch.GetTimestamp() : 0;
+#endif
                         _socket.Send(_sendingBuffer, 0, read);
+#if CUO_DEVTOOLS
+                        if (Diagnostics.On)
+                        {
+                            Diagnostics.PingWrite(Statistics, _diagWritten, _diagWritten + read, diagSendStart, Stopwatch.GetTimestamp());
+                            _diagWritten += read;
+                        }
+#endif
                     }
                 }
             }

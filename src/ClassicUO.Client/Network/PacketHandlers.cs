@@ -67,6 +67,9 @@ namespace ClassicUO.Network
         // The connection generation the received-bytes queue belongs to, and the one the plugin queue's contents were injected
         // under (a plugin packet is tagged by the generation current when it is injected, so one injected after Connect but
         // before the next ParsePackets - e.g. from an outgoing hook during the 0x8C relay's login sends - is kept).
+#if CUO_DEVTOOLS
+        private readonly DiagReceiveTimeline _diagReads = Diagnostics.On ? new() : null;
+#endif
         private int _generation;
         private int _pluginGeneration;
 
@@ -82,6 +85,9 @@ namespace ClassicUO.Network
                 if (!data.IsEmpty)
                 {
                     _buffer.Enqueue(data);
+#if CUO_DEVTOOLS
+                    if (Diagnostics.On) _diagReads.Enqueue(data.Length, socket.DiagReadTimestamp);
+#endif
                 }
             }
 
@@ -97,6 +103,9 @@ namespace ClassicUO.Network
             {
                 _generation = generation;
                 _buffer.Clear();
+#if CUO_DEVTOOLS
+                if (Diagnostics.On) _diagReads.Clear();
+#endif
             }
 
             if (_pluginGeneration != generation)
@@ -117,6 +126,10 @@ namespace ClassicUO.Network
                 int packetlength;
                 int offset;
                 var malformed = false;
+#if CUO_DEVTOOLS
+                long diagRead = 0, diagDequeued = 0;
+                int diagPingIndex = -1;
+#endif
 
                 lock (_queueLock)
                 {
@@ -171,6 +184,17 @@ namespace ClassicUO.Network
                         }
 
                         _ = stream.Dequeue(_readingBuffer, 0, packetlength);
+#if CUO_DEVTOOLS
+                        if (Diagnostics.On && allowPlugins)
+                        {
+                            diagRead = _diagReads.Dequeue(packetlength);
+                            if (packetlength == 2 && _readingBuffer[0] == 0x73)
+                            {
+                                diagPingIndex = _readingBuffer[1];
+                                diagDequeued = System.Diagnostics.Stopwatch.GetTimestamp();
+                            }
+                        }
+#endif
                     }
 
                     packetBuffer = _readingBuffer;
@@ -190,8 +214,21 @@ namespace ClassicUO.Network
                 // It will be fixed once the new plugin system is done.
                 if (!allowPlugins || Plugin.ProcessRecvPacket(packetBuffer, ref packetlength))
                 {
-                    AnalyzePacket(world, packetBuffer.AsSpan(0, packetlength), offset);
-
+#if CUO_DEVTOOLS
+                    var previousDispatch = Diagnostics.On ? Diagnostics.EnterDispatch(socket.Statistics,
+                        allowPlugins && packetlength == 2 && packetBuffer[0] == 0x73 && packetBuffer[1] == diagPingIndex ? diagPingIndex : -1,
+                        diagRead, diagDequeued) : default;
+                    try
+                    {
+#endif
+                        AnalyzePacket(world, packetBuffer.AsSpan(0, packetlength), offset);
+#if CUO_DEVTOOLS
+                    }
+                    finally
+                    {
+                        if (Diagnostics.On) Diagnostics.LeaveDispatch(previousDispatch);
+                    }
+#endif
                     ++packetsCount;
                 }
             }
@@ -214,6 +251,9 @@ namespace ClassicUO.Network
                 lock (_queueLock)
                 {
                     _buffer.Enqueue(data);
+#if CUO_DEVTOOLS
+                    if (Diagnostics.On) _diagReads.Enqueue(data.Length, 0);
+#endif
                 }
             }
         }

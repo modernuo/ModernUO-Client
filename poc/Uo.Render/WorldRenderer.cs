@@ -249,6 +249,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (leadX > 0) need.X1 += leadX; else need.X0 += leadX;
         if (leadY > 0) need.Y1 += leadY; else need.Y0 += leadY;
 
+        long diagStreaming = RenderDiagnostics.Stamp();
         while (Workers.TryDequeueDone(out var job))
         {
             switch (job)
@@ -262,7 +263,10 @@ public sealed unsafe class WorldRenderer : IDisposable
         Pages.BeginFrame();
         AnimPages?.BeginFrame();
         // leave one table entry for the dynamic range
+        RenderDiagnostics.Elapsed(DiagMetric.StreamingTicks, diagStreaming);
+        long diagTable = RenderDiagnostics.Stamp();
         _chunkCount = Chunks.BuildDrawList(in _view, _table.AsSpan(0, _table.Length - 1), Pages, Frame, out _instances);
+        RenderDiagnostics.Elapsed(DiagMetric.ChunkTableTicks, diagTable);
         _prepared = true;
     }
 
@@ -505,6 +509,7 @@ public sealed unsafe class WorldRenderer : IDisposable
     Renderer.FrameInput BuildFrame()
     {
         if (!_prepared) throw new InvalidOperationException("Prepare before Render");
+        long diagBuild = RenderDiagnostics.Stamp();
         int chunkCount = _chunkCount, instances = _instances;
         _transCount = 0;
         OverridesDropped = _pending.Dropped;
@@ -629,8 +634,10 @@ public sealed unsafe class WorldRenderer : IDisposable
         }
 
         // back to front: ascending depth key; equal keys (a mobile's layers) in reverse emission order, body first
+        long diagSort = RenderDiagnostics.Stamp();
         if (_transCount > 1) SortTransKeys(_transSort.AsSpan(0, _transCount));
         for (int i = 0; i < _transCount; i++) _trans[i] = uint.MaxValue - (uint)_transSort[i];
+        RenderDiagnostics.Elapsed(DiagMetric.TranslucentSortTicks, diagSort);
         TranslucentCount = _transCount;
         // effect blends with their own pipeline: split the sorted list into runs of one blend (only on frames that have one)
         int runCount = 0;
@@ -647,6 +654,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         }
         TransRunCount = runCount;
         OverrideTicks = Stopwatch.GetTimestamp() - t0;
+        RenderDiagnostics.Elapsed(DiagMetric.BuildFrameTicks, diagBuild);
 
         Pages.StartLoads(Frame);
         AnimPages?.StartLoads(Frame);

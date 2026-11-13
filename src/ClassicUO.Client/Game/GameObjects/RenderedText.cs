@@ -665,6 +665,7 @@ namespace ClassicUO.Game
                             int drawW = (int)(entry.GlyphWidth * scale);
                             int drawH = (int)(entry.GlyphHeight * scale);
 
+                            FrameStats.Inc(FrameCounter.GlyphQuads);
                             batcher.Draw(
                                 entry.Texture,
                                 new Rectangle(drawX, drawY, drawW, drawH),
