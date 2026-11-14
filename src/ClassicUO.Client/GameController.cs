@@ -702,6 +702,7 @@ namespace ClassicUO
             }
 
             _lastDrainTs = _updateStartTs;
+            int generation = NetClient.Socket.ConnectionGeneration;
             var packetsCount = NetClient.Socket.Drain(_parseSlice, capBytes, capPackets, _netCapMs);
 
             if (LoopStats.On)
@@ -709,10 +710,7 @@ namespace ClassicUO
                 LoopStats.NoteDrain(drainStart, Stopwatch.GetTimestamp(), NetClient.Socket.LastDrainBytes);
             }
 
-            if (NetClient.Socket.LastDrainBytes > 0)
-            {
-                NoteNetChange(_updateStartTs);
-            }
+            NoteDrainResult(_updateStartTs, NetClient.Socket.LastDrainBytes, packetsCount, generation);
 
             if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
             {
@@ -869,7 +867,17 @@ namespace ClassicUO
             base.Update(gameTime);
 
             // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
-            if (_tickMode == LoopMode.Event) NetClient.Socket.Flush();
+            if (_tickMode == LoopMode.Event)
+            {
+                int flushGeneration = NetClient.Socket.ConnectionGeneration;
+                NetClient.Socket.Flush();
+
+                if (NetClient.Socket.ConnectionGeneration != flushGeneration)
+                {
+                    // present_on_change: a failed send ended the connection
+                    _changePending = true;
+                }
+            }
 
             FrameStats.End(FramePhase.Update);
 #if CUO_DEVTOOLS
@@ -1048,12 +1056,6 @@ namespace ClassicUO
 
         protected override void EndDraw()
         {
-            if (_presentOnChange)
-            {
-                // present_on_change: read a reply that arrived during Draw (and flush what it queues) before Present, which can block
-                EventDrain();
-            }
-
             if (DevBench.FrameStats)
             {
                 FrameStats.BeforeEndDraw();

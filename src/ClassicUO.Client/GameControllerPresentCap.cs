@@ -71,7 +71,7 @@ namespace ClassicUO
         // ---- present_on_change (evloop-2) ----
         private bool _presentOnChange; // this tick: event loop, display-rate cap active and the switch on
         private bool _changePending, _continuous;
-        private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen;
+        private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen, _partialReadTs;
 
         private static bool PresentOnChangeSwitch => Settings.GlobalSettings.PresentOnChange;
 
@@ -93,6 +93,27 @@ namespace ClassicUO
             if (_pendingNetTs == 0)
             {
                 _pendingNetTs = ts;
+            }
+        }
+
+        // After a drain (or a flush): any dispatched packet, including one a plugin injected (pumped with an empty slice), and
+        // any connection start or end is a change. Packet-to-present runs from the oldest read that contributed to a dispatched
+        // packet: bytes of a packet split across reads keep their first read's time until the packet is dispatched.
+        private void NoteDrainResult(long readTs, int bytes, int packets, int generationBefore)
+        {
+            bool connection = NetClient.Socket.ConnectionGeneration != generationBefore;
+            bool pending = packets > 0 && !connection && PacketHandlers.Handler.PendingBytes > 0;
+
+            if (LoopTiming.DrainChanged(ref _partialReadTs, readTs, bytes, packets, pending, connection, out long from))
+            {
+                if (from != 0)
+                {
+                    NoteNetChange(from);
+                }
+                else
+                {
+                    _changePending = true;
+                }
             }
         }
 
@@ -159,11 +180,13 @@ namespace ClassicUO
 #endif
         }
 
-        // present_on_change: a non-blocking drain outside Update (before Present and before the wait), with the base caps; the
-        // socket event is re-armed first so data left or arriving after it wakes the next wait. Sends are flushed after it.
+        // present_on_change: a non-blocking drain and dispatch outside Update, right after Present and before the wait (never
+        // between Draw and Present: a handler can change the scene or reset the device there), with the base caps; the socket
+        // event is re-armed first so data left or arriving after it wakes the next wait. Sends are flushed after it.
         private void EventDrain()
         {
             long start = Stopwatch.GetTimestamp();
+            int generation = NetClient.Socket.ConnectionGeneration;
             _waiter.BindNet(NetClient.Socket);
             _parseSlice ??= ParseSlice;
             int packets = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets, _netCapMs);
@@ -177,8 +200,6 @@ namespace ClassicUO
 
             if (bytes > 0)
             {
-                NoteNetChange(start);
-
                 if (FrameStats.On)
                 {
                     FrameStats.Add(FrameCounter.NetBytes, bytes);
@@ -191,6 +212,8 @@ namespace ClassicUO
             // wait at once for nothing
             _waiter.ClearWake();
             NetClient.Socket.Flush();
+            // a failed send ends the connection inside Flush
+            NoteDrainResult(start, bytes, packets, generation);
         }
     }
 }

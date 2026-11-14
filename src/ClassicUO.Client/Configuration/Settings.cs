@@ -186,8 +186,9 @@ namespace ClassicUO.Configuration
         // fixed display grid, rate-limited from the last present: a net, input or wake, a due timer, mobile/boat motion or
         // effects present one display interval after the last present, or at once when the screen has been idle that long.
         // With no change the screen is redrawn every event_loop_idle_redraw_ms for the discrete animations the loop does not
-        // track. The socket is also drained (and sends flushed) right before Present and again before the wait, so a reply
-        // that arrives during Draw is read without waiting for the next Update. CUO_PRESENT_CHANGE_CHECK=1 shadows the grid.
+        // track. The socket is also drained and dispatched (and sends flushed) right after Present, before the wait, so a reply
+        // that arrives during Draw is handled without a wake and a new Update (never between Draw and Present, where a handler
+        // could change the scene). CUO_PRESENT_CHANGE_CHECK=1 shadows the grid.
         // Default off.
         [JsonPropertyName("present_on_change")] public bool PresentOnChange { get; set; }
 

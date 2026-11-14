@@ -99,6 +99,39 @@ namespace ClassicUO.Loop
             return Math.Max(0, target - msSinceLastPresent);
         }
 
+        /// <summary>
+        /// After a drain: whether the screen may have changed (a packet was dispatched, or the connection started or ended), and
+        /// the read time packet-to-present runs from. Bytes of a packet split across reads keep their first read's time in
+        /// <paramref name="partialReadTs"/> until a dispatch completes it; bytes left pending after a dispatch start a new one.
+        /// </summary>
+        public static bool DrainChanged(ref long partialReadTs, long readTs, int bytes, int packets, bool pendingAfter,
+            bool connectionChanged, out long presentFromTs)
+        {
+            presentFromTs = 0;
+
+            if (connectionChanged)
+            {
+                partialReadTs = 0;
+
+                return true;
+            }
+
+            if (bytes > 0 && partialReadTs == 0)
+            {
+                partialReadTs = readTs;
+            }
+
+            if (packets <= 0)
+            {
+                return false;
+            }
+
+            presentFromTs = partialReadTs != 0 ? partialReadTs : readTs;
+            partialReadTs = pendingAfter ? readTs : 0;
+
+            return true;
+        }
+
         /// <summary>present_on_change: whether this iteration draws (within <see cref="DrawSlackMs"/> of the deadline).</summary>
         public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs)
             => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs) <= DrawSlackMs;

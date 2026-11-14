@@ -56,6 +56,34 @@ namespace ClassicUO.UnitTests.Loop
         }
 
         [Fact]
+        public void A_Packet_Split_Across_Reads_Presents_From_Its_First_Read()
+        {
+            long partial = 0;
+            LoopTiming.DrainChanged(ref partial, 100, 3, 0, false, false, out long from).Should().BeFalse("only a header arrived");
+            partial.Should().Be(100);
+            LoopTiming.DrainChanged(ref partial, 200, 0, 0, false, false, out _).Should().BeFalse();
+            LoopTiming.DrainChanged(ref partial, 300, 40, 1, true, false, out from).Should().BeTrue();
+            from.Should().Be(100, "the oldest read that contributed to the dispatched packet");
+            partial.Should().Be(300, "the bytes left pending start at this read");
+            LoopTiming.DrainChanged(ref partial, 400, 10, 1, false, false, out from).Should().BeTrue();
+            from.Should().Be(300);
+            partial.Should().Be(0);
+        }
+
+        [Fact]
+        public void Injected_Packets_And_Connection_Changes_Are_Changes_Without_Bytes()
+        {
+            long partial = 0;
+            LoopTiming.DrainChanged(ref partial, 100, 0, 1, false, false, out long from).Should().BeTrue("a plugin-injected packet was dispatched");
+            from.Should().Be(100);
+            partial = 50;
+            LoopTiming.DrainChanged(ref partial, 100, 0, 0, false, true, out from).Should().BeTrue("the connection ended");
+            from.Should().Be(0);
+            partial.Should().Be(0);
+            LoopTiming.DrainChanged(ref partial, 100, 0, 0, false, false, out _).Should().BeFalse();
+        }
+
+        [Fact]
         public void The_First_Present_Is_Due_At_Once()
         {
             LoopTiming.PresentDue(false, double.PositiveInfinity, Interval, 50).Should().BeTrue();
