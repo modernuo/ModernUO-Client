@@ -248,7 +248,7 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
             if (AnimDueCheck.On)
             {
-                AnimDueCheck.BeginFrame(_changePending, "");
+                AnimDueCheck.BeginFrame(_changePending, "", _visualDueTick);
                 UltimaBatcher2D.SignatureOn = Uo.Render.WorldRenderer.SignatureOn = true;
                 _uoSpriteBatch.FrameSignature = 0;
                 _uoSpriteBatch.SignatureSprites = 0;

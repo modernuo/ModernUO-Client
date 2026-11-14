@@ -457,7 +457,7 @@ namespace ClassicUO.Ecs
 
             long due = c.IdleDue;
 
-            if (t.ExecuteAnimation && (t.FrameCount > 1 || t.FromServer) && c.AnimDue < due)
+            if (t.ExecuteAnimation && (t.ActionFrames != 1 || t.FromServer) && c.AnimDue < due)
             {
                 due = c.AnimDue;
             }
@@ -499,6 +499,14 @@ namespace ClassicUO.Ecs
         public bool ExecuteAnimation;
         public long AnimDue;
         public long IdleDue;
+
+        /// <summary>
+        /// evloop-4 (present_on_change_anim_due): the frame count of the action the last advance stepped (0 = not known: no
+        /// advance since the action was set). <see cref="FrameCount"/> holds it only for a server action; a normal action's
+        /// frames cycle with FrameCount 0, so the next frame was not scheduled (CUO_ANIM_DUE_CHECK mismatches, bench-000827).
+        /// Read only by <see cref="MobileClockRules.NextVisualTick"/>.
+        /// </summary>
+        public byte ActionFrames;
 
         // T5b-items: a corpse item's UsedLayer bit (the second death action). For a corpse, Frame is AnimIndex, AnimDue its
         // LastAnimationChangeTime and ExecuteAnimation as on a mobile; the other fields stay 0. Always false on a mobile.

@@ -26,14 +26,17 @@ namespace ClassicUO.Loop
         private static bool _haveReference, _inRun;
         private static bool _wouldDraw;
         private static string _wouldWhy = "";
+        private static long _dueAtDraw;
 
         internal static long TotalMismatches => _totalMismatches;
 
-        /// <summary>Draw start: whether the new signal would present this frame, and why (for the log).</summary>
-        public static void BeginFrame(bool wouldPresent, string why)
+        /// <summary>Draw start: whether the new signal would present this frame, why (for the log), and the due tick the
+        /// schedule held then (the logged next_due is the one after this frame).</summary>
+        public static void BeginFrame(bool wouldPresent, string why, long dueAtDraw)
         {
             _wouldDraw = wouldPresent;
             _wouldWhy = why;
+            _dueAtDraw = dueAtDraw;
         }
 
         /// <summary>After the frame was submitted: its signature and sprite count.</summary>
@@ -71,7 +74,7 @@ namespace ClassicUO.Loop
                         if (_logged++ < Logged)
                         {
                             Log.Warn(FormattableString.Invariant(
-                                $"[anim-due-check] skipped frame differs from the last presented one: ticks={ticks} next_due={(nextTick == long.MaxValue ? -1 : nextTick)} next_source={nextSource} continuous={continuous} sprites={sprites}"));
+                                $"[anim-due-check] skipped frame differs from the last presented one: ticks={ticks} due_at_draw={(_dueAtDraw == long.MaxValue ? -1 : _dueAtDraw)} next_due={(nextTick == long.MaxValue ? -1 : nextTick)} next_source={nextSource} continuous={continuous} sprites={sprites}"));
                         }
                     }
                 }

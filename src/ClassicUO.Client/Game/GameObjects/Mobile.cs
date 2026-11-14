@@ -772,6 +772,7 @@ namespace ClassicUO.Game.GameObjects
         {
             ClassicUO.Ecs.AnimationTimer t = Timer;
             t.FrameCount = timer.FrameCount;
+            t.ActionFrames = timer.ActionFrames;
             t.RepeatMode = timer.RepeatMode;
             t.RepeatModeCount = timer.RepeatModeCount;
             t.Repeat = timer.Repeat;

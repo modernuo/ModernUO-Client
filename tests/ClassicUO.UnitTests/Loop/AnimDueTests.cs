@@ -99,7 +99,7 @@ namespace ClassicUO.UnitTests.Loop
         }
 
         private static AnimationTimer Timer(byte frames, bool execute = true, bool fromServer = false)
-            => new AnimationTimer { FrameCount = frames, ExecuteAnimation = execute, FromServer = fromServer };
+            => new AnimationTimer { ActionFrames = frames, ExecuteAnimation = execute, FromServer = fromServer };
 
         [Fact]
         public void Mobile_Frame_Timer_Counts_Only_When_The_Frame_Can_Move()
@@ -110,6 +110,25 @@ namespace ClassicUO.UnitTests.Loop
             MobileClockRules.NextVisualTick(clock, Timer(5), 1000).Should().Be(1080);
             MobileClockRules.NextVisualTick(clock, Timer(1, fromServer: true), 1000).Should().Be(1080, "a server action can end");
             MobileClockRules.NextVisualTick(clock, Timer(5, execute: false), 1000).Should().Be(40000);
+            MobileClockRules.NextVisualTick(clock, Timer(0), 1000).Should().Be(1080, "no advance since the action was set: not known");
+        }
+
+        [Fact]
+        public void A_Normal_Action_Keeps_Its_Frame_Count_For_The_Due_Time()
+        {
+            // a normal action's frames cycle with FrameCount 0 (only a server action stores it); the advance records the
+            // action's frame count so the next frame is scheduled (bench-000827: a standing mobile's frames were missed)
+            var t = new AnimationTimer { Group = 4, ExecuteAnimation = true };
+            ClassicUO.Game.AnimationTiming.Advance(ref t, 6, out _);
+            t.FrameCount.Should().Be(0);
+            t.ActionFrames.Should().Be(6);
+            MobileClockRules.NextVisualTick(new MobileClock { AnimDue = 1080, IdleDue = 40000 }, t, 1000).Should().Be(1080);
+
+            ClassicUO.Game.AnimationTiming.Advance(ref t, 1, out _);
+            MobileClockRules.NextVisualTick(new MobileClock { AnimDue = 1080, IdleDue = 40000 }, t, 1000).Should().Be(40000);
+
+            ClassicUO.Game.AnimationAdvanceRules.SetAnimation(ref t, 0xFF);
+            t.ActionFrames.Should().Be(0, "a new action's frame count is not known until it advances");
         }
 
         [Fact]
@@ -121,6 +140,16 @@ namespace ClassicUO.UnitTests.Loop
             var declined = new MobileClock { AnimDue = 900, IdleDue = 40000 };
             MobileClockRules.NextVisualTick(declined, Timer(5), 1000).Should().Be(MobileClockRules.VisualEveryFrame);
             MobileClockRules.NextVisualTick(declined, Timer(1), 1000).Should().Be(40000, "a stale frame timer that cannot move a frame");
+        }
+
+        [Fact]
+        public void A_Frame_After_An_Idle_Wait_Is_Not_A_Slow_Frame()
+        {
+            // the session timeline's frame time leaves out the loop's waits: 100 ms between presents with 97 ms of waiting is a
+            // 3 ms frame (switch on: idle presents follow long waits; the slow-frame log line allocated on each of them)
+            FrameStats.BusyFrameMs(100_000, 97_000, 1_000_000).Should().BeApproximately(3, 1e-9);
+            FrameStats.BusyFrameMs(100_000, 0, 1_000_000).Should().BeApproximately(100, 1e-9);
+            FrameStats.BusyFrameMs(5_000, 6_000, 1_000_000).Should().Be(0);
         }
     }
 }
