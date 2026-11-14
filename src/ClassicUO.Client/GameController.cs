@@ -168,6 +168,11 @@ namespace ClassicUO
                 ms = Math.Min(ms, LoopTiming.MsUntilTick(true, player.Walker.LastStepRequestTime - 1, Time.Ticks, msSinceUpdate));
             }
 
+            if (Scene is GameScene gameScene && UO.World is { InGame: true })
+            {
+                ms = Math.Min(ms, LoopTiming.MsUntilPing(_presentOnChange, gameScene.PingDueTick, Time.Ticks, msSinceUpdate));
+            }
+
             return ms;
         }
 

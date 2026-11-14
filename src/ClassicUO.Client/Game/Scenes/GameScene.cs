@@ -61,6 +61,9 @@ namespace ClassicUO.Game.Scenes
             _rectanglePlayer;
         private long _timePing;
 
+        /// <summary>The game time after which the next ping is sent (Time.Ticks &gt; this); 0 before the first.</summary>
+        internal long PingDueTick => _timePing;
+
         private uint _timeToPlaceMultiInHouseCustomization;
         private readonly UseItemQueue _useItemQueue;
         private bool _useObjectHandles;
