@@ -48,19 +48,19 @@ namespace ClassicUO.Game.Managers
 
             var fileManager = Client.Game.UO.FileManager;
             // TODO: don't load the file txt every time the housemanager get initialized
-            ParseFileWithCategory<CustomHouseWall, CustomHouseWallCategory>(Walls, fileManager.GetUOFilePath("walls.txt"));
+            ParseFileWithCategory<CustomHouseWall, CustomHouseWallCategory>(Walls, fileManager.GetLooseFilePath("walls.txt"));
 
-            ParseFile(Floors, fileManager.GetUOFilePath("floors.txt"));
-            ParseFile(Doors, fileManager.GetUOFilePath("doors.txt"));
+            ParseFile(Floors, fileManager.GetLooseFilePath("floors.txt"));
+            ParseFile(Doors, fileManager.GetLooseFilePath("doors.txt"));
 
-            ParseFileWithCategory<CustomHouseMisc, CustomHouseMiscCategory>(Miscs, fileManager.GetUOFilePath("misc.txt"));
+            ParseFileWithCategory<CustomHouseMisc, CustomHouseMiscCategory>(Miscs, fileManager.GetLooseFilePath("misc.txt"));
 
-            ParseFile(Stairs, fileManager.GetUOFilePath("stairs.txt"));
-            ParseFile(Teleports, fileManager.GetUOFilePath("teleprts.txt"));
+            ParseFile(Stairs, fileManager.GetLooseFilePath("stairs.txt"));
+            ParseFile(Teleports, fileManager.GetLooseFilePath("teleprts.txt"));
 
-            ParseFileWithCategory<CustomHouseRoof, CustomHouseRoofCategory>(Roofs, fileManager.GetUOFilePath("roof.txt"));
+            ParseFileWithCategory<CustomHouseRoof, CustomHouseRoofCategory>(Roofs, fileManager.GetLooseFilePath("roof.txt"));
 
-            ParseFile(ObjectsInfo, fileManager.GetUOFilePath("suppinfo.txt"));
+            ParseFile(ObjectsInfo, fileManager.GetLooseFilePath("suppinfo.txt"));
             //
 
 

@@ -813,7 +813,7 @@ namespace ClassicUO.Game.Scenes
 
         private string[] ReadCityTextFile(int count)
         {
-            string path = Client.Game.UO.FileManager.GetUOFilePath("citytext.enu");
+            string path = Client.Game.UO.FileManager.GetLooseFilePath("citytext.enu");
 
             if (!File.Exists(path))
             {

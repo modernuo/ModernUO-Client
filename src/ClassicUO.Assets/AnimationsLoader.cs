@@ -95,7 +95,7 @@ namespace ClassicUO.Assets
         {
             list.Clear();
 
-            string file = FileManager.GetUOFilePath(name);
+            string file = FileManager.GetLooseFilePath(name);
 
             if (!File.Exists(file))
             {

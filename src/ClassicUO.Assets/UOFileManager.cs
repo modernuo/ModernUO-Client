@@ -8,12 +8,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
     public sealed class UOFileManager : IDisposable
     {
         private readonly UOFilesOverrideMap _overrideMap;
+        private readonly bool _packHasLoose;
 
         public UOFileManager(ClientVersion clientVersion, string uoPath, PackAssets pack) : this(clientVersion, uoPath, new UOFilesOverrideMap(), pack)
         {
@@ -26,6 +28,7 @@ namespace ClassicUO.Assets
             Pack = pack;
 
             _overrideMap = overrideMap;
+            _packHasLoose = pack != null && Directory.Exists(pack.PathOf(MiscConst.LooseDir));
             IsUOPInstallation = Version >= ClientVersion.CV_7000 && File.Exists(GetUOFilePath("MainMisc.uop"));
 
             Animations = new AnimationsLoader(this);
@@ -155,6 +158,22 @@ namespace ClassicUO.Assets
             }
 
             return uoFilePath;
+        }
+
+        /// <summary>
+        /// A text or def file shards edit by hand (Prof.txt, citytext.enu, stitchin.def, Anim1.def, the house
+        /// customization tables): a files_override entry wins, else the pack's verbatim copy in loose/ (absent when the
+        /// install had none). A pack converted before loose/ existed has no such folder; the file then comes from the
+        /// loose-file folder as before.
+        /// </summary>
+        public string GetLooseFilePath(string file)
+        {
+            if (!_packHasLoose || _overrideMap.ContainsKey(file.ToLowerInvariant()))
+            {
+                return GetUOFilePath(file);
+            }
+
+            return Pack.PathOf(MiscConst.LoosePath(file));
         }
 
         public void Load(string lang)
