@@ -65,7 +65,15 @@ namespace ClassicUO.Assets
             return Path.Combine(clientDir ?? "", DefaultFolderName);
         }
 
-        public static PackAssets Open(string root)
+        public static PackAssets Open(string root) => Open(root, requireRevision12: true);
+
+        /// <summary>
+        /// Tests on reference packs converted before revision 1.2: everything <see cref="Open"/> checks except the 1.2
+        /// tables (skills.bin).
+        /// </summary>
+        internal static PackAssets OpenBefore12ForTests(string root) => Open(root, requireRevision12: false);
+
+        private static PackAssets Open(string root, bool requireRevision12)
         {
             var manifestPath = Path.Combine(root, "manifest.json");
 
@@ -92,6 +100,13 @@ namespace ClassicUO.Assets
                 {
                     throw new FileNotFoundException($"Incomplete asset pack: '{required}' is missing (format 1.1 required: convert the client again with Uo.Converter).", Path.Combine(root, required));
                 }
+            }
+
+            // revision 1.2: the skills come from the pack (every supported install has skills.mul); a pack converted
+            // before it would leave the client without a skill list
+            if (requireRevision12 && !File.Exists(Path.Combine(root, MiscConst.SkillsFile)))
+            {
+                throw new FileNotFoundException($"Incomplete asset pack: '{MiscConst.SkillsFile}' is missing (format 1.2 required: convert the client again with Uo.Converter).", Path.Combine(root, MiscConst.SkillsFile));
             }
 
             Log.Trace($"Asset pack: {root} (format {manifest.Version}, from {manifest.SourceClientVersion})");

@@ -159,6 +159,41 @@ namespace ClassicUO.UnitTests.Assets
             static IEnumerable<int> Skills(SkillsGroup g) => Enumerable.Range(0, g.Count).Select(i => (int)g.GetSkill(i));
         }
 
+        [Fact]
+        public void Sorting_A_Group_Without_A_Skill_Catalog_Keeps_Its_Ids()
+        {
+            var g = new SkillsGroup();
+            foreach (byte id in new byte[] { 40, 3, 17 }) g.Add(id);
+
+            g.SortBy(0, _ => -1);
+            Enumerable.Range(0, g.Count).Select(i => (int)g.GetSkill(i)).Should().Equal(40, 3, 17);
+
+            // a catalog that knows only 3 and 17 (sorted 17, 3): those first, 40 kept after them
+            var sorted = new[] { 17, 3 };
+            g.SortBy(2, i => sorted[i]);
+            Enumerable.Range(0, g.Count).Select(i => (int)g.GetSkill(i)).Should().Equal(17, 3, 40);
+        }
+
+        // ------------------------------------------------------------------ pack revision
+
+        [Fact]
+        public void A_Pack_Without_Skills_Bin_Is_Refused_As_Incomplete()
+        {
+            ManifestFileIo.Write(Path.Combine(_pack, "manifest.json"), new Manifest());
+            foreach (var f in new[] { TableConst.TileDataFile, "hues_raw.bin", "radarcol.bin", "multis.bin", "lights.bin", "tileart.bin",
+                                      "equipconv.bin", "art/sprites.bin", "tex/texmaps.bin", "anim/anim.bin", "anim/palettes.bin", "anim/animdata.bin" })
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(_pack, f)));
+                File.WriteAllBytes(Path.Combine(_pack, f), Array.Empty<byte>());
+            }
+
+            Action open = () => PackAssets.Open(_pack).Dispose();
+            open.Should().Throw<FileNotFoundException>().WithMessage("*skills.bin*format 1.2*Uo.Converter*");
+
+            StringListFile.Write(Path.Combine(_pack, MiscConst.SkillsFile), MiscConst.MagicSkills, new List<(uint, string)> { (0, "Alchemy") }, brotli: false);
+            open.Should().NotThrow();
+        }
+
         // ------------------------------------------------------------------ multimap
 
         private static byte[] FacetImage(int w, int h, int seed)
@@ -231,6 +266,22 @@ namespace ClassicUO.UnitTests.Assets
             m.Load();
             m.HasFacet(0).Should().BeFalse();
             m.LoadFacet(0, 10, 10, 0, 0, 0, 0).Pixels.Length.Should().Be(0);
+        }
+
+        [Fact]
+        public void A_Forged_Multimap_Size_Is_Refused_Before_Allocating()
+        {
+            var w = new RecordStoreWriter(2);
+            var tiny = RecordStoreWriter.Encode(new byte[16], StoreConst.CodecBrotli);
+            w.Slots[0] = new StoreSlot { Record = (uint)w.Add(new byte[] { 1, 0, 0, 0, 1, 0, 0, 0, 0x81 }, 9, StoreConst.CodecRaw, 0, 0) + 1 };
+            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(tiny, 0x7FFFFFFF, StoreConst.CodecBrotli, 1, 0) + 1 };
+            w.Write(Path.Combine(_pack, MiscConst.MultiMapFile), MiscConst.MagicMultiMap, 0);
+
+            var m = PackManager().MultiMaps;
+            m.Load();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            m.LoadFacet(0, 10, 10, 0, 0, 0, 0).Pixels.Length.Should().Be(0);
+            (GC.GetAllocatedBytesForCurrentThread() - before).Should().BeLessThan(1 << 20);
         }
 
         // ------------------------------------------------------------------ string dictionary

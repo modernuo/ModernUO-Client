@@ -449,7 +449,7 @@ namespace ClassicUO.UnitTests.Assets
             }
 
             ClientVersionHelper.IsClientVersionValid("7.0.103.0", out var cv);
-            using var pack = PackAssets.Open(PackDir);
+            using var pack = PackAssets.OpenBefore12ForTests(PackDir);
             var fm = new UOFileManager(cv, Path.GetTempPath(), pack);
             fm.Maps.Load();
             var maps = fm.Maps;

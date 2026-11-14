@@ -37,7 +37,7 @@ namespace ClassicUO.UnitTests.Assets
         {
             ClientVersionHelper.TryParseFromFile(Path.Combine(UoDir, "client.exe"), out var text);
             ClientVersionHelper.IsClientVersionValid(text, out var cv);
-            var assets = PackAssets.Open(packDir);
+            var assets = PackAssets.OpenBefore12ForTests(packDir);
             var mul = new UOFileManager(cv, UoDir, overrides ?? new UOFilesOverrideMap(), assets);
             mul.Hues.Load();
             mul.Gumps.UsePack = false;

@@ -113,27 +113,40 @@ public sealed class MiscConvertTests : IDisposable
     }
 
     [Fact]
-    public void An_Install_Without_The_Files_Leaves_No_Tables_And_Removes_Stale_Ones()
+    public void An_Install_Without_The_Optional_Files_Leaves_No_Tables_And_Removes_Stale_Ones()
     {
         WriteSkills();
+        WriteSkillGroups(unicode: false, new[] { "Combat" }, new[] { 1, 0, 1 });
         File.WriteAllBytes(Path.Combine(_uo, "Multimap.rle"), new byte[] { 1, 0, 0, 0, 1, 0, 0, 0, 0x81 });
         File.WriteAllText(Path.Combine(_uo, "walls.txt"), "x");
         using (var fm = Fm()) ConvertAll(fm);
-        File.Exists(P(MiscConst.SkillsFile)).Should().BeTrue();
+        File.Exists(P(MiscConst.SkillGroupsFile)).Should().BeTrue();
 
-        // the same output from an install without the files (a fresh folder: the frozen loaders keep their files mapped)
+        // the same output from an install with only the skills (a fresh folder: the frozen loaders keep their files mapped)
         var bare = Path.Combine(_dir, "bare");
         Directory.CreateDirectory(bare);
+        foreach (var f in new[] { "skills.mul", "Skills.idx" }) File.Copy(Path.Combine(_uo, f), Path.Combine(bare, f));
         using var fm2 = new UOFileManager(ClientVersion.CV_7090, bare);
         ConvertAll(fm2);
         VerifyAll(fm2);
-        foreach (var f in new[] { MiscConst.SkillsFile, MiscConst.SkillGroupsFile, MiscConst.MultiMapFile, "loose/walls.txt" })
+        File.Exists(P(MiscConst.SkillsFile)).Should().BeTrue();
+        foreach (var f in new[] { MiscConst.SkillGroupsFile, MiscConst.MultiMapFile, "loose/walls.txt" })
             File.Exists(P(f)).Should().BeFalse(f);
+    }
+
+    [Fact]
+    public void Skills_Are_Required()
+    {
+        using var fm = Fm();
+        ((Action)(() => MiscConvert.Skills(fm, _out))).Should().Throw<FileNotFoundException>();
+        MiscConvert.VerifySkills(fm, _out);
+        Verify.Failures.Should().Contain(f => f.Contains("requires skills.bin"));
     }
 
     [Fact]
     public void A_Malformed_Skillgrp_Mul_Has_No_Table_As_The_Client_Used_Its_Defaults()
     {
+        WriteSkills();
         WriteSkillGroups(unicode: false, new[] { "Combat" }, new[] { 1, 0 }, truncate: 2);
         using var fm = Fm();
         MiscConvert.Skills(fm, _out);

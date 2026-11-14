@@ -313,7 +313,7 @@ namespace ClassicUO.UnitTests.Game
         private static MapLoader OpenMaps(out IDisposable pack)
         {
             ClientVersionHelper.IsClientVersionValid("7.0.103.0", out var cv);
-            var p = PackAssets.Open(PackDir);
+            var p = PackAssets.OpenBefore12ForTests(PackDir);
             pack = p;
             var fm = new UOFileManager(cv, Path.GetTempPath(), p);
             fm.Maps.Load();

@@ -97,23 +97,42 @@ namespace ClassicUO.Game.Managers
             return false;
         }
 
-        public unsafe void Sort()
+        public void Sort() => SortBy(SkillsGroupManager.SkillsCount, Client.Game.UO.FileManager.Skills.GetSortedIndex);
+
+        /// <summary>
+        /// Orders the group's skills by the catalog's sorted order. Skills the catalog does not list (it is shorter, or
+        /// empty before a pack or server provides it) keep their ids, after the sorted ones in their old order, so a
+        /// profile saved afterwards never loses or invents a skill id.
+        /// </summary>
+        internal unsafe void SortBy(int skillsCount, Func<int, int> sortedIndex)
         {
             byte* table = stackalloc byte[60];
+            // SkipLocalsInit may leave stackalloc uninitialized
+            Span<bool> used = stackalloc bool[60];
+            used.Clear();
             int index = 0;
 
-            int count = SkillsGroupManager.SkillsCount;
-
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < skillsCount && index < Count; i++)
             {
+                int skill = sortedIndex(i);
+
                 for (int j = 0; j < Count; j++)
                 {
-                    if (Client.Game.UO.FileManager.Skills.GetSortedIndex(i) == _list[j])
+                    if (!used[j] && skill == _list[j])
                     {
                         table[index++] = _list[j];
+                        used[j] = true;
 
                         break;
                     }
+                }
+            }
+
+            for (int j = 0; j < Count; j++)
+            {
+                if (!used[j])
+                {
+                    table[index++] = _list[j];
                 }
             }
 

@@ -146,7 +146,7 @@ namespace ClassicUO.UnitTests.Assets
         {
             var packDir = Fixture("CUO_MOUNT_AOS_PACK", "aos");
             ClientVersionHelper.IsClientVersionValid("7.0.103.0", out var cv);
-            using var pack = PackAssets.Open(packDir);
+            using var pack = PackAssets.OpenBefore12ForTests(packDir);
             var anims = new AnimationsLoader(new UOFileManager(cv, Path.GetTempPath(), pack));
             anims.Load();
 
@@ -184,7 +184,7 @@ namespace ClassicUO.UnitTests.Assets
         {
             var packDir = Fixture("CUO_MOUNT_T2A_PACK", "t2a");
             ClientVersionHelper.IsClientVersionValid("7.0.103.0", out var cv);
-            using var pack = PackAssets.Open(packDir);
+            using var pack = PackAssets.OpenBefore12ForTests(packDir);
             var anims = new AnimationsLoader(new UOFileManager(cv, Path.GetTempPath(), pack));
             anims.Load();
 

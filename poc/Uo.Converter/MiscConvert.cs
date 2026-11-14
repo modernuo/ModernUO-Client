@@ -37,8 +37,8 @@ public static class MiscConvert
         }
         else
         {
-            PackOutputFiles.Delete(path);
-            parts.Add("no skills.mul/Skills.idx: no skills table");
+            // every supported install has them, and the client refuses a pack without skills.bin (revision 1.2)
+            throw new FileNotFoundException($"the install has no skills.mul/Skills.idx ({fm.GetUOFilePath("skills.mul")}); the client requires {MiscConst.SkillsFile}");
         }
 
         var gpath = Out(outDir, MiscConst.SkillGroupsFile);
@@ -164,12 +164,8 @@ public static class MiscConvert
     {
         var path = Out(outDir, MiscConst.SkillsFile);
         int bad = 0;
-        if (!SkillFilesExist(fm))
-        {
-            if (File.Exists(path)) Fail("skills: the pack has skills.bin, the install has no skills.mul/Skills.idx");
-            Console.WriteLine("  skills: none in the install, none in the pack");
-        }
-        else if (!File.Exists(path)) Fail("skills: skills.bin missing");
+        if (!SkillFilesExist(fm)) Fail("skills: the install has no skills.mul/Skills.idx (the client requires skills.bin)");
+        else if (!File.Exists(path)) Fail("skills: skills.bin missing (the client requires it)");
         else
         {
             var s = fm.Skills;
