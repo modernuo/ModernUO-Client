@@ -48,7 +48,9 @@ namespace ClassicUO.Game
 
         private readonly World _world;
         private readonly List<Item> _pending = new List<Item>();
-        private readonly Queue<Entry> _queue = new Queue<Entry>();
+        // sized for MaxPooled once (16 B x 8,192 = 128 KB, a large-object-heap array) instead of doubling up to it while the
+        // first walks retire items (the 4..4,096-entry arrays the doubling leaves behind, ~128 KB of garbage once per session)
+        private readonly Queue<Entry> _queue = new Queue<Entry>(MaxPooled);
         private bool _closed;
 
         /// <summary>Session counts (the checker's summary and the tests): offered by World, retired into quarantine, refused
