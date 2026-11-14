@@ -7207,3 +7207,34 @@ Wakes are fast: net wakes are not quantised to 1 ms. The present_on_change gap h
 Owner requirement: `event_loop_idle_redraw_ms` now defaults to 0, meaning the display interval, so idle frames run at display rate with no visual change. With idle frames every interval, a change still waits for the next interval from the last draw. The phase is the last draw's rather than the display grid's, so idle-then-event zero delay only exists with the 50 ms opt-in. The counts now have four arms (spin, grid, new, new50) per session.
 
 Tests: 3876 passed, 6 skipped, 0 failed. Both builds have 0 errors. Re-run jobs: counts **bench-000795**, gate **bench-000796**, allocations **bench-000797/000798**. bench-000792 is the alloc run on the old build. bench-000793 was cancelled because its binary was superseded. Binary `new2` is `6544a3ec3`.
+
+### evloop-2 fix round 2 (code `270e03b5c`; quiet commit point now **`270e03b5c`**)
+
+Results for `6544a3ec3`:
+
+- **Gate bench-000796:** PASS.
+- **GPU allocations bench-000797:** PASS. Main-thread p50 is 256-272 B/frame in base, off and on alike; GC gen1+gen2 is 0 in every window.
+- **Legacy allocations bench-000798:** still running when this was written.
+- **Counts bench-000795**, medians in µs:
+
+| spot | arm | net_present p50/p99 | ping RTT | presents/s |
+|---|---|---|---|---|
+| quiet | gpu new50 | 4250/17486 | 0.46 ms | 26.9 |
+| quiet | legacy new50 | 5000/17279 | 0.21 ms | 23.9 |
+| quiet | gpu new (idle redraw = interval) | 17563 | 0.76 ms | 58.3 |
+| quiet | gpu grid | 16893 | 0.86 ms | 60 |
+| busy | gpu new | 14000/18969 | 0.94 ms | 57.5 |
+| busy | gpu grid | 14000/17891 | 1.15 ms | 60 |
+| busy | legacy new | 16000/19000 | 2.54 ms | 57.5 |
+| busy | legacy new50 | 16000/19500 | 3.16 ms | 56.8 |
+| busy | legacy grid | 15500/18500 | 0.87 ms | 60 |
+
+- In the busy-Legacy new arms, 44 of 45 and 39 of 40 pings had no draw outstanding (max_draw_us=0) but max_update_us of 2.9-4.5 ms. So these replies waited inside a long Update phase, not a Draw. The cause is not found yet; see the 801 results.
+- **Review fixes (Codex review, `audits/evloop-2/review.out.md`):**
+  - Nothing runs between Draw and Present, so no dispatch there. A handler there could change the scene or reset the device: LoginComplete leads to SetScene, then SetWindowSize, then GraphicsDevice.Reset.
+  - Reading bytes without dispatch before Present was not added: it would not move the dispatch point. A flush there can Terminate the connection, which runs the Disconnected handlers.
+  - Received bytes are dispatched, and sends flushed, right after Present, before the wait.
+  - Any dispatched packet counts as a change, including plugin-injected ones. So does any connection start or end, including a failed Flush, in Update and in the event drain.
+  - net_present now runs from the oldest read that contributed to a dispatched packet.
+- **Tests:** 3878 passed, 6 skipped, 0 failed. Both builds have 0 errors.
+- **Jobs on `270e03b5c` (binary `new3`):** counts **bench-000801**, gate **bench-000802**, allocations **bench-000803/000804**.
