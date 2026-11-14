@@ -12,9 +12,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
         private static readonly object PassA = new object(), PassB = new object();
 
         // one frame: Begin, then the world pass's readiness after the render (or stream)
-        private static bool Frame(WorldSettleGate g, double now, double camX, double camY, bool ready, object pass = null, int facet = 0, bool kept = true)
+        private static bool Frame(WorldSettleGate g, double now, double camX, double camY, bool ready, object pass = null, int facet = 0, bool kept = true, long rebakes = 0)
         {
-            bool hold = g.Begin(now, pass ?? PassA, facet, camX, camY, kept);
+            bool hold = g.Begin(now, pass ?? PassA, facet, camX, camY, kept, rebakes);
             g.End(ready);
 
             return hold;
@@ -90,6 +90,34 @@ namespace ClassicUO.UnitTests.Game.Scenes
             g.Stats.HeldBlack.Should().Be(0);
             g.Stats.PresentedUnsettled.Should().Be(0);
             g.Stats.HoldMsMax.Should().Be(48);
+        }
+
+        [Fact]
+        public void Rebake_HoldsTheLastFrame_UntilReady()
+        {
+            // a depth_model flip (or season change) drops every chunk while the camera stays put: without the rebake count
+            // the gate presented the unbuilt (black) view
+            var g = Settled();
+
+            Frame(g, 100, 0, 0, false, rebakes: 1).Should().BeTrue();
+            g.Episode.Should().Be(WorldDiscontinuity.Rebake);
+            g.Fade.Should().Be(1f, "a frame is held, not black");
+            Frame(g, 116, 0, 0, true, rebakes: 1).Should().BeTrue();
+            Frame(g, 132, 0, 0, true, rebakes: 1).Should().BeFalse();
+            g.Episode.Should().Be(WorldDiscontinuity.None);
+
+            Frame(g, 148, 0, 0, false, rebakes: 1).Should().BeFalse("an unchanged count is no discontinuity");
+            g.Stats.Held.Should().Be(2);
+            g.Stats.HeldBlack.Should().Be(0);
+        }
+
+        [Fact]
+        public void Rebake_OnANewPass_IsARecreation()
+        {
+            var g = Settled();
+
+            Frame(g, 100, 0, 0, false, PassB, rebakes: 3).Should().BeTrue();
+            g.Episode.Should().Be(WorldDiscontinuity.Recreated);
         }
 
         [Fact]

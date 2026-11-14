@@ -1275,8 +1275,10 @@ namespace ClassicUO.Game.Scenes
                     // the player's world pixel, which a teleport moves in Update: the draw offset (the camera) only follows
                     // during this frame's list fill, after the hold decision
                     var player = _world.Player;
+                    gpu.ApplyBakeInputs(_world.Season);
+                    GpuUpdateStaticSeason(gpu);
                     hold = _settle.Begin(Time.Ticks, gpu.World, _world.MapIndex, (player.X - player.Y) * 22, (player.X + player.Y) * 22 - (player.Z << 2),
-                        ReferenceEquals(target, _settleTarget));
+                        ReferenceEquals(target, _settleTarget), gpu.Rebakes);
                     _settleTarget = target;
                 }
 

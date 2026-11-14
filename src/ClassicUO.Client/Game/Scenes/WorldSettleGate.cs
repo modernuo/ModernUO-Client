@@ -16,13 +16,16 @@ namespace ClassicUO.Game.Scenes
         Facet,
         /// <summary>The GPU world pass was recreated on the same facet (its chunks and pages are gone).</summary>
         Recreated,
+        /// <summary>The GPU world pass dropped every chunk to rebake them (a bake input changed: depth_model, season,
+        /// animated water).</summary>
+        Rebake,
         /// <summary>The GPU world resumes after frames it didn't draw (the developer Legacy mode, or a skipped frame).</summary>
         Resume
     }
 
     /// <summary>
     /// Decides, per frame, whether the GPU world's frame is presented or the last presented world frame is held, so a world
-    /// entry, teleport, facet change or world-pass recreation never shows unbuilt chunks (gaps) or missing atlas pages
+    /// entry, teleport, facet change, world-pass recreation or rebake never shows unbuilt chunks (gaps) or missing atlas pages
     /// (black) on screen. Walking never holds: edge streaming is the prefetch's job. Holding applies only after a
     /// discontinuity, and lasts until the world pass reports its visible area ready or <see cref="TimeoutMs"/> passes.
     /// With no previous frame to hold (first entry, or the world target was recreated), the world area is black and fades
@@ -46,6 +49,7 @@ namespace ClassicUO.Game.Scenes
         private object _pass;
         private int _facet;
         private double _camX, _camY;
+        private long _rebakes;
         private bool _resume;
 
         // the current episode: a discontinuity until the visible area is ready (or the timeout)
@@ -85,10 +89,11 @@ namespace ClassicUO.Game.Scenes
         /// <summary>
         /// Start of a GPU world frame. <paramref name="pass"/> identifies the world pass (a new instance = recreated),
         /// (<paramref name="cameraX"/>, <paramref name="cameraY"/>) is the camera centre in world pixels, and
-        /// <paramref name="targetKept"/> says the world target still holds the last presented frame. Returns true when
+        /// <paramref name="targetKept"/> says the world target still holds the last presented frame, and
+        /// <paramref name="rebakes"/> counts the pass's drops of every chunk (ChunkStore.EvictAllCount). Returns true when
         /// this frame must hold (stream only, don't draw into the world target).
         /// </summary>
-        public bool Begin(double nowMs, object pass, int facet, double cameraX, double cameraY, bool targetKept)
+        public bool Begin(double nowMs, object pass, int facet, double cameraX, double cameraY, bool targetKept, long rebakes = 0)
         {
             var kind = WorldDiscontinuity.None;
 
@@ -104,6 +109,10 @@ namespace ClassicUO.Game.Scenes
             {
                 kind = WorldDiscontinuity.Recreated;
             }
+            else if (rebakes != _rebakes)
+            {
+                kind = WorldDiscontinuity.Rebake;
+            }
             else if (_resume)
             {
                 kind = WorldDiscontinuity.Resume;
@@ -118,6 +127,7 @@ namespace ClassicUO.Game.Scenes
             _facet = facet;
             _camX = cameraX;
             _camY = cameraY;
+            _rebakes = rebakes;
             _resume = false;
 
             if (!targetKept)

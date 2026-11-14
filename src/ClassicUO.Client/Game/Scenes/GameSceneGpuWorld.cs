@@ -370,8 +370,6 @@ namespace ClassicUO.Game.Scenes
 #if CUO_DEVTOOLS
             ClipOrderCheck.BeginFrame(_world);
 #endif
-            gpu.SetLandSeason(_world.Season);
-            GpuUpdateStaticSeason(gpu);
             FrameStats.AddSince(FramePhase.PrepSetup, stamp);
 
             // E12: a check frame's probe pass (the frame served from the cache) comes before the frame's own fill
@@ -385,7 +383,6 @@ namespace ClassicUO.Game.Scenes
             FinishGpuCollect();
             gpu.SetOffset(_offset.X, _offset.Y);
             gpu.SetZHiding(_maxZ, _maxGroundZ, _noDrawRoofs);
-            gpu.GeometricDepth = DepthModel.On;
 
             if (_gpuTintAll)
             {
