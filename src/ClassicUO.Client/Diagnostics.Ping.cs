@@ -25,6 +25,11 @@ namespace ClassicUO
             public int Connection, Index, DrainStop, Backlog, DrainBytes;
             public long Sequence, Created, Queued, SendStart, SendEnd, Read, Dequeued, Handler, QueueEnd;
             public long MaxInterval, MaxUpdate, MaxDraw, MaxPresent;
+            // evloop-3: the loop waits between the ping's write and its read, the drain that read it, and how long the reply
+            // could have sat in the socket (read - the later of socket_end and the last drain that found nothing)
+            public int Waits, LastWaitReason, DrainSite, NetSignaled;
+            public long WaitTicks, LastWaitReq, LastWaitAct, LastEmptyDrain, ReadDrainStart;
+            public bool LastWaitLate;
             public int Gc0, Gc1, Gc2;
             public double PauseMs;
             public uint RawMs, DisplayMs;
@@ -91,6 +96,7 @@ namespace ClassicUO
                         return;
                     }
                     p.Read = _dispatch.Read; p.Dequeued = _dispatch.Dequeued;
+                    p.DrainSite = _drainSite; p.NetSignaled = _netSignaled; p.LastEmptyDrain = _lastEmptyDrain; p.ReadDrainStart = _drainStart;
                     p.Handler = Stopwatch.GetTimestamp(); p.RawMs = raw; p.DisplayMs = display;
                     p.MaxInterval = Math.Max(p.MaxInterval, p.Handler - _state.LastUpdate);
                     p.MaxUpdate = Math.Max(p.MaxUpdate, p.Handler - _state.LastUpdate);
@@ -98,6 +104,34 @@ namespace ClassicUO
                     return;
                 }
         }
+        // ---- evloop-3 loop context (main thread) ----
+        private static long _lastEmptyDrain, _drainStart;
+        private static int _drainSite, _netSignaled = -1;
+
+        /// <summary>A loop wait ended: every ping written but not yet read records it.</summary>
+        public static void LoopWait(int reason, long requestedTicks, long start, long end, bool late)
+        {
+            if (!IsGameThread) return;
+            foreach (ref var p in _state.ActivePings.AsSpan())
+                if (p.Owner != null && p.SendEnd != 0 && p.Handler == 0)
+                {
+                    p.Waits++;
+                    p.WaitTicks += end - Math.Max(start, p.SendEnd);
+                    p.LastWaitReason = reason; p.LastWaitReq = requestedTicks; p.LastWaitAct = end - start; p.LastWaitLate = late;
+                }
+        }
+
+        /// <summary>A drain starts at <paramref name="start"/> (site 1 = Update, 2 = before the wait); the socket event's state then.</summary>
+        public static void LoopDrainStart(int site, long start, int netSignaled)
+        {
+            _drainSite = site; _drainStart = start; _netSignaled = netSignaled;
+        }
+
+        public static void LoopDrainEnd(int bytes)
+        {
+            if (bytes <= 0) _lastEmptyDrain = _drainStart;
+        }
+
         public static void PingReset(NetStatistics owner)
         {
             if (!IsGameThread) return;

@@ -187,10 +187,16 @@ namespace ClassicUO
         {
             long start = Stopwatch.GetTimestamp();
             int generation = NetClient.Socket.ConnectionGeneration;
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopDrainStart(2, start, _waiter.NetSignaled); // before BindNet resets it
+#endif
             _waiter.BindNet(NetClient.Socket);
             _parseSlice ??= ParseSlice;
             int packets = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets, _netCapMs);
             int bytes = NetClient.Socket.LastDrainBytes;
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopDrainEnd(bytes);
+#endif
             _lastDrainTs = start;
 
             if (LoopStats.On)

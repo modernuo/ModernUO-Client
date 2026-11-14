@@ -186,6 +186,8 @@ namespace ClassicUO.Loop
             }
         }
 
+        public override int NetSignaled => !_netBound || _disposed ? -1 : WaitForSingleObject(_netEvent, 0) == 0 ? 1 : 0;
+
         public override void ClearWake()
         {
             if (!_disposed && _wakeEvent != 0)

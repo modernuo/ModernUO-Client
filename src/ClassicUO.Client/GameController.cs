@@ -220,6 +220,9 @@ namespace ClassicUO
             }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopWait((int)reason, (long)(wait * Stopwatch.Frequency / 1000.0), start, end, late);
+#endif
 
             if (LoopStats.On)
             {
@@ -691,8 +694,13 @@ namespace ClassicUO
             var drainStart = _netTrace || LoopStats.On ? Stopwatch.GetTimestamp() : 0;
             int capBytes = _netCapBytes, capPackets = _netCapPackets;
 
+            int netSignaled = -1;
+
             if (_tickMode == LoopMode.Event)
             {
+#if CUO_DEVTOOLS
+                if (Diagnostics.On) netSignaled = _waiter.NetSignaled; // before BindNet resets it
+#endif
                 _waiter.BindNet(NetClient.Socket);
 
                 // one drain per frame or wake instead of one per ~1 ms: the byte and packet caps scale with the time since the last
@@ -703,7 +711,13 @@ namespace ClassicUO
 
             _lastDrainTs = _updateStartTs;
             int generation = NetClient.Socket.ConnectionGeneration;
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopDrainStart(1, _updateStartTs, netSignaled);
+#endif
             var packetsCount = NetClient.Socket.Drain(_parseSlice, capBytes, capPackets, _netCapMs);
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopDrainEnd(NetClient.Socket.LastDrainBytes);
+#endif
 
             if (LoopStats.On)
             {
