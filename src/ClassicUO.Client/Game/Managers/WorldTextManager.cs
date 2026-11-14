@@ -94,6 +94,12 @@ namespace ClassicUO.Game.Managers
                 _subst.Clear();
             }
 
+            if (_damages.Count != 0)
+            {
+                // present_on_change_anim_due: damage numbers float up every 25 ms until they expire
+                ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.WorldText);
+            }
+
             foreach (KeyValuePair<uint, OverheadDamage> overheadDamage in _damages)
             {
                 overheadDamage.Value.Update();

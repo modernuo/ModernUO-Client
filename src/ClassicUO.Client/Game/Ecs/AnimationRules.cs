@@ -397,6 +397,7 @@ namespace ClassicUO.Game
             int delay = Constants.CHARACTER_ANIMATION_DELAY;
             int fc = frames;
             int frameIndex = t.Frame + (t.FromServer && !t.Forward ? -1 : 1);
+            t.ActionFrames = (byte)Math.Min(frames, byte.MaxValue);
 
             if (t.FromServer)
             {

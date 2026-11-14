@@ -79,6 +79,7 @@ namespace ClassicUO.Game
             t.Frame = (byte)(forward ? 0 : frameCount);
             t.Interval = interval;
             t.FrameCount = (byte)(forward ? 0 : frameCount);
+            t.ActionFrames = 0;
             t.RepeatMode = repeatCount;
             t.RepeatModeCount = repeatCount;
             t.Repeat = repeat;
@@ -217,6 +218,7 @@ namespace ClassicUO.Game
 
             t.Frame = 0;
             t.FrameCount = 0;
+            t.ActionFrames = 0;
             t.Interval = 1;
             t.RepeatMode = 1;
             t.RepeatModeCount = 1;
@@ -311,6 +313,7 @@ namespace ClassicUO.Game
 
                 // ApplyAnimationTimer: the frame count and the repeat state (the frame index comes last)
                 t.FrameCount = step.FrameCount;
+                t.ActionFrames = step.ActionFrames;
                 t.RepeatMode = step.RepeatMode;
                 t.RepeatModeCount = step.RepeatModeCount;
                 t.Repeat = step.Repeat;

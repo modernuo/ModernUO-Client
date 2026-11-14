@@ -100,6 +100,36 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
+        /// present_on_change_anim_due: as <see cref="MsUntilPresent(bool, double, double, double)"/>, but with no change pending
+        /// the next present is when the next visual change is due (<paramref name="msUntilVisualDue"/>, from now: an animation
+        /// frame, an idle animation, a text expiry; infinity when nothing is scheduled), never sooner than one interval after
+        /// the last present. The fixed idle redraw period is not used.
+        /// </summary>
+        public static double MsUntilPresentAnimDue(bool changePending, double msSinceLastPresent, double intervalMs, double msUntilVisualDue)
+        {
+            double limit = Math.Max(0, intervalMs - msSinceLastPresent);
+
+            return changePending ? limit : Math.Max(limit, msUntilVisualDue);
+        }
+
+        /// <summary>
+        /// present_on_change, both idle policies: <see cref="MsUntilPresentAnimDue"/> when <paramref name="animDue"/> is on,
+        /// else the fixed idle redraw period.
+        /// </summary>
+        public static double MsUntilPresent(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs,
+            bool animDue, double msUntilVisualDue)
+            => animDue
+                ? MsUntilPresentAnimDue(changePending, msSinceLastPresent, intervalMs, msUntilVisualDue)
+                : MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs);
+
+        /// <summary>
+        /// present_on_change_anim_due: whether the visual change the previous Update scheduled has come due by this Update's game
+        /// time (sources advance once <c>Time.Ticks</c> is past their due tick, as <see cref="MsUntilTick"/> counts).
+        /// <see cref="long.MaxValue"/> = nothing was scheduled.
+        /// </summary>
+        public static bool VisualDueReached(long dueTick, uint ticks) => dueTick != long.MaxValue && ticks > dueTick;
+
+        /// <summary>
         /// After a drain: whether the screen may have changed (a packet was dispatched, or the connection started or ended), and
         /// the read time packet-to-present runs from. Bytes of a packet split across reads keep their first read's time in
         /// <paramref name="partialReadTs"/> until a dispatch completes it; bytes left pending after a dispatch start a new one.
@@ -135,6 +165,11 @@ namespace ClassicUO.Loop
         /// <summary>present_on_change: whether this iteration draws (within <see cref="DrawSlackMs"/> of the deadline).</summary>
         public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs)
             => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs) <= DrawSlackMs;
+
+        /// <summary>present_on_change, both idle policies (<paramref name="animDue"/>: present_on_change_anim_due).</summary>
+        public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs,
+            bool animDue, double msUntilVisualDue)
+            => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs, animDue, msUntilVisualDue) <= DrawSlackMs;
 
         /// <summary>
         /// The wait for this iteration, in ms: the earliest of the next draw, the next timer (both from now) and the cap (the

@@ -317,6 +317,12 @@ namespace ClassicUO.Game.UI.Gumps
                     _background.Height = Height;
                 }
 
+                if (_lastChangeTime != 0 && Time.Ticks - _lastChangeTime < HIGHLIGHT_AMOUNT_CHANGED_DURATION)
+                {
+                    // present_on_change_anim_due: the change highlight fades at each poll
+                    ClassicUO.Loop.VisualDue.At(_time, ClassicUO.Loop.VisualSource.Gump);
+                }
+
                 if (Parent == null || !Parent.IsEnabled || _time >= Time.Ticks)
                 {
                     return;

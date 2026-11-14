@@ -7410,3 +7410,20 @@ design note section 7, option 2 (pixel-shader depth), after the oDepth spike. Sc
   bench6-000041 golden (off, base vs new), bench3-000021 gate-legacy, bench5-000025 alloc-l (base / off / on). Scenes from
   `measure/clip-4/gen_legacy.py`. Results: handoff clip-4.
 - **Parked:** job-timing-legacy-PARKED.sh (base / off / on, Legacy, vsync off): the early-Z cost of the GEO technique.
+
+## 2026-11-14: evloop-4, present_on_change_anim_due (idle frames at the next visual change)
+
+Base `bae113ff7`, branch `bg/evloop-4`, code `834a075a4`. New switch `present_on_change_anim_due` (default off; only with `present_on_change`). Before it, an idle frame was drawn every `event_loop_idle_redraw_ms` (0 = every display interval) because the loop did not know when the screen changes by itself (owner-review section 1, question 1). Now every source of change without a packet or input reports into `Loop/VisualDue`: either a due game tick (the change happens in the first Update with `Time.Ticks` past it) or "every frame while active". The loop presents an idle frame at the earliest due time, rate-limited from the last present, and draws no idle frame when nothing is due. Packets and input still present at once.
+
+- **Sources.** The survey is `cuo-poc-state/surveys/next-visual-due.md`.
+  - Mobiles: the frame timer counts only when the frame can move (ExecuteAnimation and FrameCount > 1, or a server action). The idle timer counts too. Steps, opening handles and a due time the advance declined (recent-step gate) count as every frame. This is aggregated in the existing `MobileClockSystem.CollectDue` scan and, for due mobiles, after their update.
+  - Corpse frames count while the death action still moves (`Item.CorpseFrameMoves`).
+  - Animated statics and items count while the last list fill walked one (`AnimatedStaticsManager.NextChange`).
+  - Also tracked: alpha fades (`_alphaTimer` while the last step moved an alpha), overhead text expiry and the `text_fading` last second, damage numbers, weather, animated water, the settle hold, a held left button, auto-walk, follow, the death screen, running macros, a scripted cursor move (`Mouse.Override`), and the timed gumps (system chat lines, tooltip delay, buff countdown and pulse, mini-map blink, quest arrow, corpse eye, debug and network stats text, credits, login arrow, counter-bar fade).
+  - UI that polls packet-fed data gets one "net echo" present 250 ms after each dispatched packet: status 250 ms, info bar 125 ms, counter bar 100 ms.
+- **Two sets.** The Update set is cleared at each Update and the Draw set at each Draw. The Draw set holds what only the draw evaluates (world text, tooltip), so it describes the last drawn frame until the next draw.
+- **Checker `CUO_ANIM_DUE_CHECK=1`** (developer builds). It keeps idle frames at display rate and signs every frame. The signature covers the batcher's vertices, textures, transform and effect in `DrawRange`/`DrawDirectIndexed`, and the GPU world's uniforms, chunk table, dynamic instances, overrides in use, translucent list and missing visible pages in `WorldRenderer.Submit`. A frame the signal would have skipped that differs from the last frame it would have presented is a mismatch. The first 30 runs are logged with the due tick, the next source and the continuous sources. A summary prints every 5 s.
+- **Cost.** One compare per non-due mobile in the existing clock scan. When the switch or the checker is on: two record reads per due mobile, plus one corpse-frame lookup per active corpse per Update. One OR per walked static or item. A call per drawn world text and per timed gump. No new allocation sites.
+- **Known gaps.** Late async art or animation decodes are not tracked: a sprite that arrives late shows on the next present (the GPU signature includes missing visible pages, so the checker sees it). Also not tracked: other scenes' timers (character select, server list), and the timing of a static in view per graphic (the global minimum over all animated graphics is used).
+
+Verification and results: see the evloop-4 follow-up below (jobs pending at the time of writing).

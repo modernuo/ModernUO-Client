@@ -118,6 +118,12 @@ namespace ClassicUO.Input
         {
             if (Override.HasValue)
             {
+                if (Position != Override.Value)
+                {
+                    // present_on_change_anim_due: a scripted move (DevBench, Input.Mouse.Override) has no input wake
+                    ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Cursor);
+                }
+
                 Position = Override.Value;
                 IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
 

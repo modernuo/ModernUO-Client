@@ -434,6 +434,36 @@ namespace ClassicUO.Ecs
         {
             return c.Flags != MobileClockFlags.None || c.AnimDue < now || c.IdleDue < now;
         }
+
+        /// <summary>No visual change scheduled (<see cref="NextVisualTick"/>).</summary>
+        public const long NoVisualChange = long.MaxValue;
+
+        /// <summary>A visual change on every frame, or one whose time is not known (<see cref="NextVisualTick"/>).</summary>
+        public const long VisualEveryFrame = long.MinValue;
+
+        /// <summary>
+        /// evloop-4 (present_on_change_anim_due): the game tick after which the mobile's picture next changes without a
+        /// packet. Steps or opening handles change it every frame. The frame timer changes it only when the frame index can
+        /// move (ExecuteAnimation with more than one frame) or a server action can end and switch the group (FromServer). The
+        /// idle timer starts an idle action. A due time already past at <paramref name="now"/> belongs to a mobile the
+        /// advance declined this frame (the recent-step gate), whose change is pending at an unknown time: every frame.
+        /// </summary>
+        public static long NextVisualTick(in MobileClock c, in AnimationTimer t, long now)
+        {
+            if (c.Flags != MobileClockFlags.None)
+            {
+                return VisualEveryFrame;
+            }
+
+            long due = c.IdleDue;
+
+            if (t.ExecuteAnimation && (t.ActionFrames != 1 || t.FromServer) && c.AnimDue < due)
+            {
+                due = c.AnimDue;
+            }
+
+            return due < now ? VisualEveryFrame : due;
+        }
     }
 
     /// <summary>
@@ -469,6 +499,14 @@ namespace ClassicUO.Ecs
         public bool ExecuteAnimation;
         public long AnimDue;
         public long IdleDue;
+
+        /// <summary>
+        /// evloop-4 (present_on_change_anim_due): the frame count of the action the last advance stepped (0 = not known: no
+        /// advance since the action was set). <see cref="FrameCount"/> holds it only for a server action; a normal action's
+        /// frames cycle with FrameCount 0, so the next frame was not scheduled (CUO_ANIM_DUE_CHECK mismatches, bench-000827).
+        /// Read only by <see cref="MobileClockRules.NextVisualTick"/>.
+        /// </summary>
+        public byte ActionFrames;
 
         // T5b-items: a corpse item's UsedLayer bit (the second death action). For a corpse, Frame is AnimIndex, AnimDue its
         // LastAnimationChangeTime and ExecuteAnimation as on a mobile; the other fields stay 0. Always false on a mobile.

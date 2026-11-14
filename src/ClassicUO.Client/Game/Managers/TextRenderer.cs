@@ -126,6 +126,8 @@ namespace ClassicUO.Game.Managers
                     continue;
                 }
 
+                NoteVisualDue(o);
+
                 ushort hue = 0;
 
                 float alpha = o.Alpha / 255f;
@@ -367,6 +369,29 @@ namespace ClassicUO.Game.Managers
             }
         }
 #endif
+
+        // present_on_change_anim_due (evloop-4): a drawn text disappears once Time.Ticks passes its Time and, with text_fading,
+        // fades every frame over its last second (CalculateAlpha)
+        private static void NoteVisualDue(TextObject o)
+        {
+            if (ProfileManager.CurrentProfile is { TextFading: true })
+            {
+                long fadeFrom = (long)o.Time - 1001;
+
+                if (fadeFrom < ClassicUO.Time.Ticks)
+                {
+                    Loop.VisualDue.Now(Loop.VisualSource.WorldText);
+
+                    return;
+                }
+
+                Loop.VisualDue.At(fadeFrom, Loop.VisualSource.WorldText);
+
+                return;
+            }
+
+            Loop.VisualDue.At(o.Time, Loop.VisualSource.WorldText);
+        }
 
         private void CalculateAlpha(TextObject msg)
         {

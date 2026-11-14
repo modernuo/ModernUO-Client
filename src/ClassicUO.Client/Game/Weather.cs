@@ -41,6 +41,9 @@ namespace ClassicUO.Game
         public byte Count { get; private set; }
         public byte ScaledCount { get; private set; }
         public byte CurrentCount { get; private set; }
+
+        /// <summary>present_on_change_anim_due: particles move on every draw while the weather runs or drains.</summary>
+        internal bool IsActive => CurrentCount != 0 || _timer != 0 && Type != WeatherType.WT_INVALID_0 && Type != WeatherType.WT_INVALID_1;
         public byte Temperature{ get; private set; }
         public sbyte Wind { get; private set; }
 

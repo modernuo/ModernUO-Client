@@ -97,6 +97,9 @@ namespace ClassicUO.Game.UI.Gumps
                 _draw = !_draw;
                 _timeMS = (long)Time.Ticks + 500;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At(_timeMS, ClassicUO.Loop.VisualSource.Gump);
         }
 
         public bool ToggleSize(bool? large = null)

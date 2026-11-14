@@ -355,8 +355,17 @@ namespace ClassicUO.Game.UI.Gumps
                         }
                     }
 
+                    if (delta > 0)
+                    {
+                        // present_on_change_anim_due: the countdown text changes once a second
+                        ClassicUO.Loop.VisualDue.At((long)_updateTooltipTime, ClassicUO.Loop.VisualSource.Gump);
+                    }
+
                     if (Icon.Timer != 0xFFFF_FFFF && delta < 10000)
                     {
+                        // present_on_change_anim_due: the icon pulses every frame over its last 10 s
+                        ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Gump);
+
                         if (delta <= 0)
                         {
                             ((BuffGump)Parent.Parent)?.RequestUpdateContents();

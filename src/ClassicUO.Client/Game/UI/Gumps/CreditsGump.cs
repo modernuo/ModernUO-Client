@@ -63,6 +63,9 @@ Ultima Online(R) 2021 Electronic Arts Inc. All Rights Reserved.
                 _offset.Y -= 1;
                 _lastUpdate = Time.Ticks + 25;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At(_lastUpdate, ClassicUO.Loop.VisualSource.Gump);
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
