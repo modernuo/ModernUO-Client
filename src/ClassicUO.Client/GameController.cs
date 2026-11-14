@@ -1559,6 +1559,8 @@ namespace ClassicUO
         // DevBench: the world render target of the next drawn frame, without UI, as a PNG
         internal void RequestWorldShot(string path) => _worldShotPath = path;
 
+        internal bool WorldShotPending => _worldShotPath != null;
+
         private void SaveWorldShot(string path)
         {
             var rt = _renderTargets.WorldRenderTarget;

@@ -27,6 +27,9 @@ namespace ClassicUO.Game
         private readonly string[] _lines;
         private int _pc;
         private uint _waitUntil;
+        // shot: the script waits for the draw that saves it. Draws are capped below the update rate, so a one-update yield
+        // let the next line (a depth_model flip, a renderer switch) run before the capture.
+        private bool _shotPending;
         private int _walkLeft;
         private Direction _walkDir;
         private bool _walkRun;
@@ -100,6 +103,16 @@ namespace ClassicUO.Game
                 }
 
                 return;
+            }
+
+            if (_shotPending)
+            {
+                if (Client.Game.WorldShotPending)
+                {
+                    return;
+                }
+
+                _shotPending = false;
             }
 
             if (player == null || Time.Ticks < _waitUntil)
@@ -805,6 +818,7 @@ namespace ClassicUO.Game
                 // shot <name>: saves the world render target as CUO_BENCH_SHOTS/<name>_gpu.png (DevBench's shot:)
                 case "shot" when args.Length > 0 && Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS") is { Length: > 0 } shots:
                     Client.Game.RequestWorldShot(Path.Combine(shots, $"{args[0]}_gpu.png"));
+                    _shotPending = true;
 
                     return true;
 
