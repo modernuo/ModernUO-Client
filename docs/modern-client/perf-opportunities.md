@@ -10,13 +10,9 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 |---|---|---|---|
 | UIManager.Update sorts and recursively updates every control each frame | UIManager.cs:335, Control.cs:259 | update only dirty controls, hit-test cache | open |
 | UI pass walk + vertex generation (~50 us with static UI) | batcher UI pass | needs dirty tracking; draw-time side effects (`HealthBarGump`, `ContainerGump` set `SelectedObject`) block it | open |
-| `Control.InvokeMouseOver/Enter/Exit` allocate `MouseEventArgs` before checking listeners | Control.cs | ~32-40 B/frame while hovering | open |
-| `UIManager.SortControlsByInfo` allocates a list node per Over gump (`AddFirst(c)`) | UIManager | use `AddFirst(first)` | open |
 | `HandleKeyboardInput` walks every gump every frame | UIManager | CPU | open |
-| `ItemGump` calls `World.Items.Get` per container item per frame; `ItemGumpFixed` per paperdoll slot | ItemGump.cs ~188/236, PaperdollGump.cs ~866 | use `EntityRef` | open; the lookup goes with T9 tables |
 | Container/paperdoll item art decodes on the main thread when a gump first opens | request in `WorldWriter.PlaceInContainer` | ~20-50 us per sprite, first-open hitch | open |
-| `HealthLinesManager` with `ShowMobilesHP` on still walks every mobile; hoist `HitsTexture`/`CurrentProfile` | HealthLinesManager.cs | CPU | open |
-| `NameOverHeadManager.TypeAllowed` reads `CurrentProfile` per object per frame | NameOverHeadManager.cs:35 | tiny | open |
+| `HealthLinesManager` with `ShowMobilesHP` on still walks every mobile | HealthLinesManager.cs | CPU | open (`HitsTexture` hoisted, 705e4039b) |
 | `Party.Contains` per guild entity per frame (world map); `RequestServerPartyGuildInfo` builds a buffer every 250 ms (unverified); `HouseCustomizationGump` LINQ | perf-alloc-4 | low | open |
 | Season change reads the race per object | Map.cs:338, World.cs:324 | minor, rare | open |
 | Blocking main-thread waits (Present, limiter sleep) lose their quantum under load | frame limiter | 2 ms wait ~500 ms under 40 busy loops; ~4 ms with raised priority | decided 2026-11-08 (raise only around sleep/Present, lower when minimized); not started, needs timing under load |
@@ -43,11 +39,10 @@ From a comparison with a reference client (reports in cuo-poc-state/audits (paci
 | What | Where | Estimate | Status |
 |---|---|---|---|
 | Pool `Item`s entering range | `World.GetOrCreateItem` (280 B each) | ~4.3 MB per 15 s of ls_walk | switch `item_pool` (default off, `bg/item-pool`); alloc jobs pending, then flip |
-| Pre-size the item pool's queue, or prefill the pool at login | `ItemPool` (`Queue<Entry>` grows by doubling to 8,192 entries, a 128 KB LOH array once) | one LOH allocation; first-walk reuse | open (after the item-pool alloc results) |
+| Prefill the item pool at login (8,192 x 280 B, ~2.3 MB per client) | `ItemPool` | first-walk Item reuse | open; behaviour change, needs switch + checker (queue presize done, a119ae333) |
+| `MobileSpriteExtract.Emit` per-call arrays | MobileSpriteExtract | small, per mobile drawn | open (alloc-ui-1 report) |
+| Fresh AllocationTick trace of ls_walk after alloc-ui-1 | whole client | re-rank the remaining allocation sources | open |
 | Measure text without rasterizing for the `RenderedText` atlas path | RenderedText / FontsLoader | part of ~40 % of ls_walk allocation | open |
-| Presize or pool `GpuItemCache` arrays | `Array.Resize` | ~1 MB per 15 s Gpu ls_walk | open (signatures go with T9) |
-| Cache `ClilocLoader.Translate` + `CapitalizeAllWords` for empty args | ClilocLoader | ~2.2 MB per 15 s ls_walk | open |
-| Create the journal `RenderedText` for `DisplayClilocString` lazily | journal | part of text allocation | open |
 | One-off ~677 KB allocation once per Legacy run, 20-30 s after login | unknown | 1 frame; raised town_walk tipon avg to 92 B/frame | open; not reproduced in 3 JIT runs, likely NativeAOT-only (lazy static init/type loader), needs an AOT-side method |
 | Name-gump creation ~600 B/frame for first windows of the handles walk | ui_update | one-time per new mobile | open (low) |
 | Remaining NativeAOT per-frame floor and scene-scaling allocations | FrameStats alloc/frame | keep flat per mobile, gump, text line | check on every branch (alloc jobs) |
@@ -166,7 +161,7 @@ Source: cuo-poc-state audits/perf-audit-1111/out.md. Savings are provisional (ex
 ## Done (commit ids)
 
 - Update path: W5 active items (`world_update_active_items`; 0.28-0.33 to 0.015-0.02 ms at 25k items), `gpu_mobile_frame_cache` (0.71 to 0.35 ms at 1,611 mobiles), `text_skip_expired` (0.18 to 0.04 ms), HP percentage in setters, `WMapManager` per-frame early-out, camera generation instead of per-frame screen positions, E11 single mirror sync per placement (98654f96f).
-- Allocation: B1-B5 batcher/UI (17-28 KB to 0.1-0.25 KB per frame), 250 fps cap removed, chunk loads without allocation (0069120eb), login warm-up (11174c3cf), perf-alloc-sites-2 (5c6b682a7; text pixel buffer, MegaCliloc), perf-alloc-3 (a52b1bc77, 396b960ba, 188193899: Gpu 48 B floor, name-overhead closures), perf-alloc-4 (world map gump 352 to 0), perf-alloc-5 (79e0f20e2; `Pathfinder.CanWalk`), perf-15 (8a16a5b55), perf-14 (d85a12570 console writes, 9a6bb9a98 `EffectManager.PushToBack` tail pointer).
+- Allocation: alloc-ui-1 (b64d85d86: name-overhead filter once per pass, `HitsTexture` hoist, `ItemPool` queue presize, `GpuItemCache` growth through `ArrayPool`; `MouseEventArgs`/`SortControlsByInfo` 3164baa6c, `ItemGump` `EntityRef` perf-9, `Translate` cache 3d653dcd0, lazy journal b7db8542a), B1-B5 batcher/UI (17-28 KB to 0.1-0.25 KB per frame), 250 fps cap removed, chunk loads without allocation (0069120eb), login warm-up (11174c3cf), perf-alloc-sites-2 (5c6b682a7; text pixel buffer, MegaCliloc), perf-alloc-3 (a52b1bc77, 396b960ba, 188193899: Gpu 48 B floor, name-overhead closures), perf-alloc-4 (world map gump 352 to 0), perf-alloc-5 (79e0f20e2; `Pathfinder.CanWalk`), perf-15 (8a16a5b55), perf-14 (d85a12570 console writes, 9a6bb9a98 `EffectManager.PushToBack` tail pointer).
 - Rendering: B1 `Pass.Apply` 16 to 3 per frame, B8 UI render cache (794526bbd), W4 ground-item chunk cache (9a35c9b9a), E6 effects (8a2bcb876), E7 mixed tiles (a4090e9ff), step 9 roof/translucent/range-tint as shader state (b0be567aa), Indexed8 single-tap and per-worker Kind 2 decoders (c18e96a6b), per-header page read, translucent list grows on demand.
 - Loading: pack-hitch buffers/SIMD picker/worker first-sight decode (df2fbf8c8), teleport decode on workers (28bb72308, 24a7e1504), item/multi art on workers (697e4c668), L1 network drain (48f970596), L7 handle cache measured negligible (593c65c1b), L2-L5 dropped (the pack replaces them).
 - ECS reads: tile-head (1150d9b3a), `EcsRead` (02c0ef387), ecs-hygiene (66cf4b8e7), linked-object (eb0f70ed0), perf-6..12 (picker/texmap, paperdoll `WornView` b221d00eb, `MobileInputs` by ref, hue frame inputs, worn cache once per mobile, per-corpse layer tables, one record read per mobile), perf-13-steps (9bd1ac059; door and corpse scans), perf-cpu-1109 (456bb0606; `ItemTable` held flag, `HealthLinesManager` target walk), legacy-sprites-items (880c138ce direct art draw, b607aa19a `GatherFrame`/`ItemOffsets.ReadRow`, 106a6ff8b `SpritePickTable` no zero-fill; merged 618c63d55).

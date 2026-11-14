@@ -7339,3 +7339,9 @@ Base `poc/modern-client` bae113ff7. Scripts: `cuo-poc-state/measure/alloc-ui-1/`
 - **Not done:** prefilling the item pool at login (8,192 x 280 B = ~2.3 MB per client for the first walk's Items; a behaviour change that needs the switch and checker route); the item pool is already default on (Settings.cs:234).
 - **Verification:** builds with and without `CuoDevTools` 0 errors; ClassicUO.UnitTests 3905 passed / 6 skipped (dev) and 3860 / 6 (`-p:CuoDevTools=false`). Write-site budget unchanged (no class A writes touched).
 - **Jobs (allocation counts only; the machine is not quiet, no timing):** NativeAOT dev builds of bae113ff7 and 032666849; alloc-g / alloc-l on lane L4 (handles once, tour twice, base vs new interleaved, checkers off), gate-gpu (L1) and gate-legacy (L2). Job ids and results: see the coordinator's merge entry.
+
+## Merges 2026-11-14: clip-3 (9f8ab8992) and alloc-ui-1 (b64d85d86)
+
+- **clip-3** (depth_model, default off): results above. bench6-000036 ran the c3-flip scene on the base build (cbfa71281): the Gpu world shots after a teleport, a step and a switch back from Legacy are black (99.5 % of pixels) exactly as with clip-3 (bench6-000035), so the black land is inherited, not a depth_model regression. It gets its own stream.
+- **alloc-ui-1**: bench2-000026 gate-gpu failed only because the main runner's evloop-4 jobs logged in with the same account (kbatman, lane L1's) and each login disconnected the other (textflood/smallfields/uistate). The evloop job sets now use kbatman2. Rerun bench2-000027 GATE PASS. bench3-000020 gate-legacy PASS. bench5-000022/23 alloc-g/alloc-l: main-thread p50 0 B/frame base and new, gen1/gen2 0; all-threads medians move both ways by one-off ~1 MB allocations landing in different windows (Legacy worldmap 1469 to 0, off 0 to 734).
+- Merged tip: ClassicUO.UnitTests 3917 passed / 6 skipped; client builds with and without `CuoDevTools` 0 errors.
