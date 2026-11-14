@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -62,7 +63,7 @@ namespace ClassicUO.Assets
         {
             bool result = false;
 
-            FileInfo file = new FileInfo(FileManager.GetUOFilePath("Prof.txt"));
+            FileInfo file = new FileInfo(FileManager.GetLooseFilePath("Prof.txt"));
 
             if (file.Exists)
             {
@@ -92,6 +93,8 @@ namespace ClassicUO.Assets
                     }
                 }
             }
+
+            Log.Trace(file.Exists ? $"Professions: {Professions.Count} from {file.FullName}" : $"Professions: no {file.FullName}");
 
             Professions[new ProfessionInfo(FileManager.Version)
             {

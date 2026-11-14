@@ -2,13 +2,11 @@
 
 using System;
 using System.IO;
-using System.Text;
-using ClassicUO.IO;
-using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
+using Uo.Pack;
 
 namespace ClassicUO.Assets;
 
-// https://github.com/cbnolok/UOETE/blob/master/src/uostringdictionary.cpp
 public sealed class StringDictionaryLoader : UOFileLoader
 {
     private string[] _strings = Array.Empty<string>();
@@ -29,40 +27,24 @@ public sealed class StringDictionaryLoader : UOFileLoader
         return true;
     }
 
+    /// <summary>The strings from the pack's text/stringdict.bin (string_dictionary.uop as the converter decoded it); none when the pack has no such file.</summary>
     public override void Load()
     {
-        var path = FileManager.GetUOFilePath("string_dictionary.uop");
-        if (!File.Exists(path))
+        var path = FileManager.Pack?.PathOf(MiscConst.StringDictFile);
+        if (path == null || !File.Exists(path))
             return;
 
-        using var file = new UOFileUop(path, "build/stringdictionary/string_dictionary.bin");
-        file.FillEntries();
-
-        ref readonly var index = ref file.GetValidRefEntry(0);
-        if (index.Length == 0)
-            return;
-
-        file.Seek(index.Offset, SeekOrigin.Begin);
-        var buf = new byte[file.Length];
-        file.Read(buf);
-
-        var dbuf = new byte[index.DecompressedLength];
-        var result = ZLib.Decompress(buf, dbuf);
-        if (result != ZLib.ZLibError.Ok)
-            return;
-
-        var reader = new StackDataReader(dbuf);
-
-        var unk1 = reader.ReadUInt64LE();
-        var count = reader.ReadUInt32LE();
-        _strings = new string[count];
-        var unk2 = reader.ReadUInt32LE();
-        for (var i = 0; i < count; ++i)
+        try
         {
-            var len = reader.ReadUInt16LE();
-            var str = Encoding.UTF8.GetString(reader.Buffer.Slice(reader.Position, len));
-            _strings[i] = str;
-            reader.Skip(len);
+            var entries = StringListFile.Read(path, MiscConst.MagicStringDict);
+            var strings = new string[entries.Length];
+            for (var i = 0; i < entries.Length; ++i)
+                strings[i] = entries[i].Text;
+            _strings = strings;
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            Log.Error($"String dictionary: cannot read '{path}' ({e.Message})");
         }
     }
 }

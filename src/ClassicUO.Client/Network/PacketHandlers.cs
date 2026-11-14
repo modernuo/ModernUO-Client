@@ -1219,7 +1219,7 @@ namespace ClassicUO.Network
                 NetClient.Socket.Send_Language(Settings.GlobalSettings.Language);
             }
 
-            NetClient.Socket.Send_ClientVersion(Settings.GlobalSettings.ClientVersion);
+            NetClient.Socket.Send_ClientVersion(Client.Game.UO.VersionText);
 
             GameActions.SingleClick(world, world.Player);
             NetClient.Socket.Send_SkillsRequest(world.Player.Serial);
@@ -4310,7 +4310,7 @@ namespace ClassicUO.Network
 
         private static void ClientVersion(World world, ref StackDataReader p)
         {
-            NetClient.Socket.Send_ClientVersion(Settings.GlobalSettings.ClientVersion);
+            NetClient.Socket.Send_ClientVersion(Client.Game.UO.VersionText);
         }
 
         private static void AssistVersion(World world, ref StackDataReader p)

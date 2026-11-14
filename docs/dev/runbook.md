@@ -155,7 +155,7 @@ The client reads its assets from the pack. It finds the pack folder in this orde
 
 It stops with an error if `manifest.json` is missing or the pack format is newer than the client supports.
 
-The client also still reads the settings `ultimaonlinedirectory` and `clientversion`. At startup it checks that the UO directory (default: the executable's folder) holds `tiledata.mul` (`Main.cs`), and it needs a valid client version (from `clientversion`, else from `client.exe`). Point `ultimaonlinedirectory` at `<uo-install>`.
+The client needs no UO directory. It takes the client version from `clientversion` if that is valid (sanitized), else from the pack manifest's `sourceClientVersion`, and sends that text to the server; the resolved version is not written back to `settings.json`. `ultimaonlinedirectory` is optional: when it is set and exists, it is the folder for the remaining loose reads (`Clilocs.txt`, `Sounds/<id>.wav`) and for the `CUO_PACK_GUMPS=0` / `CUO_PACK_TEXT=0` fallbacks; otherwise the executable's folder is. Skills, skill groups, world map images, the string dictionary and the hand-edited text/def files come from the pack (pack-format.md). A pack converted before revision 1.2 has no `skills.bin` and is refused: convert again.
 
 Settings come from `settings.json` next to the executable, or from the file named by `-settings <file>`. Command-line arguments start with `-`, take one value (flags such as `-skiploginscreen` take none) and override the file. Relevant keys:
 

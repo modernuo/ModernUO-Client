@@ -102,10 +102,14 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
+
+// Absolute: the frozen loaders' case-insensitive lookup (non-Windows) compares directory entries, which are absolute,
+// with the requested path, so a relative --uo would miss a differently cased file (Skills.idx as skills.idx).
+uoPath = Path.GetFullPath(uoPath);
 
 // Read-only reports (--gump-report, --audio-report) load the client files, print and return before anything is created,
 // cleared or written: no debug folder, no ClearPreviousOutput, no body plan (docs/modern-client/bodies.md, entry paths).
@@ -300,6 +304,10 @@ if (convert)
     if (Want("speech")) stats["speech"] = Stage("speech", () => TextConvert.Speech(fm, outDir));
     if (Want("sounds")) stats["sounds"] = Stage("sounds", () => AudioConvert.Sounds(fm, outDir));
     if (Want("music")) stats["music"] = Stage("music", () => AudioConvert.Music(fm, outDir));
+    if (Want("skills")) Stage("skills", () => MiscConvert.Skills(fm, outDir));
+    if (Want("multimap")) Stage("multimap", () => MiscConvert.MultiMap(fm, outDir));
+    if (Want("stringdict")) Stage("stringdict", () => MiscConvert.StringDict(fm, outDir));
+    if (Want("loose")) Stage("loose", () => MiscConvert.Loose(fm, outDir));
 
     if (Want("maps"))
     {

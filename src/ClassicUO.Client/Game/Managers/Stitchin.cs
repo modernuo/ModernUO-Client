@@ -14,7 +14,7 @@ namespace ClassicUO.Game.Managers
 
         public void Read(UOFileManager fileManager)
         {
-            var filePath = fileManager.GetUOFilePath("stitchin.def");
+            var filePath = fileManager.GetLooseFilePath("stitchin.def");
 
             if (!File.Exists(filePath))
             {

@@ -103,6 +103,11 @@ public static class Verify
         if (Want("fonts") && File.Exists(Path.Combine(outDir, TextConst.AsciiFontsFile))) TextConvert.VerifyFonts(fm, outDir);
         if (Want("cliloc") && File.Exists(Path.Combine(outDir, TextConst.ClilocFile))) TextConvert.VerifyCliloc(fm, outDir);
         if (Want("speech") && File.Exists(Path.Combine(outDir, TextConst.SpeechFile))) TextConvert.VerifySpeech(fm, outDir);
+        // optional tables: verify also checks that the pack lacks the ones the install lacks
+        if (Want("skills")) MiscConvert.VerifySkills(fm, outDir);
+        if (Want("multimap")) MiscConvert.VerifyMultiMap(fm, outDir);
+        if (Want("stringdict")) MiscConvert.VerifyStringDict(fm, outDir);
+        if (Want("loose")) MiscConvert.VerifyLoose(fm, outDir);
         // Sounds and music have no MUL fallback in the client: a pack without them is silent, so a verify that asks
         // for them (a full verify, or --only sounds/music) fails when they are missing.
         if (Want("sounds") && !Off.Contains("sounds"))

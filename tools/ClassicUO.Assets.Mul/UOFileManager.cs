@@ -47,7 +47,14 @@ namespace ClassicUO.Assets
             Clilocs = new ClilocLoader(this);
             Speeches = new SpeechesLoader(this);
             Sounds = new SoundsLoader(this);
+            Skills = new SkillsLoader(this);
+            MultiMaps = new MultiMapLoader(this);
+            StringDictionary = new StringDictionaryLoader(this);
         }
+
+        public SkillsLoader Skills { get; }
+        public MultiMapLoader MultiMaps { get; }
+        public StringDictionaryLoader StringDictionary { get; }
 
         public GumpsLoader Gumps { get; }
         public FontsLoader Fonts { get; }
@@ -91,6 +98,9 @@ namespace ClassicUO.Assets
             Clilocs.Dispose();
             Speeches.Dispose();
             Sounds.Dispose();
+            Skills.Dispose();
+            MultiMaps.Dispose();
+            StringDictionary.Dispose();
         }
 
         public string GetUOFilePath(string file)

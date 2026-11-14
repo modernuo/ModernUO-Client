@@ -33,7 +33,7 @@ namespace ClassicUO.UnitTests.Assets
             }
 
             ClientVersionHelper.IsClientVersionValid("4.0.11c", out var cv).Should().BeTrue();
-            using var pack = PackAssets.Open(Pack);
+            using var pack = PackAssets.OpenBefore12ForTests(Pack);
             var fm = new UOFileManager(cv, Uo, pack);
             fm.Load("ENU");
 

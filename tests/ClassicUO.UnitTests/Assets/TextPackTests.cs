@@ -66,7 +66,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
             var mul = mulFm.Fonts;
             mul.UsePack = false;
@@ -148,7 +148,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
 
             foreach (var (fm, usePack) in new[] { (mulFm, false), (packFm, true) })
@@ -209,7 +209,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
             mulFm.Fonts.UsePack = false;
             mulFm.Fonts.Load();
@@ -252,7 +252,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var languages = Languages(dir);
             languages.Should().Contain("enu");
             long checkedIds = 0;
@@ -316,7 +316,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
             mulFm.Clilocs.UsePack = false;
             mulFm.Clilocs.Load("enu");
@@ -361,7 +361,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (_, packFm) = Managers(assets);
             packFm.Clilocs.Load("enu");
             var t = packFm.Clilocs.LanguageTable;
@@ -398,7 +398,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (_, packFm) = Managers(assets);
             var clilocs = packFm.Clilocs;
             int r0 = clilocs.Revision;
@@ -425,7 +425,7 @@ namespace ClassicUO.UnitTests.Assets
                 return;
             }
 
-            using var assets = PackAssets.Open(dir);
+            using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
             mulFm.Speeches.UsePack = false;
             mulFm.Speeches.Load();
