@@ -101,6 +101,48 @@ namespace ClassicUO.Renderer
 
         public int PendingSprites => _numSprites;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
+        /// <summary>When set, every draw folds its vertices, textures, transform and effect into <see cref="FrameSignature"/>.</summary>
+        public static bool SignatureOn;
+
+        /// <summary>A hash of everything drawn since the caller last reset it (CUO_ANIM_DUE_CHECK), and the sprites it covers.</summary>
+        public ulong FrameSignature;
+        public long SignatureSprites;
+
+        private void Sign(PositionNormalTextureColor4[] vertices, Texture2D[] textures, int start, int count)
+        {
+            ulong h = FrameSignature == 0 ? 14695981039346656037UL : FrameSignature;
+            ReadOnlySpan<ulong> words = MemoryMarshal.Cast<PositionNormalTextureColor4, ulong>(vertices.AsSpan(start, count));
+
+            for (int i = 0; i < words.Length; i++)
+            {
+                h = (h ^ words[i]) * 1099511628211UL;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                h = (h ^ (ulong)RuntimeHelpers.GetHashCode(textures[start + i])) * 1099511628211UL;
+            }
+
+            h = SignState(h);
+            FrameSignature = h;
+            SignatureSprites += count;
+        }
+
+        private ulong SignState(ulong h)
+        {
+            ReadOnlySpan<ulong> m = MemoryMarshal.Cast<Matrix, ulong>(new ReadOnlySpan<Matrix>(in _transformMatrix));
+
+            for (int i = 0; i < m.Length; i++)
+            {
+                h = (h ^ m[i]) * 1099511628211UL;
+            }
+
+            return (h ^ (ulong)RuntimeHelpers.GetHashCode(_customEffect ?? (object)this)) * 1099511628211UL;
+        }
+#endif
+
         public void BeginSuppress()
         {
             _suppress = true;
@@ -1334,6 +1376,15 @@ namespace ClassicUO.Renderer
         public void DrawDirectIndexed(Texture2D texture, int startIndex, int primitiveCount, int numVertices)
         {
             AbortRecordingIfActive();
+#if CUO_DEVTOOLS
+            if (SignatureOn)
+            {
+                ulong h = FrameSignature == 0 ? 14695981039346656037UL : FrameSignature;
+                h = (h ^ (ulong)RuntimeHelpers.GetHashCode(texture)) * 1099511628211UL;
+                h = (h ^ ((ulong)(uint)startIndex << 32 | (uint)primitiveCount)) * 1099511628211UL;
+                FrameSignature = SignState(h);
+            }
+#endif
 
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
 
@@ -1487,6 +1538,9 @@ namespace ClassicUO.Renderer
         private void DrawRange(PositionNormalTextureColor4[] vertices, Texture2D[] textures, int start, int count)
         {
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
+#if CUO_DEVTOOLS
+            if (SignatureOn) Sign(vertices, textures, start, count);
+#endif
 
             ApplyStates();
 

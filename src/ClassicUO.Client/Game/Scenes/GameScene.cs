@@ -2,6 +2,7 @@
 
 using ClassicUO.Assets;
 using ClassicUO.Configuration;
+using ClassicUO.Loop;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
@@ -47,6 +48,9 @@ namespace ClassicUO.Game.Scenes
         private const float MAX_LAYER_DEPTH = 0x8000;
         private uint _time_cleanup = Time.Ticks + 5000;
         private bool _alphaChanged;
+        // present_on_change_anim_due: the last list fill walked an animated static or item (tiledata Animation flag); kept
+        // until the next fill, so a frame that reuses the list keeps it
+        private bool _animatedArtInView;
         private long _alphaTimer;
         private bool _forceStopScene;
         private HealthLinesManager _healthLinesManager;
@@ -609,6 +613,7 @@ namespace ClassicUO.Game.Scenes
 
             _foliageCount = 0;
             _drawFrame++;
+            _animatedArtInView = false;
 
             if (!_world.InGame)
             {
@@ -632,6 +637,11 @@ namespace ClassicUO.Game.Scenes
             int fadeSteps = FadeSteps(Time.Ticks, ref _alphaTimer, Client.Game.DisplayCapActive);
             _alphaStepSize = 25 * Math.Max(1, fadeSteps);
             _alphaChanged = fadeSteps != 0 || _snapAlphas;
+
+            if (_alphaChanged)
+            {
+                _alphaMoved = false;
+            }
 
             if (ProfileManager.CurrentProfile.UseCircleOfTransparency)
             {
@@ -1009,6 +1019,43 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        // present_on_change_anim_due (evloop-4): the scene's own visual changes that no packet or input causes. The mobiles,
+        // corpses and world text report from their own walks (World.Update, TextRenderer.Draw).
+        private void NoteVisualDue()
+        {
+            if (_animatedArtInView && _animatedStaticsManager.HasAnimations)
+            {
+                VisualDue.At(_animatedStaticsManager.NextChange, VisualSource.StaticAnim);
+            }
+
+            if (_alphaMoved)
+            {
+                VisualDue.At(_alphaTimer, VisualSource.Other);
+            }
+
+            if (_world.Weather.IsActive)
+            {
+                VisualDue.Now(VisualSource.Weather);
+            }
+
+            if (_settle.Holding || _isMouseLeftDown || _world.Player.Pathfinder.AutoWalking || _followingMode)
+            {
+                // the settle hold ends on chunk arrival; a held left button picks up after a delay; auto-walk and follow
+                // request steps on their own
+                VisualDue.Now(VisualSource.Scene);
+            }
+
+            if (ProfileManager.CurrentProfile is { AnimatedWaterEffect: true })
+            {
+                VisualDue.Now(VisualSource.Other);
+            }
+
+            if (_world.Player.IsDead && _world.PlayerState.DeathScreenTimer > Time.Ticks)
+            {
+                VisualDue.At(_world.PlayerState.DeathScreenTimer, VisualSource.Scene);
+            }
+        }
+
         public override void Update()
         {
             Profile currentProfile = ProfileManager.CurrentProfile;
@@ -1057,6 +1104,7 @@ namespace ClassicUO.Game.Scenes
             _world.BoatMovingManager.Update();
             _world.Player.Pathfinder.ProcessAutoWalk();
             _world.DelayedObjectClickManager.Update();
+            NoteVisualDue();
 
             if (!MoveCharacterByMouseInput() && !currentProfile.DisableArrowBtn)
             {

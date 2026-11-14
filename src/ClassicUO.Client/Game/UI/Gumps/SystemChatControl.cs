@@ -1101,6 +1101,11 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     Destroy();
                 }
+                else
+                {
+                    // present_on_change_anim_due: the line disappears after its display time
+                    ClassicUO.Loop.VisualDue.At(_createdTime, ClassicUO.Loop.VisualSource.Gump);
+                }
             }
 
 

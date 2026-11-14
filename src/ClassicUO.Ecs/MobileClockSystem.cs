@@ -23,10 +23,18 @@ namespace ClassicUO.Ecs
         /// <summary>Mobile entities seen by the last <see cref="CollectDue"/>.</summary>
         public int Scanned { get; private set; }
 
+        /// <summary>
+        /// evloop-4: over the mobiles the last <see cref="CollectDue"/> found not due, the earliest
+        /// <see cref="MobileClockRules.NextVisualTick"/> (<see cref="MobileClockRules.NoVisualChange"/>: none). The due mobiles
+        /// change this frame and are added by the caller after their update. Taken in the same scan.
+        /// </summary>
+        public long NextVisualTick { get; private set; }
+
         /// <summary>Appends the serials of the mobiles due at <paramref name="now"/> to <paramref name="due"/>.</summary>
         public void CollectDue(long now, List<uint> due)
         {
             int scanned = 0;
+            long visual = MobileClockRules.NoVisualChange;
 
             foreach (Archetype arch in _query.Archetypes)
             {
@@ -39,6 +47,7 @@ namespace ClassicUO.Ecs
 
                 ReadOnlySpan<MobileClock> clocks = arch.Components<MobileClock>();
                 ReadOnlySpan<Serial> serials = arch.Components<Serial>();
+                ReadOnlySpan<AnimationTimer> timers = arch.ComponentTypes.Has<AnimationTimer>() ? arch.Components<AnimationTimer>() : default;
                 scanned += n;
 
                 for (int i = 0; i < n; i++)
@@ -47,10 +56,20 @@ namespace ClassicUO.Ecs
                     {
                         due.Add(serials[i].Value);
                     }
+                    else if (timers.Length != 0)
+                    {
+                        long v = MobileClockRules.NextVisualTick(in clocks[i], in timers[i], now);
+
+                        if (v < visual)
+                        {
+                            visual = v;
+                        }
+                    }
                 }
             }
 
             Scanned = scanned;
+            NextVisualTick = visual;
         }
     }
 }

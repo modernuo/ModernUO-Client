@@ -434,6 +434,36 @@ namespace ClassicUO.Ecs
         {
             return c.Flags != MobileClockFlags.None || c.AnimDue < now || c.IdleDue < now;
         }
+
+        /// <summary>No visual change scheduled (<see cref="NextVisualTick"/>).</summary>
+        public const long NoVisualChange = long.MaxValue;
+
+        /// <summary>A visual change on every frame, or one whose time is not known (<see cref="NextVisualTick"/>).</summary>
+        public const long VisualEveryFrame = long.MinValue;
+
+        /// <summary>
+        /// evloop-4 (present_on_change_anim_due): the game tick after which the mobile's picture next changes without a
+        /// packet. Steps or opening handles change it every frame. The frame timer changes it only when the frame index can
+        /// move (ExecuteAnimation with more than one frame) or a server action can end and switch the group (FromServer). The
+        /// idle timer starts an idle action. A due time already past at <paramref name="now"/> belongs to a mobile the
+        /// advance declined this frame (the recent-step gate), whose change is pending at an unknown time: every frame.
+        /// </summary>
+        public static long NextVisualTick(in MobileClock c, in AnimationTimer t, long now)
+        {
+            if (c.Flags != MobileClockFlags.None)
+            {
+                return VisualEveryFrame;
+            }
+
+            long due = c.IdleDue;
+
+            if (t.ExecuteAnimation && (t.FrameCount > 1 || t.FromServer) && c.AnimDue < due)
+            {
+                due = c.AnimDue;
+            }
+
+            return due < now ? VisualEveryFrame : due;
+        }
     }
 
     /// <summary>

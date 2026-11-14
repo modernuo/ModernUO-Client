@@ -632,7 +632,14 @@ namespace ClassicUO.Game
 
                 // the update may have opened or ended the handles (the timer and queue writes kept the rest of the clock)
                 Ecs.PushClock(mob);
+
+                if (ClassicUO.Loop.VisualDue.Tracking)
+                {
+                    NoteMobileVisual(mob);
+                }
             }
+
+            NoteVisualTick(Ecs.Clock.NextVisualTick, ClassicUO.Loop.VisualSource.MobileAnim);
 
             if (AnimFrameCount.UseTables)
             {
@@ -667,6 +674,29 @@ namespace ClassicUO.Game
             if (wmap)
             {
                 WorldMapPass(); // T5c: the world-map pass
+            }
+        }
+
+        // present_on_change_anim_due (evloop-4): a due mobile's next visual change after its update this frame
+        private static void NoteMobileVisual(Mobile mob)
+        {
+            if (!mob.IsDestroyed && mob.TryRecord(out Friflo.Engine.ECS.Entity e))
+            {
+                NoteVisualTick(ClassicUO.Ecs.MobileClockRules.NextVisualTick(
+                    in ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.MobileClock>(e), in ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e), Time.Ticks),
+                    ClassicUO.Loop.VisualSource.MobileAnim);
+            }
+        }
+
+        private static void NoteVisualTick(long tick, ClassicUO.Loop.VisualSource source)
+        {
+            if (tick == ClassicUO.Ecs.MobileClockRules.VisualEveryFrame)
+            {
+                ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.MobileBusy);
+            }
+            else if (tick != ClassicUO.Ecs.MobileClockRules.NoVisualChange)
+            {
+                ClassicUO.Loop.VisualDue.At(tick, source);
             }
         }
 
@@ -769,6 +799,11 @@ namespace ClassicUO.Game
                 Item item = store[i];
 
                 UpdateActiveItem(item);
+
+                if (ClassicUO.Loop.VisualDue.Tracking && item.IsCorpse && item.CorpseFrameMoves())
+                {
+                    ClassicUO.Loop.VisualDue.At(item.LastAnimationChangeTime, ClassicUO.Loop.VisualSource.ItemAnim);
+                }
 
                 if (!item.NeedsFrameUpdate || !HeldItem(item))
                 {

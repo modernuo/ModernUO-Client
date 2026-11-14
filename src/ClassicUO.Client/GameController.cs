@@ -678,6 +678,8 @@ namespace ClassicUO
 
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+            VisualDue.BeginUpdate();
+            VisualDue.Tracking = AnimDueTracking;
             Time.Frame++;
             _totalUpdates++;
             // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
@@ -948,6 +950,7 @@ namespace ClassicUO
         {
             if (LoopStats.On) LoopStats.NoteDraw();
             BeginPresentedChange();
+            VisualDue.BeginDraw();
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
 
@@ -1069,6 +1072,7 @@ namespace ClassicUO
             FrameStats.End(FramePhase.PluginDraw);
 
             base.Draw(gameTime);
+            VisualDue.EndDraw();
 
             FrameStats.End(FramePhase.Draw);
         }

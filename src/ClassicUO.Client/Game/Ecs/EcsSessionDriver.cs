@@ -1029,6 +1029,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // animdue on|off: present_on_change_anim_due (evloop-4 counts jobs compare it with the idle redraw in one session)
+                case "animdue" when args.Length > 0:
+                    Settings.GlobalSettings.PresentOnChangeAnimDue = args[0] == "on";
+                    Log.Info($"[ECS] driver: present_on_change_anim_due {args[0]}");
+
+                    return true;
+
                 case "vsync" when args.Length > 0:
                     Client.Game.SetVSync(args[0] == "on");
                     Log.Info($"[ECS] driver: vsync {args[0]}");

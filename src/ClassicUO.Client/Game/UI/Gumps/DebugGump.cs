@@ -164,6 +164,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                 WantUpdateSize = true;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At(_timeToUpdate, ClassicUO.Loop.VisualSource.Gump);
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)

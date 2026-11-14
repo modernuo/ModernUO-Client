@@ -552,6 +552,30 @@ namespace ClassicUO.Game.GameObjects
             UsedLayer = UsedLayer
         };
 
+        /// <summary>
+        /// present_on_change_anim_due (evloop-4): whether the corpse's next frame advance shows another frame (the same lookup
+        /// <see cref="ProcessAnimation"/> makes; a finished death action holds its last frame, and its timer keeps running).
+        /// </summary>
+        internal bool CorpseFrameMoves()
+        {
+            if (!IsCorpse || IsDestroyed || Client.Game?.UO?.Animations == null || Client.Game.UO.FileManager?.Animations == null)
+            {
+                return false;
+            }
+
+            var dir = (byte)Layer;
+            byte frameIndex = (byte)(AnimIndex + (ExecuteAnimation ? 1 : 0));
+            ushort id = GetGraphicForAnimation();
+            bool mirror = false;
+            var animations = Client.Game.UO.Animations;
+            animations.GetAnimDirection(ref dir, ref mirror);
+
+            return id < animations.MaxAnimationCount
+                && dir < 5
+                && Client.Game.UO.FileManager.Animations.TryCorpseFrame(id, UsedLayer, dir, frameIndex, out byte frame)
+                && frame != AnimIndex;
+        }
+
         public void ProcessAnimation()
         {
             if (!IsCorpse)

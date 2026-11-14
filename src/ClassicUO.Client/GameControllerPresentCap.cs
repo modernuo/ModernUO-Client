@@ -4,6 +4,7 @@ using System.Diagnostics;
 using ClassicUO.Configuration;
 using ClassicUO.Game;
 using ClassicUO.Network;
+using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using ClassicUO.Loop;
 using static SDL3.SDL;
@@ -75,6 +76,54 @@ namespace ClassicUO
 
         private static bool PresentOnChangeSwitch => Settings.GlobalSettings.PresentOnChange;
 
+        // ---- present_on_change_anim_due (evloop-4) ----
+        // _visualDueTick: the earliest visual due tick seen by the last RefreshChange (long.MaxValue: none); once Time.Ticks is
+        // past it the change has happened in this Update. _netEchoTick: one present 250 ms after a dispatched packet, for the
+        // UI that polls packet-fed data (status 250 ms, info bar 125 ms, counter bar 100 ms) and shows it after the packet's own
+        // present.
+        private long _visualDueTick = long.MaxValue, _netEchoTick = long.MaxValue;
+        private const int NetEchoMs = 250;
+
+        private static bool AnimDueSwitch => Settings.GlobalSettings.PresentOnChangeAnimDue;
+
+        // the anim-due schedule decides idle frames: the switch is on and the checker is not forcing display-rate frames
+        private static bool AnimDueScheduling
+        {
+            get
+            {
+#if CUO_DEVTOOLS
+                if (AnimDueCheck.On)
+                {
+                    return false;
+                }
+#endif
+                return AnimDueSwitch;
+            }
+        }
+
+        private static bool AnimDueTracking
+        {
+            get
+            {
+#if CUO_DEVTOOLS
+                if (AnimDueCheck.On)
+                {
+                    return true;
+                }
+#endif
+                return AnimDueSwitch;
+            }
+        }
+
+        private long NextVisualTick => Math.Min(VisualDue.NextTick, _netEchoTick);
+
+        private double MsUntilVisualDue()
+        {
+            long next = NextVisualTick;
+
+            return LoopTiming.MsUntilTick(next != long.MaxValue, next, Time.Ticks, Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds);
+        }
+
         private double DisplayIntervalMs => _displayPeriod * 1000.0 / Stopwatch.Frequency;
 
         // 0 = the display interval (LoopTiming.MsUntilPresent never goes below it)
@@ -109,6 +158,7 @@ namespace ClassicUO
                 if (from != 0)
                 {
                     NoteNetChange(from);
+                    _netEchoTick = Time.Ticks + NetEchoMs;
                 }
                 else
                 {
@@ -134,13 +184,35 @@ namespace ClassicUO
             {
                 _changePending = _continuous = true;
             }
+
+            if (AnimDueTracking)
+            {
+                if (VisualDue.Continuous != VisualSource.None)
+                {
+                    _changePending = _continuous = true;
+                }
+
+                if (LoopTiming.VisualDueReached(_visualDueTick, Time.Ticks))
+                {
+                    _changePending = true;
+                }
+
+                if (LoopTiming.VisualDueReached(_netEchoTick, Time.Ticks))
+                {
+                    _netEchoTick = long.MaxValue;
+                }
+
+                _visualDueTick = NextVisualTick;
+            }
         }
 
         private bool PresentOnChangeDue(bool gridDue)
         {
             RefreshChange();
             long now = Stopwatch.GetTimestamp();
-            bool due = LoopTiming.PresentDue(_changePending, MsSinceLastPresent(now), DisplayIntervalMs, IdleRedrawMs);
+            bool animDue = AnimDueScheduling;
+            bool due = LoopTiming.PresentDue(_changePending, MsSinceLastPresent(now), DisplayIntervalMs, IdleRedrawMsFor(animDue), animDue,
+                animDue ? MsUntilVisualDue() : double.PositiveInfinity);
 #if CUO_DEVTOOLS
             if (PresentChangeCheck.On)
                 PresentChangeCheck.Tick(now, true, gridDue, due, _changePending, _displayPeriod);
@@ -149,12 +221,40 @@ namespace ClassicUO
         }
 
         private double MsUntilPresentOnChange()
-            => LoopTiming.MsUntilPresent(_changePending, MsSinceLastPresent(Stopwatch.GetTimestamp()), DisplayIntervalMs, IdleRedrawMs);
+        {
+            bool animDue = AnimDueScheduling;
+
+            return LoopTiming.MsUntilPresent(_changePending, MsSinceLastPresent(Stopwatch.GetTimestamp()), DisplayIntervalMs,
+                IdleRedrawMsFor(animDue), animDue, animDue ? MsUntilVisualDue() : double.PositiveInfinity);
+        }
+
+        // CUO_ANIM_DUE_CHECK draws idle frames at the display interval (idle redraw 0) so every frame the signal would skip is
+        // drawn and compared
+        private static double IdleRedrawMsFor(bool animDue)
+        {
+#if CUO_DEVTOOLS
+            if (AnimDueCheck.On)
+            {
+                return 0;
+            }
+#endif
+            return IdleRedrawMs;
+        }
 
         // Draw start: what changed so far is in this frame; later changes stay pending for the next one. A frame drawn during
         // motion or effects keeps the next one due one interval later (the motion advances in Update, after the wait).
         private void BeginPresentedChange()
         {
+#if CUO_DEVTOOLS
+            if (AnimDueCheck.On)
+            {
+                AnimDueCheck.BeginFrame(_changePending, "");
+                UltimaBatcher2D.SignatureOn = Uo.Render.WorldRenderer.SignatureOn = true;
+                _uoSpriteBatch.FrameSignature = 0;
+                _uoSpriteBatch.SignatureSprites = 0;
+                Uo.Render.WorldRenderer.LastSignature = 0;
+            }
+#endif
             _lastDrawTs = Stopwatch.GetTimestamp();
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;
@@ -177,6 +277,12 @@ namespace ClassicUO
             }
 #if CUO_DEVTOOLS
             if (PresentChangeCheck.On) PresentChangeCheck.Present(now);
+
+            if (AnimDueCheck.On && _presentOnChange)
+            {
+                AnimDueCheck.EndFrame(now, _uoSpriteBatch.FrameSignature * 31 ^ Uo.Render.WorldRenderer.LastSignature,
+                    _uoSpriteBatch.SignatureSprites, AnimDueSwitch, VisualDue.Continuous, VisualDue.NextSource, NextVisualTick, Time.Ticks);
+            }
 #endif
         }
 

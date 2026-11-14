@@ -498,6 +498,12 @@ namespace ClassicUO.Game.UI.Gumps
                 _eyeGumpPic.Width = (int)(_eyeGumpPic.Width * scale);
                 _eyeGumpPic.Height = (int)(_eyeGumpPic.Height * scale);
             }
+
+            if (Graphic == CORPSES_GUMP)
+            {
+                // present_on_change_anim_due: the corpse gump's eye blinks
+                ClassicUO.Loop.VisualDue.At(_corpseEyeTicks, ClassicUO.Loop.VisualSource.Gump);
+            }
         }
 
         protected override void UpdateContents()
