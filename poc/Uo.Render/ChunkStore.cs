@@ -75,6 +75,9 @@ public sealed unsafe class ChunkStore
     public bool OutOfGpuSpace;
 
     public long ChangeEpoch { get; private set; }
+    /// <summary>Times <see cref="EvictAll"/> dropped every chunk (a bake input changed): the view is unbuilt until it
+    /// re-streams, which a host holding its frame treats as a discontinuity.</summary>
+    public long EvictAllCount { get; private set; }
     // Only skip eviction when every active chunk was needed and ready at the last full scan.
     public bool CanReuseMaintenance { get; private set; }
     long _lastMaintenanceFrame, _reuseFrame, _reuseTicks;
@@ -155,6 +158,7 @@ public sealed unsafe class ChunkStore
     public void EvictAll()
     {
         ChangeEpoch++;
+        EvictAllCount++;
         CanReuseMaintenance = false;
         for (int i = _activeCount - 1; i >= 0; i--)
         {

@@ -344,10 +344,16 @@ namespace ClassicUO.Game.Scenes
             return remap;
         }
 
-        /// <summary>clip-2 depth model (DepthModel): per-pixel geometric depth on the world renderer.</summary>
-        public bool GeometricDepth
+        /// <summary>Times the world pass dropped every chunk to rebake them (WorldSettleGate's Rebake discontinuity).</summary>
+        public long Rebakes => _world?.Chunks.EvictAllCount ?? 0;
+
+        /// <summary>The inputs whose change rebakes every chunk (land season, clip-2 depth_model, animated water), applied before
+        /// the frame's hold decision so the rebake's unbuilt view is held instead of presented.</summary>
+        public void ApplyBakeInputs(Season season)
         {
-            set => _world.GeometricDepth = value;
+            SetLandSeason(season);
+            _world.GeometricDepth = DepthModel.On;
+            UpdateWaterWobble();
         }
 
         /// <summary>GameScene's _maxZ / _maxGroundZ / _noDrawRoofs, applied to baked land and statics in the shader.</summary>
