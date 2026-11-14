@@ -1015,6 +1015,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // idleredraw <ms>: event_loop_idle_redraw_ms (0 = the display interval)
+                case "idleredraw" when args.Length > 0 && int.TryParse(args[0], out int idleMs):
+                    Settings.GlobalSettings.EventLoopIdleRedrawMs = idleMs;
+                    Log.Info($"[ECS] driver: event_loop_idle_redraw_ms {idleMs}");
+
+                    return true;
+
                 // presentchange on|off: present_on_change (evloop-2 counts jobs compare it with the grid in one session)
                 case "presentchange" when args.Length > 0:
                     Settings.GlobalSettings.PresentOnChange = args[0] == "on";
