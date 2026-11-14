@@ -58,8 +58,16 @@ namespace ClassicUO.Assets
 
         private byte[] ReadSlot(int slot)
         {
-            if (_store == null || !_store.TryGet(slot, out _, out var record) || record.RawBytes == 0 || record.RawBytes > int.MaxValue)
+            if (_store == null || !_store.TryGet(slot, out _, out var record) || record.RawBytes == 0)
             {
+                return null;
+            }
+
+            // a forged size must not allocate before the decode finds the payload corrupt
+            if (record.RawBytes > MiscConst.MaxMultiMapRecordBytes)
+            {
+                Log.Error($"MultiMap: slot {slot} declares {record.RawBytes} bytes; at most {MiscConst.MaxMultiMapRecordBytes}");
+
                 return null;
             }
 

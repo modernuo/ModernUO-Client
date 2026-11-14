@@ -107,6 +107,10 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+// Absolute: the frozen loaders' case-insensitive lookup (non-Windows) compares directory entries, which are absolute,
+// with the requested path, so a relative --uo would miss a differently cased file (Skills.idx as skills.idx).
+uoPath = Path.GetFullPath(uoPath);
+
 // Read-only reports (--gump-report, --audio-report) load the client files, print and return before anything is created,
 // cleared or written: no debug folder, no ClearPreviousOutput, no body plan (docs/modern-client/bodies.md, entry paths).
 bool readOnlyReport = gumpReport || audioReport != null;

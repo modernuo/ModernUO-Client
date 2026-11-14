@@ -78,6 +78,8 @@ public static class MiscConvert
         Parallel.For(0, sources.Length, ConvertOptions.Par, i =>
         {
             if (sources[i] == null) return;
+            long len = new FileInfo(sources[i]!).Length;
+            if (len > MiscConst.MaxMultiMapRecordBytes) throw new InvalidDataException($"{sources[i]}: {len} bytes; a multimap record is at most {MiscConst.MaxMultiMapRecordBytes}");
             var raw = File.ReadAllBytes(sources[i]!);
             ushort codec = TextConvert.Raw || raw.Length <= SmallRaw ? StoreConst.CodecRaw : StoreConst.CodecBrotli;
             var p = RecordStoreWriter.Encode(raw, codec, Quality);
@@ -223,6 +225,7 @@ public static class MiscConvert
             bool has = store.TryGet(i, out _, out var rec);
             if (src == null) { if (has) { Fail($"multimap slot {i}: present, the install has no file"); bad++; } continue; }
             if (!has) { Fail($"multimap slot {i}: missing ({Path.GetFileName(src)})"); bad++; continue; }
+            if (rec.RawBytes > MiscConst.MaxMultiMapRecordBytes) { Fail($"multimap slot {i}: {rec.RawBytes} bytes, above the {MiscConst.MaxMultiMapRecordBytes} limit"); bad++; continue; }
             var got = new byte[rec.RawBytes];
             store.Read(rec, got);
             var want = File.ReadAllBytes(src);

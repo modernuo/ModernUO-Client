@@ -56,6 +56,12 @@ public static class MiscConst
     /// <summary>Largest loose file the converter copies (the biggest stock one, stitchin.def, is 230 KB).</summary>
     public const long MaxLooseBytes = 16 << 20;
 
+    /// <summary>
+    /// Largest multimap record (decoded): readers check it before allocating. The stock files are at most 12 MB
+    /// (facet01.mul, 7168×4096 run-length coded), so 64 MiB leaves room for larger shard maps.
+    /// </summary>
+    public const int MaxMultiMapRecordBytes = 64 << 20;
+
     public static RecordStore OpenMultiMapStore(string path) =>
         RecordStore.Open(path, MagicMultiMap, 1, 1 + MaxMultiMapFacets);
 }
