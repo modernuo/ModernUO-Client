@@ -166,9 +166,9 @@ Art, texmaps and gump pages are stored as `B5G5R5A1` by default (`--format`). Tr
 
 ### 3.14 Skills, skill groups, world map images, string dictionary, loose files
 
-Stages `skills`, `multimap`, `stringdict` and `loose` (pack-format.md, "Skills, skill groups, multimap, string dictionary" and "Loose text files"). Each writes nothing, and removes a stale copy, when the install lacks the source; legacy (pre-UOP) installs have no `string_dictionary.uop` and usually no facet images.
+Stages `skills`, `multimap`, `stringdict` and `loose` (pack-format.md, "Skills, skill groups, multimap, string dictionary" and "Loose text files"). Apart from `skills`, each writes nothing, and removes a stale copy, when the install lacks the source; legacy (pre-UOP) installs have no `string_dictionary.uop` and usually no facet images.
 
-- `skills.bin`: `skills.mul` + `Skills.idx` as the frozen `SkillsLoader` reads them (entries with a positive length, ASCII names with trailing NULs trimmed, the action flag).
+- `skills.bin`: `skills.mul` + `Skills.idx` as the frozen `SkillsLoader` reads them (entries with a positive length, ASCII names with trailing NULs trimmed, the action flag). Required: the stage fails without them, and the client refuses a pack without `skills.bin`.
 - `skillgrp.bin`: `skillgrp.mul`'s group names (ASCII, or UTF-16 after a −1 count marker) and its trailing i32 group numbers, read as the client read them (frozen `SkillGroupsMul`). A file the client could not read gets no table.
 - `multimap.bin`: `Multimap.rle` and every `facet0*.mul`, byte for byte, in the client's order.
 - `text/stringdict.bin`: `string_dictionary.uop`'s strings as the frozen `StringDictionaryLoader` decodes them.
@@ -198,7 +198,7 @@ animinfo.mul and the client's built-in tables. A loose `Clilocs.txt` and loose `
 - A full run (no `--only`) first removes the files the previous output's manifest lists, then writes the new pack. It refuses a non-empty folder that has no `manifest.json`, so it never deletes files it did not write. There are no recursive deletes.
 - Files are written to a temporary name in the same folder and moved over the target, so a hard link in the output folder is replaced, not written through.
 - Folders under a published packs root are immutable: the converter refuses to write to them (and to a folder that contains one). On Windows a developer-machine folder is built in as a default root (`PublishedPacks.DefaultRoot`). Add roots with `--packs-root <dir>` (repeatable) or the `UO_PACKS_ROOTS` environment variable (`;` separated). A folder whose parent holds a `CURRENT` file naming it is also protected. `--verify-only` only reads, so it may check a published pack.
-- `manifest.json` lists every file with its size and SHA-256, plus the install path as passed to `--uo`, the client version text, the creation time, the facets, and the body choices record (`bodies`, see bodies.md).
+- `manifest.json` lists every file with its size and SHA-256, plus the install path (`--uo`, made absolute), the client version text, the creation time, the facets, and the body choices record (`bodies`, see bodies.md).
 - Debug PNGs of art, texmaps and animations are written to the folder given by `--debug`, by default `<temp>/uo-converter-debug/<out folder name>`.
 
 ## 6. Verification
@@ -219,7 +219,7 @@ Uo.Converter --uo <uo-install> --out <pack-out> [options]
 
 | Option | Meaning |
 |---|---|
-| `--uo <dir>` | The UO install folder. |
+| `--uo <dir>` | The UO install folder. A relative path is made absolute first. |
 | `--client-version <v>` | The client version, for example `7.0.103.0` or `4.0.11c`. Overrides detection. |
 | `--cuo-settings <file>` | A ClassicUO `settings.json`; its `clientversion` is used. |
 | `--no-map-diffs` | Do not merge `mapdif*`/`stadif*` patch files into the maps. |

@@ -4,7 +4,7 @@ This document specifies the asset pack that the ModernUO client loads instead of
 
 For every content type described here, the client reads only the pack. MUL and UOP stay only for the content listed in "Not in the pack". The client never reads a patch format. `verdata.mul` is not imported: shard owners merge it into the base files before converting. The converter merges the legacy map patches (`mapdif*`, `mapdifl*`, `stadif*`, `stadifi*`, `stadifl*`) into the maps at import. The `map*x`, `statics*x` and `staidx*x` files are not read; a shard that wants them renames them to the regular names before converting.
 
-The format version is 1. `FileHeader.version` and the manifest `version` are both 1. The tile data layout (magic `TILE`) was introduced in revision 1.1. A client accepts only packs that contain a `TILE` `tiledata.bin`.
+The format version is 1. `FileHeader.version` and the manifest `version` are both 1. The tile data layout (magic `TILE`) was introduced in revision 1.1, and `skills.bin` in revision 1.2. Revisions are marked by required files, not by the version number: a client accepts only packs that contain a `TILE` `tiledata.bin` and a `skills.bin`.
 
 ## Conventions
 
@@ -27,7 +27,7 @@ The format version is 1. `FileHeader.version` and the manifest `version` are bot
   tileart.bin              paperdoll appearances from tileart.uop (TART)
   equipconv.bin            Equipconv.def (EQCV)
   layerrules.bin           equipment layering rules (LAYR); optional, see layer-rules.md
-  skills.bin               skills.mul + Skills.idx: a string-list store (SKLS); optional
+  skills.bin               skills.mul + Skills.idx: a string-list store (SKLS); required since revision 1.2
   skillgrp.bin             skillgrp.mul: group names and per-skill group numbers (SKGR); optional
   multimap.bin             Multimap.rle and facet0*.mul: a record store of their RLE streams (MMAP); optional
   art/
@@ -61,7 +61,7 @@ The format version is 1. `FileHeader.version` and the manifest `version` are bot
 
 `NNNN` is the zero-padded decimal page index (`page_0000.bin`). Page indices are contiguous from 0.
 
-`PackAssets.Open` (`src/ClassicUO.Assets/PackAssets.cs`) requires `manifest.json` and these files: `tiledata.bin`, `hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`, `art/sprites.bin`, `tex/texmaps.bin`, `anim/anim.bin`, `anim/palettes.bin` and `anim/animdata.bin`. It rejects a manifest whose `version` is above 1. The gumps, text, audio, skills, multimap and loose files are optional at open time; see each section for what happens without them.
+`PackAssets.Open` (`src/ClassicUO.Assets/PackAssets.cs`) requires `manifest.json` and these files: `tiledata.bin`, `hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`, `art/sprites.bin`, `tex/texmaps.bin`, `anim/anim.bin`, `anim/palettes.bin`, `anim/animdata.bin` and (revision 1.2) `skills.bin`, each with an "incomplete asset pack ... convert the client again with Uo.Converter" error. It rejects a manifest whose `version` is above 1. The gumps, text, audio, skill group, multimap, string dictionary and loose files are optional at open time; see each section for what happens without them.
 
 ## FileHeader and versioning
 
@@ -400,15 +400,15 @@ ClassicUO's hard-coded equipment layering (the draw order, the cloak move by fac
 
 ## Skills, skill groups, multimap, string dictionary
 
-The last binary files the client read from the UO folder. Each is optional: the converter writes it only when the install has the source file (a stale copy from an earlier run is removed), and a client whose pack lacks it behaves as it did without the file. Reader and writer: `poc/Uo.Pack/MiscData.cs`.
+The last binary files the client read from the UO folder. `skills.bin` is required: every supported install, from 4.0.11c on, has skills.mul and Skills.idx, so the converter fails without them and the client refuses a pack without `skills.bin`. The others are optional: the converter writes one only when the install has the source file (a stale copy from an earlier run is removed), and a client whose pack lacks it behaves as it did without the file. Reader and writer: `poc/Uo.Pack/MiscData.cs`.
 
 A **string-list store** is a record store (below) with exactly one slot, whose record is: count u32, blobBytes u32, `StringListRecord[count]` (8 bytes: value u32, end u32), then the UTF-8 blob; entry `i`'s text is `blob[end[i-1] .. end[i])`. The reader caps it at 2^20 entries and 64 MiB of text and requires `8 + 8*count + blobBytes` to equal the record's raw size, with ends that never decrease or pass the blob.
 
 | File | Magic | Content |
 |---|---|---|
-| `skills.bin` | `SKLS` | String-list store, record raw. One entry per skill in the client's order (Skills.idx entries with a positive length, in index order); value bit 0 = the skill has a use button. Without it the client has no skill names until the server sends a skill list. |
+| `skills.bin` | `SKLS` | String-list store, record raw. One entry per skill in the client's order (Skills.idx entries with a positive length, in index order); value bit 0 = the skill has a use button. Required (revision 1.2). |
 | `skillgrp.bin` | `SKGR` | Not a store: `FileHeader`, nameCount u32, assignmentCount u32, blobBytes u32, u32 nameEnd[nameCount], i32 assignment[assignmentCount], UTF-8 blob. The names are skillgrp.mul's groups 1..count−1 (ASCII or, after a −1 marker, UTF-16 in the file); the assignments are the file's trailing i32 group numbers, unchecked. The client builds the groups from them as it built them from the file: group 0 is its own "Miscellaneous", a number past the last group skips the entry, a negative one makes it use its built-in groups. A skillgrp.mul the client could not read (count 0 or negative, a name or number past the end of the file) gets no table, so the client uses the built-in groups as before. |
-| `multimap.bin` | `MMAP` | Record store, 1..256 slots. Slot 0 is Multimap.rle; slot 1 + n is the n-th facet0*.mul file in ordinal path order (the order the client indexed them, so a missing facet02.mul shifts the later ones). Records are the files' bytes, raw up to 16 KiB, else Brotli (quality 9). The client decodes a record when the server asks for a map (packets 0x90/0xF5) and keeps nothing; a facet image needs slot 0, as before. |
+| `multimap.bin` | `MMAP` | Record store, 1..256 slots. Slot 0 is Multimap.rle; slot 1 + n is the n-th facet0*.mul file in ordinal path order (the order the client indexed them, so a missing facet02.mul shifts the later ones). Records are the files' bytes, raw up to 16 KiB, else Brotli (quality 9), at most 64 MiB decoded each (`MiscConst.MaxMultiMapRecordBytes`; the stock facet01.mul is 12 MB): the converter refuses a larger file, and the client refuses a record that declares more before allocating. The client decodes a record when the server asks for a map (packets 0x90/0xF5) and keeps nothing; a facet image needs slot 0, as before. |
 | `text/stringdict.bin` | `STRD` | String-list store, record Brotli. string_dictionary.uop's strings in index order, value 0. Absent for installs without the file (pre-UOP). |
 
 ## Loose text files (`loose/`)
