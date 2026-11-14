@@ -7345,3 +7345,45 @@ Base `poc/modern-client` bae113ff7. Scripts: `cuo-poc-state/measure/alloc-ui-1/`
 - **clip-3** (depth_model, default off): results above. bench6-000036 ran the c3-flip scene on the base build (cbfa71281): the Gpu world shots after a teleport, a step and a switch back from Legacy are black (99.5 % of pixels) exactly as with clip-3 (bench6-000035), so the black land is inherited, not a depth_model regression. It gets its own stream.
 - **alloc-ui-1**: bench2-000026 gate-gpu failed only because the main runner's evloop-4 jobs logged in with the same account (kbatman, lane L1's) and each login disconnected the other (textflood/smallfields/uistate). The evloop job sets now use kbatman2. Rerun bench2-000027 GATE PASS. bench3-000020 gate-legacy PASS. bench5-000022/23 alloc-g/alloc-l: main-thread p50 0 B/frame base and new, gen1/gen2 0; all-threads medians move both ways by one-off ~1 MB allocations landing in different windows (Legacy worldmap 1469 to 0, off 0 to 734).
 - Merged tip: ClassicUO.UnitTests 3917 passed / 6 skipped; client builds with and without `CuoDevTools` 0 errors.
+
+## 2026-11-14 clip-4: depth model on the Legacy renderer (bg/clip-4)
+
+Base `0381a1eb7`. Code `509e124d9` (renderer: technique, encoding, batcher) and `d42119c1d` (client plumbing, tests). Switch
+`depth_model` stays default off; with it off nothing new is written and the default technique is unchanged. Design: clip
+design note section 7, option 2 (pixel-shader depth), after the oDepth spike. Scripts: `cuo-poc-state/measure/clip-4/`.
+
+- **Shader.** IsometricWorld.fx gains `HueGeoTechnique` (vs_3_0/ps_3_0, `DEPTH0` out) next to `HueTechnique`, compiled
+  with the repo's fxc (`/T fx_2_0 /O3`, as compile_shaders.bat). HueTechnique's fxc listing (both shaders, constant
+  registers) is identical to the committed .fxc's. The GEO pixel shader computes the same classes as sprite.hlsl GeoDepth
+  (box with clip-3's centre cap, wall, flat, mobile composite, linear for land corners), then calls the unchanged
+  PixelShader_Hue. 128 instruction slots (default 104).
+- **Encoding (LegacyGeo).** No new vertex fields: TexCoord.z = class * 64 + 32 + (base - key), Normal.xy = the class's
+  reference column/row in the vertex's own space (world pixels for the chunk mesh, screen pixels for the batcher; the
+  shader takes position - reference, so both work). TexCoord.z 0 is the depth key (every writer's default), mapped to the
+  Gpu's key fallback ((D - Dcam) / 100 + 0.5). **Precision:** the key range of the default projection (1/65535 per key unit,
+  ~256 Depth24 steps) would put ZBias (2e-3) under one step, and absolute tile sums near 10 000 resolve only ~1e-3 in fp32.
+  So the shader subtracts an integer camera sum (uniform GeoCam, the view centre's tile sum) from the vertex key before it
+  adds (base - key), and maps with the Gpu's GeoScale (1/2500): ZBias is ~13 Depth24 steps (unit test), the same scale the
+  Gpu uses. All world draws of the pass go through the GEO technique (keys included), so they share one scale.
+- **Plumbing (LegacyGeoDepth).** Chunk mesh: land as a flat at its z, stretched land by its corner sums (+0, 1, 1, 2),
+  statics and multi pieces by tiledata (wall / flat / box), map statics whose top is at or under their tile's land buried
+  (multi pieces not, as on the Gpu). Meshes built with the other setting are rebuilt (ChunkMesh.BuiltGeo). Batcher:
+  `SetGeoDepth(on, camSum)` for the world pass (End turns it off), `BeginGeo`/`EndGeo` around one object's draws; the open
+  shape is written into the queued sprites before a flush draws them; shadows keep the key. Sinks: view-drawn land
+  (animated water, stretched), statics and multis out of the mesh (trees, foliage, animated art), items (tiledata shape on
+  their tile, not buried), corpses and mobiles (composite around `MobileSpriteExtract.GeoAnchor`, the anchor the records
+  carry). Effects, auras, shadows and seated (CharSitting) mobiles keep the key, as on the Gpu.
+- **Tests (LegacyDepthModelTests, 25).** The vertex encoding decoded as the shader does (LegacyGeo.PixelSum, a C# copy of
+  GeoSum) equals GeoDepth for the static classes (walls, flats, boxes, buried; z -11..40), the mobile composite (three strip
+  keys), land and stretched-land corners; acceptance #1 (feet behind the studio's walls) and the feet/floor/same-tile-box
+  cases hold through the Legacy encoding; key fallback = the Gpu's key mapping; shadows untouched; mesh quads change only
+  with the switch on; the sink's anchor = the extract's record anchor for all mobile fixture cases.
+- **Verification.** Client builds with and without `CuoDevTools`: 0 errors. ClassicUO.UnitTests (dev): 3941 passed / 6
+  skipped, 1 failed: RecordedPassTests.EveryTextureUpload_BumpsTheEpoch, which looks for `src/` above the test binary and
+  cannot find it when the tests build to a scratch `--artifacts-path` (same with `-p:CuoDevTools=false`: 3896 passed);
+  CUO_REPO_ROOT set for the other source-scanning tests. NativeAOT dev builds: aot-clip4a (d42119c1d), aot-base (0381a1eb7).
+- **Jobs (no timing; machine not quiet):** bench6-000039 clip-legacy (c4-items + c4-feet: each pose's Legacy shot with the
+  switch on _L1 and off _L0, Gpu on _G; CUO_CLIP_ORDER_CHECK=1), bench6-000040 clip-multis (c4-multis: G1/G0/L1/L0),
+  bench6-000041 golden (off, base vs new), bench3-000021 gate-legacy, bench5-000025 alloc-l (base / off / on). Scenes from
+  `measure/clip-4/gen_legacy.py`. Results: handoff clip-4.
+- **Parked:** job-timing-legacy-PARKED.sh (base / off / on, Legacy, vsync off): the early-Z cost of the GEO technique.
