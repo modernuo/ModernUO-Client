@@ -621,6 +621,18 @@ namespace ClassicUO
 
         private static bool _sessionAfterReport;
 
+        // event_loop: the loop's waits since the last present, each up to the time it asked for (an oversleep stays in the
+        // frame). With present_on_change an idle frame follows a long wait on purpose; counted, every such frame was a "slow
+        // frame" and its log line allocated on every present (evloop-4 alloc-g/alloc-l, switch on)
+        private static long _sessionWaitTicks;
+
+        /// <summary>The loop waited <paramref name="ticks"/> (Stopwatch) for the next present, wake or timer.</summary>
+        public static void NoteLoopWait(long ticks) => _sessionWaitTicks += ticks;
+
+        /// <summary>A frame's time for the session timeline: the present-to-present interval without the loop's waits.</summary>
+        internal static double BusyFrameMs(long intervalTicks, long waitTicks, long frequency)
+            => Math.Max(0, intervalTicks - waitTicks) * 1000.0 / frequency;
+
         // the baseline for the next frame: everything up to the end of this one
         private static void SessionBaseline()
         {
@@ -647,6 +659,7 @@ namespace ClassicUO
                 WorldHeld = false;
                 _sessionAfterReport = false;
                 _sessionLast = now;
+                _sessionWaitTicks = 0;
                 SessionBaseline();
 
                 return;
@@ -676,8 +689,9 @@ namespace ClassicUO
             }
 
             double t = (now - _sessionStart) / (double)Stopwatch.Frequency;
-            double frameMs = (now - _sessionLast) * 1000.0 / Stopwatch.Frequency;
+            double frameMs = BusyFrameMs(now - _sessionLast, _sessionWaitTicks, Stopwatch.Frequency);
             _sessionLast = now;
+            _sessionWaitTicks = 0;
             int seen0 = GC.CollectionCount(0);
 
             if (seen0 != _sessionGcSeen0)

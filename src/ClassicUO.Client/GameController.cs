@@ -225,6 +225,7 @@ namespace ClassicUO
             }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
+            FrameStats.NoteLoopWait(Math.Min(end - start, (long)(wait * Stopwatch.Frequency / 1000.0)));
 #if CUO_DEVTOOLS
             if (Diagnostics.On) Diagnostics.LoopWait((int)reason, (long)(wait * Stopwatch.Frequency / 1000.0), start, end, late);
 #endif
