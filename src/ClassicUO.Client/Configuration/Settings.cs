@@ -182,6 +182,23 @@ namespace ClassicUO.Configuration
         // (CUO_EVENT_LOOP_MAX_WAIT_MS overrides it in developer builds).
         [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
 
+        // evloop-2: with event_loop and the display-rate cap active, present when something may have changed instead of on a
+        // fixed display grid, rate-limited from the last present: a net, input or wake, a due timer, mobile/boat motion or
+        // effects present one display interval after the last present, or at once when the screen has been idle that long.
+        // With no change the screen is redrawn every event_loop_idle_redraw_ms for the discrete animations the loop does not
+        // track. The socket is also drained and dispatched (and sends flushed) right after Present, before the wait, so a reply
+        // that arrives during Draw is handled without a wake and a new Update (never between Draw and Present, where a handler
+        // could change the scene). CUO_PRESENT_CHANGE_CHECK=1 shadows the grid.
+        // Default off.
+        [JsonPropertyName("present_on_change")] public bool PresentOnChange { get; set; }
+
+        // present_on_change: the redraw period (ms) when nothing tracked changed. 0 (default) = the display interval: idle frames
+        // at display rate as with the grid, so no visual change; a packet then waits for the next interval from the last draw.
+        // A longer period (opt-in, e.g. 50 ms, the shortest discrete animation cadence, ITEM_EFFECT_ANIMATION_DELAY) leaves
+        // room to present an idle-time packet at once, at the cost of idle animations at that rate. Never shorter than the
+        // display interval.
+        [JsonPropertyName("event_loop_idle_redraw_ms")] public int EventLoopIdleRedrawMs { get; set; }
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

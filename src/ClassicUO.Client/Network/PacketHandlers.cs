@@ -76,6 +76,9 @@ namespace ClassicUO.Network
         /// <summary>Times parsing stopped at a packet whose bytes had not all arrived yet (a header or body cut by a read).</summary>
         public int PartialPacketWaits { get; private set; }
 
+        /// <summary>Bytes received but not yet dispatched (a packet split across reads). Main thread.</summary>
+        internal int PendingBytes => _buffer.Length;
+
         public int ParsePackets(NetClient socket, World world, Span<byte> data)
         {
             lock (_queueLock)

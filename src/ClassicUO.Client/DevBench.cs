@@ -1839,6 +1839,14 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex].StartsWith("presentchange:"))
+                    {
+                        Configuration.Settings.GlobalSettings.PresentOnChange = _plan[_planIndex] == "presentchange:on";
+                        Log.Info($"[bench] present_on_change {Configuration.Settings.GlobalSettings.PresentOnChange}");
+                        _planIndex++;
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("vsync:"))
                     {
                         game.SetVSync(_plan[_planIndex] == "vsync:on");

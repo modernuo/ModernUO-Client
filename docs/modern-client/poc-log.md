@@ -7191,3 +7191,69 @@ Base bg/pack-only 03b7df135. Owner decision: hybrid. Binary sources become pack 
 - P1, packs from before this change: revision 1.2. `PackAssets.Open` refuses a pack without `skills.bin` ("format 1.2 required: convert the client again"), and the converter fails on an install without skills.mul. Every supported install has skills.mul; the multimap, string dictionary, skill groups and loose files stay optional. Tests that open older reference packs use `OpenBefore12ForTests`. `SkillsGroup.Sort` used to copy uninitialized stack bytes over ids the catalog lacked (the assembly uses SkipLocalsInit). Ids the catalog does not know now stay, after the sorted ones.
 - P2: the converter makes `--uo` absolute. Multimap records are capped at 64 MiB decoded, checked before allocating in the client and in the converter's verify.
 - Live run on the fixed binary: bench-000800 (queued at hand-off).
+
+## 2026-11-13: evloop-2, present_on_change (present on change, fast wakes, no ping cost)
+
+Base `02956317b`, branch `bg/evloop-2`. Code and quiet commit point: **`bccb172c1`**. New switch `present_on_change` (default off) with `event_loop_idle_redraw_ms` (50). With event_loop and the display-rate cap active, the draw is no longer held for the next display-grid slot. A change presents one display interval after the last present, or at once when the screen has been idle that long. Changes are every net/input/wake wake (conservative), a due queued action, mobile/boat step motion and live effects. With no change the screen is redrawn every 50 ms, which covers the discrete animations the loop does not track. The socket is drained non-blocking and sends are flushed right before Present and again before the wait (inline, no receive thread). Developer checker `CUO_PRESENT_CHANGE_CHECK=1` shadows the grid on the same Update and counts draws later than the grid would have made. It also checks every present-to-present gap against the interval less the slack (mismatch). CUO_LOOP_STATS adds `net_wake`/`input_wake` (wait return to Update start), `net_present` (drain with bytes to the present showing it) and finer 5-30 us buckets. CUO_DIAG names the switch. Driver `presentchange on|off`, DevBench `presentchange:on|off`.
+
+Verification: Release builds CuoDevTools=true 78 warnings/0 errors, false 83 warnings/0 errors (the new CS0162 lines are the existing const-LoopStats pattern). Unit tests: 3874 passed, 6 skipped, 1 failed (`AtomicFileTests.Concurrent_writers...`, a FileNotFound race; it passes alone, 27/27, and the test is unrelated). Loop tests 48/48, including both switch states on one simulated timeline: grid delay > 0 and <= period, new delay 0, busy rate ~60/s in both.
+
+Gate **bench-000790 PASS** (both renderers, switch on, present-cap/present-change/pick/gpu-item/funnel checkers, plus a pick scan with the event loop and the switch on: 48 same / 0 different each). Quiet spot, 60 Hz: presents/s 20.2-20.8 idle (grid 60), about 42 with motion, updates/s 66-76. Every window had under_gap=0 and min gap >= 16.6 ms. Draws later than the grid: GPU 4 of 211 (mean 6.8 ms, max 11.5 ms) and Legacy 2 of 212 (max 9.1 ms) in the motion window, 0-1 elsewhere. This is inherent in rate-limiting from the last present.
+
+Pending: counts and latency **bench-000791** (spin/grid/new interleaved per session, quiet and busy spot, both renderers, CUO_DIAG pings), allocations **bench-000792/000793** (base 02956317b, off, on; all event_loop on). PARKED: `measure/evloop-2/job-timing-{g,l}-PARKED.sh`. Handoff `handoffs/evloop-2.md`.
+
+Accepted costs (switch on only): idle discrete animations and fades are shown at 20 Hz (up to 50 ms late). A draw can come up to one interval later than the grid when a change follows a recent present. There are two extra non-blocking drains per frame. The histograms add about 0.7 KB. No new per-frame allocation site (alloc jobs pending).
+
+### evloop-2 fix round (code `9838399b5`, `6544a3ec3`; quiet commit point now **`6544a3ec3`**)
+
+bench-000791 counts, first build `bccb172c1`. Medians, us:
+
+| spot | arm | net_wake p50/p99 | net_present p50/p99 | ping RTT | presents/s |
+|---|---|---|---|---|---|
+| quiet | gpu grid | 11/15 | 16824/16824 | 0.70 ms | 60 |
+| quiet | gpu new | 9/12 | 17319/17361 | 0.46 ms | 20.4 |
+| busy | gpu grid | 25/49 | <=16000/18674 | 1.17 ms | 60 |
+| busy | gpu new | 20/50 | <=20000/23764 | 1.34 ms | 50.2 |
+| busy | legacy grid | 20/30 | <=16000/19684 | 0.81 ms | 60 |
+| busy | legacy new | 20/50 | <=20000/21937 | 1.17 ms | 48.7 |
+
+Wakes are fast: net wakes are not quantised to 1 ms. The present_on_change gap had three causes:
+
+1. **The client's own send wake counted as a change.** `NetClient.SendQueuedWake` fires on every send, including the ping. The send wake made the next wait return at once and started a draw, so the reply arrived during that Draw. The pre-present drain read it, and it was shown one interval later. This also explains why quiet replies were so rarely read on a net wake: 5 net wakes for 35 pings. The FD_READ re-arm was not the cause, since busy sessions show thousands of net wakes. Fix: a Wake no longer counts as a change, and the pre-present and pre-wait drains clear the pending send wake before they flush.
+2. **The rate limit was anchored on the present end.** Each frame added its own draw time to the interval, so busy sessions dropped to about 50 presents/s and their latency rose. Fix: the rate limit now runs from the draw start. The checker checks draw-to-draw gaps; present gaps are reported only.
+3. **The round 16000/20000 values were histogram bucket bounds.** The old buckets were 4 ms wide; this is not a ms clock. Fix: 1 ms buckets from 4 to 25 ms.
+
+Owner requirement: `event_loop_idle_redraw_ms` now defaults to 0, meaning the display interval, so idle frames run at display rate with no visual change. With idle frames every interval, a change still waits for the next interval from the last draw. The phase is the last draw's rather than the display grid's, so idle-then-event zero delay only exists with the 50 ms opt-in. The counts now have four arms (spin, grid, new, new50) per session.
+
+Tests: 3876 passed, 6 skipped, 0 failed. Both builds have 0 errors. Re-run jobs: counts **bench-000795**, gate **bench-000796**, allocations **bench-000797/000798**. bench-000792 is the alloc run on the old build. bench-000793 was cancelled because its binary was superseded. Binary `new2` is `6544a3ec3`.
+
+### evloop-2 fix round 2 (code `270e03b5c`; quiet commit point now **`270e03b5c`**)
+
+Results for `6544a3ec3`:
+
+- **Gate bench-000796:** PASS.
+- **GPU allocations bench-000797:** PASS. Main-thread p50 is 256-272 B/frame in base, off and on alike; GC gen1+gen2 is 0 in every window.
+- **Legacy allocations bench-000798:** still running when this was written.
+- **Counts bench-000795**, medians in µs:
+
+| spot | arm | net_present p50/p99 | ping RTT | presents/s |
+|---|---|---|---|---|
+| quiet | gpu new50 | 4250/17486 | 0.46 ms | 26.9 |
+| quiet | legacy new50 | 5000/17279 | 0.21 ms | 23.9 |
+| quiet | gpu new (idle redraw = interval) | 17563 | 0.76 ms | 58.3 |
+| quiet | gpu grid | 16893 | 0.86 ms | 60 |
+| busy | gpu new | 14000/18969 | 0.94 ms | 57.5 |
+| busy | gpu grid | 14000/17891 | 1.15 ms | 60 |
+| busy | legacy new | 16000/19000 | 2.54 ms | 57.5 |
+| busy | legacy new50 | 16000/19500 | 3.16 ms | 56.8 |
+| busy | legacy grid | 15500/18500 | 0.87 ms | 60 |
+
+- In the busy-Legacy new arms, 44 of 45 and 39 of 40 pings had no draw outstanding (max_draw_us=0) but max_update_us of 2.9-4.5 ms. So these replies waited inside a long Update phase, not a Draw. The cause is not found yet; see the 801 results.
+- **Review fixes (Codex review, `audits/evloop-2/review.out.md`):**
+  - Nothing runs between Draw and Present, so no dispatch there. A handler there could change the scene or reset the device: LoginComplete leads to SetScene, then SetWindowSize, then GraphicsDevice.Reset.
+  - Reading bytes without dispatch before Present was not added: it would not move the dispatch point. A flush there can Terminate the connection, which runs the Disconnected handlers.
+  - Received bytes are dispatched, and sends flushed, right after Present, before the wait.
+  - Any dispatched packet counts as a change, including plugin-injected ones. So does any connection start or end, including a failed Flush, in Update and in the event drain.
+  - net_present now runs from the oldest read that contributed to a dispatched packet.
+- **Tests:** 3878 passed, 6 skipped, 0 failed. Both builds have 0 errors.
+- **Jobs on `270e03b5c` (binary `new3`):** counts **bench-000801**, gate **bench-000802**, allocations **bench-000803/000804**.

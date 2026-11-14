@@ -186,6 +186,14 @@ namespace ClassicUO.Loop
             }
         }
 
+        public override void ClearWake()
+        {
+            if (!_disposed && _wakeEvent != 0)
+            {
+                ResetEvent(_wakeEvent);
+            }
+        }
+
         public override void Dispose()
         {
             if (_disposed)

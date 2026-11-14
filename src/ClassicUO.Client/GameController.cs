@@ -174,10 +174,18 @@ namespace ClassicUO
         // The wait between frames: at the end of a tick that does not draw (Update) or after the present (EndDraw).
         private void EventLoopWait()
         {
+            if (_presentOnChange)
+            {
+                // present_on_change: a reply that arrived during Update, Draw or Present is read now, not after the wait
+                EventDrain();
+                RefreshChange();
+            }
+
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
             double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
             double wait = LoopTiming.WaitMs(
-                _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                _presentOnChange ? MsUntilPresentOnChange()
+                : _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
                 MsUntilNextTimer(since),
                 maxWait
             );
@@ -203,14 +211,25 @@ namespace ClassicUO
             {
                 _lateWake.RecordWait(late);
             }
+            else if (reason != WakeReason.Wake)
+            {
+                // present_on_change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
+                // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
+                // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
+                _changePending = true;
+            }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
 
             if (LoopStats.On)
             {
-                if (reason == WakeReason.Net && waited > 0.2)
+                if (reason == WakeReason.Net)
                 {
-                    LoopStats.NoteNetWake(end);
+                    LoopStats.NoteNetWake(end, waited > 0.2);
+                }
+                else if (reason == WakeReason.Input)
+                {
+                    LoopStats.NoteWake(reason, end);
                 }
 
                 LoopStats.NoteWait(reason, (long)((waited - wait) * Stopwatch.Frequency / 1000.0), timed, late);
@@ -683,12 +702,15 @@ namespace ClassicUO
             }
 
             _lastDrainTs = _updateStartTs;
+            int generation = NetClient.Socket.ConnectionGeneration;
             var packetsCount = NetClient.Socket.Drain(_parseSlice, capBytes, capPackets, _netCapMs);
 
             if (LoopStats.On)
             {
                 LoopStats.NoteDrain(drainStart, Stopwatch.GetTimestamp(), NetClient.Socket.LastDrainBytes);
             }
+
+            NoteDrainResult(_updateStartTs, NetClient.Socket.LastDrainBytes, packetsCount, generation);
 
             if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
             {
@@ -749,6 +771,19 @@ namespace ClassicUO
             _tickInterval = x;
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
+            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive && PresentOnChangeSwitch;
+
+            if (_presentOnChange)
+            {
+                displayDue = PresentOnChangeDue(displayDue);
+            }
+#if CUO_DEVTOOLS
+            else if (PresentChangeCheck.On)
+            {
+                PresentChangeCheck.Tick(Stopwatch.GetTimestamp(), false, displayDue, displayDue, false, _displayPeriod);
+            }
+#endif
+
             _displayDrawDue = displayDue;
 
             // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
@@ -824,12 +859,25 @@ namespace ClassicUO
 
 
             // event_loop on: every due action (one Update per frame or wake); off: one per Update, as before
-            _queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch);
+            if (_queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch) > 0)
+            {
+                _changePending = true;
+            }
 
             base.Update(gameTime);
 
             // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
-            if (_tickMode == LoopMode.Event) NetClient.Socket.Flush();
+            if (_tickMode == LoopMode.Event)
+            {
+                int flushGeneration = NetClient.Socket.ConnectionGeneration;
+                NetClient.Socket.Flush();
+
+                if (NetClient.Socket.ConnectionGeneration != flushGeneration)
+                {
+                    // present_on_change: a failed send ended the connection
+                    _changePending = true;
+                }
+            }
 
             FrameStats.End(FramePhase.Update);
 #if CUO_DEVTOOLS
@@ -880,6 +928,7 @@ namespace ClassicUO
         protected override void Draw(GameTime gameTime)
         {
             if (LoopStats.On) LoopStats.NoteDraw();
+            BeginPresentedChange();
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
 
@@ -1019,6 +1068,7 @@ namespace ClassicUO
             }
 
             GpuDeviceLost.AfterPresent();
+            EndPresentedChange();
             _totalFrames++;
 #if CUO_DEVTOOLS
             PresentedFrameCount++;
@@ -1101,6 +1151,12 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
+            // present_on_change: any window, input or device event may change the screen (not the poll sentinel or user events)
+            if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
+            {
+                _changePending = true;
+            }
+
             if (LoopStats.On)
             {
                 LoopStats.NoteInputEvent(sdlEvent->type, sdlEvent->common.timestamp);
