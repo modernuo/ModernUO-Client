@@ -7184,3 +7184,10 @@ Base bg/pack-only 03b7df135. Owner decision: hybrid. Binary sources become pack 
 - Still read from the loose-file folder when present: a loose Clilocs.txt (wins over the packed overrides), loose Sounds/<id>.wav, and the CUO_PACK_GUMPS=0 / CUO_PACK_TEXT=0 fallbacks. Stitchin is never called in the client (dead code); it uses the loose lookup anyway.
 - Memory: no resident cost. A map request allocates the decoded record (up to about 12 MB for facet00) and keeps nothing.
 - Live run: job bench-000794 (measure/pack-only-2/job-live.sh). It runs with no UO directory and clientversion "", on the test pack in the agent scratch folder.
+
+### Pack-only step 2, review fix round (review-2)
+
+- P1, client version on the wire: the client now sends the resolved version text (`UltimaOnline.VersionText`) in its 0xBD replies. That is settings `clientversion` when valid (sanitized), else the pack manifest's version. The login gump, the debug gump and the crash report show the same text. Nothing is written back to settings.json. bench-000794 ran the old binary with `clientversion ""`: login reached the world, but the scene driver never attached and the run timed out. Until the new live run completes, that missing version reply is only the likely cause.
+- P1, packs from before this change: revision 1.2. `PackAssets.Open` refuses a pack without `skills.bin` ("format 1.2 required: convert the client again"), and the converter fails on an install without skills.mul. Every supported install has skills.mul; the multimap, string dictionary, skill groups and loose files stay optional. Tests that open older reference packs use `OpenBefore12ForTests`. `SkillsGroup.Sort` used to copy uninitialized stack bytes over ids the catalog lacked (the assembly uses SkipLocalsInit). Ids the catalog does not know now stay, after the sorted ones.
+- P2: the converter makes `--uo` absolute. Multimap records are capped at 64 MiB decoded, checked before allocating in the client and in the converter's verify.
+- Live run on the fixed binary: bench-000800 (queued at hand-off).
