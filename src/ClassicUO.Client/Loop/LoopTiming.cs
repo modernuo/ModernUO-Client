@@ -163,6 +163,17 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
+        /// present_on_change: the ping's game-time deadline is a timer of its own. Without it the Update that crosses the
+        /// deadline is the one after the longest wait, i.e. the one that draws at the next display interval, so the reply
+        /// arrived during that Draw and was read after Present (busy Legacy ping 2.6 ms against 0.4 ms with the grid,
+        /// bench-000801/000805). Waking at the deadline sends the ping from an Update that does not draw; the reply then ends
+        /// the wait as a net wake. Infinity when the switch is off, no ping is scheduled, or the deadline had already passed at
+        /// the Update start (the scene did not service it, e.g. not in game: waking for it would spin).
+        /// </summary>
+        public static double MsUntilPing(bool presentOnChange, long pingDueTick, uint ticksAtUpdate, double msSinceUpdate)
+            => MsUntilTick(presentOnChange && pingDueTick > 0 && pingDueTick + 1 > ticksAtUpdate, pingDueTick, ticksAtUpdate, msSinceUpdate);
+
+        /// <summary>
         /// Event loop: the per-drain byte and packet caps scale with the time since the previous drain (one Update per frame
         /// instead of one per ~1 ms), at least the base cap and at most four times it. The time cap stays per drain.
         /// </summary>

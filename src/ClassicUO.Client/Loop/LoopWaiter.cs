@@ -39,6 +39,9 @@ namespace ClassicUO.Loop
         /// </summary>
         public abstract void ClearWake();
 
+        /// <summary>Diagnostics: 1 if the socket's readiness event is set now, 0 if not, -1 if no socket is bound.</summary>
+        public virtual int NetSignaled => -1;
+
         public abstract void Dispose();
     }
 }

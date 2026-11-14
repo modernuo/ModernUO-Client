@@ -281,7 +281,7 @@ namespace ClassicUO
             for (int i = 0; i < w.PingCount; i++)
             {
                 var p = w.Pings[i];
-                writer.WriteLine($"ping connection={p.Connection} seq={p.Sequence} index={p.Index} status={p.Status} created={p.Created} queued={p.Queued} socket_start={p.SendStart} socket_end={p.SendEnd} read={p.Read} dequeued={p.Dequeued} handler={p.Handler} frame_clock_ms={p.RawMs} displayed_ms={p.DisplayMs} drain_stop={p.DrainStop} backlog_bytes={p.Backlog} drain_bytes={p.DrainBytes} max_interval_us={ToUs(p.MaxInterval)} max_update_us={ToUs(p.MaxUpdate)} max_draw_us={ToUs(p.MaxDraw)} max_present_us={ToUs(p.MaxPresent)} gc={p.Gc0}/{p.Gc1}/{p.Gc2} pause_ms={p.PauseMs:F3}");
+                writer.WriteLine($"ping connection={p.Connection} seq={p.Sequence} index={p.Index} status={p.Status} created={p.Created} queued={p.Queued} socket_start={p.SendStart} socket_end={p.SendEnd} read={p.Read} dequeued={p.Dequeued} handler={p.Handler} frame_clock_ms={p.RawMs} displayed_ms={p.DisplayMs} drain_stop={p.DrainStop} backlog_bytes={p.Backlog} drain_bytes={p.DrainBytes} max_interval_us={ToUs(p.MaxInterval)} max_update_us={ToUs(p.MaxUpdate)} max_draw_us={ToUs(p.MaxDraw)} max_present_us={ToUs(p.MaxPresent)} gc={p.Gc0}/{p.Gc1}/{p.Gc2} pause_ms={p.PauseMs:F3} waits={p.Waits} wait_after_send_us={ToUs(p.WaitTicks)} last_wait_reason={p.LastWaitReason} last_wait_req_us={ToUs(p.LastWaitReq)} last_wait_act_us={ToUs(p.LastWaitAct)} last_wait_late={p.LastWaitLate} drain_site={p.DrainSite} net_signaled={p.NetSignaled} drain_start={p.ReadDrainStart} sit_us={(p.Read == 0 ? -1 : ToUs(p.Read - Math.Max(p.SendEnd, p.LastEmptyDrain)))}");
             }
         }
         public static string RuntimeHeader()

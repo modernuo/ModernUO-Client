@@ -83,6 +83,35 @@ namespace ClassicUO.UnitTests.Loop
             LoopTiming.DrainChanged(ref partial, 100, 0, 0, false, false, out _).Should().BeFalse();
         }
 
+        // evloop-3: with the switch on the loop wakes for the ping deadline (the ping goes out from an Update that does not draw);
+        // off it does not track it, as before
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void The_Ping_Deadline_Is_A_Timer_Only_With_The_Switch_On(bool on)
+        {
+            // Time.Ticks > due sends it, i.e. at due + 1: 1000 + 1 - 995 - 2 ms since the Update = 4 ms
+            double ms = LoopTiming.MsUntilPing(on, 1000, 995, 2);
+
+            if (on)
+            {
+                ms.Should().Be(4);
+            }
+            else
+            {
+                ms.Should().Be(double.PositiveInfinity);
+            }
+        }
+
+        [Fact]
+        public void A_Ping_Deadline_The_Scene_Did_Not_Service_Is_Not_Waited_For()
+        {
+            // past at the Update start (not in game, scene returned early): waking for it would spin
+            LoopTiming.MsUntilPing(true, 1000, 1001, 0).Should().Be(double.PositiveInfinity);
+            LoopTiming.MsUntilPing(true, 0, 5, 0).Should().Be(double.PositiveInfinity);
+            LoopTiming.MsUntilPing(true, 1000, 1000, 0.5).Should().Be(0.5);
+        }
+
         [Fact]
         public void The_First_Present_Is_Due_At_Once()
         {
