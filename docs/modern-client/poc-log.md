@@ -7267,3 +7267,20 @@ Results for `6544a3ec3`:
 - **Results at 143.86 Hz (both monitors moved to 144 Hz on 2026-11-14; counts bench-000820, diag bench-000821):** busy ping median, GPU / Legacy: spin 0.86 / 0.64 ms, grid 3.75 / 4.58 ms, new 3.14 / 3.28 ms (counts) and 1.06 / 1.12 ms (diag). At 144 Hz the busy scene keeps the loop drawing 60-70 % of the time (draw 2.5-4 ms against a 6.95 ms interval), so a reply often lands in a Draw in every arm; spin catches more replies between draws at p50 but has the worst p90 (6.8 / 14.1 ms diag). net_present p50 is 7-8 ms in all arms. CPU ms/s busy: spin about 1,050, grid 660-855, new 540-675.
 - **Machine not quiet:** latency and CPU are indicative. The owner asked for a quiet 144 Hz pass before calling the 144 Hz ping a regression: `cuo-poc-state/measure/evloop-3/job-quiet-144.sh` (base `ee6809bf9` vs `d23dba919`, ABBA, 3 rounds) is parked until the owner says the machine is quiet.
 - **Gates:** gate bench-000812 PASS; allocations bench-000818 (GPU) and bench-000819 (Legacy) PASS, gen1+gen2 0 in every window, base / off / on equal. Tests 3903 passed, 6 skipped, 0 failed. Earlier runs 807-810 and 813-817 were cancelled or failed when the machine restarted or the monitors were changed.
+
+## alloc-ui-1: small allocation and UI per-frame fixes (2026-11-14, `bg/alloc-ui-1`)
+
+Base `poc/modern-client` bae113ff7. Scripts: `cuo-poc-state/measure/alloc-ui-1/` (lane set from measure/lanes/template).
+
+- **Backlog check (perf-opportunities rows, checked against the code first).** Already done, no change here:
+  - `Control.InvokeMouseOver/Enter/Exit` build `MouseEventArgs` only with listeners, and `UIManager.SortControlsByInfo` re-links the existing node (`AddFirst(first)`): 3164baa6c (alloc-text-ui).
+  - `ItemGump` / `ItemGumpFixed` hold an `EntityRef` (perf-9); the remaining `World.Get` calls run on hover, mouse-up and double-click only.
+  - `ClilocLoader.Translate` caches results for empty arguments, capitalized and plain (3d653dcd0); the journal renders a line only when a filter shows its type (b7db8542a).
+- **Changes (one commit each; all keep behaviour identical, so no switch or checker):**
+  - ce84849aa object handles: the render-list pass reads the profile's name-overhead filter once, next to the player's race, and calls the static `NameOverHeadManager.IsAllowed` overload (was a `CurrentProfile` read per item and mobile while handles show). CPU only.
+  - 705e4039b `HealthLinesManager.DrawMobile`: one `HitsTexture` lookup per drawn hits text instead of four. CPU only; the every-mobile walk with `ShowMobilesHP` on stays.
+  - a119ae333 `ItemPool`: the retired-item queue is created at `MaxPooled` (8,192 entries). **Memory: 128 KB per client**, which a pool that fills reaches anyway; it removes ~128 KB of outgrown queue arrays once per session. With `item_pool` off the pool object is still created (World.Offer), so the 128 KB is held there too.
+  - 032666849 `GpuItemCache.Add`: `Entries` and `Instances` grow through `ArrayPool<T>.Shared` (the outgrown pool-sized array goes back), instead of `Array.Resize`; entries past `Count` are cleared after growth, as a new array had them. Memory: the shared pool keeps outgrown arrays it has room for (bounded per size; trimmed by the runtime under memory pressure). Test `GpuItemCacheGrowTests` (2; a mutant without the clear fails).
+- **Not done:** prefilling the item pool at login (8,192 x 280 B = ~2.3 MB per client for the first walk's Items; a behaviour change that needs the switch and checker route); the item pool is already default on (Settings.cs:234).
+- **Verification:** builds with and without `CuoDevTools` 0 errors; ClassicUO.UnitTests 3905 passed / 6 skipped (dev) and 3860 / 6 (`-p:CuoDevTools=false`). Write-site budget unchanged (no class A writes touched).
+- **Jobs (allocation counts only; the machine is not quiet, no timing):** NativeAOT dev builds of bae113ff7 and 032666849; alloc-g / alloc-l on lane L4 (handles once, tour twice, base vs new interleaved, checkers off), gate-gpu (L1) and gate-legacy (L2). Job ids and results: see the coordinator's merge entry.
