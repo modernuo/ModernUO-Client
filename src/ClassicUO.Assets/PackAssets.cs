@@ -99,6 +99,9 @@ namespace ClassicUO.Assets
             return new PackAssets(root, manifest);
         }
 
+        /// <summary>Tests: a pack folder without the files <see cref="Open"/> requires.</summary>
+        internal static PackAssets OpenForTests(string root) => new PackAssets(root, new Manifest());
+
         public void Dispose()
         {
             Art.Clear();

@@ -1,18 +1,15 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
-using ClassicUO.IO;
-using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using System;
 using System.Collections.Generic;
-using System.Text;
-using System.Threading.Tasks;
+using System.IO;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
     public sealed class SkillsLoader : UOFileLoader
     {
-        private UOFileMul _file;
-
         public SkillsLoader(UOFileManager fileManager) : base(fileManager)
         {
         }
@@ -21,41 +18,47 @@ namespace ClassicUO.Assets
         public readonly List<SkillEntry> Skills = new List<SkillEntry>();
         public readonly List<SkillEntry> SortedSkills = new List<SkillEntry>();
 
-        public override unsafe void Load()
+        /// <summary>
+        /// The skills from the pack's skills.bin (skills.mul + Skills.idx as the converter read them). A pack without it
+        /// (the install had no skills files) leaves the list empty until the server sends one.
+        /// </summary>
+        public override void Load()
         {
             if (SkillsCount > 0)
             {
                 return;
             }
 
-            string path = FileManager.GetUOFilePath("skills.mul");
-            string pathidx = FileManager.GetUOFilePath("Skills.idx");
+            string path = FileManager.Pack?.PathOf(MiscConst.SkillsFile);
 
-            FileSystemHelper.EnsureFileExists(path);
-            FileSystemHelper.EnsureFileExists(pathidx);
-
-            _file = new UOFileMul(path, pathidx);
-            _file.FillEntries();
-
-            var buf = new byte[256];
-            for (int i = 0, count = 0; i < _file.Entries.Length; i++)
+            if (path == null || !File.Exists(path))
             {
-                ref var entry = ref _file.GetValidRefEntry(i);
-                if (entry.Length <= 0) continue;
+                Log.Warn("Skills: the pack has no skills.bin; no skill names until the server sends them (convert the client again with Uo.Converter)");
 
-                _file.Seek(entry.Offset, System.IO.SeekOrigin.Begin);
-                bool hasAction = _file.ReadInt8() != 0;
-                if (buf.Length < entry.Length)
-                    buf = new byte[entry.Length];
+                return;
+            }
 
-                _file.Read(buf.AsSpan(0, entry.Length - 1));
-                var name = Encoding.ASCII.GetString(buf.AsSpan(0, entry.Length - 1)).TrimEnd('\0');
+            (uint Value, string Text)[] entries;
 
-                Skills.Add(new SkillEntry(count++, name, hasAction));
+            try
+            {
+                entries = StringListFile.Read(path, MiscConst.MagicSkills);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"Skills: cannot read '{path}' ({e.Message})");
+
+                return;
+            }
+
+            for (int i = 0; i < entries.Length; i++)
+            {
+                Skills.Add(new SkillEntry(i, entries[i].Text, (entries[i].Value & MiscConst.SkillHasAction) != 0));
             }
 
             SortedSkills.AddRange(Skills);
             SortedSkills.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.InvariantCulture));
+            Log.Trace($"Skills: {SkillsCount} from {path}");
         }
 
         public int GetSortedIndex(int index)
