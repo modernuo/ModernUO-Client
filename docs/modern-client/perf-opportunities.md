@@ -13,6 +13,10 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 | `HandleKeyboardInput` walks every gump every frame | UIManager | CPU | open |
 | Container/paperdoll item art decodes on the main thread when a gump first opens | request in `WorldWriter.PlaceInContainer` | ~20-50 us per sprite, first-open hitch | open |
 | `HealthLinesManager` with `ShowMobilesHP` on still walks every mobile | HealthLinesManager.cs | CPU | open (`HitsTexture` hoisted, 705e4039b) |
+| anim_due: per-graphic due for animated statics (now one shared due) | present_on_change_anim_due | fewer idle presents near animated statics | open (evloop-4 report) |
+| anim_due: mobiles whose animation never advances still schedule a due | MobileClockRules.NextVisualTick | idle presents | open |
+| anim_due: effects report `NextChange` instead of "continuous" | effects | idle presents while effects run | open |
+| anim_due: remaining checker mismatch runs (world text early by 1-2 frames; one long mobile run after actions, bench-000830) | anim-due sources | correctness before default on | open |
 | `Party.Contains` per guild entity per frame (world map); `RequestServerPartyGuildInfo` builds a buffer every 250 ms (unverified); `HouseCustomizationGump` LINQ | perf-alloc-4 | low | open |
 | Season change reads the race per object | Map.cs:338, World.cs:324 | minor, rare | open |
 | Blocking main-thread waits (Present, limiter sleep) lose their quantum under load | frame limiter | 2 ms wait ~500 ms under 40 busy loops; ~4 ms with raised priority | decided 2026-11-08 (raise only around sleep/Present, lower when minimized); not started, needs timing under load |
