@@ -71,16 +71,19 @@ namespace ClassicUO
         // ---- present_on_change (evloop-2) ----
         private bool _presentOnChange; // this tick: event loop, display-rate cap active and the switch on
         private bool _changePending, _continuous;
-        private long _lastPresentTs, _pendingNetTs, _drawnNetTs, _motionSeen;
+        private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen;
 
         private static bool PresentOnChangeSwitch => Settings.GlobalSettings.PresentOnChange;
 
         private double DisplayIntervalMs => _displayPeriod * 1000.0 / Stopwatch.Frequency;
 
-        private static double IdleRedrawMs => Math.Max(1, Settings.GlobalSettings.EventLoopIdleRedrawMs);
+        // 0 = the display interval (LoopTiming.MsUntilPresent never goes below it)
+        private static double IdleRedrawMs => Math.Max(0, Settings.GlobalSettings.EventLoopIdleRedrawMs);
 
+        // The rate limit runs from the last draw start, not the present end: anchored on the present, every frame would add
+        // its own draw time to the interval (busy GPU frames fell to ~50/s in bench-000791).
         private double MsSinceLastPresent(long now)
-            => _lastPresentTs == 0 ? double.PositiveInfinity : (now - _lastPresentTs) * 1000.0 / Stopwatch.Frequency;
+            => _lastDrawTs == 0 ? double.PositiveInfinity : (now - _lastDrawTs) * 1000.0 / Stopwatch.Frequency;
 
         // A drain read bytes at ts: a change, and the oldest read not yet drawn starts the packet-to-present latency.
         private void NoteNetChange(long ts)
@@ -131,6 +134,7 @@ namespace ClassicUO
         // motion or effects keeps the next one due one interval later (the motion advances in Update, after the wait).
         private void BeginPresentedChange()
         {
+            _lastDrawTs = Stopwatch.GetTimestamp();
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;
             _changePending = _continuous;
@@ -140,7 +144,6 @@ namespace ClassicUO
         private void EndPresentedChange()
         {
             long now = Stopwatch.GetTimestamp();
-            _lastPresentTs = now;
 
             if (_drawnNetTs != 0)
             {
@@ -184,6 +187,9 @@ namespace ClassicUO
             }
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packets;
+            // the send wake has done its job once the queue is flushed here: without this, every send (a ping) ends the next
+            // wait at once for nothing
+            _waiter.ClearWake();
             NetClient.Socket.Flush();
         }
     }

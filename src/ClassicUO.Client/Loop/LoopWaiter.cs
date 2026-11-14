@@ -33,6 +33,12 @@ namespace ClassicUO.Loop
         /// <summary>From any thread: ends the current wait, or the next one if none is in progress (sticky).</summary>
         public abstract void Wake();
 
+        /// <summary>
+        /// Main thread, right before a flush: drops a pending <see cref="Wake"/>. A send queued before the flush goes out with
+        /// it; one queued after it wakes again.
+        /// </summary>
+        public abstract void ClearWake();
+
         public abstract void Dispose();
     }
 }

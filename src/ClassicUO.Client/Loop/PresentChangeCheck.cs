@@ -10,8 +10,9 @@ namespace ClassicUO.Loop
     /// <summary>
     /// CUO_PRESENT_CHANGE_CHECK=1: while present_on_change decides the draws, the old grid schedule still runs on the same
     /// Update. For each pending change it notes when the grid would have drawn and when the new policy drew; a new draw later
-    /// than the grid's is logged (the first few with values) and counted. Every present-to-present gap is checked against the
-    /// display interval: a gap shorter than the interval less the draw slack breaks the rate limit and is a mismatch.
+    /// than the grid's is logged (the first few with values) and counted. The rate limit runs between draw starts: a draw-to-draw
+    /// gap shorter than the interval less the draw slack breaks it and is a mismatch. The present-to-present minimum is reported
+    /// too (it also varies with the draw time).
     /// </summary>
     internal static class PresentChangeCheck
     {
@@ -19,7 +20,7 @@ namespace ClassicUO.Loop
 
         private const int LoggedLate = 20;
         private static long _start, _updates, _changes, _draws, _gridDraws, _later, _earlier, _same, _presents, _underGap, _logged;
-        private static long _lastPresent, _minGap, _laterMax, _laterSum, _earlierSum, _period;
+        private static long _lastPresent, _minGap, _laterMax, _laterSum, _earlierSum, _period, _lastDraw, _minDrawGap;
         private static long _changeAt, _gridAt;
         private static bool _active;
 
@@ -63,6 +64,19 @@ namespace ClassicUO.Loop
                 if (newDue)
                 {
                     _draws++;
+
+                    if (_lastDraw != 0)
+                    {
+                        long gap = now - _lastDraw;
+                        _minDrawGap = _minDrawGap == 0 ? gap : Math.Min(_minDrawGap, gap);
+
+                        if (UnderGap(gap, period, Stopwatch.Frequency))
+                        {
+                            _underGap++;
+                        }
+                    }
+
+                    _lastDraw = now;
 
                     if (_changeAt != 0)
                     {
@@ -116,11 +130,6 @@ namespace ClassicUO.Loop
             {
                 long gap = now - _lastPresent;
                 _minGap = _minGap == 0 ? gap : Math.Min(_minGap, gap);
-
-                if (_active && UnderGap(gap, _period, Stopwatch.Frequency))
-                {
-                    _underGap++;
-                }
             }
 
             _lastPresent = now;
@@ -131,17 +140,19 @@ namespace ClassicUO.Loop
             double sec = (now - _start) / (double)Stopwatch.Frequency;
             double ms = 1000.0 / Stopwatch.Frequency;
             Log.Info(FormattableString.Invariant(
-                $"[present-change-check] active={_active} sec={sec:F3} updates/s={_updates / sec:F1} presents/s={_presents / sec:F1} draws={_draws} grid_draws={_gridDraws} changes={_changes} earlier={_earlier} same={_same} later={_later} later_mean_ms={(_later == 0 ? 0 : _laterSum * ms / _later):F3} later_max_ms={_laterMax * ms:F3} earlier_change_to_draw_mean_ms={(_earlier == 0 ? 0 : _earlierSum * ms / _earlier):F3} min_gap_ms={_minGap * ms:F3} period_ms={_period * ms:F3} under_gap={_underGap} mismatches={_underGap}"));
-            long last = _lastPresent;
+                $"[present-change-check] active={_active} sec={sec:F3} updates/s={_updates / sec:F1} presents/s={_presents / sec:F1} draws={_draws} grid_draws={_gridDraws} changes={_changes} earlier={_earlier} same={_same} later={_later} later_mean_ms={(_later == 0 ? 0 : _laterSum * ms / _later):F3} later_max_ms={_laterMax * ms:F3} earlier_change_to_draw_mean_ms={(_earlier == 0 ? 0 : _earlierSum * ms / _earlier):F3} min_draw_gap_ms={_minDrawGap * ms:F3} min_present_gap_ms={_minGap * ms:F3} period_ms={_period * ms:F3} under_gap={_underGap} mismatches={_underGap}"));
+            long last = _lastPresent, lastDraw = _lastDraw;
             Reset(now);
             _lastPresent = last;
+            _lastDraw = lastDraw;
         }
 
         private static void Reset(long now)
         {
             _start = now;
             _updates = _changes = _draws = _gridDraws = _later = _earlier = _same = _presents = _underGap = 0;
-            _minGap = _laterMax = _laterSum = _earlierSum = 0;
+            _minGap = _laterMax = _laterSum = _earlierSum = _minDrawGap = 0;
+            _lastDraw = 0;
             _changeAt = _gridAt = 0;
             _lastPresent = 0;
         }

@@ -17,7 +17,7 @@ namespace ClassicUO.UnitTests.Loop
         {
             var s = new Settings();
             s.PresentOnChange.Should().BeFalse();
-            s.EventLoopIdleRedrawMs.Should().Be(50);
+            s.EventLoopIdleRedrawMs.Should().Be(0, "0 = idle frames at the display interval (no visual change)");
 
             var r = JsonSerializer.Deserialize<Settings>("{\"present_on_change\":true,\"event_loop_idle_redraw_ms\":100}");
             r.PresentOnChange.Should().BeTrue();
@@ -46,6 +46,13 @@ namespace ClassicUO.UnitTests.Loop
             LoopTiming.PresentDue(false, 20, Interval, 50).Should().BeFalse();
             LoopTiming.PresentDue(false, 50, Interval, 50).Should().BeTrue();
             LoopTiming.MsUntilPresent(false, 5, Interval, 1).Should().BeApproximately(Interval - 5, 1e-9);
+        }
+
+        [Fact]
+        public void Default_Idle_Redraw_Zero_Means_The_Display_Interval()
+        {
+            LoopTiming.MsUntilPresent(false, 5, Interval, 0).Should().BeApproximately(Interval - 5, 1e-9);
+            LoopTiming.PresentDue(false, Interval, Interval, 0).Should().BeTrue();
         }
 
         [Fact]
@@ -137,7 +144,7 @@ namespace ClassicUO.UnitTests.Loop
         }
 
         [Fact]
-        public void Checker_Counts_A_Draw_Later_Than_The_Grid_And_A_Short_Gap()
+        public void Checker_Counts_A_Draw_Later_Than_The_Grid_And_A_Short_Draw_Gap()
         {
             long f = Stopwatch.Frequency;
             long period = f / 60;
@@ -149,9 +156,15 @@ namespace ClassicUO.UnitTests.Loop
             PresentChangeCheck.Tick(t + 2, true, true, false, true, period); // change pending, grid due, new holds
             PresentChangeCheck.Tick(t + 2 + f / 100, true, false, true, true, period); // new draws 10 ms later
             PresentChangeCheck.Later.Should().Be(later0 + 1);
+            PresentChangeCheck.Mismatches.Should().Be(mism0);
 
+            // presents closer than the interval (draw time varies) are not a mismatch; draws closer than it are
             PresentChangeCheck.Present(t + f / 50);
             PresentChangeCheck.Present(t + f / 50 + period / 2);
+            PresentChangeCheck.Mismatches.Should().Be(mism0);
+            PresentChangeCheck.Tick(t + 2 + f / 100 + period / 2, true, false, true, true, period);
+            PresentChangeCheck.Mismatches.Should().Be(mism0 + 1);
+            PresentChangeCheck.Tick(t + 2 + f / 100 + period / 2 + period, true, false, true, true, period);
             PresentChangeCheck.Mismatches.Should().Be(mism0 + 1);
         }
 #endif

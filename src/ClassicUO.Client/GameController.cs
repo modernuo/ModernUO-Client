@@ -211,9 +211,11 @@ namespace ClassicUO
             {
                 _lateWake.RecordWait(late);
             }
-            else
+            else if (reason != WakeReason.Wake)
             {
-                // present_on_change: every net, input or wake (and a failed wait) counts as a change (conservative)
+                // present_on_change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
+                // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
+                // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
                 _changePending = true;
             }
 
