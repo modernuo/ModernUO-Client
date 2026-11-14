@@ -7267,3 +7267,37 @@ Results for `6544a3ec3`:
 - **Results at 143.86 Hz (both monitors moved to 144 Hz on 2026-11-14; counts bench-000820, diag bench-000821):** busy ping median, GPU / Legacy: spin 0.86 / 0.64 ms, grid 3.75 / 4.58 ms, new 3.14 / 3.28 ms (counts) and 1.06 / 1.12 ms (diag). At 144 Hz the busy scene keeps the loop drawing 60-70 % of the time (draw 2.5-4 ms against a 6.95 ms interval), so a reply often lands in a Draw in every arm; spin catches more replies between draws at p50 but has the worst p90 (6.8 / 14.1 ms diag). net_present p50 is 7-8 ms in all arms. CPU ms/s busy: spin about 1,050, grid 660-855, new 540-675.
 - **Machine not quiet:** latency and CPU are indicative. The owner asked for a quiet 144 Hz pass before calling the 144 Hz ping a regression: `cuo-poc-state/measure/evloop-3/job-quiet-144.sh` (base `ee6809bf9` vs `d23dba919`, ABBA, 3 rounds) is parked until the owner says the machine is quiet.
 - **Gates:** gate bench-000812 PASS; allocations bench-000818 (GPU) and bench-000819 (Legacy) PASS, gen1+gen2 0 in every window, base / off / on equal. Tests 3903 passed, 6 skipped, 0 failed. Earlier runs 807-810 and 813-817 were cancelled or failed when the machine restarted or the monitors were changed.
+
+## 2026-11-14 clip-3: same-tile boxes, multis shots, Legacy port design (bg/clip-3)
+
+Base `cbfa71281`. Code `4d7eebc13` (switch `depth_model` stays default off; only the GEO pixel shader changes, the default
+shaders are byte-identical).
+
+- **Same-tile item rule (Gpu, depth_model on).** bench6-000027 (clip-2) showed the player at Felucca 1451,1666 z 10 standing
+  in item 0x0F6A (height 12) on its own tile: the box's front faces (x + y + 2 - |s|) beat the mobile's billboard
+  (x + y + 1); the checker counted 3249 "now behind" samples, all against that box. Coordinator rule: a box on the mobile's
+  own tile with its base at or under the mobile's z must not occlude it. Fix: the box class is capped at its tile centre's
+  plane instead of the front faces, `max(back, min(top, x + y + 1))` (GeoDepth.Box, sprite.hlsl GEO_BOX). It covers items,
+  multi pieces, captured and baked statics alike (they share the class). Only values above x + y + 1 change, which no mobile
+  but the one on the box's own tile reaches; walls on the box's front edges win there with or without the cap; a box well
+  above the mobile on its tile (base more than MobileBias / ZBias = 5 z higher) still beats the billboard by its z bias.
+  Tests: DepthModelItemTests (same tile, 7 z/height cases; neighbouring tiles ahead still hide the lower body; walls on the
+  tile's front edges still beat the box; a box 20 z above still wins); DepthModelTests.BoxTopPlaneMeetsItsBackEdges now
+  expects x + y + 1 at the front's lowest point.
+- **Multis scene** (task 2): `cuo-poc-state/measure/clip-3/gen_multis.py` -> c3-multis.txt: a GM-placed classic small brick
+  house (SmallBrickHouseDeed, floor at z + 7) near lane L5's spot and a SmallBoat at Felucca 1720 1770; poses inside against
+  the front/east walls and the corner, behind the house, in front of it, on the boat's deck and rails. Each pose is shot on Gpu
+  with depth_model on (_G1) and off (_G0, driver `depthmodel`; job-clip-shots.sh CLIP_DM=drv sets no env) and on Legacy.
+  Results: see the jobs below (pending at writing).
+- **Legacy port** (task 3): design only, in the design note `cuo-poc-state/surveys/clip-design-2026-11-12.md` section 7:
+  per-vertex Z split (walls 2 quads, boxes 3-5 via the depth-test max trick, mobiles clipped on the CPU; +10-25 MB mesh memory
+  per client, estimate) vs pixel-shader depth (MojoShader oDepth, class parameters in the unused Normal/TexCoord.z fields; no
+  extra geometry, loses early-Z on the world pass). Recommendation: oDepth after a one-hour spike that checks MojoShader's
+  oDepth through FNA3D's SDL_GPU backend; per-vertex split as the fallback. Not built.
+- **Verification:** unit tests dev 3915 passed / 6 skipped; CuoDevTools=false 3870 passed / 6 skipped (client builds in both). NativeAOT aot-clip3a
+  (4d7eebc13) and aot-base (cbfa71281). Jobs (lanes, set measure/clip-3): bench6-000032 clip-items (c2-items + c1-feet, on,
+  CUO_CLIP_ORDER_CHECK), bench6-000033 clip-multis, bench6-000034 golden (off), bench2-000025 gate-gpu, bench3-000019
+  gate-legacy, bench5-000020/21 alloc-g/alloc-l (base / off / on).
+  Partial read of bench6-000032 while it ran: c2-items changed 984 samples (was 3249), all "now behind" vs the studio walls
+  (acceptance #1), none vs 0x0F6A, none "now in front".
+- **Costs:** none. The GEO pixel shader loses one instruction; no CPU, allocation or memory change. No timing job needed.
