@@ -10,7 +10,8 @@ namespace ClassicUO.Game.Scenes
     /// mobile strips' + 1 + 2i; the strip under the anchor (+ 3) beats walls up to two diagonals ahead (feet through walls,
     /// Felucca 1453 1668). On: per-pixel geometric depth by shape class (Uo.Render.GeoDepth): walls, boxes, land planes and the
     /// mobile composite (body, mount and equipment around one anchor; corpses too); items, multis and captured statics take
-    /// the baked statics' shapes (SpriteInstance.GeoTile). Gpu only so far; Legacy keeps the keys. Switch
+    /// the baked statics' shapes (SpriteInstance.GeoTile). Legacy (clip-4): the same classes from IsometricWorld.fx's HueGeoTechnique
+    /// (LegacyGeoDepth, LegacyGeo). Switch
     /// <c>depth_model</c>; <c>CUO_DEPTH_MODEL=1|0</c> overrides it in developer builds. CUO_CLIP_ORDER_CHECK compares the two
     /// orders on the pairs around standing mobiles.
     /// </summary>

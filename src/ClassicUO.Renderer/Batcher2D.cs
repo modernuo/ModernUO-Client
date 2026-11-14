@@ -1058,6 +1058,12 @@ namespace ClassicUO.Renderer
         {
             EnsureStarted();
             Flush();
+
+            if (_geoOn)
+            {
+                SetGeoDepth(false, 0);
+            }
+
             _started = false;
             _customEffect = null;
         }
@@ -1458,6 +1464,30 @@ namespace ClassicUO.Renderer
         }
 
         private void Flush()
+        {
+            if (_geoMark >= 0)
+            {
+                // clip-4: the open shape's sprites get their class before they are drawn; the shape goes on with the next
+                if (_geoMark > _numSprites)
+                {
+                    _geoMark = _numSprites;
+                }
+
+                PatchGeo();
+                FlushQueue();
+
+                if (_geoMark > _numSprites)
+                {
+                    _geoMark = _numSprites;
+                }
+
+                return;
+            }
+
+            FlushQueue();
+        }
+
+        private void FlushQueue()
         {
             if (_suppress)
             {

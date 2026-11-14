@@ -278,7 +278,7 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("walk_maxz_continue")] public bool WalkMaxZContinue { get; set; }
 
         // clip-2: per-pixel geometric depth by shape class instead of one depth key per sprite (feet and large bodies
-        // through walls; Game/Scenes/DepthModel). Gpu renderer only so far. CUO_DEPTH_MODEL=1|0 overrides it in developer
+        // through walls; Game/Scenes/DepthModel). Both renderers (Legacy since clip-4). CUO_DEPTH_MODEL=1|0 overrides it in developer
         // builds. Default off.
         [JsonPropertyName("depth_model")] public bool DepthModel { get; set; }
 

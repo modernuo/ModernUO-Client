@@ -722,6 +722,8 @@ namespace ClassicUO.Game.Scenes
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
             bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
             int nTiles = 0;
+            // clip-4: meshes built with the other depth_model setting are rebuilt (their vertices carry the shapes or not)
+            bool meshGeo = DepthModel.On;
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
@@ -732,7 +734,7 @@ namespace ClassicUO.Game.Scenes
                         continue;
 
                     // Build chunk mesh if dirty
-                    if (chunk.Mesh.IsDirty)
+                    if (chunk.Mesh.IsDirty || chunk.Mesh.BuiltGeo != meshGeo)
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
                         // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
@@ -1436,6 +1438,12 @@ namespace ClassicUO.Game.Scenes
 
             // https://shawnhargreaves.com/blog/depth-sorting-alpha-blended-objects.html
             batcher.SetStencil(DepthStencilState.Default);
+
+            if (DepthModel.On)
+            {
+                // clip-4: the geometric depth (HueGeoTechnique) for the rest of the world pass, relative to the view's centre
+                batcher.SetGeoDepth(true, LegacyGeo.CamSum(_offset.Y + (batcher.GraphicsDevice.Viewport.Height >> 1)));
+            }
 
             RenderedObjectsCount = _renderLists.DrawRenderLists(
                 batcher,
