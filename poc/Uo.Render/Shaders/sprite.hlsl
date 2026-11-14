@@ -66,7 +66,7 @@
 #define LIGHT_GEOMOB  0xA000u // ROTATED | WOBBLE together: a mobile layer with its composite's anchor (SpriteInstance.GeoMobile)
 // clip-2 depth model classes (GeoDepth.cs mirrors the maths)
 #define GEO_LINEAR    0u      // depth interpolated per vertex (land planes, and the key fallback)
-#define GEO_BOX       1u      // static over its tile: max(back edges, min(top plane, front faces))
+#define GEO_BOX       1u      // static over its tile: max(back edges, min(top plane, tile centre plane))
 #define GEO_WALL      2u      // vertical faces on the tile's back edges
 #define GEO_MOBILE    3u      // mobile composite: billboard through the tile centre, ground plane below, own tile's front faces
 #define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land
@@ -600,9 +600,9 @@ float GeoDepth(VSOut i)
     {
         float s = (w.x - i.geoP.y) / 22.0;
         float back = i.geoP.w + abs(s);
-        float front = i.geoP.w + 2.0 - abs(s);
         float top = i.geoP.w + (w.y - i.geoP.z) / 22.0;
-        return max(back, min(top, front));
+        // clip-3: capped at the tile centre's plane (not the front faces), so a mobile on or in the box on its own tile wins
+        return max(back, min(top, i.geoP.w + 1.0));
     }
     if (cls == GEO_WALL)
         return i.geoP.w + abs((w.x - i.geoP.y) / 22.0);

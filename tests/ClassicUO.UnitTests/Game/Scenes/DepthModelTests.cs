@@ -296,8 +296,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // centre of the top diamond: the top plane, x + y + 1
             GeoDepth.Box(100, 100, 0, h, nx, ny - 4 * h + 22).Should().BeApproximately(201f, 1e-3f);
 
-            // the front face's lowest point (the south vertex at z): x + y + 2
-            GeoDepth.Box(100, 100, 0, h, nx, ny + 44).Should().BeApproximately(202f, 1e-3f);
+            // the front face's lowest point (the south vertex at z): the tile centre's plane x + y + 1 (clip-3), not the
+            // front faces' x + y + 2, so a mobile on the box's own tile is drawn over it
+            GeoDepth.Box(100, 100, 0, h, nx, ny + 44).Should().BeApproximately(201f, 1e-3f);
 
             // a crown pixel high above the box: a vertical plane on the back edges
             GeoDepth.Box(100, 100, 0, h, nx + 11, ny - 200).Should().BeApproximately(200.5f, 1e-3f);

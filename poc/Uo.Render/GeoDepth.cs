@@ -14,9 +14,14 @@ namespace Uo.Render;
 /// floors. Flats keep their order among themselves; a non-flat less than FlatDrop · 5.5 z below a flat (same pixel) wins;</item>
 /// <item>wall (tiledata Wall): vertical faces on the tile's back edges (north-east Y = y, north-west X = x, corners both):
 /// x + y + |s| with s = (sx − north vertex column) / 22. Orientation free: each half of the art can only be one edge;</item>
-/// <item>box (every other static): over its tile from z to z + height: max(back edges, min(top plane, front faces)), with
-/// back = x + y + |s| (art above the top diamond, e.g. tree crowns, stays a vertical plane on the back edges) and
-/// front = x + y + 2 − |s|;</item>
+/// <item>box (every other static, and items, multi pieces and captured statics with the same layout): over its tile from z
+/// to z + height: max(back edges, min(top plane, centre)), with back = x + y + |s| (art above the top diamond, e.g. tree
+/// crowns, stays a vertical plane on the back edges) and centre = x + y + 1, the tile centre's plane, where the front faces
+/// (x + y + 2 − |s|) would be. clip-3: a mobile standing on or in a box on its own tile (base z at or under the mobile's
+/// z) is drawn over it, as the depth key does (bench6-000027: the player at Felucca 1451,1666 z 10 in item 0x0F6A,
+/// height 12); with the front faces the box beat the mobile's billboard (also x + y + 1). The clamp only lowers values
+/// above x + y + 1, which no mobile but the one on the box's own tile reaches, and walls on the box's front edges win
+/// there with or without it;</item>
 /// <item>mobile composite (body, mount and equipment share one anchor): a billboard through the tile centre (B = x + y + 1)
 /// above the ground, the ground plane below the centre row (feet and hooves lie on the floor, so they beat it by the bias),
 /// capped by the own tile's front faces B + 1 − |s| (they lose to walls on the tile's front edges).</item>
@@ -53,9 +58,9 @@ public static class GeoDepth
     public static float Box(int tx, int ty, int z, int height, float sx, float sy)
     {
         float s = MathF.Abs(sx / 22f - (tx - ty));
-        float back = tx + ty + s, front = tx + ty + 2f - s;
+        float back = tx + ty + s, centre = tx + ty + 1f;
         float top = Plane(sy, z + height);
-        return MathF.Max(back, MathF.Min(top, front));
+        return MathF.Max(back, MathF.Min(top, centre));
     }
 
     /// <summary>A mobile composite whose anchor (MobileView's draw point: tile centre, 3 rows up) is at world pixel
