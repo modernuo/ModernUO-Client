@@ -134,7 +134,7 @@ namespace ClassicUO.Game.UI.Gumps.Login
 
                 Add
                 (
-                    new Label($"UO Version {Settings.GlobalSettings.ClientVersion}.", false, 0x034E, font: 9)
+                    new Label($"UO Version {Client.Game.UO.VersionText}.", false, 0x034E, font: 9)
                     {
                         X = 286,
                         Y = 453
@@ -235,7 +235,7 @@ namespace ClassicUO.Game.UI.Gumps.Login
 
                 Add
                 (
-                    new Label($"UO Version {Settings.GlobalSettings.ClientVersion}.", false, 0x0481, font: 9)
+                    new Label($"UO Version {Client.Game.UO.VersionText}.", false, 0x0481, font: 9)
                     {
                         X = 286,
                         Y = 453

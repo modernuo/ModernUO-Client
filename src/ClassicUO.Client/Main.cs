@@ -80,7 +80,7 @@ namespace ClassicUO
                 if (Settings.GlobalSettings != null)
                 {
                     sb.AppendLine($"Shard: {Settings.GlobalSettings.IP}");
-                    sb.AppendLine($"ClientVersion: {Settings.GlobalSettings.ClientVersion}");
+                    sb.AppendLine($"ClientVersion: {Client.Game?.UO?.VersionText ?? Settings.GlobalSettings.ClientVersion}");
                     sb.AppendLine();
                 }
 

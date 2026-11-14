@@ -30,6 +30,12 @@ namespace ClassicUO
         public GameCursor GameCursor { get; private set; }
 
         public ClientVersion Version { get; private set; }
+
+        /// <summary>
+        /// The version text the client runs as and sends to the server: settings clientversion (sanitized) when valid,
+        /// else the pack manifest's. Not written back to settings.json, so a different pack changes it.
+        /// </summary>
+        public string VersionText { get; private set; }
         public ClientFlags Protocol { get; set; }
         public string ClientPath { get; private set; }
         public UOFileManager FileManager { get; private set; }
@@ -134,6 +140,7 @@ namespace ClassicUO
             }
 
             Version = clientVersion;
+            VersionText = clientVersionText;
             ClientPath = clientPath;
 
             Protocol = ClientFlags.CF_T2A;
