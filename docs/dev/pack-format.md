@@ -27,6 +27,9 @@ The format version is 1. `FileHeader.version` and the manifest `version` are bot
   tileart.bin              paperdoll appearances from tileart.uop (TART)
   equipconv.bin            Equipconv.def (EQCV)
   layerrules.bin           equipment layering rules (LAYR); optional, see layer-rules.md
+  skills.bin               skills.mul + Skills.idx: a string-list store (SKLS); optional
+  skillgrp.bin             skillgrp.mul: group names and per-skill group numbers (SKGR); optional
+  multimap.bin             Multimap.rle and facet0*.mul: a record store of their RLE streams (MMAP); optional
   art/
     sprites.bin            SpriteEntry[] (SPRS), index = land id 0..0x3FFF, or 0x4000 + static graphic
     page_NNNN.bin          atlas pages (PPAK)
@@ -48,6 +51,9 @@ The format version is 1. `FileHeader.version` and the manifest `version` are bot
     unifont.bin            unicode fonts: a record store, a record per 256-character page (FNTU)
     cliloc.bin             cliloc, every language: a record store, a record per language (CLIL)
     speech.bin             speech.mul keywords (SPCH)
+    stringdict.bin         string_dictionary.uop: a string-list store (STRD); optional
+  loose/
+    <name>                 hand-edited text and def files, verbatim, lower-case names; optional
   audio/
     sounds.bin             sound effects, raw 22,050 Hz mono 16-bit PCM: a record store (SNDS)
     music.bin              music, the original MP3 bytes and loop flags: a record store (MUSC)
@@ -55,7 +61,7 @@ The format version is 1. `FileHeader.version` and the manifest `version` are bot
 
 `NNNN` is the zero-padded decimal page index (`page_0000.bin`). Page indices are contiguous from 0.
 
-`PackAssets.Open` (`src/ClassicUO.Assets/PackAssets.cs`) requires `manifest.json` and these files: `tiledata.bin`, `hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`, `art/sprites.bin`, `tex/texmaps.bin`, `anim/anim.bin`, `anim/palettes.bin` and `anim/animdata.bin`. It rejects a manifest whose `version` is above 1. The gumps, text and audio files are optional at open time; see each section for what happens without them.
+`PackAssets.Open` (`src/ClassicUO.Assets/PackAssets.cs`) requires `manifest.json` and these files: `tiledata.bin`, `hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`, `art/sprites.bin`, `tex/texmaps.bin`, `anim/anim.bin`, `anim/palettes.bin` and `anim/animdata.bin`. It rejects a manifest whose `version` is above 1. The gumps, text, audio, skills, multimap and loose files are optional at open time; see each section for what happens without them.
 
 ## FileHeader and versioning
 
@@ -392,9 +398,26 @@ At runtime, an equipped item on body `body` with animId `graphic` is drawn as `n
 
 ClassicUO's hard-coded equipment layering (the draw order, the cloak move by facing, the covering rules and the gargoyle remaps) as data: magic `LAYR`, a `LayerRulesHeader` of six i32 counts, then body groups, base draw-order tables, rules, conditions and ranges. The converter writes it from `Uo.Pack.LayerRulesDefault.Create()`, or from a JSON file given with `--layer-rules` (stage `layers`, no install data), and a client whose pack has no such file uses the same `Create()`. The client reads it while the `ecs_layer_rules` setting is on (the default). The full layout, the evaluation rules, the setting and the checker are in [layer-rules.md](layer-rules.md).
 
+## Skills, skill groups, multimap, string dictionary
+
+The last binary files the client read from the UO folder. Each is optional: the converter writes it only when the install has the source file (a stale copy from an earlier run is removed), and a client whose pack lacks it behaves as it did without the file. Reader and writer: `poc/Uo.Pack/MiscData.cs`.
+
+A **string-list store** is a record store (below) with exactly one slot, whose record is: count u32, blobBytes u32, `StringListRecord[count]` (8 bytes: value u32, end u32), then the UTF-8 blob; entry `i`'s text is `blob[end[i-1] .. end[i])`. The reader caps it at 2^20 entries and 64 MiB of text and requires `8 + 8*count + blobBytes` to equal the record's raw size, with ends that never decrease or pass the blob.
+
+| File | Magic | Content |
+|---|---|---|
+| `skills.bin` | `SKLS` | String-list store, record raw. One entry per skill in the client's order (Skills.idx entries with a positive length, in index order); value bit 0 = the skill has a use button. Without it the client has no skill names until the server sends a skill list. |
+| `skillgrp.bin` | `SKGR` | Not a store: `FileHeader`, nameCount u32, assignmentCount u32, blobBytes u32, u32 nameEnd[nameCount], i32 assignment[assignmentCount], UTF-8 blob. The names are skillgrp.mul's groups 1..count−1 (ASCII or, after a −1 marker, UTF-16 in the file); the assignments are the file's trailing i32 group numbers, unchecked. The client builds the groups from them as it built them from the file: group 0 is its own "Miscellaneous", a number past the last group skips the entry, a negative one makes it use its built-in groups. A skillgrp.mul the client could not read (count 0 or negative, a name or number past the end of the file) gets no table, so the client uses the built-in groups as before. |
+| `multimap.bin` | `MMAP` | Record store, 1..256 slots. Slot 0 is Multimap.rle; slot 1 + n is the n-th facet0*.mul file in ordinal path order (the order the client indexed them, so a missing facet02.mul shifts the later ones). Records are the files' bytes, raw up to 16 KiB, else Brotli (quality 9). The client decodes a record when the server asks for a map (packets 0x90/0xF5) and keeps nothing; a facet image needs slot 0, as before. |
+| `text/stringdict.bin` | `STRD` | String-list store, record Brotli. string_dictionary.uop's strings in index order, value 0. Absent for installs without the file (pre-UOP). |
+
+## Loose text files (`loose/`)
+
+Text and def files shards edit by hand are copied byte for byte into `loose/` under lower-case names: `prof.txt`, `citytext.enu`, `stitchin.def`, `anim1.def`, `anim2.def`, `walls.txt`, `floors.txt`, `doors.txt`, `misc.txt`, `stairs.txt`, `teleprts.txt`, `roof.txt`, `suppinfo.txt` (`MiscConst.LooseFiles`; the source is found case-insensitively, files_override applied, at most 16 MiB). A file the install lacks is not in the pack. The client finds them through one lookup, `UOFileManager.GetLooseFilePath`: a `files_override` entry wins; else, when the pack has a `loose/` folder, the pack's copy (absent means the file is absent); a pack without `loose/` (converted before it existed) reads the loose-file folder as before. The client parses them with the same code as before, so a shard can edit the pack copy directly; the manifest hash then no longer matches until the manifest is rewritten.
+
 ## Record stores
 
-Content that the client reads one item at a time, and that the GPU does not sample from pack pages, goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps, ASCII fonts, unicode fonts, cliloc, sound effects and music use it, each with its own magic, slot argument and record meta. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter` (`poc/Uo.Pack/RecordStore.cs`).
+Content that the client reads one item at a time, and that the GPU does not sample from pack pages, goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps, ASCII fonts, unicode fonts, cliloc, sound effects, music, the multimap and the string lists use it, each with its own magic, slot argument and record meta. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter` (`poc/Uo.Pack/RecordStore.cs`).
 
 | Part | Layout |
 |---|---|
@@ -588,11 +611,13 @@ camelCase JSON, read case-insensitively (`Uo.Pack.Manifest`):
 | Fonts | record stores | Kind 0 files; ASCII fonts and unicode pages up to 16 KiB raw uncompressed, larger ones Brotli (quality 9) |
 | Cliloc | record store | Kind 0 file; language records uncompressed |
 | Sounds, music | record stores | Kind 0 files; records uncompressed (raw PCM; the original MP3 bytes) |
+| Multimap, string dictionary | record stores | Kind 0 files; records over 16 KiB Brotli (quality 9); skills raw |
+| Loose files | n/a | verbatim copies |
 | Everything else | n/a | Kind 0 |
 
 - No install-time unpacking is required. A patcher may rewrite any file to Kind 0, since raw is always valid.
 - Compression and page flags: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--page-size n`, `--anim-page-size n`, `--raw-gumps`, `--gump-small n`, `--raw-text`, `--text-small n`, `--cliloc-brotli`. Experimental page formats (`--format rgba8|bc7`, `--anim-format page`) exist for measurement and are not part of the format.
-- Stages: `--only art,tex,hues,tiledata,data,layers,gumps,fonts,cliloc,speech,sounds,music,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music`, `--verify-only`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin`); `tiledata` writes `tiledata.bin` (and deletes a stale `tiledata_ext.bin`); `data` writes multis, lights, tileart and equipconv; `layers` writes `layerrules.bin`; `fonts` writes `text/fonts.bin` and `text/unifont.bin`; `sounds` and `music` write the audio stores; `animdata.bin` belongs to `anims`.
+- Stages: `--only art,tex,hues,tiledata,data,layers,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music`, `--verify-only`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin`); `tiledata` writes `tiledata.bin` (and deletes a stale `tiledata_ext.bin`); `data` writes multis, lights, tileart and equipconv; `layers` writes `layerrules.bin`; `fonts` writes `text/fonts.bin` and `text/unifont.bin`; `sounds` and `music` write the audio stores; `skills` writes `skills.bin` and `skillgrp.bin`; `multimap`, `stringdict` and `loose` write the files of their names; `animdata.bin` belongs to `anims`.
 - **Outputs are replaced, never written in place.** Every pack file the converter writes goes to a temp file in the same folder (`.<name>.<guid>.replacing.tmp`), which is then moved over the target (`Uo.Pack.ReplacingFile`). Replacing the directory entry breaks a hard link instead of writing through it, so a test pack built by hard-linking a published pack's files and then converting `--only <stages>` leaves the published files untouched. A failed write deletes its temp file and leaves the target as it was; the manifest skips leftover temp files.
 - **Published packs are refused as output.** The converter and the pack tools refuse an output folder that is, lies under, or contains a published-packs root (`Uo.Pack.PublishedPacks`). Roots are a built-in default root, the `UO_PACKS_ROOTS` environment variable (`;`-separated), every `--packs-root <dir>` argument, and any ancestor folder holding a `CURRENT` file that names one of its subfolders. Paths are compared in canonical form (symlinks, junctions and drive aliases collapse to one path). When the relationship cannot be established, the write is refused. `--verify-only` only reads, so it may verify a published pack.
 - **No recursive deletes.** A full conversion deletes only the files the previous output's `manifest.json` lists (plus crashed-writer temp files beside them and the manifest itself); a non-empty `--out` without a manifest is refused. `--only anims` deletes the `*.bin` files directly in `anim/`.
@@ -605,6 +630,7 @@ camelCase JSON, read case-insensitively (`Uo.Pack.Manifest`):
 - **Every gump slot**, exact: present or not, width and height, and the RGBA8 image with the alias hue.
 - **Audio, exact:** every sound id and music id (present or not, the bytes, the name and the loop flag); payloads must not overlap.
 - **Text, exact:** every ASCII glyph of every font, every unicode glyph of the 20 font slots, every (language, id) cliloc string, and every speech entry.
+- **Skills, skill groups, multimap, string dictionary, loose files, exact:** every skill (name, action flag, order) against the frozen SkillsLoader; skillgrp.bin's names and numbers against a frozen copy of the client's skillgrp.mul reads; every multimap slot's bytes against the file the frozen MultiMapLoader opened; every string against the frozen StringDictionaryLoader; every loose file byte for byte. Each also checks that the pack lacks the file when the install does.
 
 ## Reference sizes (stock 7.0.x client, ship profile)
 
@@ -621,6 +647,8 @@ Approximate, from one stock install; they vary with the install.
 | Gumps | about 58 MiB |
 | Text | about 23 MiB (eight cliloc languages) |
 | Audio | about 160 MiB sounds, about 104 MiB music |
+| Multimap (rle + 6 facet images) | about 9.1 MiB (30 MiB as files) |
+| Skills, skill groups, string dictionary, loose files | about 1 KiB, 0.3 KiB, 0.35 MiB, 0.35 MiB |
 
 Decode cost on one worker (desktop CPU): an anim page about 2.6 ms, an art page about 23 ms (about 4 ms with 8 workers on Kind 2), a region about 2.4 ms.
 
@@ -628,9 +656,8 @@ Decode cost on one worker (desktop CPU): an anim page about 2.6 ms, an art page 
 
 | Content | ClassicUO loader | Notes |
 |---|---|---|
-| Skills, professions | `SkillsLoader`, `ProfessionLoader` | |
-| World map images | `MultiMapLoader` (Multimap.rle, facet*.mul) | |
-| Anim1.def / Anim2.def group replaces, animinfo.mul, sitting tables | `AnimationsLoader` and client tables | runtime fallbacks for mounts and missing groups |
+| animinfo.mul, sitting tables | `AnimationsLoader` and client tables | runtime fallbacks for mounts and missing groups |
+| Loose `Sounds/<id>.wav`, `Clilocs.txt` | `SoundsLoader`, `ClilocLoader` | read from the loose-file folder at load when present (see below) |
 
 `Clilocs.txt` (a shard's own cliloc strings) is folded into the pack's overrides record at conversion; a loose `Clilocs.txt` in the client folder is still read at load and wins over the packed record, so a shard can ship an edit without a new pack.
 
