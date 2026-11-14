@@ -7288,7 +7288,26 @@ shaders are byte-identical).
   house (SmallBrickHouseDeed, floor at z + 7) near lane L5's spot and a SmallBoat at Felucca 1720 1770; poses inside against
   the front/east walls and the corner, behind the house, in front of it, on the boat's deck and rails. Each pose is shot on Gpu
   with depth_model on (_G1) and off (_G0, driver `depthmodel`; job-clip-shots.sh CLIP_DM=drv sets no env) and on Legacy.
-  Results: see the jobs below (pending at writing).
+  Results: bench6-000033 (below).
+- **Multis results (bench6-000033, aot-clip3a, CUO_CLIP_ORDER_CHECK=1).** The scene worked: the house was placed (player
+  inside at z 7 = land 0 + 7, the floor), the boat at Felucca 1720 1770 (player on deck z -5); both deleted afterwards
+  (`[Global Count` 0 for each). 16 poses x (G1, G0, L); sheets made with a 3-column variant of measure/clip-1/sheet.py.
+  - **Ordering: G1 = G0 = Legacy in all 16 poses.** House inside (south wall d3/d4, east wall d2, SE corner d2/d3/d4): the
+    walls and door on the front edges hide the lower body alike in all three; outside N/NW/W: the player is under the house,
+    hidden alike; outside S: in front alike. Boat (mid, east, west, south): alike; the mast's collar draws over the
+    player standing on the mast tile in all three (inherited, not a geo issue). No regression from depth_model.
+  - Checker: house: "now behind" vs the walls on the south/east neighbour tiles (the walls stand in front: correct); "now in
+    front" vs the floor only for the transient z 0 frames under the floor before `[self inc Z 7` (not a real pose); boat:
+    1-2 samples "now behind" vs the deck piece 0x3EAC on the south neighbour (box h 3, same z). No action.
+  - **Black land on Gpu, not caused by depth_model.** In every _G1 shot the baked land (grass, sea water) is black (clear
+    colour) while multi pieces, items and the mobile draw; G0 and Legacy are fine. It looked like a runtime-flip bug, but
+    diagnostic bench6-000035 (measure/clip-3/c3-flip.txt, open grass at the same spot, no multi) shows the opposite: land
+    black after the `[go` with depth_model off, fine 1, 4 and 14 s after `depthmodel on`, black again after one step, fine
+    after `depthmodel off`, black after a Legacy -> Gpu renderer switch, fine after `depthmodel on`. So baked chunks go
+    missing after a teleport, a step or a renderer switch, and any flip cures it (WorldRenderer.GeometricDepth evicts and
+    rebakes every chunk). In c3-multis the G1 shots came after the moves (black) and the G0 shots after a flip (cured).
+    Not a geo-path bug; not fixed here. bench6-000035 had CUO_RENDER_VIEW_REUSE_CHECK=1 (render_view_reuse was off).
+    bench6-000036 runs the same scene on aot-base (cbfa71281) to tell whether it is inherited.
 - **Legacy port** (task 3): design only, in the design note `cuo-poc-state/surveys/clip-design-2026-11-12.md` section 7:
   per-vertex Z split (walls 2 quads, boxes 3-5 via the depth-test max trick, mobiles clipped on the CPU; +10-25 MB mesh memory
   per client, estimate) vs pixel-shader depth (MojoShader oDepth, class parameters in the unused Normal/TexCoord.z fields; no
@@ -7298,6 +7317,8 @@ shaders are byte-identical).
   (4d7eebc13) and aot-base (cbfa71281). Jobs (lanes, set measure/clip-3): bench6-000032 clip-items (c2-items + c1-feet, on,
   CUO_CLIP_ORDER_CHECK), bench6-000033 clip-multis, bench6-000034 golden (off), bench2-000025 gate-gpu, bench3-000019
   gate-legacy, bench5-000020/21 alloc-g/alloc-l (base / off / on).
-  Partial read of bench6-000032 while it ran: c2-items changed 984 samples (was 3249), all "now behind" vs the studio walls
-  (acceptance #1), none vs 0x0F6A, none "now in front".
+  Results: bench6-000032 PASS: c2-items changed 984 samples (was 3249), all "now behind" vs the studio walls
+  (acceptance #1), none vs 0x0F6A; c1-feet now in front 125 / now behind 8606, the only "now in front" pair is land 0x008D
+  1456,1669 (as before). bench6-000034 GOLDEN SAME; bench2-000025 gate-gpu and bench3-000019 gate-legacy PASS;
+  bench5-000020/21 allocs base = off = on (p50 0 B/frame, gen1/gen2 0). bench6-000033 multis: see above.
 - **Costs:** none. The GEO pixel shader loses one instruction; no CPU, allocation or memory change. No timing job needed.
