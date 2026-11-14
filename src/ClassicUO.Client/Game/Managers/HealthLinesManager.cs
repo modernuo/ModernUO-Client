@@ -315,9 +315,11 @@ namespace ClassicUO.Game.Managers
                                 p1.Y += 22;
                             }
 
+                            // one lookup for the four uses (this runs per mobile per frame with ShowMobilesHP on)
+                            RenderedText hits = mobile.HitsTexture;
                             p1 = camera.WorldToScreen(p1, true);
-                            p1.X -= (mobile.HitsTexture.Width >> 1) + 5;
-                            p1.Y -= mobile.HitsTexture.Height;
+                            p1.X -= (hits.Width >> 1) + 5;
+                            p1.Y -= hits.Height;
 
                             if (mobile.ObjectHandlesStatus == ObjectHandlesStatus.DISPLAYING)
                             {
@@ -331,7 +333,7 @@ namespace ClassicUO.Game.Managers
                             if (
                                 !(
                                     p1.X < 0
-                                    || p1.X > camera.Bounds.Width - mobile.HitsTexture.Width
+                                    || p1.X > camera.Bounds.Width - hits.Width
                                     || p1.Y < 0
                                     || p1.Y > camera.Bounds.Height
                                 )
@@ -345,14 +347,14 @@ namespace ClassicUO.Game.Managers
 
                                     if (!DryRun)
                                     {
-                                        mobile.HitsTexture.Draw(batcher, p1.X, p1.Y, layerDepth);
+                                        hits.Draw(batcher, p1.X, p1.Y, layerDepth);
                                     }
                                 }
                             }
 
                             if (newTargSystem)
                             {
-                                offsetY += mobile.HitsTexture.Height;
+                                offsetY += hits.Height;
                             }
                         }
                     }

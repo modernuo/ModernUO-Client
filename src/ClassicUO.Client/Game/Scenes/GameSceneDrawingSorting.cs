@@ -142,7 +142,7 @@ namespace ClassicUO.Game.Scenes
 
         private void UpdateObjectHandles(Entity obj, bool useObjectHandles)
         {
-            if (useObjectHandles && _world.NameOverHeadManager.IsAllowed(obj, _handlesPlayerIsGargoyle))
+            if (useObjectHandles && NameOverHeadManager.IsAllowed(obj, _handlesTypeAllowed, _handlesPlayerIsGargoyle))
             {
                 if (obj.ObjectHandlesStatus != ObjectHandlesStatus.CLOSED)
                 {

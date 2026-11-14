@@ -7322,3 +7322,20 @@ shaders are byte-identical).
   1456,1669 (as before). bench6-000034 GOLDEN SAME; bench2-000025 gate-gpu and bench3-000019 gate-legacy PASS;
   bench5-000020/21 allocs base = off = on (p50 0 B/frame, gen1/gen2 0). bench6-000033 multis: see above.
 - **Costs:** none. The GEO pixel shader loses one instruction; no CPU, allocation or memory change. No timing job needed.
+
+## alloc-ui-1: small allocation and UI per-frame fixes (2026-11-14, `bg/alloc-ui-1`)
+
+Base `poc/modern-client` bae113ff7. Scripts: `cuo-poc-state/measure/alloc-ui-1/` (lane set from measure/lanes/template).
+
+- **Backlog check (perf-opportunities rows, checked against the code first).** Already done, no change here:
+  - `Control.InvokeMouseOver/Enter/Exit` build `MouseEventArgs` only with listeners, and `UIManager.SortControlsByInfo` re-links the existing node (`AddFirst(first)`): 3164baa6c (alloc-text-ui).
+  - `ItemGump` / `ItemGumpFixed` hold an `EntityRef` (perf-9); the remaining `World.Get` calls run on hover, mouse-up and double-click only.
+  - `ClilocLoader.Translate` caches results for empty arguments, capitalized and plain (3d653dcd0); the journal renders a line only when a filter shows its type (b7db8542a).
+- **Changes (one commit each; all keep behaviour identical, so no switch or checker):**
+  - ce84849aa object handles: the render-list pass reads the profile's name-overhead filter once, next to the player's race, and calls the static `NameOverHeadManager.IsAllowed` overload (was a `CurrentProfile` read per item and mobile while handles show). CPU only.
+  - 705e4039b `HealthLinesManager.DrawMobile`: one `HitsTexture` lookup per drawn hits text instead of four. CPU only; the every-mobile walk with `ShowMobilesHP` on stays.
+  - a119ae333 `ItemPool`: the retired-item queue is created at `MaxPooled` (8,192 entries). **Memory: 128 KB per client**, which a pool that fills reaches anyway; it removes ~128 KB of outgrown queue arrays once per session. With `item_pool` off the pool object is still created (World.Offer), so the 128 KB is held there too.
+  - 032666849 `GpuItemCache.Add`: `Entries` and `Instances` grow through `ArrayPool<T>.Shared` (the outgrown pool-sized array goes back), instead of `Array.Resize`; entries past `Count` are cleared after growth, as a new array had them. Memory: the shared pool keeps outgrown arrays it has room for (bounded per size; trimmed by the runtime under memory pressure). Test `GpuItemCacheGrowTests` (2; a mutant without the clear fails).
+- **Not done:** prefilling the item pool at login (8,192 x 280 B = ~2.3 MB per client for the first walk's Items; a behaviour change that needs the switch and checker route); the item pool is already default on (Settings.cs:234).
+- **Verification:** builds with and without `CuoDevTools` 0 errors; ClassicUO.UnitTests 3905 passed / 6 skipped (dev) and 3860 / 6 (`-p:CuoDevTools=false`). Write-site budget unchanged (no class A writes touched).
+- **Jobs (allocation counts only; the machine is not quiet, no timing):** NativeAOT dev builds of bae113ff7 and 032666849; alloc-g / alloc-l on lane L4 (handles once, tour twice, base vs new interleaved, checkers off), gate-gpu (L1) and gate-legacy (L2). Job ids and results: see the coordinator's merge entry.
