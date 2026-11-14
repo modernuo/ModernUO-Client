@@ -357,6 +357,7 @@ namespace ClassicUO.Game.Scenes
             // Draw excluded statics + animations + effects. T7b: mobiles and items through the sink, at the same list position
             // (LegacySpriteSink); T7b part 3: effects through EffectSpriteSink
             LegacySpriteSink.BeginFrame();
+            LegacyGeoDepth.BeginFrame(offsetX, offsetY);
 #if CUO_DEVTOOLS
             GoldenCapture.BeginLegacy(batcher);
 #endif
@@ -623,8 +624,12 @@ namespace ClassicUO.Game.Scenes
                 if (obj.Z <= maxGroundZ)
                 {
                     float depth = obj.CalculateDepthZ();
+                    // clip-4: the land views' shapes with depth_model on (nothing with it off)
+                    LegacyGeoDepth.BeginView(batcher, obj);
+                    bool drawn = obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+                    batcher.EndGeo();
 
-                    if (obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth))
+                    if (drawn)
                     {
                         done++;
                     }

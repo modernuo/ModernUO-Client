@@ -182,6 +182,21 @@ namespace ClassicUO.Game
         public void Emit(EcsEntity e, int posX, int posY, float depth) => Emit(e, EcsRead.Row(e), posX, posY, depth);
 
         // perf-11: one record read (the entity's EcsRow) for all the components the emission reads
+        /// <summary>clip-4: the composite anchor <see cref="Emit(EcsEntity, in EcsRow, int, int, float)"/> gives every layer's
+        /// record (DynamicSprite.GeoAx/GeoAy) for a mobile drawn at (<paramref name="posX"/>, <paramref name="posY"/>): MobileView's
+        /// draw point with the step offset, moved by the seat offset when sitting; the mount's seat offset does not move it.</summary>
+        internal static void GeoAnchor(in AnimationState s, in MobileRenderState rs, int posX, int posY, out int ax, out int ay)
+        {
+            ax = posX + rs.OffsetX + 22;
+            ay = posY - 3 + rs.OffsetY + 22;
+
+            if ((s.Flags & AnimStateFlags.MountDrawn) == 0 && (s.Flags & AnimStateFlags.Sitting) != 0)
+            {
+                ax += s.SitX;
+                ay += s.SitY;
+            }
+        }
+
         private void Emit(EcsEntity e, in EcsRow data, int posX, int posY, float depth)
         {
             MaterializeView();

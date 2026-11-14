@@ -69,7 +69,17 @@ namespace ClassicUO.Game.Scenes
                 return EffectSpriteSink.DrawLegacy(batcher, Unsafe.As<GameEffect>(obj), depth);
             }
 
-            return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+            if (!batcher.GeoDepthOn)
+            {
+                return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+            }
+
+            // clip-4: statics and multis out of the chunk mesh (trees, foliage, animated art) with their shapes
+            LegacyGeoDepth.BeginView(batcher, obj);
+            bool drawn = obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+            batcher.EndGeo();
+
+            return drawn;
         }
 
         // how many render-list entries ahead DrawWorldRenderList prefetches an object's own memory, then an item's mirror node,
@@ -285,8 +295,18 @@ namespace ClassicUO.Game.Scenes
 
             mobile.DrawAura(batcher, posX, posY, depth);
             MobileSpriteExtract extract = ecs.MobileExtract;
+
+            if (batcher.GeoDepthOn && (state.Flags & AnimStateFlags.CharSitting) == 0)
+            {
+                // clip-4: every layer around the composite's anchor (MobileSpriteExtract.GeoAnchor); seated mobiles keep the
+                // key, as the Gpu's seated sections do
+                MobileSpriteExtract.GeoAnchor(in state, in render, posX, posY, out int ax, out int ay);
+                LegacyGeoDepth.BeginMobile(batcher, ax, ay, mobile.Z);
+            }
+
             // the select and resolve, or their calls replayed from the mobile's MobileFrameCache (as the Gpu path's Emit)
             extract.DrawLegacy(batcher, ClientLegacySpriteSource.Instance, e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
+            batcher.EndGeo();
             bool mirror = (state.Flags & AnimStateFlags.Mirror) != 0;
             // picking reads these (the views' FrameInfo and mirror bit below stay: other readers, the mirror history)
             SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
@@ -319,10 +339,18 @@ namespace ClassicUO.Game.Scenes
         private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth)
         {
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
+
+            if (batcher.GeoDepthOn)
+            {
+                // clip-4: the item's tiledata shape on its tile, a corpse's composite
+                LegacyGeoDepth.BeginItem(batcher, in input, item.RealScreenPosition.X, item.RealScreenPosition.Y);
+            }
+
             // the records are drawn as the select makes them (the batcher calls of a select + DrawAll); the side effects below
             // do not touch the batcher
             bool drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, item.RealScreenPosition.X,
                 item.RealScreenPosition.Y, depth);
+            batcher.EndGeo();
 
             SpritePickTable.RecordItem(item, _items);
 
