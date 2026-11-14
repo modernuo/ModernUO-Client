@@ -7345,3 +7345,26 @@ Base `poc/modern-client` bae113ff7. Scripts: `cuo-poc-state/measure/alloc-ui-1/`
 - **clip-3** (depth_model, default off): results above. bench6-000036 ran the c3-flip scene on the base build (cbfa71281): the Gpu world shots after a teleport, a step and a switch back from Legacy are black (99.5 % of pixels) exactly as with clip-3 (bench6-000035), so the black land is inherited, not a depth_model regression. It gets its own stream.
 - **alloc-ui-1**: bench2-000026 gate-gpu failed only because the main runner's evloop-4 jobs logged in with the same account (kbatman, lane L1's) and each login disconnected the other (textflood/smallfields/uistate). The evloop job sets now use kbatman2. Rerun bench2-000027 GATE PASS. bench3-000020 gate-legacy PASS. bench5-000022/23 alloc-g/alloc-l: main-thread p50 0 B/frame base and new, gen1/gen2 0; all-threads medians move both ways by one-off ~1 MB allocations landing in different windows (Legacy worldmap 1469 to 0, off 0 to 734).
 - Merged tip: ClassicUO.UnitTests 3917 passed / 6 skipped; client builds with and without `CuoDevTools` 0 errors.
+
+## 2026-11-14 gpu-black-land: black Gpu land after a depth_model flip (bg/gpu-black-land)
+
+Base `0381a1eb7`. Code `7a6bc8312` (settle gate holds on a rebake), `b609ac981` (driver shot waits for its draw).
+
+- **Real or artifact: both.** The c3-flip shots called black "after a teleport, a step, a switch back from Legacy"
+  (bench6-000035/36) were each followed in the script by a `depthmodel` line. Draws are capped below the update rate and
+  the driver's `shot` yielded one update, so the flip ran before the capture: the shots show the frame after the flip,
+  not the pose they name. The flip itself is real: `WorldRenderer.GeometricDepth` drops every chunk
+  (`ChunkStore.EvictAll`), the change was applied in DrawWorldGpu after `WorldSettleGate.Begin` decided not to hold, and
+  the gate had no discontinuity for it, so the screen showed the unbuilt world (99.6 % black world target, 63 % of the
+  composited screen) for about 300 ms. Same for the other EvictAll inputs: land/static season, animated water.
+- **Fix.** `WorldDiscontinuity.Rebake`: `ChunkStore.EvictAllCount` goes to `Begin`; the bake inputs (land season,
+  static season remap, depth_model, water wobble) are applied before the hold decision (`GpuWorldRenderer.ApplyBakeInputs`).
+  The last frame is held until the view is ready, as after a teleport. Unit tests in WorldSettleGateTests. Obvious bug
+  fix: no switch.
+- **Driver.** `shot` now waits until the draw saved it (`GameController.WorldShotPending`). Scenes with a state change
+  right after a shot capture the pose before it now; shots requested in one update are no longer lost (base kept only 9 of
+  the 12 gbl-flip shots: a later request replaced the pending path).
+- **Jobs** (set measure/gpu-black-land, scene gbl-flip = c3-flip plus a shot right after each flip/switch):
+  bench6-000037 base: the three `*now` shots 99.6 % black, start/walk/backgpu lost; bench6-000038 fix: all 12 shots
+  0.5 % black (the player's surroundings), `[settle] Rebake: ready after ~320 ms, 3-4 frames held, 0 unsettled
+  presented`. bench2-000028 gate-gpu (L1) and bench5-000024 alloc-g (L4, base/new/on) submitted.
