@@ -144,55 +144,28 @@ namespace ClassicUO
                 Settings.GlobalSettings.Language = "";
             }
 
-            if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.UltimaOnlineDirectory))
+            // The pack is the asset source and is required; the UO directory is optional (AssetSource).
+            string startupError = null;
+            string packPath = AssetSource.PackPath(Settings.GlobalSettings);
+
+            if (!AssetSource.TryReadManifest(packPath, out var packManifest, out startupError))
             {
-                Settings.GlobalSettings.UltimaOnlineDirectory = CUOEnviroment.ExecutablePath;
+                Log.Error(startupError);
+            }
+            else if (!AssetSource.TryResolveVersion(Settings.GlobalSettings, packManifest, out _, out string clientVersionText))
+            {
+                startupError = $"No valid client version: set \"clientversion\" in settings.json (the pack records '{clientVersionText}').";
+                Log.Error(startupError);
             }
 
-            const uint INVALID_UO_DIRECTORY = 0x100;
-            const uint INVALID_UO_VERSION = 0x200;
-
-            uint flags = 0;
-
-            if (!Directory.Exists(Settings.GlobalSettings.UltimaOnlineDirectory) || !File.Exists(Path.Combine(Settings.GlobalSettings.UltimaOnlineDirectory, "tiledata.mul")))
+            if (!string.IsNullOrWhiteSpace(Settings.GlobalSettings.UltimaOnlineDirectory) && AssetSource.ConfiguredUODirectory(Settings.GlobalSettings) == null)
             {
-                flags |= INVALID_UO_DIRECTORY;
+                Log.Warn($"UO directory '{Settings.GlobalSettings.UltimaOnlineDirectory}' does not exist; it is optional, continuing without it");
             }
 
-            string clientVersionText = Settings.GlobalSettings.ClientVersion;
-
-            if (!ClientVersionHelper.IsClientVersionValid(Settings.GlobalSettings.ClientVersion, out ClientVersion clientVersion))
+            if (startupError != null)
             {
-                Log.Warn($"Client version [{clientVersionText}] is invalid, let's try to read the client.exe");
-
-                // mmm something bad happened, try to load from client.exe [windows only]
-                if (!ClientVersionHelper.TryParseFromFile(Path.Combine(Settings.GlobalSettings.UltimaOnlineDirectory, "client.exe"), out clientVersionText) || !ClientVersionHelper.IsClientVersionValid(clientVersionText, out clientVersion))
-                {
-                    Log.Error("Invalid client version: " + clientVersionText);
-
-                    flags |= INVALID_UO_VERSION;
-                }
-                else
-                {
-                    Log.Trace($"Found a valid client.exe [{clientVersionText} - {clientVersion}]");
-
-                    // update the wrong/missing client version in settings.json
-                    Settings.GlobalSettings.ClientVersion = clientVersionText;
-                }
-            }
-
-            if (flags != 0)
-            {
-                if ((flags & INVALID_UO_DIRECTORY) != 0)
-                {
-                    Client.ShowErrorMessage(ResGeneral.YourUODirectoryIsInvalid);
-                }
-                else if ((flags & INVALID_UO_VERSION) != 0)
-                {
-                    Client.ShowErrorMessage(ResGeneral.YourUOClientVersionIsInvalid);
-                }
-
-                PlatformHelper.LaunchBrowser(ResGeneral.ClassicUOLink);
+                Client.ShowErrorMessage(startupError);
             }
             else
             {

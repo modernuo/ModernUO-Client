@@ -109,46 +109,28 @@ namespace ClassicUO
 
         private void LoadUOFiles()
         {
-            string clientPath = Settings.GlobalSettings.UltimaOnlineDirectory;
-            Log.Trace($"Ultima Online installation folder: {clientPath}");
+            // The pack is required; the UO directory is optional and only serves loose-file reads (AssetSource).
+            string clientPath = AssetSource.LooseFileDirectory(Settings.GlobalSettings);
+            Log.Trace($"Loose-file folder: {clientPath}");
 
             Log.Trace("Loading files...");
 
-            if (!string.IsNullOrWhiteSpace(Settings.GlobalSettings.ClientVersion))
+            string packPath = AssetSource.PackPath(Settings.GlobalSettings);
+
+            if (!AssetSource.TryReadManifest(packPath, out var packManifest, out string packError))
             {
-                // sanitize client version
-                Settings.GlobalSettings.ClientVersion = Settings.GlobalSettings.ClientVersion.Replace(",", ".").Replace(" ", "").ToLower();
+                Log.Error(packError);
+                Client.ShowErrorMessage(packError);
+
+                throw new FileNotFoundException(packError);
             }
 
-            string clientVersionText = Settings.GlobalSettings.ClientVersion;
-
-            // check if directory is good
-            if (!Directory.Exists(clientPath))
+            if (!AssetSource.TryResolveVersion(Settings.GlobalSettings, packManifest, out ClientVersion clientVersion, out string clientVersionText))
             {
-                Log.Error("Invalid client directory: " + clientPath);
-                Client.ShowErrorMessage(string.Format(ResErrorMessages.ClientPathIsNotAValidUODirectory, clientPath));
+                Log.Error("Invalid client version: " + clientVersionText);
+                Client.ShowErrorMessage(string.Format(ResGumps.ImpossibleToDefineTheClientVersion0, clientVersionText));
 
-                throw new InvalidClientDirectory($"'{clientPath}' is not a valid directory");
-            }
-
-            // try to load the client version
-            if (!ClientVersionHelper.IsClientVersionValid(clientVersionText, out ClientVersion clientVersion))
-            {
-                Log.Warn($"Client version [{clientVersionText}] is invalid, let's try to read the client.exe");
-
-                // mmm something bad happened, try to load from client.exe
-                if (!ClientVersionHelper.TryParseFromFile(Path.Combine(clientPath, "client.exe"), out clientVersionText) || !ClientVersionHelper.IsClientVersionValid(clientVersionText, out clientVersion))
-                {
-                    Log.Error("Invalid client version: " + clientVersionText);
-                    Client.ShowErrorMessage(string.Format(ResGumps.ImpossibleToDefineTheClientVersion0, clientVersionText));
-
-                    throw new InvalidClientVersion($"Invalid client version: '{clientVersionText}'");
-                }
-
-                Log.Trace($"Found a valid client.exe [{clientVersionText} - {clientVersion}]");
-
-                // update the wrong/missing client version in settings.json
-                Settings.GlobalSettings.ClientVersion = clientVersionText;
+                throw new InvalidClientVersion($"Invalid client version: '{clientVersionText}'");
             }
 
             Version = clientVersion;
@@ -192,7 +174,6 @@ namespace ClassicUO
 
             var filesOverride = new UOFilesOverrideMap(Settings.GlobalSettings.OverrideFile);
             filesOverride.Load();
-            string packPath = PackAssets.Resolve(Settings.GlobalSettings.PackDirectory, CUOEnviroment.ExecutablePath, clientPath);
             PackAssets pack;
 
             try
