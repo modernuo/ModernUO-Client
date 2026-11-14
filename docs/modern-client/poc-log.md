@@ -7184,3 +7184,26 @@ Gate **bench-000790 PASS** (both renderers, switch on, present-cap/present-chang
 Pending: counts and latency **bench-000791** (spin/grid/new interleaved per session, quiet and busy spot, both renderers, CUO_DIAG pings), allocations **bench-000792/000793** (base 02956317b, off, on; all event_loop on). PARKED: `measure/evloop-2/job-timing-{g,l}-PARKED.sh`. Handoff `handoffs/evloop-2.md`.
 
 Accepted costs (switch on only): idle discrete animations and fades are shown at 20 Hz (up to 50 ms late). A draw can come up to one interval later than the grid when a change follows a recent present. There are two extra non-blocking drains per frame. The histograms add about 0.7 KB. No new per-frame allocation site (alloc jobs pending).
+
+### evloop-2 fix round (code `9838399b5`, `6544a3ec3`; quiet commit point now **`6544a3ec3`**)
+
+bench-000791 counts, first build `bccb172c1`. Medians, us:
+
+| spot | arm | net_wake p50/p99 | net_present p50/p99 | ping RTT | presents/s |
+|---|---|---|---|---|---|
+| quiet | gpu grid | 11/15 | 16824/16824 | 0.70 ms | 60 |
+| quiet | gpu new | 9/12 | 17319/17361 | 0.46 ms | 20.4 |
+| busy | gpu grid | 25/49 | <=16000/18674 | 1.17 ms | 60 |
+| busy | gpu new | 20/50 | <=20000/23764 | 1.34 ms | 50.2 |
+| busy | legacy grid | 20/30 | <=16000/19684 | 0.81 ms | 60 |
+| busy | legacy new | 20/50 | <=20000/21937 | 1.17 ms | 48.7 |
+
+Wakes are fast: net wakes are not quantised to 1 ms. The present_on_change gap had three causes:
+
+1. **The client's own send wake counted as a change.** `NetClient.SendQueuedWake` fires on every send, including the ping. The send wake made the next wait return at once and started a draw, so the reply arrived during that Draw. The pre-present drain read it, and it was shown one interval later. This also explains why quiet replies were so rarely read on a net wake: 5 net wakes for 35 pings. The FD_READ re-arm was not the cause, since busy sessions show thousands of net wakes. Fix: a Wake no longer counts as a change, and the pre-present and pre-wait drains clear the pending send wake before they flush.
+2. **The rate limit was anchored on the present end.** Each frame added its own draw time to the interval, so busy sessions dropped to about 50 presents/s and their latency rose. Fix: the rate limit now runs from the draw start. The checker checks draw-to-draw gaps; present gaps are reported only.
+3. **The round 16000/20000 values were histogram bucket bounds.** The old buckets were 4 ms wide; this is not a ms clock. Fix: 1 ms buckets from 4 to 25 ms.
+
+Owner requirement: `event_loop_idle_redraw_ms` now defaults to 0, meaning the display interval, so idle frames run at display rate with no visual change. With idle frames every interval, a change still waits for the next interval from the last draw. The phase is the last draw's rather than the display grid's, so idle-then-event zero delay only exists with the 50 ms opt-in. The counts now have four arms (spin, grid, new, new50) per session.
+
+Tests: 3876 passed, 6 skipped, 0 failed. Both builds have 0 errors. Re-run jobs: counts **bench-000795**, gate **bench-000796**, allocations **bench-000797/000798**. bench-000792 is the alloc run on the old build. bench-000793 was cancelled because its binary was superseded. Binary `new2` is `6544a3ec3`.
