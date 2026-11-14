@@ -97,7 +97,8 @@ namespace ClassicUO.Game.Managers
             return false;
         }
 
-        public void Sort() => SortBy(SkillsGroupManager.SkillsCount, Client.Game.UO.FileManager.Skills.GetSortedIndex);
+        // the catalog is looked up only when there is one (tests and an empty catalog have no Client.Game)
+        public void Sort() => SortBy(SkillsGroupManager.SkillsCount, i => Client.Game.UO.FileManager.Skills.GetSortedIndex(i));
 
         /// <summary>
         /// Orders the group's skills by the catalog's sorted order. Skills the catalog does not list (it is shorter, or
