@@ -174,10 +174,18 @@ namespace ClassicUO
         // The wait between frames: at the end of a tick that does not draw (Update) or after the present (EndDraw).
         private void EventLoopWait()
         {
+            if (_presentOnChange)
+            {
+                // present_on_change: a reply that arrived during Update, Draw or Present is read now, not after the wait
+                EventDrain();
+                RefreshChange();
+            }
+
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
             double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
             double wait = LoopTiming.WaitMs(
-                _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                _presentOnChange ? MsUntilPresentOnChange()
+                : _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
                 MsUntilNextTimer(since),
                 maxWait
             );
@@ -203,14 +211,23 @@ namespace ClassicUO
             {
                 _lateWake.RecordWait(late);
             }
+            else
+            {
+                // present_on_change: every net, input or wake (and a failed wait) counts as a change (conservative)
+                _changePending = true;
+            }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
 
             if (LoopStats.On)
             {
-                if (reason == WakeReason.Net && waited > 0.2)
+                if (reason == WakeReason.Net)
                 {
-                    LoopStats.NoteNetWake(end);
+                    LoopStats.NoteNetWake(end, waited > 0.2);
+                }
+                else if (reason == WakeReason.Input)
+                {
+                    LoopStats.NoteWake(reason, end);
                 }
 
                 LoopStats.NoteWait(reason, (long)((waited - wait) * Stopwatch.Frequency / 1000.0), timed, late);
@@ -690,6 +707,11 @@ namespace ClassicUO
                 LoopStats.NoteDrain(drainStart, Stopwatch.GetTimestamp(), NetClient.Socket.LastDrainBytes);
             }
 
+            if (NetClient.Socket.LastDrainBytes > 0)
+            {
+                NoteNetChange(_updateStartTs);
+            }
+
             if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
             {
                 Log.Info($"[net] t={Environment.TickCount64} frame={_totalFrames} avail={NetClient.Socket.LastDrainAvailable} bytes={NetClient.Socket.LastDrainBytes} slices={NetClient.Socket.LastDrainSlices} packets={packetsCount} ms={Stopwatch.GetElapsedTime(drainStart).TotalMilliseconds:0.00}");
@@ -749,6 +771,19 @@ namespace ClassicUO
             _tickInterval = x;
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
+            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive && PresentOnChangeSwitch;
+
+            if (_presentOnChange)
+            {
+                displayDue = PresentOnChangeDue(displayDue);
+            }
+#if CUO_DEVTOOLS
+            else if (PresentChangeCheck.On)
+            {
+                PresentChangeCheck.Tick(Stopwatch.GetTimestamp(), false, displayDue, displayDue, false, _displayPeriod);
+            }
+#endif
+
             _displayDrawDue = displayDue;
 
             // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
@@ -824,7 +859,10 @@ namespace ClassicUO
 
 
             // event_loop on: every due action (one Update per frame or wake); off: one per Update, as before
-            _queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch);
+            if (_queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch) > 0)
+            {
+                _changePending = true;
+            }
 
             base.Update(gameTime);
 
@@ -880,6 +918,7 @@ namespace ClassicUO
         protected override void Draw(GameTime gameTime)
         {
             if (LoopStats.On) LoopStats.NoteDraw();
+            BeginPresentedChange();
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
 
@@ -1007,6 +1046,12 @@ namespace ClassicUO
 
         protected override void EndDraw()
         {
+            if (_presentOnChange)
+            {
+                // present_on_change: read a reply that arrived during Draw (and flush what it queues) before Present, which can block
+                EventDrain();
+            }
+
             if (DevBench.FrameStats)
             {
                 FrameStats.BeforeEndDraw();
@@ -1019,6 +1064,7 @@ namespace ClassicUO
             }
 
             GpuDeviceLost.AfterPresent();
+            EndPresentedChange();
             _totalFrames++;
 #if CUO_DEVTOOLS
             PresentedFrameCount++;
@@ -1101,6 +1147,12 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
+            // present_on_change: any window, input or device event may change the screen (not the poll sentinel or user events)
+            if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
+            {
+                _changePending = true;
+            }
+
             if (LoopStats.On)
             {
                 LoopStats.NoteInputEvent(sdlEvent->type, sdlEvent->common.timestamp);

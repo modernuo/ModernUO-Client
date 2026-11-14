@@ -71,6 +71,18 @@ namespace ClassicUO.Loop
         /// <summary>How late a timed wait returned after its deadline (event loop only).</summary>
         public static readonly LatencyHistogram WaitLateness = new LatencyHistogram();
 
+        /// <summary>Event loop: a wait that returned on the socket to the start of the Update that drains it.</summary>
+        public static readonly LatencyHistogram NetWakeToUpdate = new LatencyHistogram();
+
+        /// <summary>Event loop: a wait that returned on window or input messages to the start of the next Update.</summary>
+        public static readonly LatencyHistogram InputWakeToUpdate = new LatencyHistogram();
+
+        /// <summary>A drain that read bytes to the end of the next present that shows them (every loop mode).</summary>
+        public static readonly LatencyHistogram NetToPresent = new LatencyHistogram();
+
+        private static long _wakeAt;
+        private static WakeReason _wakeReason;
+
         /// <summary>The loop mode the last report names (set by GameController).</summary>
         public static string Mode = "legacy";
 
@@ -109,14 +121,29 @@ namespace ClassicUO.Loop
             _lastPresent = now;
         }
 
-        /// <summary>The event loop woke on the socket after it had blocked: readiness is now (better than the last empty drain).</summary>
-        public static void NoteNetWake(long now)
+        /// <summary>
+        /// The event loop woke on the socket: the next Update start is measured from now (net_wake). If the wait had blocked,
+        /// readiness is now (better than the last empty drain).
+        /// </summary>
+        public static void NoteNetWake(long now, bool blocked)
         {
-            if (_netEmptySince != 0)
+            NoteWake(WakeReason.Net, now);
+
+            if (blocked && _netEmptySince != 0)
             {
                 _netEmptySince = now;
             }
         }
+
+        /// <summary>A wait returned for <paramref name="reason"/> at <paramref name="now"/>; the next Update start closes it.</summary>
+        public static void NoteWake(WakeReason reason, long now)
+        {
+            _wakeAt = now;
+            _wakeReason = reason;
+        }
+
+        /// <summary>Data read at <paramref name="readTs"/> is on screen: the present that shows it ended now.</summary>
+        public static void NoteNetPresent(long readTs, long presentTs) => NetToPresent.Add(Math.Max(0, presentTs - readTs));
 
         /// <summary>One drain: <paramref name="bytes"/> raw bytes read between <paramref name="start"/> and <paramref name="end"/>.</summary>
         public static void NoteDrain(long start, long end, int bytes)
@@ -167,6 +194,20 @@ namespace ClassicUO.Loop
 
             long now = Stopwatch.GetTimestamp();
 
+            if (_wakeAt != 0)
+            {
+                if (_wakeReason == WakeReason.Net)
+                {
+                    NetWakeToUpdate.Add(now - _wakeAt);
+                }
+                else if (_wakeReason == WakeReason.Input)
+                {
+                    InputWakeToUpdate.Add(now - _wakeAt);
+                }
+
+                _wakeAt = 0;
+            }
+
             if (_periodStart == 0)
             {
                 _periodStart = now;
@@ -212,6 +253,9 @@ namespace ClassicUO.Loop
             Input.Append(sb, " input");
             FramePacing.Append(sb, " frame");
             WaitLateness.Append(sb, " wait_late");
+            NetWakeToUpdate.Append(sb, " net_wake");
+            InputWakeToUpdate.Append(sb, " input_wake");
+            NetToPresent.Append(sb, " net_present");
 #if CUO_DEVTOOLS
             if (Diagnostics.On) Diagnostics.Loop(sb.ToString());
             else
@@ -225,6 +269,9 @@ namespace ClassicUO.Loop
             Input.Clear();
             FramePacing.Clear();
             WaitLateness.Clear();
+            NetWakeToUpdate.Clear();
+            InputWakeToUpdate.Clear();
+            NetToPresent.Clear();
             _periodStart = now;
             _cpuStart = cpu;
         }
@@ -236,7 +283,7 @@ namespace ClassicUO.Loop
         // bucket upper bounds in microseconds; the last bucket is open
         internal static readonly int[] BoundsUs =
         {
-            50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000, 12000, 16000, 20000, 25000, 33000, 50000,
+            5, 10, 20, 30, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000, 12000, 16000, 20000, 25000, 33000, 50000,
             75000, 100000, 150000, 250000, 500000, int.MaxValue
         };
 

@@ -86,6 +86,24 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
+        /// present_on_change: ms until the next present, measured from now, rate-limited from the last present instead of a
+        /// fixed grid. A pending change (a net, input or wake, a due timer, motion or effects) presents one display interval
+        /// after the last present, or at once if that much time has passed; with no change the screen is redrawn after
+        /// <paramref name="idleRedrawMs"/> (never sooner than the interval) for the discrete animations the loop does not track.
+        /// <paramref name="msSinceLastPresent"/> is infinity before the first present.
+        /// </summary>
+        public static double MsUntilPresent(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs)
+        {
+            double target = changePending ? intervalMs : Math.Max(intervalMs, idleRedrawMs);
+
+            return Math.Max(0, target - msSinceLastPresent);
+        }
+
+        /// <summary>present_on_change: whether this iteration draws (within <see cref="DrawSlackMs"/> of the deadline).</summary>
+        public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs)
+            => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs) <= DrawSlackMs;
+
+        /// <summary>
         /// The wait for this iteration, in ms: the earliest of the next draw, the next timer (both from now) and the cap (the
         /// longest the loop may go without an Update, for timers it does not track). 0 = do not wait.
         /// </summary>

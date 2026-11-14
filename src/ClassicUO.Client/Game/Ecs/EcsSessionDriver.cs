@@ -1015,6 +1015,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // presentchange on|off: present_on_change (evloop-2 counts jobs compare it with the grid in one session)
+                case "presentchange" when args.Length > 0:
+                    Settings.GlobalSettings.PresentOnChange = args[0] == "on";
+                    Log.Info($"[ECS] driver: present_on_change {args[0]}");
+
+                    return true;
+
                 case "vsync" when args.Length > 0:
                     Client.Game.SetVSync(args[0] == "on");
                     Log.Info($"[ECS] driver: vsync {args[0]}");
