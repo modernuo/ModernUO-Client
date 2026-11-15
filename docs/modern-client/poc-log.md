@@ -7509,3 +7509,42 @@ Base `16887f55b`, branch `bg/evloop-5`. Code `287789a48`, `659cf28f0`, `a49ef1e0
 
 Owner declared the machine quiet. Base ee6809bf9 (before the ping fix) vs d23dba919 (fix, merged cbfa71281), JIT with TieredCompilation off, ABBA order; the job reached the main runner's 3600 s cap in round 3, so rounds 1-2 (both builds, both renderers, busy and quiet spots, arms spin/grid/new/new50) are the result. Ping RTT p50 ms, base -> fix, present_on_change arm: Gpu busy 1.53 / 1.48 -> 0.75 / 0.28; Legacy busy 2.30 / 2.29 -> 0.55 / 0.64; Gpu quiet 0.54 / 0.36 -> 0.17 / 0.37; Legacy quiet 0.42 / 0.38 -> 0.14 / 0.16. Spin (event loop off, current default) 0.29-0.41 busy, 0.13-0.16 quiet; grid 1.5-2.5 busy. new50 (idle redraw 50 ms) 0.28-0.35 busy, 0.16 quiet. Wire+poll p50 with the fix 0.06-0.13 ms (as low as spin). CPU ms/s: spin ~1000, fix 65-75 quiet, 240-390 busy.
 Verdict: no regression. The 3 ms seen at 144 Hz (bench-000820/821) was the busy machine. The fix brings present_on_change within ~0.1-0.35 ms of spin at 3-15x less CPU; the remaining gap is a reply landing during a Draw/Present.
+
+## 2026-11-14 perf-16: world_fill_diamond, the list fill walks the screen's diamond (bg/perf-16)
+
+Base a4bd60d8a. Code `cbb233b71` (switch, walk, checker, unit tests), `de100ab85` (checker counts every square tile).
+Switch `world_fill_diamond`, default off; nothing changes with it off.
+
+- **Old walk.** `FillGameObjectList` visits every tile of every chunk in `GetViewPort`'s square tile range (player
+  +- max(W, H) / 44 * zoom tiles). `AddTileToRenderList` leaves a tile beside the culling rectangle at its first object
+  and culls every other object by its anchor y; the Gpu path then runs `CollectGpuHidden` on each walked tile. A tile's
+  anchor depends on D = x - y (horizontal) and S = x + y (vertical, minus 4 px per Z), so the screen is a diamond in tile
+  space and most of the square (its corners, and the rows far above and below a wide view) can draw nothing.
+- **New walk (`FillDiamond`).** Per chunk a 64-bit mask of the tiles inside the D and S bands. The bands cover every tile
+  the walk could draw for any Z (sbyte: anchor y -508..+512 px; stretched land's MinZ the same) and, on the Gpu world,
+  every tile `CollectGpuHidden` could hide a baked sprite on (its own GPU_WIDE_ART cut beside the view; land 44 px plus
+  stretch; the tallest static art from the pack's sprite table). The tile loop and the hidden pass skip the rest; the
+  edge-tile pass (`GpuHideCulledBaked`) is unchanged. Chunk-level work stays for every chunk of the square (mesh builds,
+  `_visibleChunks`, Gpu prepare masks, item cache prepare), so the Gpu skip state and Legacy mesh resets behave as
+  before. Skipped tiles miss camera moves, so a fill whose bands (or switch state) differ from the last one recomputes
+  every walked position (`UpdateDrawPosition`); the bands only move with the offset or the view, which already set it.
+- **Dropped work (no visible output).** The old walk ran fades, name-handle opening and the "animated art in the walk"
+  flag for unmeshed objects before culling them by y; for objects more than 512 px above or below the view that work no
+  longer runs. They pass through the 512 px margin, where they are walked, before they can reach the view.
+- **Checker `CUO_FILL_DIAMOND_CHECK=1|N`** (dev; default every 10th fill). The fill walks the whole square; for each tile
+  outside the diamond it reports any object drawn (DrawnFrame stamp: render lists, mesh visibility, served items, picks),
+  any land/static override from its hidden pass (`GpuWorldRenderer.OverrideCalls`), a selection there, and counts alpha
+  or handle changes as dropped side effects. The new walk is the old walk minus those tiles in the same order, so zero
+  contributions means the same objects, order, hidden set and picking.
+- **Jobs (lanes; AOT dev, base a4bd60d8a, new cbb233b71).** bench2-000029 gate-gpu and bench3-000022 gate-legacy with the
+  switch and the checker on: T9S11 PASS, 12 / 10 client logs with summaries, **0 mismatches, 0 dropped side effects**.
+  The cbb233b71 summaries counted only chunks the diamond cuts: Legacy 43-47 % of those tiles outside, Gpu 3-30 % (its
+  bands are wider by the hidden pass's reach). bench6-000044 golden: base vs new (off) and base vs on, 54 file pairs
+  each, GOLDEN SAME. bench5-000028 alloc-g and bench5-000029 alloc-l: main-thread p50 B/frame equal for base, off and
+  on (0 everywhere; Legacy ls_walk 360 / 0 / 48, streaming noise).
+- **Verification.** Client builds with and without `CuoDevTools`: 0 errors. ClassicUO.UnitTests: 3992 passed / 6 skipped
+  (dev), 3945 / 6 (`CuoDevTools=false`); FillDiamondTests brute-force every Z against the bands for five views.
+- **Parked:** `measure/perf-16/job-timing-PARKED.sh` (base / off / on, Gpu and Legacy, 1080p zoom 1 and 2.5, 3840x2054
+  zoom 2.5). No timing claim yet.
+- **Next:** on the Gpu world, tiles only in the hidden pass's reach need the hidden pass, not the walk (split bands);
+  skip chunk-level work for chunks with an empty mask; per-tile decision cache (the row's other half).

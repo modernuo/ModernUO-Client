@@ -58,10 +58,10 @@ From a comparison with a reference client (reports in cuo-poc-state/audits (paci
 | Present stalls 4-5 ms on ~4 % of frames above ~1000 fps | SDL_GPU frames in flight | misleading avg/p99 at high fps | M1 avoids them when uncapped (present at the display rate); open otherwise; try mailbox-style present or more frames in flight; compare p50 meanwhile |
 | NativeAOT `DirectPInvoke` for FNA3D/SDL3 | build | not measured | open, needs generated import libraries |
 | AOT `RtlWalkFrameChain` 4-5 % of render-thread samples (likely GPU tool injection) | profiling | ~0.03 ms/frame | re-measure on a machine without GPU tools |
-| List fill is the world's main Gpu cost (walks a square tile range, tests every object): walk the screen's diamond, cache per-tile decisions | GameScene fill | 0.5 ms zoomed out 1080p, 2.9 ms at 4K | open |
+| List fill is the world's main Gpu cost (walks a square tile range, tests every object): walk the screen's diamond, cache per-tile decisions | GameScene fill | 0.5 ms zoomed out 1080p, 2.9 ms at 4K | diamond walk behind `world_fill_diamond` (perf-16, default off, gates 0 mismatches, timing parked); per-tile decision cache open |
 | `Static.CheckMouseSelection` for every static every frame (reject by art rect first) | StaticView.cs:95, GameSceneDrawingSorting.cs:940 | ~3.7 % of main-thread samples zoomed out; helps Legacy | open |
 | Chunk meshes still built in Gpu mode (picker parity) and art atlases still filled for the picker | GameScene.cs:648 | CPU and VRAM per dirty chunk | open; picker-only path once Legacy is removed |
-| `CollectGpuHidden` second walk over each tile; remaining zoomed-out overrides (182) are the fill's skips | WorldRenderer | 0.03-0.1 ms zoomed out | open; disappears with the diamond walk |
+| `CollectGpuHidden` second walk over each tile; remaining zoomed-out overrides (182) are the fill's skips | WorldRenderer | 0.03-0.1 ms zoomed out | perf-16: runs only on the diamond's tiles with `world_fill_diamond`; Gpu bands still wide (hidden pass reach), split them next |
 | Circle-of-transparency ring scans chunks every frame | `WorldRenderer.BuildFrame` | 8 ring instances at zoom 1, cheap | open; cache per player tile and chunk generation |
 | Season change rebakes by `ChunkStore.EvictAll` (view re-streams a few frames) | ChunkStore | - | open; double-buffered slots if it matters |
 | Three entity lookups per mobile in the Uo.Client extract; 23 equipment layers walked per human per frame | RenderExtract.cs:119, Animation.cs:240 | - | open (Uo.Client only) |
