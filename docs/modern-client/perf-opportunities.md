@@ -60,6 +60,9 @@ From a comparison with a reference client (reports in cuo-poc-state/audits (paci
 | AOT `RtlWalkFrameChain` 4-5 % of render-thread samples (likely GPU tool injection) | profiling | ~0.03 ms/frame | re-measure on a machine without GPU tools |
 | List fill is the world's main Gpu cost (walks a square tile range, tests every object): walk the screen's diamond, cache per-tile decisions | GameScene fill | 0.5 ms zoomed out 1080p, 2.9 ms at 4K | diamond walk behind `world_fill_diamond` (perf-16, default off, gates 0 mismatches, timing parked); per-tile decision cache open |
 | `Static.CheckMouseSelection` for every static every frame (reject by art rect first) | StaticView.cs:95, GameSceneDrawingSorting.cs:940 | ~3.7 % of main-thread samples zoomed out; helps Legacy | open |
+
+| List fill is the world's main Gpu cost (walks a square tile range, tests every object): walk the screen's diamond, cache per-tile decisions | GameScene fill | 0.5 ms zoomed out 1080p, 2.9 ms at 4K | open |
+| `Static.CheckMouseSelection` for every static every frame (reject by art rect first) | StaticView.cs:95, GameSceneDrawingSorting.cs:940 | ~3.7 % of main-thread samples zoomed out; helps Legacy | the art-rect reject exists since 73969e543; perf-17 (`bg/perf-17` a46917637, `static_pick_early_reject`, default off, `CUO_STATIC_PICK_CHECK`) rejects a far mouse before the graphic/entry reads: 97 % of Legacy and 76 % of Gpu pick-scan picks, 0 mismatches; quiet timing parked (measure/perf-17/job-timing-PARKED.sh) |
 | Chunk meshes still built in Gpu mode (picker parity) and art atlases still filled for the picker | GameScene.cs:648 | CPU and VRAM per dirty chunk | open; picker-only path once Legacy is removed |
 | `CollectGpuHidden` second walk over each tile; remaining zoomed-out overrides (182) are the fill's skips | WorldRenderer | 0.03-0.1 ms zoomed out | perf-16: runs only on the diamond's tiles with `world_fill_diamond`; Gpu bands still wide (hidden pass reach), split them next |
 | Circle-of-transparency ring scans chunks every frame | `WorldRenderer.BuildFrame` | 8 ring instances at zoom 1, cheap | open; cache per player tile and chunk generation |
@@ -95,7 +98,7 @@ From a comparison with a reference client (reports in cuo-poc-state/audits (paci
 
 | What | Where | Estimate | Status |
 |---|---|---|---|
-| `ItemOffsets.ReadEcs` runs for every item every frame | ItemOffsets | 2.5-3.1 % of the large scene; a "has offset" flag on the item | open |
+| `ItemOffsets.ReadEcs` runs for every item every frame | ItemOffsets | 2.5-3.1 % of the large scene; a "has offset" flag on the item | idle case done by T9 S7 (ec0cc84ee: `ItemOffsetCount` test); perf-17 (`bg/perf-17` d3e9c6289, `item_offset_flag`, default off, `CUO_ITEM_OFFSET_FLAG_CHECK`) adds the flag for the boat-moving case: 0 mismatches in both gates and the boat scene; quiet timing parked |
 | `MobileAnimationSystem.UpdateInPlace` -> `SamplePushed`/`SelectCached` build and compare a ~15-field `SelectKey` per drawn mobile per frame | MobileAnimationSystem.cs:121-207 | 0.1-0.3 us/mobile, 1.5 % of profile; dirty bit + `NextFrameTime` check | open |
 | `GpuWorldRenderer.TryDrawMobileEcs` finds the dirty flag through a second lookup (as fixed in 37237a511); `TakeDirty` reads tags before the record | GpuWorldRenderer.cs:729, ~611 | one lookup per drawn mobile | open |
 | Mobile replay builds a ~80 B draw struct per entry | MobileSpriteExtract.cs:770 | 2.2 % of profile | open |
