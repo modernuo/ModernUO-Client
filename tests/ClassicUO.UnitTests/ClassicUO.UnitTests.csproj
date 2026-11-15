@@ -31,7 +31,7 @@
 
   <!-- The converter's audio importer (it depends only on ClassicUO.IO and Uo.Pack), run on synthetic MUL files. -->
   <ItemGroup>
-    <Compile Include="..\..\poc\Uo.Converter\AudioImport.cs" Link="Assets\AudioImport.cs" />
+    <Compile Include="..\..\tools\Uo.Converter\AudioImport.cs" Link="Assets\AudioImport.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,7 +4,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Renderer
 {
-    // Grow on demand for the Gpu world's art pages, anim pages and instance buffer (poc/Uo.Render/GrowthPolicy.cs).
+    // Grow on demand for the Gpu world's art pages, anim pages and instance buffer (src/Uo.Render/GrowthPolicy.cs).
     public class GrowthPolicyTests
     {
         [Fact]

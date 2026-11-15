@@ -8,8 +8,8 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Uo.Pack\Uo.Pack.csproj" />
-    <ProjectReference Include="..\..\tools\ClassicUO.Assets.Mul\ClassicUO.Assets.Mul.csproj" />
+    <ProjectReference Include="..\..\src\Uo.Pack\Uo.Pack.csproj" />
+    <ProjectReference Include="..\ClassicUO.Assets.Mul\ClassicUO.Assets.Mul.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />

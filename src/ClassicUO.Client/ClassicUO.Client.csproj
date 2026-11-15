@@ -76,7 +76,7 @@
     <ProjectReference Include="..\ClassicUO.Ecs\ClassicUO.Ecs.csproj" />
     <ProjectReference Include="..\ClassicUO.Renderer\ClassicUO.Renderer.csproj" />
     <ProjectReference Include="..\ClassicUO.Utility\ClassicUO.Utility.csproj" />
-    <ProjectReference Include="..\..\poc\Uo.Render\Uo.Render.csproj" />
+    <ProjectReference Include="..\Uo.Render\Uo.Render.csproj" />
   </ItemGroup>
 
   <!-- Uo.Render binds SDL3 through SDL3-CS's SDL3.Core assembly while FNA compiles SDL3.Legacy.cs into FNA.dll; both

@@ -128,7 +128,7 @@ finally { $tcp.Close() }
 
 if (-not $reachable) {
     Write-Host "The ModernUO server is not reachable at ${Server}:$Port." -ForegroundColor Red
-    Write-Host 'Start it first (C:\Repositories\ModernUO\Distribution, or poc\Uo.Net.Cli\scripts\start-modernuo.ps1) and run this again.' -ForegroundColor Red
+    Write-Host 'Start it first (C:\Repositories\ModernUO\Distribution, or tools\Uo.Net.Cli\scripts\start-modernuo.ps1) and run this again.' -ForegroundColor Red
     exit 1
 }
 

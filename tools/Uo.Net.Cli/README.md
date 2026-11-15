@@ -1,14 +1,14 @@
 # Uo.Net.Cli
 
-A headless test client for `poc/Uo.Net`. It logs in, enters the world, teleports, walks, stays connected, then disconnects.
+A headless test client for `tools/Uo.Net`. It logs in, enters the world, teleports, walks, stays connected, then disconnects.
 
 ## Local server
 
 This uses the owner's ModernUO build that is already in `C:\Repositories\ModernUO\Distribution`. The scripts don't rebuild it and don't change its config. It listens on `0.0.0.0:2593` and accounts are created automatically.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File poc\Uo.Net.Cli\scripts\start-modernuo.ps1   # log: %TEMP%\modernuo-poc.log
-powershell -ExecutionPolicy Bypass -File poc\Uo.Net.Cli\scripts\stop-modernuo.ps1
+powershell -ExecutionPolicy Bypass -File tools\Uo.Net.Cli\scripts\start-modernuo.ps1   # log: %TEMP%\modernuo-poc.log
+powershell -ExecutionPolicy Bypass -File tools\Uo.Net.Cli\scripts\stop-modernuo.ps1
 ```
 
 - **Start** opens ModernUO in its own minimized console. Its stdout goes to the log file. Its stdin stays a console, so ModernUO doesn't switch to headless mode.
@@ -20,7 +20,7 @@ Credentials come from environment variables or command-line arguments. They are 
 
 ```powershell
 $env:UO_USER = '<account>'; $env:UO_PASS = '<password>'
-dotnet run -c Release --project poc\Uo.Net.Cli -- --runs 3
+dotnet run -c Release --project tools\Uo.Net.Cli -- --runs 3
 ```
 
 | Option | Default | Purpose |
@@ -36,4 +36,4 @@ dotnet run -c Release --project poc\Uo.Net.Cli -- --runs 3
 | `--log-packets` | off | Hex dump of every packet. The login packets 0x80 and 0x91 are redacted. |
 | `--verbose` | off | Print every move result and every message |
 
-To check NativeAOT: `dotnet publish poc\Uo.Net.Cli -c Release -r win-x64 -p:PublishAot=true`. `vswhere.exe` must be on PATH.
+To check NativeAOT: `dotnet publish tools\Uo.Net.Cli -c Release -r win-x64 -p:PublishAot=true`. `vswhere.exe` must be on PATH.

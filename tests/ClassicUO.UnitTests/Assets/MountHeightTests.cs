@@ -294,7 +294,7 @@ namespace ClassicUO.UnitTests.Assets
 
             // Uo.Client: the rider offset is RiderOffset (table + the original mount body's shift), taken before the alias
             // is followed, and used for the body and every equipment layer.
-            string poc = Read("poc/Uo.Client/Animation.cs");
+            string poc = Read("research/Uo.Client/Animation.cs");
             poc.Should().MatchRegex(@"\(\(uint\)mountBody < \(uint\)bodies\.Length \? bodies\[mountBody\]\.MountSeat : default\)\.RiderOffset\(item\)");
             int offsetAt = poc.IndexOf("mountOffset = RiderOffset(_bodies, item, mountBody);", StringComparison.Ordinal);
             int aliasAt = poc.IndexOf("mountBody = _bodies[mountBody].AliasBody;", StringComparison.Ordinal);

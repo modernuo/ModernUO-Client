@@ -10,17 +10,17 @@ using Xunit;
 namespace ClassicUO.UnitTests.Renderer
 {
     /// <summary>
-    /// Uo.Render embeds committed shader binaries (poc/Uo.Render/Shaders/compiled), so a build needs no dxc. These tests catch
+    /// Uo.Render embeds committed shader binaries (src/Uo.Render/Shaders/compiled), so a build needs no dxc. These tests catch
     /// a shader source edited without regenerating the binaries, and a build that lost a binary.
     /// </summary>
     public class ShaderBundleTests
     {
-        private const string Regenerate = "dotnet build poc/Uo.Render -p:CompileShaders=true (docs/dev/runbook.md, Shader toolchain)";
+        private const string Regenerate = "dotnet build src/Uo.Render -p:CompileShaders=true (docs/dev/runbook.md, Shader toolchain)";
 
         [Fact]
         public void CompiledShaders_MatchTheirSource()
         {
-            string shaders = Path.Combine(WriteSiteScanner.FindRepoRoot(), "poc", "Uo.Render", "Shaders");
+            string shaders = Path.Combine(WriteSiteScanner.FindRepoRoot(), "src", "Uo.Render", "Shaders");
             string[] sources = Directory.GetFiles(shaders, "*.hlsl");
 
             sources.Should().NotBeEmpty();

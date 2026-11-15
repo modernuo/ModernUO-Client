@@ -20,7 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Uo.Render\Uo.Render.csproj" />
+    <ProjectReference Include="..\..\src\Uo.Render\Uo.Render.csproj" />
   </ItemGroup>
 
   <ItemGroup>

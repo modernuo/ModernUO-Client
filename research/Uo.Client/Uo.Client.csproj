@@ -19,8 +19,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Uo.Render\Uo.Render.csproj" />
-    <ProjectReference Include="..\Uo.Net\Uo.Net.csproj" />
+    <ProjectReference Include="..\..\src\Uo.Render\Uo.Render.csproj" />
+    <ProjectReference Include="..\..\tools\Uo.Net\Uo.Net.csproj" />
     <PackageReference Include="Friflo.Engine.ECS" Version="4.0.0-preview.2" />
   </ItemGroup>
 

@@ -45,13 +45,13 @@
       <_ShaderBinary Include="$(CompiledShaderDir)%(ShaderVariant.File).dxil" Resource="%(ShaderVariant.Identity).dxil" />
       <_ShaderBinary Include="$(CompiledShaderDir)%(ShaderVariant.File).spv" Resource="%(ShaderVariant.Identity).spv" />
     </ItemGroup>
-    <Error Condition="!Exists('%(_ShaderBinary.Identity)')" Text="Compiled shader %(_ShaderBinary.Identity) is missing. Regenerate with: dotnet build poc/Uo.Render -p:CompileShaders=true (docs/dev/runbook.md, Shader toolchain)." />
+    <Error Condition="!Exists('%(_ShaderBinary.Identity)')" Text="Compiled shader %(_ShaderBinary.Identity) is missing. Regenerate with: dotnet build src/Uo.Render -p:CompileShaders=true (docs/dev/runbook.md, Shader toolchain)." />
     <ItemGroup>
       <EmbeddedResource Include="@(_ShaderBinary)" LogicalName="%(_ShaderBinary.Resource)" WithCulture="false" />
     </ItemGroup>
   </Target>
 
-  <!-- Regenerate (opt-in): dotnet build poc/Uo.Render -p:CompileShaders=true. Rewrites the compiled files and the source
+  <!-- Regenerate (opt-in): dotnet build src/Uo.Render -p:CompileShaders=true. Rewrites the compiled files and the source
        hashes: sha256 of the source with CR removed, so CRLF and LF checkouts agree (dxc's output doesn't depend on them). -->
   <Target Name="CompileShaders" Condition="'$(CompileShaders)' == 'true'">
     <Error Condition="!Exists('$(Dxc)')" Text="CompileShaders: the DXIL compiler is not at '$(Dxc)'. Install the Windows SDK 10.0.26100.0 or pass -p:Dxc=&lt;path to its dxc.exe&gt;." />
@@ -85,5 +85,10 @@
       ]]></Code>
     </Task>
   </UsingTask>
+
+  <ItemGroup>
+    <!-- src/Directory.Build.props adds the FileEmbed generator; this library embeds nothing with it -->
+    <ProjectReference Remove="..\..\external\FileEmbed\FileEmbed\FileEmbed.csproj" />
+  </ItemGroup>
 
 </Project>
