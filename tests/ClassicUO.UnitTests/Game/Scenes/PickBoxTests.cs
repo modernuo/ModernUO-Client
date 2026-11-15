@@ -9,10 +9,10 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Game.Scenes
 {
-    // perf-17, perf-19 (pick_early_reject): the pick test of a static and a multi component rejects a mouse outside the box
-    // the largest static art can reach from the anchor. The box must hold every pixel the full test can hit: the picker's
-    // OrigW x OrigH mask at the anchor minus the art entry's stored offset ((OrigW >> 1) - 22, OrigH - 44), or minus 0, 0
-    // while the entry is unset.
+    // perf-17, perf-19 (pick_early_reject): the pick test of a static, a multi component and an art item rejects a mouse
+    // outside the box the largest static art can reach from the anchor. The box must hold every pixel the full test can hit:
+    // the picker's OrigW x OrigH mask at the anchor minus the art entry's stored offset ((OrigW >> 1) - 22, OrigH - 44), or
+    // minus 0, 0 while the entry is unset; for an item also that mask 5 px up and left (a stack's copy).
     [Collection(nameof(PickBoxTests))]
     public sealed class PickBoxTests : IDisposable
     {
@@ -33,7 +33,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             PickBox.ResetForTests();
 #else
             PickBox.OverrideForTests = null;
-            PickBox.Active = PickBox.RejectOn = false;
+            PickBox.Active = PickBox.ItemActive = PickBox.RejectOn = false;
 #endif
         }
 
@@ -145,6 +145,50 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
         }
 
+        [Theory]
+        [InlineData(1, 1, 1, 1)]
+        [InlineData(44, 44, 44, 44)]
+        [InlineData(20, 30, 200, 260)]
+        [InlineData(45, 45, 45, 45)]
+        [InlineData(200, 260, 200, 260)]
+        [InlineData(91, 17, 300, 300)]
+        [InlineData(255, 20, 255, 400)]
+        public void An_Item_Early_Reject_Is_A_Miss_With_Either_Draw_Offset_And_The_Stack(int w, int h, int maxW, int maxH)
+        {
+            PickBox.SetBounds(maxW, maxH);
+
+            foreach (bool sized in new[] { false, true })
+            {
+                int entryW = 0, entryH = 0;
+
+                if (sized)
+                {
+                    Item.PickEntryFromSize(w, h, out entryW, out entryH);
+                }
+
+                for (int dy = -maxH - 80; dy < maxH + 120; dy++)
+                {
+                    for (int dx = -maxW - 80; dx < maxW + 120; dx++)
+                    {
+                        int mx = dx + entryW, my = dy + entryH;
+                        bool inMask = mx >= 0 && my >= 0 && mx < w && my < h;
+                        bool inStack = mx + 5 >= 0 && my + 5 >= 0 && mx + 5 < w && my + 5 < h;
+
+                        if (inMask || inStack)
+                        {
+                            PickBox.RejectsItem(dx, dy).Should().BeFalse($"art {w}x{h} entry {entryW},{entryH}: mouse {dx},{dy} is in a mask");
+                        }
+                    }
+                }
+            }
+
+            PickBox.RejectsItem(-maxW - 6, 0).Should().BeTrue();
+            PickBox.RejectsItem(maxW + 22, 0).Should().BeTrue();
+            PickBox.RejectsItem(0, -maxH - 6).Should().BeTrue();
+            PickBox.RejectsItem(0, maxH + 44).Should().BeTrue();
+            PickBox.RejectsItem(-maxW - 5, -maxH - 5).Should().BeFalse();
+        }
+
         [Fact]
         public void A_Far_Mouse_Is_Rejected_Before_A_Multi_Reads_Its_Art()
         {
@@ -182,12 +226,45 @@ namespace ClassicUO.UnitTests.Game.Scenes
             m.CheckMouseSelection().Should().BeFalse();
         }
 
+        [Fact]
+        public void A_Far_Mouse_Is_Rejected_Before_An_Item_Reads_Its_Art()
+        {
+            var world = new World();
+            Item item = world.GetOrCreateItem(0x4000_0010);
+            item.RealScreenPosition = new Point(500, 400);
+            PickBox.SetBounds(100, 120);
+            PickBox.Active = PickBox.ItemActive = PickBox.RejectOn = true;
+
+            // no Client.Game in tests: a pick that reached the full test would throw
+            foreach (Point mouse in new[] { new Point(100, 400), new Point(500, 50), new Point(1000, 400), new Point(500, 900) })
+            {
+                SelectedObject.TranslatedMousePositionByViewport = mouse;
+                item.CheckMouseSelection().Should().BeFalse($"mouse {mouse}");
+            }
+        }
+
+        [Fact]
+        public void Without_ItemActive_An_Item_Keeps_The_Full_Test()
+        {
+            var world = new World();
+            Item item = world.GetOrCreateItem(0x4000_0011);
+            item.RealScreenPosition = new Point(500, 400);
+            PickBox.SetBounds(100, 120);
+            PickBox.Active = PickBox.RejectOn = true;
+            PickBox.ItemActive = false;
+            SelectedObject.TranslatedMousePositionByViewport = new Point(100, 400);
+
+            // the full test reads the tile data (no Client.Game in tests)
+            Action pick = () => item.CheckMouseSelection();
+            pick.Should().Throw<Exception>();
+        }
+
 #if CUO_DEVTOOLS
         [Theory]
         [InlineData(0, false, false, 0)]
         [InlineData(1, false, true, 0)]
-        [InlineData(0, true, false, 0)]
-        [InlineData(0, true, true, 1)]
+        [InlineData(2, true, false, 0)]
+        [InlineData(2, true, true, 1)]
         [InlineData(1, true, true, 1)]
         public void The_Checker_Counts_Only_A_Reject_The_Full_Test_Hit(int kindIndex, bool reject, bool hit, int mismatches)
         {
@@ -195,10 +272,11 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var world = new World();
             var st = new Static(world) { Graphic = 0x0ABC };
 
-            PickBox.Judge(kind, st, 0x0ABC, reject, hit);
+            PickBox.Judge(kind, st, 0x0ABC, reject, hit, notResident: reject);
 
             PickBox.Mismatches.Should().Be(mismatches);
             PickBox.EarlyRejects(kind).Should().Be(reject ? 1 : 0);
+            PickBox.NotResident.Should().Be(reject ? 1 : 0);
         }
 #endif
     }
