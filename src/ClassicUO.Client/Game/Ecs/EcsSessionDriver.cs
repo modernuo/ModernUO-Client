@@ -732,6 +732,27 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // roofs on|off: the profile's draw roofs, applied as the macro does (off: roofs over the player are hidden);
+                // cot on|off [radius]: the circle of transparency (clip-5's translucent shots with depth_model)
+                case "roofs" when args.Length > 0 && ProfileManager.CurrentProfile is { } roofProfile:
+                    roofProfile.DrawRoofs = args[0] == "on";
+                    Client.Game.GetScene<GameScene>()?.UpdateMaxDrawZ(true);
+                    Log.Info($"[ECS] driver: draw roofs {roofProfile.DrawRoofs}");
+
+                    return false;
+
+                case "cot" when args.Length > 0 && ProfileManager.CurrentProfile is { } cotProfile:
+                    cotProfile.UseCircleOfTransparency = args[0] == "on";
+
+                    if (args.Length > 1)
+                    {
+                        cotProfile.CircleOfTransparencyRadius = Convert.ToInt32(args[1]);
+                    }
+
+                    Log.Info($"[ECS] driver: circle of transparency {cotProfile.UseCircleOfTransparency} radius {cotProfile.CircleOfTransparencyRadius}");
+
+                    return false;
+
                 // aura <0-3>: the profile's aura under feet (3 = always; E12 checks that the probe pass doesn't draw them)
                 case "aura" when args.Length > 0 && ProfileManager.CurrentProfile is { } auraProfile:
                     auraProfile.AuraUnderFeetType = Convert.ToInt32(args[0]);
