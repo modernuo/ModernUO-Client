@@ -45,7 +45,7 @@ What `CUO_DEVTOOLS` includes:
 - The checkers `CUO_LAYER_CACHE_CHECK` and `CUO_FUNNEL_CHECK`.
 - `MemLog` (`CUO_MEM_LOG`).
 
-Code guarded by it is tagged `CLEANUP(release)`.
+Code that exists only for developers is guarded by `#if CUO_DEVTOOLS`; the guard is its only marker.
 
 A client without dev tools:
 
