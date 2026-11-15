@@ -138,6 +138,37 @@ namespace ClassicUO.Game.GameObjects
             // IsAnimated test before OnGround (Container probes ContainedIn and EquippedOn); the same values and answers
             ushort itemGraphic = Graphic;
 
+            // pick_early_reject (PickBox): a mouse far from an art item's anchor misses whatever art it draws; no tile data,
+            // drawn graphic, sprite or art entry read for it (nor the full test's art request; the draw looks the art up)
+            if (Scenes.PickBox.ItemActive && itemGraphic != CORPSE_GRAPHIC)
+            {
+                bool reject = Scenes.PickBox.RejectsItem(this);
+
+#if CUO_DEVTOOLS
+                if (Scenes.PickBox.Checking)
+                {
+                    bool hit = FullPick(itemGraphic, out ushort drawn);
+                    bool notResident = reject && drawn != 0 && !Client.Game.UO.Arts.RequestArt(drawn);
+                    Scenes.PickBox.Judge(Scenes.PickBox.Kind.Item, this, drawn, reject, hit, notResident);
+
+                    return hit && !(reject && Scenes.PickBox.RejectOn);
+                }
+#endif
+
+                if (reject)
+                {
+                    return false;
+                }
+            }
+
+            return FullPick(itemGraphic, out _);
+        }
+
+        // the pick test before pick_early_reject; drawn: the art graphic it tested (0 for a corpse, or when it stopped first)
+        private bool FullPick(ushort itemGraphic, out ushort drawn)
+        {
+            drawn = 0;
+
             if (itemGraphic != CORPSE_GRAPHIC)
             {
                 if (
@@ -176,6 +207,8 @@ namespace ClassicUO.Game.GameObjects
                         graphic += (ushort)animEntry.AnimOffset;
                     }
                 }
+
+                drawn = graphic;
 
                 // pa-itemprep (perf audit #7), item_pick_early_reject: a mouse outside every box this art can be tested in
                 // misses (ItemPick); CUO_ITEM_PICK_CHECK runs the full test too and counts a reject it would have hit
