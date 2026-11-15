@@ -156,7 +156,7 @@ namespace ClassicUO
             switch (result)
             {
                 case RecordingResult.Same:
-                    _uoSpriteBatch.DropRecording();
+                    _uoSpriteBatch.DropRecording(pass);
 
                     break;
 

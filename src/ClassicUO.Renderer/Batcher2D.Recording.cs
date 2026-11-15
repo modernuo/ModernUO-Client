@@ -31,6 +31,12 @@ namespace ClassicUO.Renderer
         internal List<RecordedSegment> Segments = new();
         internal int SpriteCount;
         internal bool Valid;
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_ANIM_DUE_CHECK: the signature of the pass's last submission, folded into the frame's again when
+        // a later recording compares the same and is dropped (the frame shows the cached pass)
+        internal ulong Signature;
+        internal long SignatureSprites;
+#endif
 
         public bool IsValid => Valid;
         public int SpriteCountSubmitted => SpriteCount;
@@ -166,8 +172,14 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>After <see cref="RecordingResult.Same"/>: drop the recording (the target is left untouched).</summary>
-        public void DropRecording()
+        public void DropRecording(RecordedPass pass)
         {
+#if CUO_DEVTOOLS
+            if (SignatureOn && pass.Valid)
+            {
+                FoldSignature(pass.Signature, pass.SignatureSprites);
+            }
+#endif
             _recSegments.Clear();
             _numSprites = 0;
         }
@@ -176,7 +188,25 @@ namespace ClassicUO.Renderer
         /// it as the pass's previous one.</summary>
         public void SubmitRecording(RecordedPass pass)
         {
+#if CUO_DEVTOOLS
+            // the pass is signed on its own, then folded in, so a later dropped recording can fold the same value
+            ulong outer = FrameSignature;
+            long outerSprites = SignatureSprites;
+            FrameSignature = 0;
+            SignatureSprites = 0;
+#endif
             Replay(_recSegments, _vertexInfo, _textureInfo, 0);
+#if CUO_DEVTOOLS
+            pass.Signature = FrameSignature;
+            pass.SignatureSprites = SignatureSprites;
+            FrameSignature = outer;
+            SignatureSprites = outerSprites;
+
+            if (SignatureOn)
+            {
+                FoldSignature(pass.Signature, pass.SignatureSprites);
+            }
+#endif
 
             (pass.Vertices, _vertexInfo) = (_vertexInfo, pass.Vertices);
             (pass.Textures, _textureInfo) = (_textureInfo, pass.Textures);

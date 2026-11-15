@@ -130,6 +130,14 @@ namespace ClassicUO.Renderer
             SignatureSprites += count;
         }
 
+        /// <summary>Folds a signature taken on its own (a recorded pass) into <see cref="FrameSignature"/>.</summary>
+        internal void FoldSignature(ulong signature, long sprites)
+        {
+            ulong h = FrameSignature == 0 ? 14695981039346656037UL : FrameSignature;
+            FrameSignature = (h ^ signature) * 1099511628211UL;
+            SignatureSprites += sprites;
+        }
+
         private ulong SignState(ulong h)
         {
             ReadOnlySpan<ulong> m = MemoryMarshal.Cast<Matrix, ulong>(new ReadOnlySpan<Matrix>(in _transformMatrix));
