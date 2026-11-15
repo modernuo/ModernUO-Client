@@ -104,21 +104,21 @@ namespace ClassicUO.Game.GameObjects
                 Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.StaticPick);
             }
 
-            // static_pick_early_reject (StaticPick): a mouse far from the anchor misses whatever the art; no graphic, tree
-            // filter or art entry read for it
-            if (StaticPick.Active)
+            // pick_early_reject (PickBox): a mouse far from the anchor misses whatever the art; no graphic, tree filter or art
+            // entry read for it
+            if (PickBox.Active)
             {
                 Point anchor = RealScreenPosition;
                 Point mouse = SelectedObject.TranslatedMousePositionByViewport;
-                bool reject = StaticPick.Rejects(mouse.X - anchor.X, mouse.Y - anchor.Y);
+                bool reject = PickBox.Rejects(mouse.X - anchor.X, mouse.Y - anchor.Y);
 
 #if CUO_DEVTOOLS
-                if (StaticPick.Checking)
+                if (PickBox.Checking)
                 {
                     bool hit = FullPick();
-                    StaticPick.Judge(this, Graphic, reject, hit);
+                    PickBox.Judge(PickBox.Kind.Static, this, Graphic, reject, hit);
 
-                    return hit && !(reject && StaticPick.RejectOn);
+                    return hit && !(reject && PickBox.RejectOn);
                 }
 #endif
 
@@ -131,7 +131,7 @@ namespace ClassicUO.Game.GameObjects
             return FullPick();
         }
 
-        // the pick test before static_pick_early_reject
+        // the pick test before pick_early_reject
         private bool FullPick()
         {
             if (

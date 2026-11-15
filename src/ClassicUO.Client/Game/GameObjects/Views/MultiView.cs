@@ -115,6 +115,36 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool CheckMouseSelection()
         {
+            // pick_early_reject (PickBox): a mouse far from the anchor (moved by the boat's Offset) misses whatever the art;
+            // no state, graphic, art entry or sprite read for it
+            if (Scenes.PickBox.Active)
+            {
+                Point anchor = RealScreenPosition;
+                Point mouse = SelectedObject.TranslatedMousePositionByViewport;
+                bool reject = Scenes.PickBox.Rejects(mouse.X - (anchor.X + (int)Offset.X), mouse.Y - (anchor.Y + (int)(Offset.Y + Offset.Z)));
+
+#if CUO_DEVTOOLS
+                if (Scenes.PickBox.Checking)
+                {
+                    bool hit = FullPick();
+                    Scenes.PickBox.Judge(Scenes.PickBox.Kind.Multi, this, Graphic, reject, hit);
+
+                    return hit && !(reject && Scenes.PickBox.RejectOn);
+                }
+#endif
+
+                if (reject)
+                {
+                    return false;
+                }
+            }
+
+            return FullPick();
+        }
+
+        // the pick test before pick_early_reject
+        private bool FullPick()
+        {
             if (
                 !(
                     SelectedObject.Object == this

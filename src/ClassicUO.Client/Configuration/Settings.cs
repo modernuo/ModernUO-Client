@@ -240,10 +240,11 @@ namespace ClassicUO.Configuration
         // CUO_ITEM_OFFSET_FLAG=1|0 overrides it in developer builds, CUO_ITEM_OFFSET_FLAG_CHECK=1 checks it. Default off.
         [JsonPropertyName("item_offset_flag")] public bool ItemOffsetFlag { get; set; }
 
-        // perf-17: a static's pick test rejects a mouse outside the box the largest static art can reach from the static's
-        // anchor before it reads the graphic and the art entry (StaticPick). CUO_STATIC_PICK_EARLY_REJECT=1|0 overrides it
-        // in developer builds, CUO_STATIC_PICK_CHECK=1 checks it. Default off.
-        [JsonPropertyName("static_pick_early_reject")] public bool StaticPickEarlyReject { get; set; }
+        // perf-17, perf-19: the pick test of a static, a multi component and an art item rejects a mouse outside the box the
+        // largest static art can reach from the object's anchor before it reads the graphic and the art entry (PickBox).
+        // Replaces perf-17's static_pick_early_reject (statics only, never on by default). CUO_PICK_EARLY_REJECT=1|0
+        // overrides it in developer builds, CUO_PICK_EARLY_REJECT_CHECK=1 checks it. Default off.
+        [JsonPropertyName("pick_early_reject")] public bool PickEarlyReject { get; set; }
 
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
