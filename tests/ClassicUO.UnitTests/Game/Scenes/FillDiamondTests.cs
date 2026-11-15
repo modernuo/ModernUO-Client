@@ -220,15 +220,106 @@ namespace ClassicUO.UnitTests.Game.Scenes
             partial.Should().BeGreaterThan(0);
         }
 
-        [Fact]
-        public void Switch_off_walks_every_tile_switch_on_the_diamond()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Switch_off_walks_every_tile_switch_on_the_diamond(bool gpu)
         {
             var (min, max, view) = Frame(1920, 1080, 44);
-            var b = FillDiamond.Compute(0, 0, min, max, false, view, 0);
+            var b = FillDiamond.ComputeBands(0, 0, min, max, gpu, view, 250);
 
-            FillDiamond.WalkMask(false, 40, -10, in b).Should().Be(ulong.MaxValue);
-            FillDiamond.WalkMask(true, 40, -10, in b).Should().Be(0UL, "a chunk far beside the view");
-            FillDiamond.WalkMask(true, 0, 0, in b).Should().Be(FillDiamond.ChunkMask(0, 0, in b)).And.NotBe(0UL);
+            FillDiamond.ChunkMasks(false, gpu, 40, -10, in b, out ulong hidden).Should().Be(ulong.MaxValue);
+            hidden.Should().Be(ulong.MaxValue);
+            FillDiamond.ChunkMasks(true, gpu, 40, -10, in b, out hidden).Should().Be(0UL, "a chunk far beside the view");
+            hidden.Should().Be(0UL);
+            FillDiamond.ChunkMasks(true, gpu, 0, 0, in b, out hidden).Should().Be(FillDiamond.ChunkMask(0, 0, in b.Walk)).And.NotBe(0UL);
+            hidden.Should().Be(FillDiamond.ChunkMask(0, 0, in b.Hidden));
+        }
+
+        // perf-18: the Gpu world walks the Legacy bands; its hidden pass visits the wider ones
+        [Theory]
+        [MemberData(nameof(Views))]
+        public void Gpu_walk_bands_are_the_legacy_bands_and_the_hidden_bands_hold_them(int offX, int offY, int w, int h, int margin)
+        {
+            var (min, max, view) = Frame(w, h, margin);
+            var legacy = FillDiamond.ComputeBands(offX, offY, min, max, false, view, 0);
+            var gpu = FillDiamond.ComputeBands(offX, offY, min, max, true, view, 300);
+
+            legacy.Walk.Should().Be(FillDiamond.Compute(offX, offY, min, max, false, view, 0));
+            legacy.Hidden.Should().Be(legacy.Walk);
+            gpu.Walk.Should().Be(legacy.Walk);
+            gpu.Hidden.Should().Be(FillDiamond.Compute(offX, offY, min, max, true, view, 300));
+            gpu.Hidden.DLo.Should().BeLessThanOrEqualTo(gpu.Walk.DLo);
+            gpu.Hidden.DHi.Should().BeGreaterThanOrEqualTo(gpu.Walk.DHi);
+            gpu.Hidden.SLo.Should().BeLessThanOrEqualTo(gpu.Walk.SLo);
+            gpu.Hidden.SHi.Should().BeGreaterThanOrEqualTo(gpu.Walk.SHi);
+        }
+
+        // perf-18: per chunk, the walked tiles are inside the hidden pass's; a chunk with an empty hidden mask (no chunk-level
+        // work) has no tile the walk could draw on or the hidden pass could hide on; on the Gpu world some chunks are only
+        // visited by the hidden pass (the split's gain)
+        [Theory]
+        [MemberData(nameof(Views))]
+        public void Chunk_masks_split_the_walk_from_the_hidden_pass(int offX, int offY, int w, int h, int margin)
+        {
+            var (min, max, view) = Frame(w, h, margin);
+            const int artH = 300;
+            int cx = (offX + offY) / 44 >> 3, cy = (offY - offX) / 44 >> 3, r = Math.Max(w, h) / 22 / 8 + 10;
+
+            foreach (bool gpu in new[] { false, true })
+            {
+                var b = FillDiamond.ComputeBands(offX, offY, min, max, gpu, view, artH);
+                int hiddenOnly = 0, empty = 0;
+
+                for (int chunkX = cx - r; chunkX <= cx + r; chunkX++)
+                {
+                    for (int chunkY = cy - r; chunkY <= cy + r; chunkY++)
+                    {
+                        ulong walk = FillDiamond.ChunkMasks(true, gpu, chunkX, chunkY, in b, out ulong hidden);
+
+                        walk.Should().Be(FillDiamond.ChunkMask(chunkX, chunkY, in b.Walk));
+                        (walk & ~hidden).Should().Be(0UL, $"chunk {chunkX},{chunkY}: walked tiles are hidden-pass tiles");
+
+                        if (!gpu)
+                        {
+                            hidden.Should().Be(walk);
+                        }
+
+                        hiddenOnly += System.Numerics.BitOperations.PopCount(hidden & ~walk);
+
+                        if (hidden != 0)
+                        {
+                            continue;
+                        }
+
+                        empty++;
+
+                        for (int x = 0; x < 8; x++)
+                        {
+                            for (int y = 0; y < 8; y++)
+                            {
+                                int tx = (chunkX << 3) + x, ty = (chunkY << 3) + y;
+
+                                if (WalkCanDraw(tx, ty, offX, offY, min, max) || gpu && GpuCanHide(tx, ty, offX, offY, view, artH))
+                                {
+                                    throw new Xunit.Sdk.XunitException($"tile {tx},{ty} of empty chunk {chunkX},{chunkY} can be drawn or hidden");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                empty.Should().BeGreaterThan(0);
+
+                if (gpu)
+                {
+                    hiddenOnly.Should().BeGreaterThan(0, "the Gpu hidden pass reaches tiles the walk does not");
+                }
+                else
+                {
+                    hiddenOnly.Should().Be(0);
+                }
+            }
         }
 
         [Fact]
@@ -275,6 +366,28 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
 
             n.Should().Be(3);
+        }
+
+        [Fact]
+        public void Check_frames_count_walk_hidden_and_empty_chunks()
+        {
+            FillDiamond.CountChunk(0x0FUL, 0xFFUL);
+            FillDiamond.CountChunk(0, 0);
+            FillDiamond.CountChunk(ulong.MaxValue, ulong.MaxValue);
+
+            FillDiamond.OutsideWalk.Should().Be(60 + 64);
+            FillDiamond.OutsideHidden.Should().Be(56 + 64);
+            FillDiamond.EmptyChunks.Should().Be(1);
+            FillDiamond.Mismatches.Should().Be(0);
+        }
+
+        [Fact]
+        public void Edge_overrides_outside_the_hidden_bands_are_mismatches()
+        {
+            var b = new FillDiamond.Bounds { DLo = 0, DHi = 1, SLo = 0, SHi = 1 };
+            FillDiamond.EdgeHidden(40, 2, 3, in b);
+
+            FillDiamond.Mismatches.Should().Be(3);
         }
 #endif
     }

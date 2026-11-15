@@ -20,13 +20,15 @@ namespace ClassicUO.Game.Scenes
     /// - S: the walk culls each object by its anchor's y, which Z moves by -508..+512 px (stretched land: MinZ, the same
     ///   range); CollectGpuHidden hides a baked sprite only where it reaches the Gpu view (land: 44 px plus stretch, statics:
     ///   the tallest static art).
-    /// Chunk-level work (mesh builds, the visible chunk list, the Gpu prepare masks) still runs for every chunk of the square.
+    /// perf-18: the walk visits only the walk's bands (on the Gpu world too); the hidden pass the wider ones, where the walk
+    /// would draw nothing. A chunk with no tile in the hidden bands gets no chunk-level work (mesh build, visibility reset, the
+    /// visible chunk list, the Gpu prepare and item cache): nothing of it can be drawn or hidden.
     /// </para>
     /// What the switch drops: the work the old walk did on a skipped tile's objects before culling them by y, which no frame
     /// shows: the fade steps of unmeshed objects more than 512 px above or below the view, opening name-plate handles for
     /// them, and the present-on-change "animated art in the walk" flag for them. CUO_FILL_DIAMOND=1|0 overrides the setting
     /// in developer builds; CUO_FILL_DIAMOND_CHECK=1|N walks the whole square on every Nth frame (default 10) and logs what
-    /// the skipped tiles produced (drawn objects, hidden overrides, the selection: mismatches; alpha and handle changes:
+    /// the skipped tiles produced (drawn objects, hidden and edge overrides, the selection: mismatches; alpha and handle changes:
     /// counted as dropped side effects).
     /// </summary>
     internal static class FillDiamond
@@ -156,10 +158,60 @@ namespace ClassicUO.Game.Scenes
             return mask;
         }
 
-        /// <summary>The fill's tile mask for a chunk: the diamond with the switch on, every tile with it off.</summary>
-        public static ulong WalkMask(bool enabled, int chunkX, int chunkY, in Bounds b)
+        /// <summary>
+        /// perf-18: the walk's bands and the hidden pass's. On the Gpu world the hidden pass reaches further than the walk
+        /// (GPU_WIDE_ART beside the view, the tallest static art below it), and the tiles only it reaches need no walk: the
+        /// walk draws nothing there, so CollectGpuHidden reads the same DrawnFrame stamps without it. Legacy: the same bands.
+        /// </summary>
+        public struct Bands : IEquatable<Bands>
         {
-            return enabled ? ChunkMask(chunkX, chunkY, in b) : ulong.MaxValue;
+            public Bounds Walk, Hidden;
+
+            public bool Equals(Bands o) => Walk.Equals(o.Walk) && Hidden.Equals(o.Hidden);
+
+            public override bool Equals(object obj) => obj is Bands b && Equals(b);
+
+            public override int GetHashCode() => HashCode.Combine(Walk, Hidden);
+
+            public override string ToString() => $"walk {Walk}, hidden {Hidden}";
+        }
+
+        /// <summary>The walk's bands (Compute without the Gpu reach) and, on the Gpu world, the hidden pass's (a superset).</summary>
+        public static Bands ComputeBands(int offX, int offY, Vector2 minPixel, Vector2 maxPixel, bool gpu, Rectangle gpuView, int maxStaticArtH)
+        {
+            Bounds walk = Compute(offX, offY, minPixel, maxPixel, false, gpuView, 0);
+
+            return new Bands
+            {
+                Walk = walk,
+                Hidden = gpu ? Compute(offX, offY, minPixel, maxPixel, true, gpuView, maxStaticArtH) : walk
+            };
+        }
+
+        /// <summary>
+        /// The fill's tile masks for a chunk: the tiles it walks (returned) and the tiles its Gpu hidden pass visits
+        /// (<paramref name="hidden"/>, a superset; Legacy: the same). Switch off: every tile. A chunk whose hidden mask is
+        /// empty gets no chunk-level work at all (perf-18).
+        /// </summary>
+        public static ulong ChunkMasks(bool enabled, bool gpu, int chunkX, int chunkY, in Bands b, out ulong hidden)
+        {
+            if (!enabled)
+            {
+                hidden = ulong.MaxValue;
+
+                return ulong.MaxValue;
+            }
+
+            if (!gpu)
+            {
+                hidden = ChunkMask(chunkX, chunkY, in b.Walk);
+
+                return hidden;
+            }
+
+            hidden = ChunkMask(chunkX, chunkY, in b.Hidden);
+
+            return hidden == 0 ? 0 : ChunkMask(chunkX, chunkY, in b.Walk);
         }
 
         private static Uo.Pack.SpriteEntry[] _artRef;
@@ -193,7 +245,7 @@ namespace ClassicUO.Game.Scenes
         // ---- CUO_FILL_DIAMOND_CHECK (CLEANUP(release)) ----
 
         private static int _frame;
-        private static long _checkFrames, _tiles, _outside, _drawn, _hidden, _selection, _side, _at;
+        private static long _checkFrames, _tiles, _outside, _outsideHidden, _chunks, _emptyChunks, _drawn, _hidden, _selection, _side, _at;
         private static int _logged;
 
         /// <summary>This fill walks the whole square and judges the diamond (switch on, checker on, every Nth fill).</summary>
@@ -221,11 +273,22 @@ namespace ClassicUO.Game.Scenes
 
         internal static long Mismatches => _drawn + _hidden + _selection;
         internal static long SideEffects => _side;
+        internal static long OutsideWalk => _outside;
+        internal static long OutsideHidden => _outsideHidden;
+        internal static long EmptyChunks => _emptyChunks;
 
-        public static void CountTiles(int tiles, int outside)
+        /// <summary>A check frame's chunk: its tiles outside the walk's bands and outside the hidden pass's (perf-18).</summary>
+        public static void CountChunk(ulong walk, ulong hidden)
         {
-            _tiles += tiles;
-            _outside += outside;
+            _chunks++;
+            _tiles += 64;
+            _outside += 64 - System.Numerics.BitOperations.PopCount(walk);
+            _outsideHidden += 64 - System.Numerics.BitOperations.PopCount(hidden);
+
+            if (hidden == 0)
+            {
+                _emptyChunks++;
+            }
         }
 
         public static void Drawn(object obj, int x, int y, int z, in Bounds b)
@@ -238,6 +301,13 @@ namespace ClassicUO.Game.Scenes
         {
             _hidden += calls;
             Mismatch($"{calls} hidden override(s) from tile {x},{y} outside the diamond ({b})");
+        }
+
+        /// <summary>perf-18: GpuHideCulledBaked overrides from a tile outside the hidden bands (its chunk may be skipped).</summary>
+        public static void EdgeHidden(int x, int y, int calls, in Bounds b)
+        {
+            _hidden += calls;
+            Mismatch($"{calls} edge hidden override(s) from tile {x},{y} outside the hidden bands ({b})");
         }
 
         public static void Selected(object obj, int x, int y, int z, in Bounds b)
@@ -279,9 +349,12 @@ namespace ClassicUO.Game.Scenes
 
             _at = now;
             double pct = _tiles > 0 ? 100.0 * _outside / _tiles : 0;
+            double pctHidden = _tiles > 0 ? 100.0 * _outsideHidden / _tiles : 0;
+            double pctChunks = _chunks > 0 ? 100.0 * _emptyChunks / _chunks : 0;
             Log.Trace(
                 $"[fill-diamond-check] switch {(Enabled ? "on" : "off")}, {(gpu ? "gpu" : "legacy")}: {_checkFrames} check frames, " +
-                $"{_tiles} square tiles walked, {_outside} outside the diamond ({pct:0.0}%), mismatches {Mismatches} " +
+                $"{_tiles} square tiles walked, {_outside} outside the walk's diamond ({pct:0.0}%), {_outsideHidden} outside " +
+                $"the hidden pass's ({pctHidden:0.0}%), {_emptyChunks} of {_chunks} chunks empty ({pctChunks:0.0}%), mismatches {Mismatches} " +
                 $"(drawn {_drawn}, hidden overrides {_hidden}, selection {_selection}), dropped side effects {_side} tiles");
         }
 
@@ -290,7 +363,7 @@ namespace ClassicUO.Game.Scenes
             OverrideForTests = null;
             CheckEveryForTests = 0;
             _frame = 0;
-            _checkFrames = _tiles = _outside = _drawn = _hidden = _selection = _side = _at = 0;
+            _checkFrames = _tiles = _outside = _outsideHidden = _chunks = _emptyChunks = _drawn = _hidden = _selection = _side = _at = 0;
             _logged = 0;
         }
 #else
