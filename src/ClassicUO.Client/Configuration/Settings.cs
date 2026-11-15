@@ -229,6 +229,11 @@ namespace ClassicUO.Configuration
         // CUO_ITEM_PICK_CHECK=1 checks it. Default off.
         [JsonPropertyName("item_pick_early_reject")] public bool ItemPickEarlyReject { get; set; }
 
+        // perf-17: an item's boat offset read (ItemOffsets) tests a flag on the item, set by the boat operations' write,
+        // instead of the world's offset count, so while a boat moves only the items with an offset look up their record.
+        // CUO_ITEM_OFFSET_FLAG=1|0 overrides it in developer builds, CUO_ITEM_OFFSET_FLAG_CHECK=1 checks it. Default off.
+        [JsonPropertyName("item_offset_flag")] public bool ItemOffsetFlag { get; set; }
+
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.

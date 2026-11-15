@@ -184,6 +184,12 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>item_pool: retired into, or waiting to be retired into, World's <see cref="ItemPool"/>.</summary>
         internal bool InItemPool;
 
+        /// <summary>
+        /// item_offset_flag (perf-17): the last <see cref="ItemOffsets.Push"/> to this instance wrote a non-zero offset. Set
+        /// only there (WorldWriter's boat operations); the readers skip the record lookup while it is clear.
+        /// </summary>
+        internal bool ItemOffsetHeld;
+
         /// <summary>item_pool (<see cref="ItemPool.Take"/>): every instance field back to the constructor's value (World
         /// excepted; <see cref="GameObject.Incarnation"/> bumped). ItemPoolTests check every field by reflection, so a new field
         /// must be reset here or in a base class.</summary>
@@ -206,6 +212,7 @@ namespace ClassicUO.Game.GameObjects
             Opened = false;
             WantUpdateMulti = true;
             InItemPool = false;
+            ItemOffsetHeld = false;
         }
 
         // ground items arrive after their chunk was built: their art (the graphic the view draws, and its animation frames)
