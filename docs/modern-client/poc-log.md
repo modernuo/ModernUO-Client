@@ -7427,3 +7427,42 @@ Base `bae113ff7`, branch `bg/evloop-4`, code `834a075a4`. New switch `present_on
 - **Known gaps.** Late async art or animation decodes are not tracked: a sprite that arrives late shows on the next present (the GPU signature includes missing visible pages, so the checker sees it). Also not tracked: other scenes' timers (character select, server list), and the timing of a static in view per graphic (the global minimum over all animated graphics is used).
 
 Verification and results: see the evloop-4 follow-up below (jobs pending at the time of writing).
+
+## 2026-11-14 clip-5: depth_model open items: translucent sprites, Legacy wall-base diffs, seated mobiles (bg/clip-5)
+
+Base `16887f55b`. Code `985020d7a` (tests), `87b661a00` (driver `roofs on|off`, `cot on|off [radius]`, dev only). No render
+code changed. Scripts and evidence sheets: `cuo-poc-state/measure/clip-5/` (scene `gen_trans.py` -> `c5-trans.txt`: each pose
+shot four ways, G1 G0 L1 L0 = Gpu/Legacy with depth_model on/off).
+
+- **Translucent sprites keep their shape on both renderers (decision).** Both renderers already did the same: the Gpu stamps
+  the composite anchor / tile shape on every non-shadow instance whatever its alpha, and the translucent pass runs the GEO
+  pipelines; Legacy patches every non-shadow quad in a BeginGeo span, translucent list included. Effects and shadows keep the
+  key on both. The design note's "translucent sprites keep the key" was written for the per-vertex option (split boxes would
+  blend twice); with per-pixel depth each sprite draws once, and on the key a hidden or fading mobile shows its feet on the
+  walls again. DepthModelTranslucentTests (5): Gpu translucent mobile layers carry the opaque mobile's anchor, a fading item
+  the opaque item's tile shape, Legacy faded/spectral quads the opaque encoding (shadows untouched), acceptance #1 for a
+  translucent mobile through the Legacy encoding.
+- **Shots bench6-000042** (aot-clip5a, JOB PASS, 0 exception lines, CUO_CLIP_ORDER_CHECK: 1446 changed samples, all "now
+  behind"): hidden (spectral) player at acceptance #1's spot (c5h_1453_1668_d4/d2): G1 and L1 cut the robe at the wall line,
+  G0 and L0 draw it over the wall corner. Tiledata Translucent webs by the wall, circle of transparency (radius 60), draw
+  roofs off/on and effects look alike in G1 and L1 at sheet scale.
+- **clip-4's `_L1` vs `_L0` wall-base diffs are the model's ordering, the same on the Gpu.** In bench6-000039 the Gpu `_G`
+  shot matched `_L0` at those pixels, which read as a Legacy-only change; that job had no Gpu off arm and the `_G` arm did
+  not show the change. With G0 added (c5d_* poses, the same views): of the pixels depth_model changes on Legacy, 1258 of 1269
+  (and 94 of 96 Legacy-only) equal the Gpu G1 shot. What changes: the lower storey's walls (z -11 and -10, height 20, top at
+  or under the land at z 10) are buried and drop behind the land ahead, so their top caps no longer peek out under the
+  upper walls' bases; a "metal signpost" (0x0B9E, height 0 on land z 10, also buried) loses the bracket part behind the wall;
+  the stairs' lowest outline pixels go to the land. Not z-fighting: the encoding resolves ~1e-4 tile sums, ZBias is 2e-3
+  (LegacyDepthModelTests.ZBiasResolvesInDepth24). No fix.
+- **Gpu-only seam pixels.** About 1000-1350 px per pose change on the Gpu only: 1-px dotted lines on land tile seams, where
+  two land planes tie exactly. The Gpu's GEO pipelines test LESS with land in back-to-front order, so the farther tile keeps
+  the seam pixel; Legacy's world pass tests LessEqual (DepthStencilState.Default) and the nearer, later tile wins, as with the
+  key. Invisible at sheet scale; not fixed (a per-row land tie-break in sprite.hlsl would fix it; owner-review item).
+- **Seated mobiles** (CharSitting) keep the key on both renderers: every seated layer is a Sitted section on the Gpu (no
+  anchor; Corners carry the deform), and LegacySpriteSink skips BeginMobile for CharSitting. Consistent; documented only.
+- **Verification.** Client builds with and without CuoDevTools: 0 errors. ClassicUO.UnitTests (scratch --artifacts-path,
+  CUO_REPO_ROOT set): dev 3962 passed / 6 skipped / 1 failed, CuoDevTools=false 3917 / 6 / 1; the failure is
+  TextureUploadSitesTests.EveryTextureUpload_BumpsTheEpoch, which looks for `src/` above the test binary (scratch path; as in
+  clip-4). Golden off bench6-000043, alloc-g bench5-000026, alloc-l bench5-000027: see the handoff. Gates not run (no render
+  code changed).
+- **Accepted costs.** None (tests and two dev-only driver commands).
