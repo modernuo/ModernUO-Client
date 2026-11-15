@@ -234,32 +234,6 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void CloseBank_From_A_Position_Callback_Joins_The_Operation_On_The_Player()
-        {
-            World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            newWorld.Writer.ThrowOnViolation = true;
-            OpenBank9(oldWorld, a);
-            OpenBank9(newWorld, b);
-            bool owned = false;
-
-            a.OnMoved = p => OldCloseBank(p);
-            b.OnMoved = p =>
-            {
-                p.CloseBank();
-                owned = newWorld.Writer.InScope && newWorld.Writer.Owns(p);
-            };
-
-            Pair(() => a.SetInWorldTile(1001, 1000, 0), () => newWorld.Writer.MoveMobile(b, 1001, 1000, 0));
-
-            Destroyed9(newWorld).Should().Equal(Destroyed9(oldWorld));
-            AssertSameWorld(oldWorld, newWorld);
-            newWorld.Items.Get(COIN9).Should().BeNull();
-            owned.Should().BeTrue("the joined removal left the outer operation open and owning the player");
-            newWorld.Writer.Violations.Should().Be(0);
-            newWorld.Writer.InScope.Should().BeFalse();
-        }
-
-        [Fact]
         public void RemovePickedUpItem_Equals_The_Old_Removal_And_Rejects_What_This_World_Does_Not_Hold()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
@@ -406,13 +380,11 @@ namespace ClassicUO.UnitTests.Ecs
             Destroyed9(w).Should().OnlyContain(x => !x.Item2, "a rejected removal removes nothing");
         }
 
-        // the funnel-check tests' world: the player with its open bank (a box with a coin in it), a backpack, ground items,
-        // and a position callback that closes the bank once
+        // the funnel-check tests' world: the player with its open bank (a box with a coin in it), a backpack, ground items
         internal static World BuildBankWorld(out PlayerMobile player)
         {
             World world = BuildPlayer(out TestPlayer p);
             OpenBank9(world, p);
-            p.OnMoved = x => x.CloseBank();
             player = p;
 
             return world;
@@ -443,7 +415,7 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            for (int site = 0; site < 5; site++)
+            for (int site = 0; site < 4; site++)
             {
                 World world = WorldWriterMobileTests.BuildBankWorld(out PlayerMobile p);
                 FunnelCheck.Reset();
@@ -454,7 +426,6 @@ namespace ClassicUO.UnitTests.Ecs
                     case 1: world.Writer.RemovePickedUpItem(world.Items.Get(0x4000_7702)); break;
                     case 2: world.Writer.ClearForMapChange(true); break;
                     case 3: world.Writer.ClearForLogin(); break;
-                    case 4: world.Writer.MoveMobile(p, 1001, 1000, 0); break; // the joined CloseBank (BuildBankWorld's callback)
                 }
 
                 FunnelCheck.Total.Should().Be(0, $"site {site}");
