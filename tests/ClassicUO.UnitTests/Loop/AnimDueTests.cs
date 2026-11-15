@@ -38,10 +38,29 @@ namespace ClassicUO.UnitTests.Loop
         }
 
         [Fact]
-        public void On_With_Nothing_Due_Never_Presents_An_Idle_Frame()
+        public void On_With_Nothing_Due_Presents_Only_The_Safety_Net()
         {
-            LoopTiming.MsUntilPresent(false, 1000, Interval, 0, true, double.PositiveInfinity).Should().Be(double.PositiveInfinity);
-            LoopTiming.PresentDue(false, 1e6, Interval, 50, true, double.PositiveInfinity).Should().BeFalse();
+            // evloop-5: nothing scheduled, so the next idle frame is the safety net, one second after the last present
+            LoopTiming.MsUntilPresent(false, 200, Interval, 0, true, double.PositiveInfinity).Should().Be(LoopTiming.AnimDueSafetyNetMs - 200);
+            LoopTiming.PresentDue(false, 500, Interval, 50, true, double.PositiveInfinity).Should().BeFalse();
+            LoopTiming.PresentDue(false, LoopTiming.AnimDueSafetyNetMs, Interval, 50, true, double.PositiveInfinity).Should().BeTrue();
+            LoopTiming.PresentDue(false, 1e6, Interval, 50, true, double.PositiveInfinity).Should().BeTrue();
+        }
+
+        [Fact]
+        public void The_Safety_Net_Never_Delays_An_Earlier_Due_And_Never_Beats_The_Rate_Limit()
+        {
+            LoopTiming.MsUntilPresent(false, 100, Interval, 0, true, 30).Should().Be(30);
+            LoopTiming.MsUntilPresent(false, 100, Interval, 0, true, 5000).Should().Be(LoopTiming.AnimDueSafetyNetMs - 100);
+            LoopTiming.MsUntilPresent(false, 2, Interval, 0, true, double.PositiveInfinity).Should().Be(LoopTiming.AnimDueSafetyNetMs - 2);
+            // before the first present there is no last present: present at once
+            LoopTiming.MsUntilPresent(false, double.PositiveInfinity, Interval, 0, true, double.PositiveInfinity).Should().Be(0);
+        }
+
+        [Fact]
+        public void Off_Has_No_Safety_Net_Only_The_Idle_Redraw_Period()
+        {
+            LoopTiming.MsUntilPresent(false, 200, Interval, 5000, false, double.PositiveInfinity).Should().Be(4800);
         }
 
         [Fact]

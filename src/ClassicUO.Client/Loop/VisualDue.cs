@@ -26,7 +26,25 @@ namespace ClassicUO.Loop
         Tooltip = 1 << 13,
         Scene = 1 << 14,
         Motion = 1 << 15,
-        Other = 1 << 16
+        Other = 1 << 16,
+        Driver = 1 << 17
+    }
+
+    /// <summary>Why present_on_change has a change pending (CUO_ANIM_DUE_CHECK logs it with a mismatch run).</summary>
+    [Flags]
+    internal enum ChangeReason : ushort
+    {
+        None = 0,
+        Wake = 1 << 0,
+        Net = 1 << 1,
+        Connection = 1 << 2,
+        SdlEvent = 1 << 3,
+        Actions = 1 << 4,
+        Motion = 1 << 5,
+        Effects = 1 << 6,
+        Continuous = 1 << 7,
+        Due = 1 << 8,
+        Carried = 1 << 9
     }
 
     /// <summary>

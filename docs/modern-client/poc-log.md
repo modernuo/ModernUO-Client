@@ -7466,3 +7466,41 @@ shot four ways, G1 G0 L1 L0 = Gpu/Legacy with depth_model on/off).
   clip-4). Golden off bench6-000043, alloc-g bench5-000026, alloc-l bench5-000027: see the handoff. Gates not run (no render
   code changed).
 - **Accepted costs.** None (tests and two dev-only driver commands).
+
+## 2026-11-14: evloop-5, anim_due checker runs explained, safety net, effects due
+
+Base `16887f55b`, branch `bg/evloop-5`. Code `287789a48`, `659cf28f0`, `a49ef1e0a`, `a0fab1bbc`, `9a1e27ccf`. Switch
+`present_on_change_anim_due` stays default off; nothing changes with it off.
+
+- **Text-phase mismatch (bench-000830, 1-2 frames, next_source=WorldText): checker artifact.** With `ui_render_cache` a UI
+  recording that compares the same is dropped and the cached target is shown, so its sprites were not signed. The speech
+  packet's frame submitted the UI (678 sprites); the next frame reused it and signed only 303, so it "differed". Fix
+  `287789a48`: each submitted pass keeps its own signature and a dropped one folds it in again (unit test
+  RecordedPassSignatureTests). No world text change was missed.
+- **After-phase run (9 Gpu / 58 Legacy frames, next_source=MobileAnim): driver artifact plus the same UI artifact.** The run
+  starts at `fx 0; close PaperDollGump; close ContainerGump`: driver lines change the screen without a packet or an input
+  event. Fix `a49ef1e0a` (developer builds): each executed driver line reports `VisualSource.Driver` as continuous, so its
+  frame and the next present, as after an input event. A real close by mouse is an input event and was already presented.
+- **Checker logging (`659cf28f0`).** The loop records why a change is pending (`ChangeReason`: wake, net, connection, SDL
+  event, actions, motion, effects, continuous, due, carried). A mismatch line names the reference frame's reason, ticks,
+  sprites and whether the batcher or the Gpu world part differs; a "run ended" line gives the run length and what
+  presented it; three runs are logged per 5 s window.
+- **Safety net (`a0fab1bbc`, owner default).** With anim_due on and nothing due, the next idle present is 1000 ms
+  (`LoopTiming.AnimDueSafetyNetMs`) after the last one. An earlier due wins; the display-interval rate limit holds. The
+  checker stays strict (it does not count safety presents), so it still reports changes no source schedules.
+- **Effects (`9a1e27ccf`).** With the tracking on (switch or checker), a live effect no longer counts as motion. After its
+  update each effect reports: moving every frame; drag at its next 20 ms step; fixed and lightning at the next frame (fixed
+  only with more than one frame) and at the end of its duration; lightning also the update after its step (it shows the
+  advanced index one update late). Effects that follow a mobile move with its steps, which the step counters report. Unit
+  tests (EffectVisualDueTests) step effects 1 ms at a time and check every change was reported.
+- **Jobs (main runner, owner evloop-5; no timing, machine not quiet).** bench-000835 (diag1, poc tip + logging) showed ~500
+  mismatching frames per 5 s at the quiet spot in every window, from a mobile animating near the spot (due presents every
+  ~1 s with unscheduled frames between); bench-000837 an hour later, A/B evloop-4 new2 against the WIP, had idle clean in
+  both, so that was world state at the time (likely another session nearby), not code. bench-000838 check on 9a1e27ccf:
+  **0 mismatches in every 5 s window**, quiet and busy, Gpu and Legacy. Quiet would-present/s: idle 2.0-3.4, text 29
+  (the `text_fading` last second), actions 39 (79 before, effects were continuous), after 16-17 (100 before), then 2.0.
+  Busy 122-132 (display rate). bench-000839 gate, 840/841 alloc-g/alloc-l (base = poc tip 16887f55b, off, on), 842 counts:
+  results in the handoff `cuo-poc-state/handoffs/evloop-5.md`.
+- **Verification.** Client builds with and without `CuoDevTools`: 0 errors. ClassicUO.UnitTests: 3964 passed / 6 skipped
+  (dev), 3918 / 6 (`CuoDevTools=false`).
+- **Parked:** `measure/evloop-5/job-timing-{g,l}-PARKED.sh` (quiet commit 9a1e27ccf).

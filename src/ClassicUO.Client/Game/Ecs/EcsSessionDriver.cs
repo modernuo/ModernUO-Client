@@ -162,6 +162,10 @@ namespace ClassicUO.Game
 
                     Log.Info($"[ECS] driver> {line}");
 
+                    // present_on_change_anim_due: a script line stands in for input (it opens and closes gumps, spawns and
+                    // clears effects, moves the cursor), so the frame after it is drawn like the frame after an input event
+                    ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Driver);
+
                     if (line.StartsWith("mouse ", StringComparison.Ordinal) ? ExecuteMouse(line.Substring(6)) : execute(line))
                     {
                         return true;

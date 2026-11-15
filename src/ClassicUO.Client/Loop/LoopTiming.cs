@@ -103,14 +103,18 @@ namespace ClassicUO.Loop
         /// present_on_change_anim_due: as <see cref="MsUntilPresent(bool, double, double, double)"/>, but with no change pending
         /// the next present is when the next visual change is due (<paramref name="msUntilVisualDue"/>, from now: an animation
         /// frame, an idle animation, a text expiry; infinity when nothing is scheduled), never sooner than one interval after
-        /// the last present. The fixed idle redraw period is not used.
+        /// the last present. The fixed idle redraw period is not used. A safety net presents at least every
+        /// <see cref="AnimDueSafetyNetMs"/> when nothing is due, so a change no source reports stays on screen at most that long.
         /// </summary>
         public static double MsUntilPresentAnimDue(bool changePending, double msSinceLastPresent, double intervalMs, double msUntilVisualDue)
         {
             double limit = Math.Max(0, intervalMs - msSinceLastPresent);
 
-            return changePending ? limit : Math.Max(limit, msUntilVisualDue);
+            return changePending ? limit : Math.Max(limit, Math.Min(msUntilVisualDue, AnimDueSafetyNetMs - msSinceLastPresent));
         }
+
+        /// <summary>present_on_change_anim_due: the longest time between two presents (owner default ~1 s).</summary>
+        public const double AnimDueSafetyNetMs = 1000;
 
         /// <summary>
         /// present_on_change, both idle policies: <see cref="MsUntilPresentAnimDue"/> when <paramref name="animDue"/> is on,
