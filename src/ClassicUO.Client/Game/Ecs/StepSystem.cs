@@ -27,6 +27,10 @@ namespace ClassicUO.Game
         // components)
         public bool Mounted;
         public bool IsPlayer;
+
+        // step_drain: the front step's fixed duration in ms (StepDrain); 0: the old timing (the table less the frame delay,
+        // with the mounted guess)
+        public int Duration;
     }
 
     /// <summary>T6c: <c>Mobile.ProcessSteps</c>' decision for the front step this frame.</summary>
@@ -56,16 +60,26 @@ namespace ClassicUO.Game
             ref readonly StepEntry step = ref i.Front;
 
             int delay = (int)ticks - (int)i.LastStepTime;
-            bool mounted = i.Mounted;
-            bool run = step.Run;
+            int maxDelay;
 
-            // Client auto movements sync (see ProcessSteps)
-            if (!mounted && !i.IsPlayer && i.Count > 1 && delay > 0)
+            if (i.Duration > 0)
             {
-                mounted = delay <= (run ? MovementSpeed.STEP_DELAY_MOUNT_RUN : MovementSpeed.STEP_DELAY_MOUNT_WALK);
+                // step_drain: the next step starts where this one was due (StepDrain.NextStepTime), so no frame is subtracted
+                maxDelay = i.Duration;
             }
+            else
+            {
+                bool mounted = i.Mounted;
+                bool run = step.Run;
 
-            int maxDelay = MovementSpeed.TimeToCompleteMovement(run, mounted) - frameDelay;
+                // Client auto movements sync (see ProcessSteps)
+                if (!mounted && !i.IsPlayer && i.Count > 1 && delay > 0)
+                {
+                    mounted = delay <= (run ? MovementSpeed.STEP_DELAY_MOUNT_RUN : MovementSpeed.STEP_DELAY_MOUNT_WALK);
+                }
+
+                maxDelay = MovementSpeed.TimeToCompleteMovement(run, mounted) - frameDelay;
+            }
 
             bool removeStep = delay >= maxDelay;
             bool directionChange = false;
@@ -280,6 +294,26 @@ namespace ClassicUO.Game
             inp.Z = p.Z;
             inp.Mounted = MountedInput(mob, in row);
             inp.IsPlayer = IsPlayer(world, mob);
+            inp.Duration = 0;
+
+            int paced = 0;
+
+            if (StepDrain.Learning && !inp.IsPlayer && (inp.X != front.X || inp.Y != front.Y))
+            {
+                paced = Pace(world, mob, in row.Get<StepsComponent>(), in front, inp.Mounted, ticks);
+            }
+
+#if CUO_DEVTOOLS
+            if (StepDrain.Check && paced > 0)
+            {
+                StepDrain.Compare(mob.Serial, in inp, paced, ticks, frameDelay);
+            }
+#endif
+
+            if (StepDrain.On)
+            {
+                inp.Duration = paced;
+            }
 
             StepRules.Decide(in inp, ticks, frameDelay, out StepDecision d);
 
@@ -304,8 +338,12 @@ namespace ClassicUO.Game
 
                 Completed++;
                 Mobile.Step done = new Mobile.Step { X = front.X, Y = front.Y, Z = front.Z, Direction = front.Direction, Run = front.Run };
+                // step_drain: a paced step with more queued starts the next where it was due
+                uint stepTime = inp.Duration > 0 && inp.Count > 1
+                    ? StepDrain.NextStepTime(inp.LastStepTime, inp.Duration, ticks, frameDelay)
+                    : ticks;
                 // the queue, step time, offset, idle timer and inputs in the record (the funnel)
-                world.Writer.CompleteStep(mob, in done, d.DirectionChange);
+                world.Writer.CompleteStep(mob, in done, d.DirectionChange, stepTime);
 
                 if (d.DirectionChange)
                 {
@@ -320,6 +358,36 @@ namespace ClassicUO.Game
             }
 
             mob.UpdateTextCoordsV();
+        }
+
+        // step_drain: the front step's duration, fixed the first time it runs (through the funnel; with the switch off only
+        // the checker computes it, every frame, and nothing is written)
+        private static int Pace(World world, Mobile mob, in StepsComponent s, in StepEntry front, bool mounted, uint ticks)
+        {
+            if (s.FrontDuration != 0)
+            {
+                return s.FrontDuration;
+            }
+
+            int duration = StepDrain.Duration(in s, front.Run, mounted, ticks, out bool drained);
+
+            if (StepDrain.On)
+            {
+                StepDrain.Fixed++;
+
+                if (drained)
+                {
+                    StepDrain.Drained++;
+                }
+                else if (duration < MovementSpeed.TimeToCompleteMovement(front.Run, mounted))
+                {
+                    StepDrain.Learned++;
+                }
+
+                world.Writer.FixStepDuration(mob, (ushort)duration);
+            }
+
+            return duration;
         }
 
         /// <summary>

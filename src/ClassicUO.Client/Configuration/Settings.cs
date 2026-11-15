@@ -285,6 +285,12 @@ namespace ClassicUO.Configuration
         // builds. Default off.
         [JsonPropertyName("depth_model")] public bool DepthModel { get; set; }
 
+        // step_drain: a non-local mobile's step lasts its learned server pace (never longer than the table time; faster
+        // only when the pace is clearly faster), with a bounded drain of a real backlog, instead of the table time and the
+        // "mounted when steps are queued" guess (Game/Ecs/StepDrain). CUO_STEP_DRAIN=1|0 overrides it and
+        // CUO_STEP_DRAIN_CHECK=1 compares the old timing with the new, in developer builds. Default off.
+        [JsonPropertyName("step_drain")] public bool StepDrain { get; set; }
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("files_override")] public string OverrideFile { get; set; }

@@ -1358,6 +1358,7 @@ namespace ClassicUO.Game
             bool isRun = (direction & Direction.Running) != 0;
             bool reset = false;
             Mobile.StepPlan step = default;
+            bool moved = false;
 
             if (!player)
             {
@@ -1380,6 +1381,7 @@ namespace ClassicUO.Game
 
                     mobile.PlanStep(x, y, z, cleanedDir, isRun, endX, endY, endZ, endDir, out step);
                     reset = !step.Accepted;
+                    moved = endX != x || endY != y;
                 }
             }
 
@@ -1429,6 +1431,12 @@ namespace ClassicUO.Game
                 else
                 {
                     mobile.ApplyStep(in step);
+
+                    // step_drain: the arrival the step pace is learned from (only with the switch or its checker on)
+                    if (step.Changes && StepDrain.Learning)
+                    {
+                        mobile.NoteStepArrival(Time.Ticks, moved, isRun, StepSystem.Mounted(mobile));
+                    }
                 }
 
                 // 4. derived state: the inputs and the clock, from the values written above
@@ -1769,7 +1777,12 @@ namespace ClassicUO.Game
         /// changes; the step stays queued).
         /// </para>
         /// </summary>
-        public void CompleteStep(Mobile mobile, in Mobile.Step step, bool directionChange)
+        public void CompleteStep(Mobile mobile, in Mobile.Step step, bool directionChange) =>
+            CompleteStep(mobile, in step, directionChange, Time.Ticks);
+
+        /// <summary><see cref="CompleteStep(Mobile, in Mobile.Step, bool)"/> with the next step's start time (step_drain: where
+        /// a paced step was due; otherwise the tick).</summary>
+        public void CompleteStep(Mobile mobile, in Mobile.Step step, bool directionChange, uint stepTime)
         {
             if (mobile == null || !Admitted(nameof(CompleteStep), mobile.Serial))
             {
@@ -1797,7 +1810,6 @@ namespace ClassicUO.Game
             v.Flags = mobile.Flags;
             v.IsPlayer = ReferenceEquals(mobile, _world.Player);
             bool run = step.Run;
-            uint stepTime = Time.Ticks;
 
             Direction directionBefore = mobile.Direction;
 
@@ -2472,15 +2484,8 @@ namespace ClassicUO.Game
         /// </summary>
         public void InterpolateStep(Mobile mobile, sbyte x, sbyte y, sbyte z)
         {
-            if (mobile == null || !Admitted(nameof(InterpolateStep), mobile.Serial))
+            if (!PerFrameStepAdmitted(mobile, nameof(InterpolateStep)))
             {
-                return;
-            }
-
-            if (mobile.World != _world)
-            {
-                Reject(Violation.NotHeld, $"WorldWriter.InterpolateStep: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
-
                 return;
             }
 
@@ -2488,6 +2493,40 @@ namespace ClassicUO.Game
             {
                 mobile.SetOffset(x, y, z);
             }
+        }
+
+        /// <summary>
+        /// step_drain: fixes the front step's duration (StepDrain) the first time the step system runs it; the queue's
+        /// removal of the step clears it. Admission as <see cref="InterpolateStep"/>.
+        /// </summary>
+        public void FixStepDuration(Mobile mobile, ushort duration)
+        {
+            if (!PerFrameStepAdmitted(mobile, nameof(FixStepDuration)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.SetFrontDuration(duration);
+            }
+        }
+
+        private bool PerFrameStepAdmitted(Mobile mobile, string op)
+        {
+            if (mobile == null || !Admitted(op, mobile.Serial))
+            {
+                return false;
+            }
+
+            if (mobile.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.{op}: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
+
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
