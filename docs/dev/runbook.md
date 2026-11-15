@@ -71,7 +71,6 @@ Notes:
 - On Windows, ILC finds the linker through Visual Studio. `tools/fps-test/publish-aot.ps1` wraps the command in `vcvars64` and adds `-p:IlcUseEnvironmentalTools=true`.
 - The publish links the static MP3 decoder (`external/x64-static/cuo_mp3.lib`, `external/lib64-static/libcuo_mp3.a`, `external/osx-static/libcuo_mp3.a`). If the library is missing the publish fails with `CUOMP3`. Build it with `src/native/cuo_mp3/build-windows.sh`, `build-linux.sh` or `build-macos.sh`, or pass `-p:CuoMp3Optional=true` to publish without music.
 - `-p:CuoMibcPath=<file.mibc>` applies a static PGO profile (opt-in; `tools/pgo/collect_mibc.py` collects one).
-- `scripts/build-naot.sh` (run from `scripts/`) is the plugin-host layout. It publishes `ClassicUO.Bootstrap` and then the client as a shared library (`-p:NativeLib=Shared -p:OutputType=Library`) into `bin/dist`.
 
 ### Shader toolchain
 

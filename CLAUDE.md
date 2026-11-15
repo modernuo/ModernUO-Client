@@ -4,11 +4,12 @@ Guidance for coding agents working in this repository. Build, convert, run and t
 
 ## What this repo is
 
-The ModernUO client, built on ClassicUO (a fork). It differs from upstream ClassicUO in three ways:
+The ModernUO client, built on ClassicUO (a fork). It differs from upstream ClassicUO in four ways:
 
 - Assets come from a converted pack, not from the UO client's MUL/UOP files.
 - World state is mirrored in an ECS, and writes to it go through one funnel.
 - The world can be drawn by a GPU renderer (SDL_GPU through FNA3D) as well as the original FNA batcher ("Legacy").
+- It has no plugin host: the legacy plugin API (Razor and the like) and `ClassicUO.Bootstrap` were removed. A new plugin design comes later; do not add hooks for the old one.
 
 Target framework is `net10.0`. Submodules (`git submodule update --init --recursive`) are in `external/`.
 
@@ -22,7 +23,6 @@ Target framework is `net10.0`. Submodules (`git submodule update --init --recurs
 - `ClassicUO.Renderer`: the batcher, art, animation and font rendering.
 - `ClassicUO.IO`: file readers, packet reader and writer, audio decoding.
 - `ClassicUO.Utility`: shared helpers (logging, collections, client version, `Crypter`).
-- `ClassicUO.Bootstrap`: plugin-host launcher.
 - `Uo.Pack`: pack format structs, readers and writers, layer rules data.
 - `Uo.Render`: the GPU world renderer (SDL_GPU): page residency, chunk baking, shaders.
 - `native/cuo_mp3`: C source of the static MP3 decoder.
@@ -33,7 +33,6 @@ Other folders (every project is in `ClassicUO.sln`):
 - `tools/`: `Uo.Converter` (converts a UO install into a pack and verifies it), `ClassicUO.Assets.Mul` (MUL/UOP loaders, used by the converter and its tests only), `Uo.Render.App` (standalone viewer and test app for `Uo.Render`), `Uo.Net` (protocol client library) and `Uo.Net.Cli` (headless test client), scripts for benchmarking (`aot-bench`, `fps-test`, `pgo`), native builds (`fna3d`, `sdl`), and ECS analysis (`ecs-census`, `ecs-parity`).
 - `research/`: experiments that do not ship (`ecs-bench`; `Uo.Client`, the standalone prototype client).
 - `build/`: `DevTools.props`, the one definition of `CuoDevTools`.
-- `scripts/`: `build-naot.sh`.
 - `docs/dev/`: developer docs.
 
 `external/` submodules: `FNA` (fork: `modernuo/FNA`), `SDL` (fork: `modernuo/SDL`), `FileEmbed` (upstream `SirCxyrtyx/FileEmbed`). FNA3D is a nested submodule of FNA, also a `modernuo` fork. Prebuilt natives are committed in `external/x64`, `lib64` and `osx`.
