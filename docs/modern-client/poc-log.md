@@ -7567,3 +7567,31 @@ Base `a4bd60d8a`, code `921854954`. With present_on_change the ping's own loop t
 - **Counts** bench-000845 (machine quiet, 143.86 Hz, base and new interleaved per session, one round). Ping RTT p50 ms base -> new, and pings with a draw while outstanding: new arm Gpu busy 1.21 (7/20) -> 0.24 (0/20); Legacy busy 0.78 (8/20) -> 0.19 (0/20); Gpu quiet 0.25 (4/25) -> 0.24 (0/20); Legacy quiet 0.25 (5/25) -> 0.21 (0/20). anim arm: Gpu busy 1.83 (11/25) -> 0.24 (0/25), Legacy busy 0.77 (9/25) -> 0.21 (1/25); quiet 0.26-0.29 -> 0.20-0.23 (0). new50: busy 2.47/0.63 -> 0.22/0.24 (0/30, 2/30). Grid arm unchanged (all pings collide, 0.7-4 ms). One round only: indicative.
 - **Alloc** bench-000846/847: main-thread p50 0 B/frame and no gen0 in every window; base vs new (anim_due off) within run noise.
 - Unit tests: 3971 passed / 6 skipped (dev); both CuoDevTools builds 0 errors.
+
+## 2026-11-14 perf-18: world_fill_diamond, split Gpu bands and empty chunks skipped (bg/perf-18)
+
+Base ddba05e6f. Code `71533fb1b`. Refines the unshipped `world_fill_diamond` path (default off), so no new switch.
+
+- **Split bands.** perf-16 gave the Gpu walk the hidden pass's wide bands (GPU_WIDE_ART beside the view, the tallest static
+  art below it), so Gpu skipped only 3-30 % of the cut chunks' tiles. Now `FillDiamond.ComputeBands` gives both renderers
+  the walk's (Legacy) bands and the Gpu world a second, wider set for `CollectGpuHidden`. Tiles only in the wider set are
+  not walked; the walk would draw (stamp) nothing there, so the hidden pass reads the same DrawnFrame stamps. Fades on
+  those tiles' objects no longer run (the dropped-work rule of perf-16; the checker counts it: 0 tiles).
+- **Empty chunks.** A chunk with no tile in the hidden bands (Legacy: the walk's) gets no chunk-level work: no mesh build,
+  visibility/alpha reset, `_visibleChunks` entry, Gpu prepare, item cache prepare or edge pass. `GetChunkForDraw` still
+  runs (loading). Such a chunk re-enters only when the bands move, which sets UpdateDrawPosition; on the Gpu world it comes
+  back as a fresh chunk (GpuSeenFrame), as a chunk entering the square did.
+- **Checker.** A check frame still does the whole square: drawn objects and side effects are judged against the walk's
+  bands, `CollectGpuHidden` and now `GpuHideCulledBaked` (edge) overrides against the hidden bands, the selection against
+  the walk's. The summary reports tiles outside each band set and empty chunks.
+- **Jobs (lanes, set measure/perf-18; AOT dev, base ddba05e6f, new 71533fb1b).** bench2-000032 gate-gpu and
+  bench3-000025 gate-legacy, switch and checker on: T9S11 PASS, 12 / 10 logs, **0 mismatches, 0 dropped side effects**.
+  Of all square tiles: Gpu 22.0-28.6 % outside the walk's bands (was 3-30 % of the cut chunks' tiles only), 0.4-3.2 %
+  outside the hidden bands, no empty chunk at the gate zooms; Legacy 26.0-29.7 % outside, 8.5-11.4 % of chunks empty.
+  bench6-000047 golden: base vs new (off) and base vs on, 54 pairs each, GOLDEN SAME. bench5-000032 alloc-g and
+  bench5-000033 alloc-l: main-thread p50 B/frame 0 in every window for base, off and on (averages move
+  with streaming in both directions: ls_walk 4433 / 4346 / 4888, effects 777 / 75 / 51).
+- **Verification.** Client builds with and without `CuoDevTools`: 0 errors. ClassicUO.UnitTests 4033 / 6 skipped (dev),
+  3982 / 6 (`CuoDevTools=false`); FillDiamondTests: Gpu walk bands equal Legacy's, hidden bands hold them, every chunk's
+  walk mask inside its hidden mask, empty chunks brute-forced (no tile drawable or hideable), the checker's counters.
+- **Not done.** The per-tile decision cache. No timing claims (machine not quiet); the quiet pass's `diam` arm covers it.
