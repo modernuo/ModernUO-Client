@@ -29,7 +29,6 @@ namespace ClassicUO.Assets
 
             _overrideMap = overrideMap;
             _packHasLoose = pack != null && Directory.Exists(pack.PathOf(MiscConst.LooseDir));
-            IsUOPInstallation = Version >= ClientVersion.CV_7000 && File.Exists(GetUOFilePath("MainMisc.uop"));
 
             Animations = new AnimationsLoader(this);
             AnimData = new AnimDataLoader(this);
@@ -54,7 +53,6 @@ namespace ClassicUO.Assets
 
         public ClientVersion Version { get; }
         public string BasePath { get; }
-        public bool IsUOPInstallation { get; private set; }
         public PackAssets Pack { get; }
 
         public AnimationsLoader Animations { get; }
@@ -103,8 +101,24 @@ namespace ClassicUO.Assets
             StringDictionary.Dispose();
         }
 
-        /// <summary>The file names files_override maps (lower-case), each resolved by <see cref="GetUOFilePath"/>.</summary>
-        public IEnumerable<string> OverriddenFiles => _overrideMap.Keys;
+        /// <summary>
+        /// The path of a pack file the client can't run without: a pack converted before that file existed is refused
+        /// (there is no MUL/UOP fallback), so it must be converted again.
+        /// </summary>
+        public string RequirePackFile(string relative)
+        {
+            string path = Pack?.PathOf(relative);
+
+            if (path == null || !File.Exists(path))
+            {
+                throw MissingPackFile(relative, path);
+            }
+
+            return path;
+        }
+
+        public static FileNotFoundException MissingPackFile(string relative, string path) =>
+            new FileNotFoundException($"Incomplete asset pack: '{relative}' is missing (convert the client again with Uo.Converter).", path);
 
         /// <summary>Tests: run the alternative-casing lookup on any OS (default: off on Windows).</summary>
         internal bool CaseInsensitiveFallback = !PlatformHelper.IsWindows;

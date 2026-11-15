@@ -45,7 +45,6 @@ namespace ClassicUO.Renderer.Gumps
 
         public void Reload()
         {
-            _gumpsLoader.LoadOurs();
             System.Array.Clear(_spriteInfos);
             _picker.Clear();
         }

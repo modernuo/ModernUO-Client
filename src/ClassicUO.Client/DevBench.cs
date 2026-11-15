@@ -827,7 +827,7 @@ namespace ClassicUO
                 {
                     Log.Info($"[bench-gumpopen] {_gumpOpenName}: worst frame {_gumpOpenWorst * 1000.0 / sec:0.00} ms in 1.5 s, " +
                              $"main-thread gump decodes {Renderer.Gumps.Gump.TotalSyncLoads - _gumpOpenLoads0} " +
-                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, main-thread art decodes {Renderer.Arts.Art.TotalSyncLoads - _gumpOpenArtLoads0} ({(Renderer.Arts.Art.TotalSyncTicks - _gumpOpenArtTicks0) * 1000.0 / sec:0.000} ms), art prefetched {Renderer.Arts.Art.TotalPrefetched - _gumpOpenArtPf0} ({(Renderer.Arts.Art.TotalPrefetchTicks - _gumpOpenArtPfTicks0) * 1000.0 / sec:0.000} ms, art_container_prefetch {Game.Map.ContentsArt.Enabled}), pack {game.UO.FileManager.Gumps.FromPack}, {TextStats()}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
+                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, main-thread art decodes {Renderer.Arts.Art.TotalSyncLoads - _gumpOpenArtLoads0} ({(Renderer.Arts.Art.TotalSyncTicks - _gumpOpenArtTicks0) * 1000.0 / sec:0.000} ms), art prefetched {Renderer.Arts.Art.TotalPrefetched - _gumpOpenArtPf0} ({(Renderer.Arts.Art.TotalPrefetchTicks - _gumpOpenArtPfTicks0) * 1000.0 / sec:0.000} ms, art_container_prefetch {Game.Map.ContentsArt.Enabled}), {TextStats()}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
                     _gumpOpenName = null;
                 }
             }
@@ -931,8 +931,7 @@ namespace ClassicUO
         private static string TextStats() =>
             $"text: unicode pages read {Assets.FontsLoader.StatPageLoads - _textPages0} ({(Assets.FontsLoader.StatPageTicks - _textTicks0) * 1000.0 / Stopwatch.Frequency:0.000} ms), " +
             $"ASCII fonts read {Assets.FontsLoader.StatAsciiLoads - _textAscii0}, cliloc strings created {ClilocStrings() - _textStrings0}; " +
-            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()} " +
-            $"(fonts {(Client.Game.UO.FileManager.Fonts.UnicodeFromPack ? "pack" : "MUL")}, cliloc {(Client.Game.UO.FileManager.Clilocs.FromPack ? "pack" : "MUL")})";
+            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()}";
 
         private static void RenderTooltips(World world, int count)
         {
@@ -965,8 +964,8 @@ namespace ClassicUO
             Log.Info($"[bench-gumpopen] tooltips: {shown} rendered");
         }
 
-        // gump picking: each gump's picker answers on a 2-px grid (one bit per point, FNV-1a hashed; compare a pack run
-        // with a CUO_PACK_GUMPS=0 run), then a click-through check: hit-testing a plain gump showing the paperdoll at a
+        // gump picking: each gump's picker answers on a 2-px grid (one bit per point, FNV-1a hashed; compare two builds'
+        // runs), then a click-through check: hit-testing a plain gump showing the paperdoll at a
         // transparent and at a visible texel must find nothing and the picture.
         private static void GumpPickCheck(World world)
         {

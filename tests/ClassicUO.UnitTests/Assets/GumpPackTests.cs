@@ -1,3 +1,5 @@
+extern alias frozen;
+
 using System;
 using System.Buffers;
 using System.Collections.Generic;
@@ -11,11 +13,14 @@ using ClassicUO.Utility;
 using FluentAssertions;
 using Uo.Pack;
 using Xunit;
+using FrozenFiles = frozen::ClassicUO.Assets.UOFileManager;
+using FrozenGumps = frozen::ClassicUO.Assets.GumpsLoader;
 
 namespace ClassicUO.UnitTests.Assets
 {
-    // Gumps in the pack (pack-format.md "Gumps", poc-log "Gumps in the pack"): the pack path must give exactly what the
-    // client's MUL/UOP GumpsLoader gives, for every gump id: presence, size, RGBA pixels, the gump.def hue.
+    // Gumps in the pack (pack-format.md "Gumps", poc-log "Gumps in the pack"): the client's GumpsLoader must give exactly
+    // what the frozen MUL/UOP GumpsLoader (tools/ClassicUO.Assets.Mul) gives, for every gump id: presence, size, RGBA
+    // pixels, the gump.def hue.
     //
     // The pack with a gump section: CUO_TEST_GUMP_PACK, else C:\Repositories\uo-packs\classic-1.0 once it has one.
     // CUO_TEST_GUMP_DEF + CUO_TEST_GUMP_DEF_PACK: a gump.def with hued aliases and a pack converted with --gump-def it.
@@ -33,33 +38,30 @@ namespace ClassicUO.UnitTests.Assets
             return File.Exists(Path.Combine(dir, StoreConst.GumpsFile)) && Directory.Exists(UoDir) ? dir : null;
         }
 
-        private static (UOFileManager Mul, UOFileManager Pack, PackAssets Assets) Open(string packDir, UOFilesOverrideMap overrides = null)
+        private static (FrozenFiles Mul, UOFileManager Pack, PackAssets Assets) Open(string packDir, UOFilesOverrideMap overrides = null)
         {
             ClientVersionHelper.TryParseFromFile(Path.Combine(UoDir, "client.exe"), out var text);
             ClientVersionHelper.IsClientVersionValid(text, out var cv);
             var assets = PackAssets.OpenBefore12ForTests(packDir);
-            var mul = new UOFileManager(cv, UoDir, overrides ?? new UOFilesOverrideMap(), assets);
+            var mul = new FrozenFiles(cv, UoDir, overrides ?? new UOFilesOverrideMap());
             mul.Hues.Load();
-            mul.Gumps.UsePack = false;
             mul.Gumps.Load();
             var pack = new UOFileManager(cv, UoDir, assets);
             pack.Hues.Load();
-            pack.Gumps.UsePack = true;
             pack.Gumps.Load();
 
             return (mul, pack, assets);
         }
 
-        private static int CompareAll(GumpsLoader mul, GumpsLoader pack, out int present)
+        private static int CompareAll(FrozenGumps mul, GumpsLoader pack, out int present)
         {
             pack.FromPack.Should().BeTrue();
-            mul.FromPack.Should().BeFalse();
             pack.UseUOPGumps.Should().Be(mul.UseUOPGumps);
             present = 0;
             int bad = 0;
             var rng = new Random(7);
 
-            for (uint id = 0; id < (uint)Math.Max(mul.Count, pack.Count); id++)
+            for (uint id = 0; id < (uint)Math.Max(mul.File.Entries.Length, pack.Count); id++)
             {
                 var m = mul.GetGump(id);
                 int count = pack.PixelCount(id);
@@ -117,7 +119,7 @@ namespace ClassicUO.UnitTests.Assets
                 int bad = CompareAll(mul.Gumps, pack.Gumps, out int present);
                 bad.Should().Be(0);
                 present.Should().BeGreaterThan(1000);
-                pack.Gumps.Count.Should().BeLessThanOrEqualTo(mul.Gumps.Count);
+                pack.Gumps.Count.Should().BeLessThanOrEqualTo(mul.Gumps.File.Entries.Length);
                 pack.Gumps.Dispose();
             }
         }

@@ -121,19 +121,8 @@ namespace ClassicUO.Game.UI.Controls
                 return Client.Game.UO.Arts.TryGetArtSize(graphic, out width, out height);
             }
 
-            // pack gumps only: a MUL/UOP size can be the archive's while a loose Gumps/<id>.gump overrides the image
-            if (Client.Game.UO.FileManager.Gumps.FromPack
-                && Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height) && width > 0 && height > 0)
-            {
-                return true;
-            }
-
-            // MUL/UOP gumps (CUO_PACK_GUMPS=0) and gumps without a size: decode, as before
-            ref readonly var spriteInfo = ref Client.Game.UO.Gumps.GetGump(graphic);
-            width = spriteInfo.UV.Width;
-            height = spriteInfo.UV.Height;
-
-            return spriteInfo.Texture != null;
+            // every pack gump has a size (GumpsLoader.CheckRecord refuses a record without one): no decode needed
+            return Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height);
         }
 
         public ushort Hue { get; set; }

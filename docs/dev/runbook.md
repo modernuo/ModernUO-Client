@@ -156,7 +156,7 @@ The client reads its assets from the pack. It finds the pack folder in this orde
 
 It stops with an error if `manifest.json` is missing or the pack format is newer than the client supports.
 
-The client needs no UO directory. It takes the client version from `clientversion` if that is valid (sanitized), else from the pack manifest's `sourceClientVersion`, and sends that text to the server; the resolved version is not written back to `settings.json`. `ultimaonlinedirectory` is optional: when it is set and exists, it is the folder for the remaining loose reads (`Clilocs.txt`, `Sounds/<id>.wav`) and for the `CUO_PACK_GUMPS=0` / `CUO_PACK_TEXT=0` fallbacks; otherwise the executable's folder is. Skills, skill groups, world map images, the string dictionary and the hand-edited text/def files come from the pack (pack-format.md). A pack converted before revision 1.2 has no `skills.bin` and is refused: convert again.
+The client needs no UO directory. It takes the client version from `clientversion` if that is valid (sanitized), else from the pack manifest's `sourceClientVersion`, and sends that text to the server; the resolved version is not written back to `settings.json`. `ultimaonlinedirectory` is optional: when it is set and exists, it is the folder for the remaining loose reads (`Clilocs.txt`, `Sounds/<id>.wav`); otherwise the executable's folder is. Gumps, fonts, cliloc and speech come only from the pack: there is no MUL/UOP fallback, and a pack without `gumps/gumps.bin` or one of the `text/` files is refused. Skills, skill groups, world map images, the string dictionary and the hand-edited text/def files come from the pack (pack-format.md). A pack converted before revision 1.2 has no `skills.bin` and is refused: convert again.
 
 Settings come from `settings.json` next to the executable, or from the file named by `-settings <file>`. Command-line arguments start with `-`, take one value (flags such as `-skiploginscreen` take none) and override the file. Relevant keys:
 
@@ -268,7 +268,6 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI target with a replay every N frames |
 | `CUO_FILL_DIAMOND=1\|0`, `CUO_FILL_DIAMOND_CHECK=1\|N` | Dev. Override `world_fill_diamond`; walk the whole square every Nth fill (default 10) and log anything drawn, hidden (also by the edge pass) or picked on a tile the diamond skips; the summary gives tiles outside the walk's and the hidden pass's bands and empty chunks (`[fill-diamond-check]` every 5 s) |
 | `CUO_TILE_ORDER_CHECK=1\|every\|N`, `CUO_RECYCLE_CHECK=1\|reuse` | Check the tile lists (order, links, no item, mobile or effect in a list), the dynamic tile index (entries valid and sorted, the merged walk in key order, every placed object reachable) and map object reuse |
-| `CUO_PACK_TEXT=0`, `CUO_PACK_GUMPS=0` | Read fonts, cliloc, speech or gumps from MUL/UOP files instead of the pack (for comparison) |
 | `CUO_ANIM_SYNC=1`, `CUO_ART_SYNC=1`, `CUO_CHUNK_SYNC=1` | Decode animations, art or map chunks synchronously |
 | `CUO_RENDERER_PROBE_FAIL=device\|world`, `CUO_RENDERER_LEGACY_DRIVER=OpenGL` | Force the renderer selection fallbacks for testing |
 | `CUO_SIMULATE_DEVICE_LOST=<s>`, `CUO_DEVICE_LOST_NOEXIT=1` | Device-loss handler tests |

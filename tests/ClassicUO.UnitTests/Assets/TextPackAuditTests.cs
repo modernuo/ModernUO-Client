@@ -15,9 +15,9 @@ using Xunit;
 namespace ClassicUO.UnitTests.Assets
 {
     // The text-in-pack audit (poc-log "Text in the pack: audit fixes, overrides, block-compressed cliloc"): records the
-    // pack accepts must render, invalid store topology and oversized files are refused before allocation, a corrupt pack
-    // language never blocks the loose files, reloads publish only complete states, the cliloc overrides, and the retired
-    // block-compressed layout is rejected. All synthetic: no client data needed.
+    // pack accepts must render, invalid store topology and oversized files are refused before allocation, a pack without
+    // its text or gump files is refused, a corrupt pack language serves nothing, reloads publish only complete states, the
+    // cliloc overrides, and the retired block-compressed layout is rejected. All synthetic: no client data needed.
     public class TextPackAuditTests : IDisposable
     {
         private readonly string _tmp = Path.Combine(Path.GetTempPath(), "cuo-textaudit-" + Guid.NewGuid().ToString("N"));
@@ -283,7 +283,8 @@ namespace ClassicUO.UnitTests.Assets
 
         // ------------------------------------------------------------------ cliloc (findings 4, 7, 8; overrides; blocks)
 
-        // A raw (not BWT-compressed) Cliloc.* file: header int32 2, int16 1, then (number, flag, length, UTF-8) records.
+        // A raw (not BWT-compressed) Cliloc.* file, for the converter's language discovery: header int32 2, int16 1, then
+        // (number, flag, length, UTF-8) records.
         private static void WriteClilocFile(string path, params (int Id, string Text)[] entries)
         {
             using var w = new BinaryWriter(File.Create(path));
@@ -332,47 +333,60 @@ namespace ClassicUO.UnitTests.Assets
         {
             var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, null);
             var c = fm.Clilocs;
-            c.UsePack = true;
             c.PackFile = packFile;
 
             return c;
         }
 
         [Fact]
-        public void Corrupt_Pack_Language_Falls_Back_To_Loose_Files_With_English_Rollback()
+        public void Corrupt_Pack_Language_Or_Store_Serves_Nothing_And_A_Reload_Keeps_The_Old_Strings()
         {
-            WriteClilocFile(P("Cliloc.enu"), (1, "loose one"), (2, "loose two"));
             var garbage = Table((1, "x"));
             garbage[0] = 99; // count no longer adds up
             var pack = WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "pack one"))), Lang("deu", garbage));
 
-            // deu is in the pack but corrupt; Cliloc.deu is absent: the loose Cliloc.enu serves
+            // deu is in the pack but corrupt: nothing serves (no loose Cliloc.* files to fall back on)
             var c = Cliloc(pack);
             c.Load("deu");
-            c.FromPack.Should().BeFalse();
-            c.Language.Should().Be("enu");
-            c.GetString(1).Should().Be("loose one");
-            c.GetString(2).Should().Be("loose two");
-
-            // with Cliloc.deu present, it serves over the loose enu
-            WriteClilocFile(P("Cliloc.deu"), (2, "zwei"));
-            c.Load("deu");
-            c.Language.Should().Be("deu");
-            c.GetString(1).Should().Be("loose one");
-            c.GetString(2).Should().Be("zwei");
+            c.LanguageTable.Should().BeNull();
+            c.TryGetString(1, out _).Should().BeFalse();
 
             // a store that doesn't resolve (two enu records) is rejected as a whole
             var dup = WriteClilocStore("dup.bin", Lang("enu", Table((1, "a"))), Lang("enu", Table((1, "b"))));
             var d = Cliloc(dup);
             d.Load("enu");
-            d.FromPack.Should().BeFalse();
-            d.GetString(1).Should().Be("loose one");
+            d.LanguageTable.Should().BeNull();
 
-            // and a valid pack serves
+            // a valid pack serves, and a load of the corrupt language afterwards keeps it
             var ok = Cliloc(pack);
             ok.Load("enu");
-            ok.FromPack.Should().BeTrue();
             ok.GetString(1).Should().Be("pack one");
+            ok.Load("deu");
+            ok.Language.Should().Be("enu");
+            ok.GetString(1).Should().Be("pack one");
+        }
+
+        [Fact]
+        public void A_Pack_Without_Its_Text_Or_Gump_Files_Is_Refused()
+        {
+            // a pack converted before the text and gump sections: each loader names the file it misses
+            var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, PackAssets.OpenForTests(_tmp));
+
+            Action cliloc = () => fm.Clilocs.Load("enu");
+            cliloc.Should().Throw<FileNotFoundException>().WithMessage($"*'{TextConst.ClilocFile}' is missing*convert*");
+            Action languages = () => fm.Clilocs.AvailableLanguages();
+            languages.Should().Throw<FileNotFoundException>().WithMessage($"*'{TextConst.ClilocFile}' is missing*");
+            Action fonts = () => fm.Fonts.Load();
+            fonts.Should().Throw<FileNotFoundException>().WithMessage($"*'{TextConst.AsciiFontsFile}' is missing*");
+            Action speech = () => fm.Speeches.Load();
+            speech.Should().Throw<FileNotFoundException>().WithMessage($"*'{TextConst.SpeechFile}' is missing*");
+            Action gumps = () => fm.Gumps.Load();
+            gumps.Should().Throw<FileNotFoundException>().WithMessage($"*'{StoreConst.GumpsFile}' is missing*");
+
+            // no pack at all: the same
+            var none = new UOFileManager(ClientVersion.CV_7090, _tmp, null);
+            Action noPack = () => none.Gumps.Load();
+            noPack.Should().Throw<FileNotFoundException>();
         }
 
         [Fact]
@@ -416,8 +430,8 @@ namespace ClassicUO.UnitTests.Assets
         [Fact]
         public void Reload_Keeps_The_Old_Strings_Until_The_New_Ones_Are_Complete()
         {
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
-            var c = Cliloc(null);
+            var pack = WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "one"))));
+            var c = Cliloc(pack);
             c.Load("enu");
             c.GetString(1).Should().Be("one");
 
@@ -440,17 +454,18 @@ namespace ClassicUO.UnitTests.Assets
                 c.Reload();
             }
 
-            // a reload that fails (the file is gone) keeps the old strings
-            File.Delete(P("Cliloc.enu"));
+            // a reload that fails (the file is gone, or truncated) keeps the old strings
+            File.Delete(pack);
+            c.Reload();
+            File.WriteAllBytes(pack, new byte[10]);
             c.Reload();
             stop.Cancel();
             reader.Wait();
             misses.Should().Be(0);
             c.GetString(1).Should().Be("one");
 
-            // (a truncated Cliloc.* file is not a failure: the client clips its last entry, as ReadUTF8 always did)
             // the replacement is published once it is complete
-            WriteClilocFile(P("Cliloc.enu"), (1, "uno"));
+            WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "uno"))));
             c.Reload();
             c.GetString(1).Should().Be("uno");
         }
@@ -458,27 +473,24 @@ namespace ClassicUO.UnitTests.Assets
         [Fact]
         public void Reload_Without_The_English_Base_Keeps_The_Old_Strings()
         {
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"), (2, "two"));
-            WriteClilocFile(P("Cliloc.deu"), (2, "zwei"));
-            var c = Cliloc(null);
+            var pack = WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "one"), (2, "two"))), Lang("deu", Table((2, "zwei"))));
+            var c = Cliloc(pack);
             c.Load("deu");
             c.Language.Should().Be("deu");
             c.GetString(1).Should().Be("one", "an English-only number");
             c.GetString(2).Should().Be("zwei");
 
-            // Cliloc.enu removed while Cliloc.deu stays: the new state would lose every English-only number
-            File.Delete(P("Cliloc.enu"));
+            // enu gone while deu stays: the new state would lose every English-only number
+            WriteClilocStore("cliloc.bin", Lang("deu", Table((2, "zwei"))));
             c.Reload();
             c.GetString(1).Should().Be("one");
             c.GetString(2).Should().Be("zwei");
             c.EnglishTable.Should().NotBeNull();
 
-            // the first load has nothing to keep: the language serves alone (logged as an error)
-            var fresh = Cliloc(null);
+            // the first load has nothing to keep, and a language without its English base is not served (logged as an error)
+            var fresh = Cliloc(pack);
             fresh.Load("deu");
-            fresh.Language.Should().Be("deu");
-            fresh.GetString(2).Should().Be("zwei");
-            fresh.EnglishTable.Should().BeNull();
+            fresh.LanguageTable.Should().BeNull();
         }
 
         [Fact]
@@ -489,14 +501,14 @@ namespace ClassicUO.UnitTests.Assets
                 return; // an exclusive open makes the file unreadable only where sharing is enforced
             }
 
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"), (2, "two"));
+            var pack = WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "one"), (2, "two"))));
             File.WriteAllText(P(ClilocOverrides.FileName), "2 ours" + Environment.NewLine);
-            var c = Cliloc(null);
+            var c = Cliloc(pack);
             c.Load("enu");
             c.GetString(2).Should().Be("ours");
 
             // Clilocs.txt exists but can't be read (held exclusively): the reload is not published
-            WriteClilocFile(P("Cliloc.enu"), (1, "uno"), (2, "dos"));
+            WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "uno"), (2, "dos"))));
 
             using (new FileStream(P(ClilocOverrides.FileName), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
@@ -517,10 +529,10 @@ namespace ClassicUO.UnitTests.Assets
         [Fact]
         public void Clilocs_Txt_Missing_Is_Absent_And_An_Unreadable_Path_Is_A_Failure()
         {
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"), (2, "two"));
+            var pack = WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "one"), (2, "two"))));
 
             // missing: optional, the first load publishes without it
-            var c = Cliloc(null);
+            var c = Cliloc(pack);
             c.Load("enu");
             c.LooseOverrides.Should().BeNull();
             c.GetString(2).Should().Be("two");
@@ -532,7 +544,7 @@ namespace ClassicUO.UnitTests.Assets
             // a directory where the file should be: it exists but can't be read (deterministic, no ACLs)
             File.Delete(P(ClilocOverrides.FileName));
             Directory.CreateDirectory(P(ClilocOverrides.FileName));
-            WriteClilocFile(P("Cliloc.enu"), (1, "uno"), (2, "dos"));
+            WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "uno"), (2, "dos"))));
 
             try
             {
@@ -542,7 +554,7 @@ namespace ClassicUO.UnitTests.Assets
                 c.GetString(1).Should().Be("one");
 
                 // the first load has nothing to keep: it still serves the languages
-                var fresh = Cliloc(null);
+                var fresh = Cliloc(pack);
                 fresh.Load("enu");
                 fresh.GetString(1).Should().Be("uno");
                 fresh.LooseOverrides.Should().BeNull();
@@ -564,7 +576,6 @@ namespace ClassicUO.UnitTests.Assets
 
             var c = Cliloc(pack);
             c.Load("deu");
-            c.FromPack.Should().BeTrue();
             c.GetString(1).Should().Be("enu1");
             c.GetString(2).Should().Be("deu2");
             c.GetString(3).Should().Be("ovr3");
@@ -583,15 +594,6 @@ namespace ClassicUO.UnitTests.Assets
             c.Load("enu");
             c.GetString(3).Should().Be("ovr3");
             c.GetString(2).Should().Be("enu2");
-
-            // and over loose Cliloc.* files when the pack's languages can't serve
-            WriteClilocFile(P("Cliloc.enu"), (3, "file3"), (6, "file6"));
-            var noLang = WriteClilocStore("ovronly.bin", Overrides(Table((3, "ovr3"))));
-            var f = Cliloc(noLang);
-            f.Load("enu");
-            f.FromPack.Should().BeFalse();
-            f.GetString(3).Should().Be("ovr3");
-            f.GetString(6).Should().Be("file6");
         }
 
         [Fact]
@@ -614,7 +616,7 @@ namespace ClassicUO.UnitTests.Assets
                 var c = Cliloc(path);
                 Action load = () => c.Load("enu");
                 load.Should().NotThrow();
-                c.FromPack.Should().BeTrue("the languages still serve");
+                c.LanguageTable.Should().NotBeNull("the languages still serve");
                 c.GetString(3).Should().Be("enu3", Path.GetFileName(path));
             }
 
@@ -645,7 +647,6 @@ namespace ClassicUO.UnitTests.Assets
         [Fact]
         public void Retired_Blocked_Layout_Is_Rejected_Never_Read_As_Flat()
         {
-            WriteClilocFile(P("Cliloc.enu"), (1, "loose one"));
             // a flat payload behind the retired bit: a reader that ignored the bit would serve it
             var flat = Table((1, "pack one"));
 
@@ -657,7 +658,7 @@ namespace ClassicUO.UnitTests.Assets
                 why.Should().Contain("no longer supported");
             }
 
-            // the client rejects the whole store (an Error naming the layout) and reads the loose files
+            // the client rejects the whole store (an Error naming the layout): nothing serves
             foreach (var pack in new[]
             {
                 WriteClilocStore("blk2.bin", Lang("enu", flat, blocked: true)),
@@ -666,8 +667,8 @@ namespace ClassicUO.UnitTests.Assets
             {
                 var c = Cliloc(pack);
                 c.Load("enu");
-                c.FromPack.Should().BeFalse();
-                c.GetString(1).Should().Be("loose one");
+                c.LanguageTable.Should().BeNull();
+                c.TryGetString(1, out _).Should().BeFalse();
             }
         }
 
@@ -697,93 +698,33 @@ namespace ClassicUO.UnitTests.Assets
         }
         // ------------------------------------------------------------------ available languages (os-language Codex audit 3-5)
 
-        private ClilocLoader ClilocWithOverrides(string packFile, UOFilesOverrideMap map)
-        {
-            var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, map, null);
-            var c = fm.Clilocs;
-            c.UsePack = true;
-            c.PackFile = packFile;
-
-            return c;
-        }
-
-        // finding 3: a cliloc named only in files_override is available, and an overridden name whose target is missing is not
+        // finding 4: pack identifiers longer than three letters are not languages the client can select
         [Fact]
-        public void AvailableLanguages_Includes_Files_Override_Targets_That_Exist()
-        {
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
-            WriteClilocFile(P("Cliloc.fra"), (1, "un"));
-            string elsewhere = Path.Combine(_tmp, "shard");
-            Directory.CreateDirectory(elsewhere);
-            WriteClilocFile(Path.Combine(elsewhere, "russian.bin"), (1, "odin"));
-
-            var map = new UOFilesOverrideMap();
-            map.Add("cliloc.rus", Path.Combine(elsewhere, "russian.bin"));
-            map.Add("cliloc.fra", Path.Combine(elsewhere, "missing.bin"));
-            map.Add("cliloc.kor", Path.Combine(elsewhere, "missing.bin"));
-
-            var c = ClilocWithOverrides(null, map);
-            c.AvailableLanguages().Should().BeEquivalentTo("enu", "rus");
-
-            // the loader opens the same path
-            c.Load("rus");
-            c.Language.Should().Be("rus");
-            c.GetString(1).Should().Be("odin");
-        }
-
-        // finding 4: pack identifiers longer than three letters are not languages the client can select; files likewise
-        [Fact]
-        public void AvailableLanguages_Lists_Only_Three_Letter_Codes_From_Pack_And_Files()
+        public void AvailableLanguages_Lists_Only_Three_Letter_Codes_From_The_Pack()
         {
             var pack = WriteClilocStore("long.bin", Lang("enu", Table((1, "one"))), Lang("ptbr", Table((1, "um"))), Lang("deu", Table((1, "eins"))));
             Cliloc(pack).AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
 
+            // a store without language tables lists none (loose Cliloc.* files are not read)
             WriteClilocFile(P("Cliloc.enu"), (1, "one"));
-            WriteClilocFile(P("Cliloc.ptbr"), (1, "um"));
-            WriteClilocFile(P("Cliloc.de"), (1, "eins"));
-            Cliloc(null).AvailableLanguages().Should().BeEquivalentTo("enu");
+            Cliloc(WriteClilocStore("ovronly.bin", Overrides(Table((1, "ovr"))))).AvailableLanguages().Should().BeEmpty();
+            Cliloc(WriteClilocStore("empty.bin")).AvailableLanguages().Should().BeEmpty();
         }
 
-        // finding 5: a pack store without language tables (empty or overrides only) leaves the files to say what exists
-        [Fact]
-        public void AvailableLanguages_Falls_Through_To_Files_When_The_Pack_Has_No_Languages()
-        {
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
-            WriteClilocFile(P("Cliloc.deu"), (1, "eins"));
-
-            var overridesOnly = WriteClilocStore("ovronly.bin", Overrides(Table((1, "ovr"))));
-            Cliloc(overridesOnly).AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
-
-            var empty = WriteClilocStore("empty.bin");
-            Cliloc(empty).AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
-
-            // and the loader agrees: the German file serves
-            var c = Cliloc(overridesOnly);
-            c.Load("deu");
-            c.FromPack.Should().BeFalse();
-            c.Language.Should().Be("deu");
-        }
-
-        // round 2, finding 1: a malformed files_override target for a language nobody asked for must not abort discovery
+        // round 2, finding 1: a malformed files_override target is left unresolved, not thrown (it once aborted cliloc
+        // discovery; the lookup still serves Clilocs.txt and the other loose files)
         [Theory]
         [InlineData("")]
-        [InlineData("bad name.bin")]
-        public void AvailableLanguages_Skips_A_Malformed_Override_Target_And_Continues(string target)
+        [InlineData("bad name.bin")]
+        public void GetUOFilePath_Leaves_A_Malformed_Override_Target_Unresolved(string target)
         {
-            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
-            WriteClilocFile(P("Cliloc.deu"), (1, "eins"));
-
             var map = new UOFilesOverrideMap();
             map.Add("cliloc.rus", target);
 
             var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, map, null);
             fm.CaseInsensitiveFallback = true; // the lookup that threw on Linux/macOS, run here on any OS
-            var c = fm.Clilocs;
-            c.UsePack = true;
-            c.PackFile = null;
 
-            c.AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
-            fm.GetUOFilePath("Cliloc.rus").Should().Be(target); // unresolved, not thrown
+            fm.GetUOFilePath("Cliloc.rus").Should().Be(target);
         }
 
         // round 2, finding 2: a relative base directory finds a differently-cased file (the lookup compared absolute entries to the relative probe)
@@ -804,13 +745,6 @@ namespace ClassicUO.UnitTests.Assets
             string deu = fm.GetUOFilePath("Cliloc.deu");
             File.Exists(deu).Should().BeTrue();
             Path.GetFileName(deu).Should().BeOneOf("Cliloc.deu", "Cliloc.DEU");
-
-            var c = fm.Clilocs;
-            c.UsePack = false;
-            c.AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
-            c.Load("deu");
-            c.Language.Should().Be("deu");
-            c.GetString(1).Should().Be("eins");
         }
     }
 }
