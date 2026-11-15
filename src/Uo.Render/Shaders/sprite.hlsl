@@ -441,9 +441,10 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + tc * float2(w, srcH);
     o.uvw = float3(uv * (indexed ? InvAnimAtlas : InvAtlas), layer);
     uint pal = indexed ? (inst.corners & 0xFFFF) : 0u;
-    // Zoomed out, baked tiles that sit edge to edge (land, and statics whose trimmed art fills 44x44: floors, static
-    // water) take SampleTile, which keeps them seamless. Flat land art is always an untrimmed 44x44 diamond in the pack.
-    bool tile = Sharp == 0 && zTest && !indexed && ((flags & FLAG_STRETCH) != 0 || (w == 44.0 && h == 44.0));
+    // Baked tiles that sit edge to edge (land, and statics whose trimmed art fills 44x44: floors, static water) are
+    // sampled without seams: zoomed out by SampleTile, zoomed in by the sharp path's tile coverage (PSMain). Flat land
+    // art is always an untrimmed 44x44 diamond in the pack.
+    bool tile = zTest && !indexed && ((flags & FLAG_STRETCH) != 0 || (w == 44.0 && h == 44.0));
     float2 uv0 = float2(inst.uv & 0xFFFF, inst.uv >> 16);
     o.rect = tile ? float4(uv0, uv0 + float2(w, h)) : 0;
     o.hueFlags = uint2(hueRow | (pal << 16),
@@ -636,6 +637,17 @@ float4 PSMain(VSOut i) : SV_Target
         float2 off = sign(d) * 0.5 * saturate((abs(d) - 0.5) / (fw * 0.5) + 1.0);
         float2 uv = (floor(t) + 0.5 + off) / i.atlasSize;
         c = Atlas.SampleLevel(AtlasSmp, float3(uv, i.uvw.z), 0);
+        if ((i.hueFlags.y & (FLAG_TILE | FLAG_STRETCH)) == FLAG_TILE)
+        {
+            // Zoomed in at a fractional scale, a flat tile's diamond-edge pixels blended the edge texel with the
+            // transparent black outside the diamond: the 0.5 alpha test then rejected the pixel in both neighbours (a
+            // gap) or kept it darkened, a grid on water and floors. As SampleTile does zoomed out: coverage from the
+            // texel under the fragment (the point-sampled diamond, which tiles exactly; the 1/64 bias makes a pixel
+            // centre on a texel edge pick the same side in every tile) and the blended colour un-premultiplied.
+            float4 p = Atlas.Load(int4((int2)floor(t + 1.0 / 64), (int)i.uvw.z, 0));
+            const float k = 1.0 / 256;
+            c = float4((c.rgb + p.rgb * k) / (c.a + k), p.a);
+        }
     }
     else if (i.hueFlags.y & FLAG_TILE)
     {
