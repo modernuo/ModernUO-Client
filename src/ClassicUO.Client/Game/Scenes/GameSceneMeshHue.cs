@@ -17,7 +17,7 @@ namespace ClassicUO.Game.Scenes
         private bool _meshHueOnChange;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_MESH_HUE=1|0) and the checker (CUO_MESH_HUE_CHECK=1):
+        // the gate's override of the setting (CUO_MESH_HUE=1|0) and the checker (CUO_MESH_HUE_CHECK=1):
         // every sprite that keeps its hue is compared with the hue the old per-frame path computes for it
         private static readonly bool? _meshHueEnv = Environment.GetEnvironmentVariable("CUO_MESH_HUE") switch
         {

@@ -118,7 +118,7 @@ namespace ClassicUO
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): runtime renderer switching is dev tooling (parity shots, picking, the FPS test's Legacy column).
+        // runtime renderer switching is dev tooling (parity shots, picking, the FPS test's Legacy column).
         /// <summary>Switches this session's world renderer ("gpu" or "legacy"). Refuses "gpu" when the session has no usable
         /// Gpu world (a Legacy fallback), which would otherwise exit through FailWorldSetup.</summary>
         public static bool TrySwitch(string renderer, out string message)

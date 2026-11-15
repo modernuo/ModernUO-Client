@@ -40,7 +40,7 @@ namespace ClassicUO.Game
         internal bool? ActiveItemsCheckOverride;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the checker
+        // the checker
         private static readonly bool s_activeItemsCheck = Environment.GetEnvironmentVariable("CUO_ACTIVE_ITEMS_CHECK") == "1";
 #else
         private const bool s_activeItemsCheck = false;

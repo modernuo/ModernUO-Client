@@ -1,5 +1,7 @@
 # Release cleanup: developer tooling behind `CUO_DEVTOOLS`
 
+> **Superseded 2026-11-15.** The owner decided to keep the developer tooling and compile it out of release builds instead of deleting it: the `CLEANUP(release)` tags were removed (0bd50e491) and `#if CUO_DEVTOOLS` is the only marker. The list below is history.
+
 Started 2026-10-25 (renderer-selection agent), from the owner's decision that runtime renderer switching stays for testing but must be removable for release builds.
 
 ## The constant

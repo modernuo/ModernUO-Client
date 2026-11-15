@@ -4485,7 +4485,7 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): driver command "optionsdrop" (the Options screenshot job): opens the World renderer dropdown
+        // driver command "optionsdrop" (the Options screenshot job): opens the World renderer dropdown
         internal void OpenWorldRendererListForDriver() => _worldRenderer.InvokeMouseUp(new Microsoft.Xna.Framework.Point(_worldRenderer.ScreenCoordinateX + 1, _worldRenderer.ScreenCoordinateY + 1), MouseButtonType.Left);
 #endif
 

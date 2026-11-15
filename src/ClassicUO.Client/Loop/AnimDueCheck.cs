@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 #if CUO_DEVTOOLS
-// CLEANUP(release): checks present_on_change_anim_due's skipped frames against what the frame actually submits.
+// checks present_on_change_anim_due's skipped frames against what the frame actually submits.
 using System;
 using System.Diagnostics;
 using ClassicUO.Utility.Logging;

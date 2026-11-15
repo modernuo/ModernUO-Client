@@ -32,7 +32,13 @@ namespace ClassicUO.UnitTests.Ecs
             "world_entity_index",
             "ecs_item_draw_row",
             "gpu_ecs_sprites",
-            "legacy_ecs_sprites"
+            "legacy_ecs_sprites",
+            // retired after T9, default on since late October 2026
+            "gpu_prepare_skip_baked",
+            "gpu_prepare_item_cache",
+            "gpu_prepare_item_cache_mixed",
+            "gpu_prepare_item_cache_effects",
+            "text_skip_expired"
         };
 
         [Fact]

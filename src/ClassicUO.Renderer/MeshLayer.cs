@@ -50,7 +50,7 @@ namespace ClassicUO.Renderer
         private bool _packed;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_MESH_VIS_CHECK: with bits on, Visible[] is kept as well, and every BuildVisibleIndices compares
+        // CUO_MESH_VIS_CHECK: with bits on, Visible[] is kept as well, and every BuildVisibleIndices compares
         // its index sequence and runs with the ones the bool path builds from Visible[]
         private bool _visCheck;
         private short[] _checkIndexData = Array.Empty<short>();

@@ -1,4 +1,4 @@
-// CLEANUP(release): developer tooling (E3). Compiled only with CUO_DEVTOOLS; DevBench's `ecsdump:` plan entry is its only caller.
+// developer tooling (E3). Compiled only with CUO_DEVTOOLS; DevBench's `ecsdump:` plan entry is its only caller.
 #if CUO_DEVTOOLS
 // SPDX-License-Identifier: BSD-2-Clause
 

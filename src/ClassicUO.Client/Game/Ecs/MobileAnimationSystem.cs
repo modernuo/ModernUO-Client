@@ -211,7 +211,7 @@ namespace ClassicUO.Game
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_MOBILE_CACHE_CHECK=1: every reused selection and emission is compared with a fresh one (MobileFrameCache)
+        // CUO_MOBILE_CACHE_CHECK=1: every reused selection and emission is compared with a fresh one (MobileFrameCache)
         public static readonly bool CacheCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_CACHE_CHECK") == "1";
         public static long CheckSelects, CheckSelectDiffs;
         private static int _checkLogged;

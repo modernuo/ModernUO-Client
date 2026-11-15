@@ -143,7 +143,7 @@ public sealed unsafe class WorldRenderer : IDisposable
     RenderViewReuse _viewReuse;
     DynamicPageTouchCache _dynamicPageTouches;
 #if CUO_DEVTOOLS
-    // CLEANUP(release): shadow work is enabled only by the checker, never by the switch alone.
+    // shadow work is enabled only by the checker, never by the switch alone.
     static readonly bool ViewReuseCheck = Environment.GetEnvironmentVariable("CUO_RENDER_VIEW_REUSE_CHECK") == "1";
     ChunkDraw[] _checkTable;
     long _viewChecks, _viewDynamicChecks, _viewMismatches, _viewCheckLog;
@@ -898,7 +898,7 @@ public sealed unsafe class WorldRenderer : IDisposable
     }
 
 #if CUO_DEVTOOLS
-    // CLEANUP(release): CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
+    // CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
     /// <summary>When set, every submitted frame's inputs are hashed into <see cref="LastSignature"/>.</summary>
     public static bool SignatureOn;
 

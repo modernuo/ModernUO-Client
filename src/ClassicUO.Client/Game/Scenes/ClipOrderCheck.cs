@@ -12,7 +12,7 @@ using Uo.Render;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// CLEANUP(release) clip-2: <c>CUO_CLIP_ORDER_CHECK=1</c> compares the two depth models (DepthModel) on the pairs a mobile
+    /// clip-2: <c>CUO_CLIP_ORDER_CHECK=1</c> compares the two depth models (DepthModel) on the pairs a mobile
     /// forms with the land and statics around it. About every 2 s one Gpu frame is armed: every animation layer the mobile
     /// extract draws for a standing mobile is sampled every 4 px where its frame overlaps the shape of a static or land tile
     /// within 2 tiles (GeoDepth.OnShape). At each sample the old order (the Gpu keys: the layer's strip against the tile's

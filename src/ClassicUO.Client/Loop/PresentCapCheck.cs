@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 #if CUO_DEVTOOLS
-// CLEANUP(release): counts the legacy uncapped draw decision beside the new path; never executes a second GPU present.
+// counts the legacy uncapped draw decision beside the new path; never executes a second GPU present.
 using System;
 using System.Diagnostics;
 using ClassicUO.Utility.Logging;

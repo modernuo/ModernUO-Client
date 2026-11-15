@@ -49,7 +49,7 @@ namespace ClassicUO.Game
         private TextQuadCacheKey _quadKey;
         private bool _quadRunsValid;
 #if CUO_DEVTOOLS
-        // CLEANUP(release): fresh layout/atlas traversal next to text_quad_cache.
+        // fresh layout/atlas traversal next to text_quad_cache.
         private static readonly bool _textQuadCheck = Environment.GetEnvironmentVariable("CUO_TEXT_QUAD_CHECK") == "1";
         private List<TextQuadRun> _quadCheckRuns;
         private static long _quadChecks, _quadMismatches;

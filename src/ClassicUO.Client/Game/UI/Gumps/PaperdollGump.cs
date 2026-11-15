@@ -767,7 +767,7 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_PAPERDOLL_SLOTS_CHECK=1 compares every slot's prepared worn item with its own FindItemByLayer
+        // CUO_PAPERDOLL_SLOTS_CHECK=1 compares every slot's prepared worn item with its own FindItemByLayer
         public static readonly bool SlotsCheckOn = Environment.GetEnvironmentVariable("CUO_PAPERDOLL_SLOTS_CHECK") == "1";
         public static long SlotsChecked, SlotsMismatched;
 

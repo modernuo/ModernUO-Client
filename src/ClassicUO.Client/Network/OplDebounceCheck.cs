@@ -10,7 +10,7 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Network
 {
     /// <summary>
-    /// CLEANUP(release): CUO_OPL_DEBOUNCE_CHECK=1 counts, per serial, the 0xDC notices (with their revisions), the
+    /// CUO_OPL_DEBOUNCE_CHECK=1 counts, per serial, the 0xDC notices (with their revisions), the
     /// property-list requests sent (0xD6, whichever path sends: <c>opl_request_budget</c> on or off) and the answers. A
     /// request is a <b>repeat</b> when the serial was already requested for the same revision (the last 0xDC's, or none)
     /// and World has not removed the object since: the client did not debounce. A notice is a <b>same-revision repeat</b>

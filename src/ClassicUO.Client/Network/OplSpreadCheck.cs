@@ -8,7 +8,7 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Network
 {
     /// <summary>
-    /// CLEANUP(release): CUO_OPL_SPREAD_CHECK=1 checks the property-list sends against the requests, whichever path sends
+    /// CUO_OPL_SPREAD_CHECK=1 checks the property-list sends against the requests, whichever path sends
     /// (<c>opl_request_budget</c> on: <see cref="OplRequestQueue"/>; off: the old list). Every request the old path would
     /// send (each AddMegaClilocRequest) opens a demand unless one is open: pending, or sent and unanswered (a hover or gump
     /// request within <see cref="OplRequestQueue.RetryMs"/>, a revision request for the same revision). Each demand must be

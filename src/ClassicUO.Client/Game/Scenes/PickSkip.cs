@@ -19,7 +19,7 @@ namespace ClassicUO.Game.Scenes
     internal static class PickSkip
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_PICK_SKIP_OFF_WORLD=1|0)
+        // the gate's override of the setting (CUO_PICK_SKIP_OFF_WORLD=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_PICK_SKIP_OFF_WORLD") switch
         {
             "1" => true,
@@ -27,7 +27,7 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
-        // CLEANUP(release): CUO_PICK_SKIP_CHECK=1
+        // CUO_PICK_SKIP_CHECK=1
         public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_PICK_SKIP_CHECK") == "1";
 #else
         private static readonly bool? _env = null;

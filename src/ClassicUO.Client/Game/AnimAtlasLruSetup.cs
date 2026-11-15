@@ -27,7 +27,7 @@ namespace ClassicUO.Game
                     return OnOverride.Value;
                 }
 #if CUO_DEVTOOLS
-                // CLEANUP(release): the gate's override of the setting
+                // the gate's override of the setting
                 switch (Environment.GetEnvironmentVariable("CUO_ANIM_LRU"))
                 {
                     case "1": return true;
@@ -49,7 +49,7 @@ namespace ClassicUO.Game
             int budgetMb = DefaultBudgetMb, floorMb = DefaultFloorMb, ceilingMb = DefaultCeilingMb;
             long minAgeS = 45, thrashS = 60, shrinkS = 180, shrinkUnfocusedS = 45;
 #if CUO_DEVTOOLS
-            // CLEANUP(release): sizes and times for the gates (a small budget so eviction happens in a short scene)
+            // sizes and times for the gates (a small budget so eviction happens in a short scene)
             budgetMb = Env("CUO_ANIM_LRU_BUDGET_MB", budgetMb);
             floorMb = Env("CUO_ANIM_LRU_FLOOR_MB", Math.Min(floorMb, budgetMb));
             ceilingMb = Env("CUO_ANIM_LRU_CEILING_MB", Math.Max(ceilingMb, budgetMb));

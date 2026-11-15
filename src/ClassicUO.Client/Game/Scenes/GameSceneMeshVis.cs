@@ -15,7 +15,7 @@ namespace ClassicUO.Game.Scenes
         private bool _meshVisBits;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_MESH_VIS=1|0) and the checker (CUO_MESH_VIS_CHECK=1):
+        // the gate's override of the setting (CUO_MESH_VIS=1|0) and the checker (CUO_MESH_VIS_CHECK=1):
         // every layer's packed indices and runs are compared with the bool path's
         private static readonly bool? _meshVisEnv = Environment.GetEnvironmentVariable("CUO_MESH_VIS") switch
         {

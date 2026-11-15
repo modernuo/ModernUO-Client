@@ -983,7 +983,7 @@ namespace ClassicUO.Game
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): entry i of the cache's Legacy calls at draw origin (baseX, baseY) and base depth: what the select + resolve give
+        // entry i of the cache's Legacy calls at draw origin (baseX, baseY) and base depth: what the select + resolve give
         // there (integer positions; the depth is DepthOf's expression)
         private static LegacyDraw LegacyReplayed(MobileFrameCache cache, int i, int baseX, int baseY, float depth)
         {
@@ -1020,7 +1020,7 @@ namespace ClassicUO.Game
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the checker
+        // the checker
         public static long CheckLegacyReplays, CheckLegacyReplayDiffs;
 
         // CUO_MOBILE_CACHE_CHECK: the replayed Legacy calls, FrameInfo and lights against a fresh select and resolve (not drawn);

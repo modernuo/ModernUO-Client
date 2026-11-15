@@ -388,7 +388,7 @@ public sealed unsafe class PageResidency
     }
 
 #if CUO_DEVTOOLS
-    // CLEANUP(release): the reuse checker verifies that a full touch walk cannot change any eviction input.
+    // the reuse checker verifies that a full touch walk cannot change any eviction input.
     internal ulong TouchDecisionHash()
     {
         ulong h = (ulong)MissingVisible;

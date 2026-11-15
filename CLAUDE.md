@@ -46,7 +46,7 @@ dotnet test tests/ClassicUO.UnitTests -c Release
 dotnet test tests/Uo.Converter.Tests -c Release
 ```
 
-`CuoDevTools` defaults to true and defines `CUO_DEVTOOLS` (DevBench, runtime renderer switching, the `CUO_*_CHECK` checkers). Code under it is tagged `CLEANUP(release)`. A change that touches guarded code must build in both variants. Many verification steps need a UO install, a pack and a ModernUO server; if you cannot run them, say so in the PR instead of claiming a pass.
+`CuoDevTools` defaults to true and defines `CUO_DEVTOOLS` (DevBench, runtime renderer switching, the `CUO_*_CHECK` checkers). The `#if CUO_DEVTOOLS` guard is the only marker; a release build is the `CuoDevTools=false` variant, so both variants must build and run. A change that touches guarded code must build in both variants. Many verification steps need a UO install, a pack and a ModernUO server; if you cannot run them, say so in the PR instead of claiming a pass.
 
 ## Conventions
 

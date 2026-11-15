@@ -973,7 +973,7 @@ namespace ClassicUO.Game
 
         private long _checkTextSkips, _checkTextMoved;
 
-        /// <summary>CUO_W5_CHECK: the text layout the overhead text pass skipped (text_skip_expired) must place nothing.</summary>
+        /// <summary>CUO_W5_CHECK: the text layout the overhead text pass skipped (W5, expired texts) must place nothing.</summary>
         internal void CheckSkippedTextLayout(Entity e)
         {
             System.Span<(int X, int Y, int OffsetY)> before = stackalloc (int, int, int)[16];

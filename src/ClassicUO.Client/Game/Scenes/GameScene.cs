@@ -1073,7 +1073,6 @@ namespace ClassicUO.Game.Scenes
         private void UpdateTextServerEntities()
         {
             List<Entity> owners = _world.TextOwners;
-            bool skipExpired = Settings.GlobalSettings.TextSkipExpired;
 
             for (int i = owners.Count - 1; i >= 0; i--)
             {
@@ -1090,7 +1089,7 @@ namespace ClassicUO.Game.Scenes
 
                 if (e is Mobile || e.Graphic == 0x2006)
                 {
-                    if (skipExpired && e.TextAllExpired())
+                    if (e.TextAllExpired())
                     {
                         // W5: UpdateRealScreenPosition without the text layout, which would place nothing
                         e.UpdateRealScreenPositionOnly(_offset.X, _offset.Y);

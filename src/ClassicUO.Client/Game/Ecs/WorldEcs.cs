@@ -673,7 +673,7 @@ namespace ClassicUO.Game
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): E4 stats (CUO_MOBILE_UPDATE_CHECK=1 or "stats" logs the counts; T9 S8c deleted its clock
+        // E4 stats (CUO_MOBILE_UPDATE_CHECK=1 or "stats" logs the counts; T9 S8c deleted its clock
         // comparison: the clock is written with the timer and the queue it is derived from)
         public static readonly bool MobileUpdateStats = Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") is "1" or "stats";
 #else

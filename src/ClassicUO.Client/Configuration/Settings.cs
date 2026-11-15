@@ -125,25 +125,7 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("render_view_reuse")] public bool RenderViewReuse { get; set; }
         [JsonPropertyName("upload_skip_unchanged")] public bool UploadSkipUnchanged { get; set; }
 
-        // Gpu world renderer: the per-frame world prepare skips baked land and statics that need no per-frame work
-        // (GameSceneGpuPrepare). Off = the full walk, as Legacy does it.
-        [JsonPropertyName("gpu_prepare_skip_baked")] public bool GpuPrepareSkipBaked { get; set; } = true;
-
-        // Gpu world renderer, with gpu_prepare_skip_baked: settled ground items' sprites are cached per
-        // chunk and their tiles left out of the walk (W4, GameSceneGpuItemCache). Off = every item walked and extracted.
-        [JsonPropertyName("gpu_prepare_item_cache")] public bool GpuPrepareItemCache { get; set; } = true;
-
-        // E7, with gpu_prepare_item_cache: a tile whose other unbaked objects are items the cache can't hold (animated,
-        // corpses, fading, with text...) is still served; those items are walked alone, in tile order. Off = such tiles are
-        // walked in full.
-        [JsonPropertyName("gpu_prepare_item_cache_mixed")] public bool GpuPrepareItemCacheMixed { get; set; } = true;
-
-        // E6, with gpu_prepare_item_cache: graphic effects (GameEffect) on a tile no longer keep its items out of the cache, and
-        // a moving effect crossing tiles no longer re-extracts the chunk's items. A served tile's effects are walked alone,
-        // in tile order. Off = a tile holding an effect is walked in full and every effect move re-extracts its chunk.
-        [JsonPropertyName("gpu_prepare_item_cache_effects")] public bool GpuPrepareItemCacheEffects { get; set; } = true;
-
-        // pa-gpusig, with gpu_prepare_item_cache: a served tile's cached items are trusted while their chunk's render generation
+        // pa-gpusig, the Gpu prepare's ground-item cache: a served tile's cached items are trusted while their chunk's render generation
         // (GpuItemGen.Touch: the WorldWriter commits, text, boat offsets, object handles) is unchanged and the tile was served in
         // every pass since it was checked; otherwise their signatures are compared as before. Off = every served item's
         // signature is rebuilt and compared every frame. CUO_GPU_SIG_CHECK=1 compares both decisions at every use.
@@ -246,10 +228,6 @@ namespace ClassicUO.Configuration
         // overrides it in developer builds, CUO_PICK_EARLY_REJECT_CHECK=1 checks it. Default off.
         [JsonPropertyName("pick_early_reject")] public bool PickEarlyReject { get; set; }
 
-
-        // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
-        // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
-        [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;
 
         // item-pool: the items World drops (out of range, deleted, swept) wait 2 s in a bounded pool (8,192 items, ~2.3 MB)
         // and are reset and reused for the items that enter range next (ItemPool), instead of a new Item each. Read once at

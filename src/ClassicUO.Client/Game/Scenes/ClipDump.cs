@@ -11,7 +11,7 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// CLEANUP(release) clip-1: driver <c>clipdump &lt;name&gt; [radius]</c> logs the render-order inputs of the tiles around the
+    /// clip-1: driver <c>clipdump &lt;name&gt; [radius]</c> logs the render-order inputs of the tiles around the
     /// player as <c>[clipdump]</c> lines: every object of each tile in walk order (kind, graphic, X/Y/Z, PriorityZ, tiledata
     /// height and flags, screen position, Legacy depth, Gpu D = 100·(x+y)+127+pz), and for the next ~0.5 s every animation layer
     /// the mobile extract draws (frame size, centre, anchor, mount offset, strips with their Legacy depth and Gpu D).

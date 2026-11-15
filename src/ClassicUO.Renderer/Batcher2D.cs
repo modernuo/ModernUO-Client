@@ -102,7 +102,7 @@ namespace ClassicUO.Renderer
         public int PendingSprites => _numSprites;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
+        // CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
         /// <summary>When set, every draw folds its vertices, textures, transform and effect into <see cref="FrameSignature"/>.</summary>
         public static bool SignatureOn;
 

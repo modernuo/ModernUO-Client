@@ -211,7 +211,7 @@ namespace ClassicUO
 
         // CUO_FRAMESTATS_ALLOC=1 also brackets every Begin/End phase with the main thread's allocated bytes and reports each
         // phase's average B/frame ("alloc_phases"), to find a steady per-frame allocation without a trace (a NativeAOT
-        // build has no EventPipe AllocationTick). Nested phases count in their parents too. CLEANUP(release): dev builds only.
+        // build has no EventPipe AllocationTick). Nested phases count in their parents too. Dev builds only.
 #if CUO_DEVTOOLS
         public static readonly bool AllocPhases = On && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_ALLOC") == "1";
 #else

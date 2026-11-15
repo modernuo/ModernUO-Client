@@ -30,7 +30,7 @@ namespace ClassicUO.Game.Managers
         private bool _tailValid;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_TEXT_TAIL=1|0) and the checker
+        // the gate's override of the setting (CUO_TEXT_TAIL=1|0) and the checker
         private static readonly bool? s_env = Environment.GetEnvironmentVariable("CUO_TEXT_TAIL") switch
         {
             "1" => true,
@@ -277,7 +277,7 @@ namespace ClassicUO.Game.Managers
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the checker's walk: null when it passes a million nodes (a cycle)
+        // the checker's walk: null when it passes a million nodes (a cycle)
         private TextObject WalkToTailBounded()
         {
             TextObject t = FirstNode;
@@ -295,7 +295,7 @@ namespace ClassicUO.Game.Managers
             return t;
         }
 
-        // CLEANUP(release): CUO_TEXT_ORDER_CHECK. kept is the tail kept from earlier uses (null: none valid, nothing to
+        // CUO_TEXT_ORDER_CHECK. kept is the tail kept from earlier uses (null: none valid, nothing to
         // compare); walked is the full walk's. The link order is checked in both directions.
         private void CheckOrder(TextObject kept, TextObject walked, bool cache)
         {

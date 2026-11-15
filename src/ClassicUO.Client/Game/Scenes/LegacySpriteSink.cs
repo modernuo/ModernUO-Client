@@ -87,7 +87,7 @@ namespace ClassicUO.Game.Scenes
         private const int OBJECT_AHEAD = 16, NODE_AHEAD = 8, ROW_AHEAD = 4;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_LEGACY_PREFETCH=obj,node,row overrides the three distances for timing arms (0 = stage off)
+        // CUO_LEGACY_PREFETCH=obj,node,row overrides the three distances for timing arms (0 = stage off)
         private static readonly (int Obj, int Node, int Row) _ahead = ParsePrefetch(Environment.GetEnvironmentVariable("CUO_LEGACY_PREFETCH"));
 #else
         private static readonly (int Obj, int Node, int Row) _ahead = (OBJECT_AHEAD, NODE_AHEAD, ROW_AHEAD);
@@ -205,7 +205,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): how many listed mobiles had no mirror record with an AnimationState (not drawn)
+        // how many listed mobiles had no mirror record with an AnimationState (not drawn)
         internal static long MobilesWithoutRecord;
 #endif
 
