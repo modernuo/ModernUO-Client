@@ -1,6 +1,6 @@
 """Collect a static-PGO profile (.mibc) for the NativeAOT ClassicUO build from a JIT run.
 
-Runs the Release JIT client (bin/Release/net10.0/cuo.exe) through a DevBench plan against a local shard with an EventPipe
+Runs the Release JIT client (bin/Release/net11.0/cuo.exe) through a DevBench plan against a local shard with an EventPipe
 trace of the JIT's Dynamic PGO data (instrumentation counts and class/method histograms), then converts the trace with
 dotnet-pgo into a .mibc file (default %TEMP%/cuo.mibc). Publish with -p:CuoMibcPath=<file> to pass it to ILC. Static PGO is
 opt-in: on 2026-10-25 it gave no measurable gain (docs/modern-client/testing/aot-performance.md).
@@ -12,14 +12,18 @@ Usage (from the repo root; needs the .NET SDK, Python 3, a running shard and a t
 
 The password is written only as ClassicUO's encrypted settings value into a throwaway settings folder under %TEMP%,
 never on a command line or in the repo. The temp folder and the trace are deleted at the end (--keep-trace keeps the trace).
-dotnet-pgo is not on nuget.org; it is installed into %TEMP%/cuo-pgo-tools from the dnceng dotnet10-transport feed.
+dotnet-pgo is not on nuget.org; it is installed into %TEMP%/cuo-pgo-tools-<version> from the dnceng transport feed of the
+runtime's major version (a .NET 10 dotnet-pgo can't read a .NET 11 trace).
 See docs/modern-client/testing/aot-performance.md.
 """
 import argparse, getpass, glob, json, os, platform, shutil, subprocess, sys, tempfile, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
-FEED = 'https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet10-transport/nuget/v3/index.json'
-PGO_VERSION = '10.0.13-servicing.26504.104'
+TFM = 'net11.0'
+FEED = 'https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet11-transport/nuget/v3/index.json'
+# Not pinned for .NET 11 yet: third-party tools are picked and reviewed by the coordinator (cuo-poc-state/vendor), who sets
+# an 11.x build here.
+PGO_VERSION = None
 # Microsoft-Windows-DotNETRuntime keywords: Loader (0x8) | Jit (0x10) | Type (0x80000) | Compilation, CompilationDiagnostic,
 # MethodDiagnostic, TypeDiagnostic (0x1000000000..0x8000000000) | JitInstrumentationData (0x10000000000), at verbose level:
 # the JIT then reports each method's Dynamic PGO counts and type/method histograms when it builds tier-1 code.
@@ -41,7 +45,9 @@ def run(cmd, **kw):
 
 
 def ensure_dotnet_pgo(env):
-    tools = os.path.join(tempfile.gettempdir(), 'cuo-pgo-tools')
+    if PGO_VERSION is None:
+        sys.exit('collect_mibc: no dotnet-pgo version pinned for ' + TFM + ' (PGO_VERSION); see the comment above it')
+    tools = os.path.join(tempfile.gettempdir(), 'cuo-pgo-tools-' + PGO_VERSION)
     exe = os.path.join(tools, 'dotnet-pgo.exe' if os.name == 'nt' else 'dotnet-pgo')
     if not os.path.exists(exe):
         run(['dotnet', 'tool', 'install', 'dotnet-pgo', '--version', PGO_VERSION, '--tool-path', tools, '--add-source', FEED], env=env)
@@ -71,7 +77,7 @@ def main():
     env['DOTNET_GCHeapHardLimit'] = '0x200000000'
     if not a.no_build:
         run(['dotnet', 'build', os.path.join(REPO, 'src', 'ClassicUO.Client', 'ClassicUO.Client.csproj'), '-c', 'Release', '-nologo', '-v', 'q'], env=env)
-    bindir = os.path.join(REPO, 'bin', 'Release', 'net10.0')
+    bindir = os.path.join(REPO, 'bin', 'Release', TFM)
     exe = os.path.join(bindir, 'cuo.exe' if os.name == 'nt' else 'cuo')
     pgo = ensure_dotnet_pgo(env)
 

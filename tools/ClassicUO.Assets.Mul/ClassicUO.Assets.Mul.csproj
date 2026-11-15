@@ -4,7 +4,7 @@
        reads these formats: it loads the converted pack. Do not reference this from src/. -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <LangVersion>Preview</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>ClassicUO.Assets</RootNamespace>
