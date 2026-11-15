@@ -667,6 +667,14 @@ namespace ClassicUO.Game.Scenes
 
             GetViewPort();
             GpuPrepareBegin();
+            // perf-16 world_fill_diamond: walk only the square's tiles that can reach the screen (FillDiamond)
+            bool diamondOn = FillDiamond.Enabled;
+            FillDiamond.Bounds diamond = BeginFillDiamond(diamondOn);
+            // CUO_FILL_DIAMOND_CHECK: this fill walks the whole square and judges what the diamond would skip
+            bool diamondCheck = diamondOn && FillDiamond.BeginCheckFrame();
+#if CUO_DEVTOOLS
+            _diamondSelection = SelectedObject.Object;
+#endif
 
             if (UpdateDrawPosition)
             {
@@ -783,12 +791,29 @@ namespace ClassicUO.Game.Scenes
 
                     // T6b: the tiles whose walk merges the dynamic index
                     ulong mergeCells = ClassicUO.Game.Map.TileWalk.MergeCells(chunk);
+                    // perf-16: the tiles this fill walks (the diamond's, or all with the switch off or on a check frame)
+                    ulong inDiamond = FillDiamond.WalkMask(diamondOn, chunkX, chunkY, in diamond);
+                    ulong tileMask = diamondCheck ? ulong.MaxValue : inDiamond;
+#if CUO_DEVTOOLS
+                    ulong probeTiles = diamondCheck ? ~inDiamond : 0;
 
-                    for (var x = 0; x < 8; x++)
+                    if (probeTiles != 0)
+                    {
+                        DiamondCheckBefore(chunk, probeTiles, mergeCells);
+                    }
+#endif
+
+                    for (var x = 0; x < 8 && tileMask != 0; x++)
                     {
                         for (var y = 0; y < 8; y++)
                         {
                             ulong bit = 1UL << (x << 3 | y);
+
+                            if ((tileMask & bit) == 0)
+                            {
+                                continue;
+                            }
+
                             bool full = (fullTiles & bit) != 0;
 
                             if (!full && (walkTiles & bit) == 0)
@@ -848,8 +873,15 @@ namespace ClassicUO.Game.Scenes
                         walkStart = FrameStats.AddSince(FramePhase.PrepWalk, walkStart);
                     }
 
+#if CUO_DEVTOOLS
+                    if (probeTiles != 0)
+                    {
+                        DiamondCheckAfterWalk(chunk, probeTiles, mergeCells, in diamond);
+                    }
+#endif
+
                     // after the chunk's walk: CollectGpuHidden only reads what the walk stamped on this tile's objects
-                    if (_gpuWorld != null)
+                    if (_gpuWorld != null && (tileMask | edgeTiles) != 0)
                     {
                         for (var x = 0; x < 8; x++)
                         {
@@ -865,9 +897,19 @@ namespace ClassicUO.Game.Scenes
                                 if (firstObj == null || firstObj.IsDestroyed)
                                     continue;
 
-                                if (full || (walkTiles & bit) != 0)
+                                // perf-16: a tile the diamond leaves out was not walked; nothing of it reaches the view
+                                if ((full || (walkTiles & bit) != 0) && (tileMask & bit) != 0)
                                 {
-                                    CollectGpuHidden(firstObj, !full);
+#if CUO_DEVTOOLS
+                                    if ((probeTiles & bit) != 0)
+                                    {
+                                        DiamondCheckHidden(firstObj, !full, in diamond);
+                                    }
+                                    else
+#endif
+                                    {
+                                        CollectGpuHidden(firstObj, !full);
+                                    }
                                 }
 
                                 if ((edgeTiles & bit) != 0)
@@ -901,6 +943,14 @@ namespace ClassicUO.Game.Scenes
                 BareWalk(map, minChunkX, minChunkY, maxChunkX, maxChunkY);
                 FrameStats.Begin(FramePhase.WorldPrepare);
             }
+
+#if CUO_DEVTOOLS
+            if (diamondCheck)
+            {
+                DiamondCheckSelection(in diamond);
+                FillDiamond.Report(_gpuWorld != null);
+            }
+#endif
 
             long foliageStart = FrameStats.Stamp();
             GpuPrepareEnd();
