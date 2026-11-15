@@ -440,7 +440,7 @@ Content that the client reads one item at a time, and that the GPU does not samp
 
 ## Gumps (`gumps/gumps.bin`)
 
-A record store with magic `GUMP` holding every gump id the client's `GumpsLoader` resolves, with `gump.def` and loose `Gumps/*.gump` files already applied. The client reads gumps only from here when the file exists (`GumpsLoader.FromPack`); without it, it reads gumpart MUL/UOP. `CUO_PACK_GUMPS=0` reads gumpart MUL/UOP even when the pack has gumps.
+A record store with magic `GUMP` holding every gump id the client's `GumpsLoader` resolves, with `gump.def` and loose `Gumps/*.gump` files already applied. The client reads gumps only from here (`GumpsLoader`); a pack without this file is refused (convert again). There is no MUL/UOP fallback.
 
 - **`StoreHeader.flags`** bit 0: converted from `gumpartLegacyMUL.uop` (ClassicUO's `UseUOPGumps`; the status gump's layout depends on it).
 - **Slots:** `slotCount` = highest present id + 1. `arg` = the gump.def alias hue (0 = none).
@@ -451,7 +451,7 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
   - Any (layout, codec) pair is valid for a reader. Ship profile: an image whose run-length payload is at most 64 KiB (`--gump-small n`, default 65,536) is stored as layout 1, codec 0; every other image as layout 0, codec 1 (Brotli quality 9). `--raw-gumps` stores every image as layout 1, codec 0.
 - **Lossless:** the stored texel is the source value's colour bits plus bit 15 = visible. ClassicUO's decode ignores bit 15, so every image the client draws is reproduced exactly. Hueing needs the exact 5-bit gray texels, which a lossy format would not keep.
 - **Drawing a gump** (ClassicUO `GumpsLoader.GetGump`): each visible texel `v` becomes RGBA8 with ClassicUO's 5-to-8-bit table (`HuesHelper.Color16To32`, not the canonical expansion: gumps go through the CPU and the batcher's RGBA8 atlas, and parity is with the MUL path) and alpha 255. With a slot hue `h`, `1 <= h < hue count`, first `v = hues[h - 1].colors[(v >> 10) & 31]`, and the texel stays visible only if that is not 0.
-- **Converter resolution:** ids whose index entries are identical (gump.def copies the entry and sets a hue; UOP and MUL may alias too) share one record, and so do ids with identical decoded images. An id with a loose `Gumps/<id>.gump` file gets its own record from that file, with no hue; a broken file falls back to the archive entry with its hue. The client does not read loose gump files when the pack has gumps; re-run the converter (`--only gumps`) after changing them.
+- **Converter resolution:** ids whose index entries are identical (gump.def copies the entry and sets a hue; UOP and MUL may alias too) share one record, and so do ids with identical decoded images. An id with a loose `Gumps/<id>.gump` file gets its own record from that file, with no hue; a broken file falls back to the archive entry with its hue. The client does not read loose gump files; re-run the converter (`--only gumps`) after changing them.
 
 **Record checks at load** (`GumpsLoader.CheckRecord`): width and height 1..4096; layout 0 with `rawBytes = width*height*2` exactly; layout 1 with `rawBytes` a multiple of 4, at least the row table (`4*height`) and at most `4*height + 4*width*height`; any other layout is invalid; a Brotli record no larger than Brotli's bound for `rawBytes`. A record that fails, or whose payload later fails to decode, is invalid for the session: its ids are absent, the error is logged once per record, and nothing retries it.
 
@@ -463,7 +463,7 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
 
 ## Text: fonts, cliloc, speech (`text/`)
 
-ASCII fonts (fonts.mul), unicode fonts (unifont*.mul), cliloc in every language the client folder has (Cliloc.*), and speech.mul's keyword table. The client reads each from here when its file exists (`FontsLoader`, `ClilocLoader`, `SpeechesLoader`); without it, or when the file is invalid as a whole, it reads the MUL files and says so in the log. `CUO_PACK_TEXT=0` reads the MUL files even when the pack has text.
+ASCII fonts (fonts.mul), unicode fonts (unifont*.mul), cliloc in every language the client folder has (Cliloc.*), and speech.mul's keyword table. The client reads each only from here (`FontsLoader`, `ClilocLoader`, `SpeechesLoader`); a pack without one of these files is refused (convert again). There is no MUL fallback.
 
 The converter produces each file through a frozen copy of the client's loader, so the pack holds what the client resolved, quirks included: a unicode glyph whose width or height is not positive is no glyph, an ASCII glyph past the end of fonts.mul has no texel array, unifont1 is unifont when unifont1.mul is missing, a cliloc text stops at its first NUL. A unicode glyph whose data runs past the end of its file gets no glyph and is listed by the converter. The folder's `Clilocs.txt` becomes the overrides record.
 
@@ -512,11 +512,11 @@ Not a record store (the client uses the whole table): `FileHeader` with magic `S
 
 ### Untrusted input (text)
 
-- A store's extents and codecs are checked by `RecordStore.Open`; a store that fails is not used and the MUL files serve instead.
+- A store's extents and codecs are checked by `RecordStore.Open`. A font store that fails stops the load; a cliloc or speech file that fails is not used (logged as an error), and nothing replaces it.
 - **Font store topology** (`TextConst.OpenAsciiStore`, `OpenUnicodeStore`): unifont.bin has exactly 5,120 slots; fonts.bin has 1..256. Anything else rejects the file as a whole.
 - **Fonts:** an ASCII record must add up exactly (header table plus the texels it declares, flags only bit 0, pad 0) and a glyph without texels must be 0x0; its raw size is at most `224*4 + 224*255*255*2`. A unicode page payload is at most `2048 + 256*16*127` bytes, every glyph's rows must lie inside the payload, and absent glyphs are all zero. A record that fails, or whose read or decode fails, is absent for the session (logged once). Unicode glyph offsets may be anything an sbyte holds; the renderer clips every raster write.
-- **Cliloc:** a record's raw size is at most 256 MiB and adds up exactly (`8 + 8*count + blobBytes`), with strictly ascending ids and string ends that never decrease or pass the blob. A language record that fails makes the pack's languages unusable and the Cliloc.* files serve; an overrides record that fails is ignored (logged) and the languages still serve.
-- **Speech:** at most 2^20 entries and 64 MiB of text, and the sizes must add up to the file's exact length before anything is allocated; the ends must not decrease or pass the blob. Otherwise the file is not used and speech.mul serves.
+- **Cliloc:** a record's raw size is at most 256 MiB and adds up exactly (`8 + 8*count + blobBytes`), with strictly ascending ids and string ends that never decrease or pass the blob. A language record that fails serves nothing (a reload keeps the strings it had); an overrides record that fails is ignored (logged) and the languages still serve.
+- **Speech:** at most 2^20 entries and 64 MiB of text, and the sizes must add up to the file's exact length before anything is allocated; the ends must not decrease or pass the blob. Otherwise the file is not used and the keyword table is empty.
 
 ## Audio (`audio/`)
 
