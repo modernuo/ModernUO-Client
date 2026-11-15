@@ -1,0 +1,82 @@
+# CLAUDE.md
+
+Guidance for coding agents working in this repository. Build, convert, run and test details are in [docs/dev/runbook.md](docs/dev/runbook.md).
+
+## What this repo is
+
+The ModernUO client, built on ClassicUO (a fork). It differs from upstream ClassicUO in four ways:
+
+- Assets come from a converted pack, not from the UO client's MUL/UOP files.
+- World state is mirrored in an ECS, and writes to it go through one funnel.
+- The world can be drawn by a GPU renderer (SDL_GPU through FNA3D) as well as the original FNA batcher ("Legacy").
+- It has no plugin host: the legacy plugin API (Razor and the like) and `ClassicUO.Bootstrap` were removed. A new plugin design comes later; do not add hooks for the old one.
+
+Target framework is `net11.0`; `global.json` pins the .NET 11 SDK. Submodules (`git submodule update --init --recursive`) are in `external/`.
+
+## Layout
+
+`src/`:
+
+- `ClassicUO.Client`: the game (`cuo` executable): scenes, UI, network, packet handlers, world objects, `Game/Ecs` (the ECS world state and the `WorldWriter` funnel), `DevBench`.
+- `ClassicUO.Assets`: asset loaders; reads the pack (`PackAssets`).
+- `ClassicUO.Ecs`: ECS components, the world mirror and the mobile clock.
+- `ClassicUO.Renderer`: the batcher, art, animation and font rendering.
+- `ClassicUO.IO`: packet reader and writer, audio decoding, def-file and files_override helpers.
+- `ClassicUO.Utility`: shared helpers (logging, collections, client version, `Crypter`).
+- `Uo.Pack`: pack format structs, readers and writers, layer rules data.
+- `Uo.Render`: the GPU world renderer (SDL_GPU): page residency, chunk baking, shaders.
+- `native/cuo_mp3`: C source of the static MP3 decoder.
+
+Other folders (every project is in `ClassicUO.sln`):
+
+- `tests/`: `ClassicUO.UnitTests` (xUnit) and `Uo.Converter.Tests`.
+- `tools/`: `Uo.Converter` (converts a UO install into a pack and verifies it), `ClassicUO.Assets.Mul` (MUL/UOP loaders) and `ClassicUO.IO.Mul` (the MUL/UOP file readers they use), both for the converter and its tests only, `Uo.Render.App` (standalone viewer and test app for `Uo.Render`), `Uo.Net` (protocol client library) and `Uo.Net.Cli` (headless test client), native builds (`fna3d`, `sdl`), and development scripts that stay on `poc/modern-client` and are left off the clean branch: benchmarking (`aot-bench`, `fps-test`, `pgo`, `large-scale`, `gpu-fault-repro`, `diag`) and ECS analysis (`ecs-census`, `ecs-parity`).
+- `research/`: experiments that do not ship (`ecs-bench`; `Uo.Client`, the standalone prototype client, built from its own project, not from `ClassicUO.sln`). They stay on `poc/modern-client` and are left off the clean branch.
+- `build/`: `DevTools.props`, the one definition of `CuoDevTools`.
+- `docs/dev/`: developer docs.
+
+`external/` submodules: `FNA` (fork: `modernuo/FNA`), `SDL` (fork: `modernuo/SDL`), `FileEmbed` (upstream `SirCxyrtyx/FileEmbed`). FNA3D is a nested submodule of FNA, also a `modernuo` fork. Prebuilt natives are committed in `external/x64`, `lib64` and `osx`.
+
+## Build and test
+
+```
+dotnet build src/ClassicUO.Client/ClassicUO.Client.csproj -c Release
+dotnet build src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -p:CuoDevTools=false
+dotnet test tests/ClassicUO.UnitTests -c Release
+dotnet test tests/Uo.Converter.Tests -c Release
+```
+
+`CuoDevTools` defaults to true and defines `CUO_DEVTOOLS` (DevBench, runtime renderer switching, the `CUO_*_CHECK` checkers). The `#if CUO_DEVTOOLS` guard is the only marker; a release build is the `CuoDevTools=false` variant, so both variants must build and run. A change that touches guarded code must build in both variants. Many verification steps need a UO install, a pack and a ModernUO server; if you cannot run them, say so in the PR instead of claiming a pass.
+
+## Conventions
+
+### World-state writes go through `WorldWriter`
+
+`WorldWriter` (`src/ClassicUO.Client/Game/Ecs/WorldWriter.cs`) is the one writer of world-object state (items, mobiles, equipment, containers). Each operation matches a packet's meaning, not a field. It computes the new values and commits them to the object's ECS record, which is the only copy of most fields. The position (X/Y/Z) and a few small caches stay on the object and are written from the same values (see Class A fields). Then it runs derived-state helpers. Operations do not nest. `FunnelCheck` (`CUO_FUNNEL_CHECK=1`) reports writes to those caches made outside it. Add new packet handling as a `WorldWriter` operation; do not set world fields from a handler.
+
+### New ECS paths: switch plus checker
+
+A new ECS read or update path lands behind a `settings.json` switch (`Configuration/Settings.cs`), default off at first, with a `CUO_*_CHECK` environment checker that compares the new path with the old one at every use and logs mismatches. The checker runs the old path next to the new one on the same input (or keeps the old structure as a shadow), logs each mismatch with the object and values involved, and prints a periodic summary with the switch state and the mismatch count. The old path and the checker stay until the switch has been default on for a while; then the old path, the switch and any checker that compares against the old path are deleted (an old `settings.json` that still names the key loads, since unknown keys are skipped). Checkers and `CUO_ECS_*` overrides are compiled only with `CUO_DEVTOOLS`. Add unit tests that exercise both switch states.
+
+### The pack is the asset source
+
+The client reads art, maps, tile data, hues, animations, gumps, fonts, text and audio only from the pack. There are no MUL/UOP fallbacks: a pack without a file the client needs is refused and must be converted again. The UO folder is optional and only holds loose customisation files (`Clilocs.txt`, `Sounds/<id>.wav`, `files_override` targets); do not add MUL/UOP reads. A change to what the pack holds goes in `tools/Uo.Converter` and `src/Uo.Pack`, and the same change updates [pack-format.md](docs/dev/pack-format.md) and, for table contents, [data-formats.md](docs/dev/data-formats.md). Body sets are chosen at import ([bodies.md](docs/dev/bodies.md)); equipment layering rules are pack data ([layer-rules.md](docs/dev/layer-rules.md)). The pack keeps no derived duplicates of its own data. Published packs are immutable; the converter writes new files by replacing, never in place.
+
+### Class A fields: no new direct writes
+
+Class A fields are the ECS-owned world-state fields of `GameObject`, `Entity`, `Item` and `Mobile` (graphic, hue, position, direction, flags, hits, amount, container, layer and so on). Most are record-only: a get-only property that reads the ECS record, with no setter and no backing field. Do not add a setter or a cache field to one; `tests/ClassicUO.UnitTests/Ecs/ClassAMemberTests.cs` fails if you do. A few keep a setter, written only by `WorldWriter`: X/Y/Z (the position cache, kept because the render and update walks read it per object), `Serial`, the Mobile's `NotorietyFlag`, `IsDead`, `IsRunning` and step-sound fields, and an item's animation fields and `IsMulti`. Do not add direct writes to them. `tests/ClassicUO.UnitTests/Ecs/WriteSiteBudgetTests.cs` counts their writes outside `WorldWriter` per file and field against `WriteSiteAllowlist.txt` and fails if the count grows or shrinks. Removing writes lowers the budget: regenerate with `CUO_WRITE_BUDGET_REGEN=1 dotnet test tests/ClassicUO.UnitTests --filter WriteSiteBudgetTests`. Regenerate only on purpose, and say so in the PR.
+
+### Performance changes
+
+A performance claim needs a paired comparison: a base build and a new build from the same tip, run interleaved, several runs each. Time with a NativeAOT build or with `DOTNET_TieredCompilation=0`. Compare CPU phases and per-frame allocations, with checkers off. Details are in the runbook.
+
+### Docs and commits
+
+Code commits do not touch docs. Changes under `docs/dev/` go in their own commits. Keep commits focused: one change per commit, a message that says what and why.
+
+## Style
+
+- C# code follows the existing file: 4-space indent, braces on their own lines, `_camelCase` private fields.
+- Do not add comments that restate the code. Comments explain why, and name the switch or checker involved.
+- No new allocations in per-frame paths; check FrameStats `alloc/frame` when you touch one.
+- Do not commit local paths, account names, passwords or settings files. Passwords belong only encrypted in a throwaway `settings.json`.
