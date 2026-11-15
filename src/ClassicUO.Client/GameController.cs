@@ -222,6 +222,7 @@ namespace ClassicUO
                 // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
                 // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
                 _changePending = true;
+                _changeWhy |= ChangeReason.Wake;
             }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
@@ -884,6 +885,7 @@ namespace ClassicUO
             if (_queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch) > 0)
             {
                 _changePending = true;
+                _changeWhy |= ChangeReason.Actions;
             }
 
             base.Update(gameTime);
@@ -898,6 +900,7 @@ namespace ClassicUO
                 {
                     // present_on_change: a failed send ended the connection
                     _changePending = true;
+                    _changeWhy |= ChangeReason.Connection;
                 }
             }
 
@@ -1179,6 +1182,7 @@ namespace ClassicUO
             if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
             {
                 _changePending = true;
+                _changeWhy |= ChangeReason.SdlEvent;
             }
 
             if (LoopStats.On)

@@ -72,6 +72,7 @@ namespace ClassicUO
         // ---- present_on_change (evloop-2) ----
         private bool _presentOnChange; // this tick: event loop, display-rate cap active and the switch on
         private bool _changePending, _continuous;
+        private ChangeReason _changeWhy; // what set _changePending since the last draw (CUO_ANIM_DUE_CHECK logs it)
         private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen, _partialReadTs;
 
         private static bool PresentOnChangeSwitch => Settings.GlobalSettings.PresentOnChange;
@@ -138,6 +139,7 @@ namespace ClassicUO
         private void NoteNetChange(long ts)
         {
             _changePending = true;
+            _changeWhy |= ChangeReason.Net;
 
             if (_pendingNetTs == 0)
             {
@@ -163,6 +165,7 @@ namespace ClassicUO
                 else
                 {
                     _changePending = true;
+                    _changeWhy |= ChangeReason.Connection;
                 }
             }
         }
@@ -178,11 +181,13 @@ namespace ClassicUO
             {
                 _motionSeen = motion;
                 _changePending = _continuous = true;
+                _changeWhy |= ChangeReason.Motion;
             }
 
             if (UO.World is { InGame: true } world && !world.Effects.IsEmpty)
             {
                 _changePending = _continuous = true;
+                _changeWhy |= ChangeReason.Effects;
             }
 
             if (AnimDueTracking)
@@ -190,11 +195,13 @@ namespace ClassicUO
                 if (VisualDue.Continuous != VisualSource.None)
                 {
                     _changePending = _continuous = true;
+                    _changeWhy |= ChangeReason.Continuous;
                 }
 
                 if (LoopTiming.VisualDueReached(_visualDueTick, Time.Ticks))
                 {
                     _changePending = true;
+                    _changeWhy |= ChangeReason.Due;
                 }
 
                 if (LoopTiming.VisualDueReached(_netEchoTick, Time.Ticks))
@@ -248,7 +255,7 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
             if (AnimDueCheck.On)
             {
-                AnimDueCheck.BeginFrame(_changePending, "", _visualDueTick);
+                AnimDueCheck.BeginFrame(_changePending, _changeWhy, _visualDueTick);
                 UltimaBatcher2D.SignatureOn = Uo.Render.WorldRenderer.SignatureOn = true;
                 _uoSpriteBatch.FrameSignature = 0;
                 _uoSpriteBatch.SignatureSprites = 0;
@@ -259,6 +266,7 @@ namespace ClassicUO
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;
             _changePending = _continuous;
+            _changeWhy = _continuous ? ChangeReason.Carried : ChangeReason.None;
             _continuous = false;
         }
 
@@ -280,7 +288,7 @@ namespace ClassicUO
 
             if (AnimDueCheck.On && _presentOnChange)
             {
-                AnimDueCheck.EndFrame(now, _uoSpriteBatch.FrameSignature * 31 ^ Uo.Render.WorldRenderer.LastSignature,
+                AnimDueCheck.EndFrame(now, _uoSpriteBatch.FrameSignature, Uo.Render.WorldRenderer.LastSignature,
                     _uoSpriteBatch.SignatureSprites, AnimDueSwitch, VisualDue.Continuous, VisualDue.NextSource, NextVisualTick, Time.Ticks);
             }
 #endif

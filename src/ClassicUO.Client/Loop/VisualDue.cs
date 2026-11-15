@@ -29,6 +29,23 @@ namespace ClassicUO.Loop
         Other = 1 << 16
     }
 
+    /// <summary>Why present_on_change has a change pending (CUO_ANIM_DUE_CHECK logs it with a mismatch run).</summary>
+    [Flags]
+    internal enum ChangeReason : ushort
+    {
+        None = 0,
+        Wake = 1 << 0,
+        Net = 1 << 1,
+        Connection = 1 << 2,
+        SdlEvent = 1 << 3,
+        Actions = 1 << 4,
+        Motion = 1 << 5,
+        Effects = 1 << 6,
+        Continuous = 1 << 7,
+        Due = 1 << 8,
+        Carried = 1 << 9
+    }
+
     /// <summary>
     /// present_on_change_anim_due (evloop-4): the next visual change that no packet or input causes. Sources report a due game
     /// tick (the change happens in the first Update with <c>Time.Ticks</c> past it) or that they change every frame while
