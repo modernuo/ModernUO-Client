@@ -977,6 +977,7 @@ namespace ClassicUO.Game
             {
                 _stepLogAt = Time.Ticks + 5000;
                 Log.Info(StepSystem.Summary());
+                Log.Info(StepDrain.Summary());
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)

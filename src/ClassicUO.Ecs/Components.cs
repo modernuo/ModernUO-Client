@@ -545,6 +545,34 @@ namespace ClassicUO.Ecs
         public byte Head, Count;
         public uint LastStepTime;
         public float OffsetX, OffsetY, OffsetZ;
+
+        // step_drain: the front step's duration in ms, fixed the first time it runs and cleared when it leaves the front
+        // (0: not fixed, the old per-frame timing); the arrival pace it is learned from
+        public ushort FrontDuration;
+        public StepCadence Cadence;
+    }
+
+    [InlineArray(StepCadence.SAMPLES)]
+    public struct StepIntervals
+    {
+        private ushort _e;
+    }
+
+    /// <summary>
+    /// step_drain: a non-local mobile's learned server step pace: the last <see cref="SAMPLES"/> back-to-back intervals
+    /// between sampled move packets (a ring; <see cref="Count"/> used, <see cref="Next"/> the slot written next), the time
+    /// of the last sampled move (<see cref="Anchor"/>) and of the last move, whether a turn-only packet came after it, and
+    /// the run/mount mode the samples were learned in (0: none yet).
+    /// Written only by WorldWriter's step operations (<c>Mobile.NoteStepArrival</c>).
+    /// </summary>
+    public struct StepCadence
+    {
+        public const int SAMPLES = 8;
+
+        public StepIntervals Samples;
+        public byte Count, Next, Mode;
+        public bool TurnSinceMove;
+        public uint Anchor, LastMove;
     }
 
     /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>

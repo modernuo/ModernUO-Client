@@ -241,6 +241,7 @@ namespace ClassicUO.Game.GameObjects
             }
 
             s.Ring[--s.Count] = default;
+            s.FrontDuration = 0;
             WorldEcs.WriteClock(this, e);
         }
 
@@ -263,7 +264,26 @@ namespace ClassicUO.Game.GameObjects
             s.Ring = default;
             s.Head = 0;
             s.Count = 0;
+            s.FrontDuration = 0;
             WorldEcs.WriteClock(this, e);
+        }
+
+        /// <summary>step_drain: the front step's fixed duration (WorldWriter.FixStepDuration).</summary>
+        internal void SetFrontDuration(ushort duration)
+        {
+            if (TrySteps(out Friflo.Engine.ECS.Entity e))
+            {
+                ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).FrontDuration = duration;
+            }
+        }
+
+        /// <summary>step_drain: a packet that changed the queue, for the learned step pace (WorldWriter.UpsertMobile).</summary>
+        internal void NoteStepArrival(uint now, bool moved, bool run, bool mounted)
+        {
+            if (TrySteps(out Friflo.Engine.ECS.Entity e))
+            {
+                StepDrain.NoteArrival(ref ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.Steps>(e).Cadence, now, moved, run, mounted);
+            }
         }
 
         internal void SetLastStepTime(uint time)
