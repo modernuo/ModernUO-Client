@@ -248,9 +248,6 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `compatibility` (or `legacy`) |
-| `text_skip_expired` | `true` | Skip text layout for mobiles and corpses whose overhead texts all expired |
-| `gpu_prepare_skip_baked` | `true` | Gpu world prepare skips baked land and statics |
-| `gpu_prepare_item_cache`, `gpu_prepare_item_cache_mixed`, `gpu_prepare_item_cache_effects` | `true` | Cache settled ground-item sprites per chunk (and mixed tiles, and tiles with effects) |
 | `ui_render_cache` | `true` | Record UI draws and keep the UI target when unchanged |
 | `world_fill_diamond` | `false` | The world list fill walks only the tiles of its square range that can reach the screen (the Gpu hidden pass visits a wider band; chunks with no such tile get no chunk-level work) |
 
@@ -290,7 +287,7 @@ DevBench variables are in the next section.
 | `CUO_BENCH_PICK=1` | Hover-and-click picking test |
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS="x y;x y"`, `CUO_BENCH_GO="x y"`, `CUO_BENCH_EXIT=1` | UI tour, screenshot spots, go to a spot, walk and quit |
 
-Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan (`gpuskip`, `itemcache`, `textskip`, `uicache`, `w5`).
+Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan (`uicache`). The entries of retired switches (`gpuskip`, `itemcache`, `itemmixed`, `fxserve`, `textskip`, `w5`) are skipped.
 
 Typical run:
 
