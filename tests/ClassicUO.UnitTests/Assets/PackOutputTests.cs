@@ -239,27 +239,27 @@ namespace ClassicUO.UnitTests.Assets
         public void R2_3_4_Pack_Writers_Have_No_Direct_File_Writes_And_Tools_Share_One_Root_Configuration()
         {
             string repo = ClassicUO.UnitTests.Ecs.WriteSiteScanner.FindRepoRoot();
-            string poc = Path.Combine(repo, "poc");
+            string tools = Path.Combine(repo, "tools");
             var raw = new System.Text.RegularExpressions.Regex(
                 @"\bFile\.(Create|WriteAll\w*|AppendAll\w*|OpenWrite|Copy|Move|Delete)\s*\(|\bDirectory\.Delete\s*\(|FileMode\.(Create|CreateNew|Append|OpenOrCreate|Truncate)\b");
             string obj = Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar;
-            var files = Directory.GetFiles(Path.Combine(poc, "Uo.Pack"), "*.cs", SearchOption.AllDirectories)
-                .Concat(Directory.GetFiles(Path.Combine(poc, "Uo.Converter"), "*.cs", SearchOption.AllDirectories))
-                .Append(Path.Combine(poc, "Uo.Render.App", "Synthetic.cs"))
+            var files = Directory.GetFiles(Path.Combine(repo, "src", "Uo.Pack"), "*.cs", SearchOption.AllDirectories)
+                .Concat(Directory.GetFiles(Path.Combine(tools, "Uo.Converter"), "*.cs", SearchOption.AllDirectories))
+                .Append(Path.Combine(tools, "Uo.Render.App", "Synthetic.cs"))
                 .Where(f => !f.Contains(obj) && Path.GetFileName(f) != "PackOutput.cs");
             var hits = files.SelectMany(f => File.ReadAllLines(f).Select((l, i) => (f, i, l)))
                 .Where(x => !x.l.TrimStart().StartsWith("//") && raw.IsMatch(x.l))
                 .Select(x => $"{Path.GetRelativePath(repo, x.f)}:{x.i + 1}: {x.l.Trim()}").ToList();
             hits.Should().BeEmpty("pack and debug output goes through ReplacingFile / PackOutputFiles, which check the published roots");
 
-            foreach (var program in new[] { Path.Combine(poc, "Uo.Converter", "Program.cs"), Path.Combine(poc, "Uo.Render.App", "Program.cs") })
+            foreach (var program in new[] { Path.Combine(tools, "Uo.Converter", "Program.cs"), Path.Combine(tools, "Uo.Render.App", "Program.cs") })
             {
                 string src = File.ReadAllText(program);
                 src.Should().Contain("PublishedPacks.ConfigureFromArgs(args)", program);
                 src.Should().NotContain(@"uo-packs\synthetic", program);
             }
-            File.ReadAllText(Path.Combine(poc, "Uo.Render.App", "Synthetic.cs")).Should().Contain("Path.GetTempPath()").And.Contain("EnsureOutputDir");
-            File.ReadAllText(Path.Combine(poc, "Uo.Render.App", "Program.cs")).Should().Contain("EnsureOutputDir(dst)");
+            File.ReadAllText(Path.Combine(tools, "Uo.Render.App", "Synthetic.cs")).Should().Contain("Path.GetTempPath()").And.Contain("EnsureOutputDir");
+            File.ReadAllText(Path.Combine(tools, "Uo.Render.App", "Program.cs")).Should().Contain("EnsureOutputDir(dst)");
         }
 
         [Fact]

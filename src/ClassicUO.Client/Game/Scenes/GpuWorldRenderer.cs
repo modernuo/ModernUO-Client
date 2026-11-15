@@ -20,7 +20,7 @@ using GpuTextureFormat = sdl3core::SDL3.SDL.SDL_GPUTextureFormat;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// The world pass of Uo.Render (poc/Uo.Render) on FNA3D's SDL_GPU device, rendering into the world render target.
+    /// The world pass of Uo.Render (src/Uo.Render) on FNA3D's SDL_GPU device, rendering into the world render target.
     /// Land and statics are baked from the pack's map regions; GameScene's list fill stays the authority for visibility,
     /// alpha and picking and reports the differences as per-sprite overrides. Mobiles and items are dynamic sprites from the
     /// ECS extracts (W3: <see cref="MobileAnimationSystem"/> then <see cref="MobileSpriteExtract"/>, and

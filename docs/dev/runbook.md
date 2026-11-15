@@ -25,7 +25,7 @@ Related docs: [pack-format.md](pack-format.md), [data-formats.md](data-formats.m
 
 ## Build the client
 
-The solution `ClassicUO.sln` holds the `src/` projects, `tests/ClassicUO.UnitTests`, and the FNA and FileEmbed projects. It does not hold `poc/*` or `tests/Uo.Converter.Tests`. The client builds `poc/Uo.Render` through a project reference; the other `poc/` tools build from their own csproj.
+The solution `ClassicUO.sln` holds every project: `src/`, `tests/`, the C# projects in `tools/`, `research/Uo.Client`, and the FNA, SDL3-CS and FileEmbed projects from `external/`.
 
 ```
 dotnet build <repo>/src/ClassicUO.Client/ClassicUO.Client.csproj -c Release
@@ -36,7 +36,7 @@ Output goes to `<repo>/bin/Release/` and `<repo>/bin/Debug/`. The executable is 
 
 ### The `CuoDevTools` property
 
-`build/DevTools.props` defines `CuoDevTools`, once for `src/`, `poc/` and `tests/` (each folder's `Directory.Build.props` imports it). It defaults to `true` in every configuration. When true it adds the `CUO_DEVTOOLS` compile constant.
+`build/DevTools.props` defines `CuoDevTools`, once for `src/`, `tools/`, `research/` and `tests/` (each folder's `Directory.Build.props` imports it). It defaults to `true` in every configuration. When true it adds the `CUO_DEVTOOLS` compile constant.
 
 What `CUO_DEVTOOLS` includes:
 
@@ -75,9 +75,9 @@ Notes:
 
 ### Shader toolchain
 
-The Gpu world renderer's shaders are compiled ahead of time and committed: `poc/Uo.Render/Shaders/compiled/` holds DXIL (D3D12) and SPIR-V (Vulkan) for each shader variant, and `Uo.Render` embeds them. A normal build or NativeAOT publish needs no shader compiler and no Windows SDK. The client's Gpu path always runs on Vulkan, so it needs the SPIR-V files. A build without them runs `auto` on the Compatibility renderer and logs why; `gpu` exits with an error.
+The Gpu world renderer's shaders are compiled ahead of time and committed: `src/Uo.Render/Shaders/compiled/` holds DXIL (D3D12) and SPIR-V (Vulkan) for each shader variant, and `Uo.Render` embeds them. A normal build or NativeAOT publish needs no shader compiler and no Windows SDK. The client's Gpu path always runs on Vulkan, so it needs the SPIR-V files. A build without them runs `auto` on the Compatibility renderer and logs why; `gpu` exits with an error.
 
-You need DXC only when you change a shader source (`poc/Uo.Render/Shaders/*.hlsl`) or the variant list (`ShaderVariant` items in `Uo.Render.csproj`). Two compilers are used:
+You need DXC only when you change a shader source (`src/Uo.Render/Shaders/*.hlsl`) or the variant list (`ShaderVariant` items in `Uo.Render.csproj`). Two compilers are used:
 
 - DXIL: the `dxc.exe` of the Windows SDK 10.0.26100.0 (`C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\dxc.exe`). Override with `-p:Dxc=<path>`.
 - SPIR-V: the official DXC release v1.9.2609 from https://github.com/microsoft/DirectXShaderCompiler/releases (the SDK's dxc has no SPIR-V backend). Unpack it anywhere; the default path is `C:\Repositories\tools\dxc\v1.9.2609\bin\x64\dxc.exe`. Override with `-p:DxcSpirv=<path>`.
@@ -85,17 +85,17 @@ You need DXC only when you change a shader source (`poc/Uo.Render/Shaders/*.hlsl
 Regenerate:
 
 ```
-dotnet build <repo>/poc/Uo.Render/Uo.Render.csproj -c Release -p:CompileShaders=true
+dotnet build <repo>/src/Uo.Render/Uo.Render.csproj -c Release -p:CompileShaders=true
 ```
 
 It rewrites the compiled files and `Shaders/compiled/<name>.hlsl.sha256`, the SHA-256 of each source with CR removed. The build fails if either compiler is missing. Commit the compiled files and hash files with the source change. `ShaderBundleTests` fails when a source no longer matches its stored hash, and when `Uo.Render` does not embed both formats.
 
 ## Convert a UO install into a pack
 
-The converter is `poc/Uo.Converter`. Full conversion:
+The converter is `tools/Uo.Converter`. Full conversion:
 
 ```
-dotnet run -c Release --project <repo>/poc/Uo.Converter -- --uo <uo-install> --out <pack>
+dotnet run -c Release --project <repo>/tools/Uo.Converter -- --uo <uo-install> --out <pack>
 ```
 
 - `--out` is required. There is no default output folder.
@@ -105,7 +105,7 @@ dotnet run -c Release --project <repo>/poc/Uo.Converter -- --uo <uo-install> --o
 - The run ends with a verify step that reads the pack back and compares it with the loaders in `tools/ClassicUO.Assets.Mul`. The exit code is 0 on success, 2 when verify fails and 1 on argument errors.
 - Debug PNGs go to a temp folder, or to `--debug <dir>`.
 
-Other arguments (the full list is the usage line the converter prints on an unknown argument, in `poc/Uo.Converter/Program.cs`):
+Other arguments (the full list is the usage line the converter prints on an unknown argument, in `tools/Uo.Converter/Program.cs`):
 
 | Argument | Meaning |
 |---|---|
@@ -138,7 +138,7 @@ When only some sections change, build the new pack from a hard-linked copy of th
 
 ```
 cp -al <old-pack> <new-pack>
-dotnet run -c Release --project <repo>/poc/Uo.Converter -- --uo <uo-install> --out <new-pack> --only gumps,layers
+dotnet run -c Release --project <repo>/tools/Uo.Converter -- --uo <uo-install> --out <new-pack> --only gumps,layers
 ```
 
 The converter never writes a pack file in place. It writes a temp file in the same folder and moves it over the target, which replaces the directory entry and leaves the hard-linked source untouched. It also drops stale files that an older pack linked in (`hues.bin`, `tiledata_ext.bin`) so the manifest stays correct. The manifest is rewritten with new hashes.

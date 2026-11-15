@@ -101,9 +101,9 @@ namespace ClassicUO
 
             if (!spirvShaders)
             {
-                // a build without the compiled SPIR-V shaders (poc/Uo.Render/Shaders/compiled): no probe needed. Auto uses
+                // a build without the compiled SPIR-V shaders (src/Uo.Render/Shaders/compiled): no probe needed. Auto uses
                 // Legacy on D3D11/OpenGL; forced gpu fails after the device with this reason
-                const string reason = "this build has no SPIR-V world shaders (poc/Uo.Render/Shaders/compiled), which the Gpu world renderer needs on Vulkan";
+                const string reason = "this build has no SPIR-V world shaders (src/Uo.Render/Shaders/compiled), which the Gpu world renderer needs on Vulkan";
 
                 return new PreDeviceDecision(mode, false, mode == WorldRendererMode.Auto && string.IsNullOrEmpty(userDriver) ? legacyDriver() : null, reason, false);
             }

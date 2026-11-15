@@ -71,6 +71,6 @@ external/dr_libs/** -text
 tests/ClassicUO.UnitTests/IO/Fixtures/*.mp3 binary
 tests/ClassicUO.UnitTests/IO/Fixtures/mp3-regressions/** binary
 
-# Committed shader binaries (poc/Uo.Render/Shaders/compiled), embedded byte for byte by Uo.Render.
+# Committed shader binaries (src/Uo.Render/Shaders/compiled), embedded byte for byte by Uo.Render.
 *.dxil binary
 *.spv binary

@@ -8,7 +8,7 @@ Upstream ClassicUO hard-codes four things: the draw order of worn layers (`Paper
 
 ## File layout
 
-Magic `LAYR` (0x5259414C), version 1, kind 0 (`LayerRulesConst`, `poc/Uo.Pack/LayerRules.cs`). After the 16-byte `FileHeader`:
+Magic `LAYR` (0x5259414C), version 1, kind 0 (`LayerRulesConst`, `src/Uo.Pack/LayerRules.cs`). After the 16-byte `FileHeader`:
 
 | Part | Layout |
 |---|---|
@@ -62,11 +62,11 @@ The client then logs the error and uses the built-in rules.
 
 ## The default file
 
-The default rules live in code: `Uo.Pack.LayerRulesDefault.Create()` (`poc/Uo.Pack/LayerRulesDefault.cs`). It builds 12 body entries, 3 base tables and 92 rules (per set: 5 selects, 9 reorders, 25 covers; world only: 3 direction moves and 10 gargoyle remaps; paperdoll only: 1 remap, the gargoyle ghost's shroud 0x3CA to 0x223 on client 7.0.0.0 or later for bodies 0x2B6 and 0x2B7). With 130 conditions and 187 ranges the file is 3,055 bytes. Corpses use the world set's order and direction moves with no flags, and no cover or remap pass.
+The default rules live in code: `Uo.Pack.LayerRulesDefault.Create()` (`src/Uo.Pack/LayerRulesDefault.cs`). It builds 12 body entries, 3 base tables and 92 rules (per set: 5 selects, 9 reorders, 25 covers; world only: 3 direction moves and 10 gargoyle remaps; paperdoll only: 1 remap, the gargoyle ghost's shroud 0x3CA to 0x223 on client 7.0.0.0 or later for bodies 0x2B6 and 0x2B7). With 130 conditions and 187 ranges the file is 3,055 bytes. Corpses use the world set's order and direction moves with no flags, and no cover or remap pass.
 
 ## How the converter produces it
 
-Stage `layers` of `poc/Uo.Converter` writes `layerrules.bin` (`Stage("layerrules", ...)` in `poc/Uo.Converter/Program.cs`). It reads nothing from the install. A full conversion includes the stage. By default it writes `LayerRulesDefault.Create()`; with `--layer-rules <file.json>` it writes the rules from that JSON file.
+Stage `layers` of `tools/Uo.Converter` writes `layerrules.bin` (`Stage("layerrules", ...)` in `tools/Uo.Converter/Program.cs`). It reads nothing from the install. A full conversion includes the stage. By default it writes `LayerRulesDefault.Create()`; with `--layer-rules <file.json>` it writes the rules from that JSON file.
 
 | Flag | Effect |
 |---|---|
@@ -75,14 +75,14 @@ Stage `layers` of `poc/Uo.Converter` writes `layerrules.bin` (`Stage("layerrules
 | `--export-layer-rules <file.json>` | Write the built-in rules as JSON and exit. It needs no client directory or pack, and writes only that file. |
 
 ```
-dotnet run -c Release --project poc/Uo.Converter -- --export-layer-rules rules.json
+dotnet run -c Release --project tools/Uo.Converter -- --export-layer-rules rules.json
 (edit rules.json)
-dotnet run -c Release --project poc/Uo.Converter -- --uo <client dir> --out <pack dir> --only layers --layer-rules rules.json
+dotnet run -c Release --project tools/Uo.Converter -- --uo <client dir> --out <pack dir> --only layers --layer-rules rules.json
 ```
 
 The built-in rules export and convert back to the identical 3,055 bytes.
 
-The verify step (`CheckLayerRules` in `poc/Uo.Converter/Verify.cs`) compares an existing `layerrules.bin` byte for byte with the JSON given by `--layer-rules`, or with the built-in rules when no JSON is given. It prints `EXACT`, or `MISMATCH` and fails verification. A pack built from a custom JSON therefore shows `MISMATCH` against the built-in rules: pass the same JSON to verify it, also with `--verify-only --only layers --layer-rules <file.json>`. A run with `--only` and without `layers` skips the check.
+The verify step (`CheckLayerRules` in `tools/Uo.Converter/Verify.cs`) compares an existing `layerrules.bin` byte for byte with the JSON given by `--layer-rules`, or with the built-in rules when no JSON is given. It prints `EXACT`, or `MISMATCH` and fails verification. A pack built from a custom JSON therefore shows `MISMATCH` against the built-in rules: pass the same JSON to verify it, also with `--verify-only --only layers --layer-rules <file.json>`. A run with `--only` and without `layers` skips the check.
 
 The pack has no entry in its required-file list for `layerrules.bin`: the file is optional.
 

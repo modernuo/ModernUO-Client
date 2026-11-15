@@ -20,6 +20,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\poc\Uo.Converter\Uo.Converter.csproj" />
+    <ProjectReference Include="..\..\tools\Uo.Converter\Uo.Converter.csproj" />
   </ItemGroup>
 </Project>

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Frozen copy of ClassicUO's MUL/UOP loaders for the pack converter (poc/Uo.Converter). The client no longer
+  <!-- Frozen copy of ClassicUO's MUL/UOP loaders for the pack converter (tools/Uo.Converter). The client no longer
        reads these formats: it loads the converted pack. Do not reference this from src/. -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
