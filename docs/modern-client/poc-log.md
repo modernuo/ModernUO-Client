@@ -7504,3 +7504,8 @@ Base `16887f55b`, branch `bg/evloop-5`. Code `287789a48`, `659cf28f0`, `a49ef1e0
 - **Verification.** Client builds with and without `CuoDevTools`: 0 errors. ClassicUO.UnitTests: 3964 passed / 6 skipped
   (dev), 3918 / 6 (`CuoDevTools=false`).
 - **Parked:** `measure/evloop-5/job-timing-{g,l}-PARKED.sh` (quiet commit 9a1e27ccf).
+
+## evloop-3 quiet pass at 143.86 Hz (2026-11-14, bench-000843)
+
+Owner declared the machine quiet. Base ee6809bf9 (before the ping fix) vs d23dba919 (fix, merged cbfa71281), JIT with TieredCompilation off, ABBA order; the job reached the main runner's 3600 s cap in round 3, so rounds 1-2 (both builds, both renderers, busy and quiet spots, arms spin/grid/new/new50) are the result. Ping RTT p50 ms, base -> fix, present_on_change arm: Gpu busy 1.53 / 1.48 -> 0.75 / 0.28; Legacy busy 2.30 / 2.29 -> 0.55 / 0.64; Gpu quiet 0.54 / 0.36 -> 0.17 / 0.37; Legacy quiet 0.42 / 0.38 -> 0.14 / 0.16. Spin (event loop off, current default) 0.29-0.41 busy, 0.13-0.16 quiet; grid 1.5-2.5 busy. new50 (idle redraw 50 ms) 0.28-0.35 busy, 0.16 quiet. Wire+poll p50 with the fix 0.06-0.13 ms (as low as spin). CPU ms/s: spin ~1000, fix 65-75 quiet, 240-390 busy.
+Verdict: no regression. The 3 ms seen at 144 Hz (bench-000820/821) was the busy machine. The fix brings present_on_change within ~0.1-0.35 ms of spin at 3-15x less CPU; the remaining gap is a reply landing during a Draw/Present.
