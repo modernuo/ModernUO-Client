@@ -38,6 +38,12 @@ namespace ClassicUO
         [STAThread]
         public static void Main(string[] args) => Boot(null, args);
 
+#if CUO_DEVTOOLS
+        private const bool ClientBuiltWithDevTools = true;
+#else
+        private const bool ClientBuiltWithDevTools = false;
+#endif
+
         /// <summary>
         /// True for a language code that names no language: the invariant culture's "IVL" (what the OS language reads
         /// as under invariant globalization; earlier runs may have saved it in settings.json) or ZZZ (no language).
@@ -148,7 +154,12 @@ namespace ClassicUO
             string startupError = null;
             string packPath = AssetSource.PackPath(Settings.GlobalSettings);
 
-            if (!AssetSource.TryReadManifest(packPath, out var packManifest, out startupError))
+            if (Uo.Render.BuildInfo.DevTools != ClientBuiltWithDevTools)
+            {
+                startupError = $"Mixed build: the client was built with CuoDevTools={ClientBuiltWithDevTools} but Uo.Render.dll with CuoDevTools={Uo.Render.BuildInfo.DevTools}. Rebuild both with the same setting.";
+                Log.Error(startupError);
+            }
+            else if (!AssetSource.TryReadManifest(packPath, out var packManifest, out startupError))
             {
                 Log.Error(startupError);
             }

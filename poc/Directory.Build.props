@@ -1,5 +1,6 @@
 <Project>
-  <!-- PoC projects live outside src/ and must not pick up ClassicUO's build props. -->
+  <!-- PoC projects live outside src/ and must not pick up ClassicUO's build props; CUO_DEVTOOLS is shared. -->
+  <Import Project="..\build\DevTools.props" />
   <PropertyGroup>
     <LangVersion>preview</LangVersion>
     <Deterministic>true</Deterministic>
