@@ -249,7 +249,7 @@ namespace ClassicUO.Game
         // ---- the switch and CUO_ITEM_POOL_CHECK ----
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ITEM_POOL=1|0) and the checker
+        // the gate's override of the setting (CUO_ITEM_POOL=1|0) and the checker
         private static readonly bool s_on = Environment.GetEnvironmentVariable("CUO_ITEM_POOL") switch
         {
             "1" => true,

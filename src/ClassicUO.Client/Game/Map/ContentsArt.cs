@@ -37,7 +37,7 @@ namespace ClassicUO.Game.Map
         [ThreadStatic] internal static Func<uint, bool> NeedsDecodeForTests;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ART_CONTAINER_PREFETCH=1|0)
+        // the gate's override of the setting (CUO_ART_CONTAINER_PREFETCH=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_ART_CONTAINER_PREFETCH") switch
         {
             "1" => true,

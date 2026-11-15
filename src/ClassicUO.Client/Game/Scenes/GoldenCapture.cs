@@ -17,7 +17,7 @@ using Uo.Render;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// CLEANUP(release) T9 golden captures (<c>CUO_GOLDEN_DIR=dir</c>, driver <c>golden &lt;name&gt; [frames]</c>): before T9
+    /// T9 golden captures (<c>CUO_GOLDEN_DIR=dir</c>, driver <c>golden &lt;name&gt; [frames]</c>): before T9
     /// deletes the checkers that compare the ECS paths with the legacy views (CUO_ECS_PARITY's view capture, deleted with gpu_ecs_sprites;
     /// CUO_LEGACY_ECS_PARITY, deleted with legacy_ecs_sprites), this saves what they compared as text, so a later build can be checked against references
     /// instead of the deleted code (measure/t9-golden/goldencmp.py compares two captures).

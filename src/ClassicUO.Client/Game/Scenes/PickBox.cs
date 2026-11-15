@@ -38,7 +38,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_PICK_EARLY_REJECT=1|0)
+        // the gate's override of the setting (CUO_PICK_EARLY_REJECT=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_PICK_EARLY_REJECT") switch
         {
             "1" => true,
@@ -46,7 +46,7 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
-        // CLEANUP(release): CUO_PICK_EARLY_REJECT_CHECK=1
+        // CUO_PICK_EARLY_REJECT_CHECK=1
         public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_PICK_EARLY_REJECT_CHECK") == "1";
 
         /// <summary>Tests: the checker on (null: CUO_PICK_EARLY_REJECT_CHECK).</summary>

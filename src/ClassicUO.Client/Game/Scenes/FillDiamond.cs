@@ -39,7 +39,7 @@ namespace ClassicUO.Game.Scenes
         private const int Z_UP = 127 * 4, Z_DOWN = 128 * 4;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_FILL_DIAMOND=1|0)
+        // the gate's override of the setting (CUO_FILL_DIAMOND=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_FILL_DIAMOND") switch
         {
             "1" => true,
@@ -47,7 +47,7 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
-        // CLEANUP(release): CUO_FILL_DIAMOND_CHECK=1|N
+        // CUO_FILL_DIAMOND_CHECK=1|N
         private static readonly int _checkEvery = ParseCheck(Environment.GetEnvironmentVariable("CUO_FILL_DIAMOND_CHECK"));
 #else
         private static readonly bool? _env = null;
@@ -242,7 +242,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // ---- CUO_FILL_DIAMOND_CHECK (CLEANUP(release)) ----
+        // ---- CUO_FILL_DIAMOND_CHECK ----
 
         private static int _frame;
         private static long _checkFrames, _tiles, _outside, _outsideHidden, _chunks, _emptyChunks, _drawn, _hidden, _selection, _side, _at;

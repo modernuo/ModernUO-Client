@@ -38,7 +38,7 @@ namespace ClassicUO.Game
     internal static class AnimFrameCount
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting and the checker
+        // the gate's override of the setting and the checker
         private static readonly bool s_on = Environment.GetEnvironmentVariable("CUO_ANIM_FRAME_COUNT_TABLES") switch
         {
             "1" => true,

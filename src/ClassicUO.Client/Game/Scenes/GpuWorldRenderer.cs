@@ -294,7 +294,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        /// <summary>CUO_FILL_DIAMOND_CHECK: land and static override calls so far (CLEANUP(release)).</summary>
+        /// <summary>CUO_FILL_DIAMOND_CHECK: land and static override calls so far.</summary>
         internal static int OverrideCalls;
 #endif
 

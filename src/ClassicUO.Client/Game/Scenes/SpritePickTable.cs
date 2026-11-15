@@ -277,7 +277,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_PICK_RECORDS_CHECK=1, the record-served pick state against the side effect it replaces
+        // CUO_PICK_RECORDS_CHECK=1, the record-served pick state against the side effect it replaces
         internal static bool Check = Environment.GetEnvironmentVariable("CUO_PICK_RECORDS_CHECK") == "1";
 
         private const int MAX_LOGGED = 40;

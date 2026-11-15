@@ -113,7 +113,7 @@ namespace ClassicUO.Network
         public bool IsInFlight(uint serial) => _entries.TryGetValue(serial, out Entry e) && !e.Pending;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_OPL_REQUEST_BUDGET=<serials per second>, 0 = off)
+        // the gate's override of the setting (CUO_OPL_REQUEST_BUDGET=<serials per second>, 0 = off)
         private static readonly int? s_env = int.TryParse(Environment.GetEnvironmentVariable("CUO_OPL_REQUEST_BUDGET"), out int v) && v >= 0 ? v : null;
 #else
         private static readonly int? s_env = null;

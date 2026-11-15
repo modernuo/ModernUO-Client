@@ -153,7 +153,7 @@ namespace ClassicUO.Game
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ITEM_OFFSET_FLAG=1|0)
+        // the gate's override of the setting (CUO_ITEM_OFFSET_FLAG=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_ITEM_OFFSET_FLAG") switch
         {
             "1" => true,
@@ -161,7 +161,7 @@ namespace ClassicUO.Game
             _ => null
         };
 
-        // CLEANUP(release): CUO_ITEM_OFFSET_FLAG_CHECK=1
+        // CUO_ITEM_OFFSET_FLAG_CHECK=1
         public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_ITEM_OFFSET_FLAG_CHECK") == "1";
 
         /// <summary>Tests: the checker on (null: CUO_ITEM_OFFSET_FLAG_CHECK).</summary>

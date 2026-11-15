@@ -101,7 +101,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): each effect graphic the pack lacks is logged once (a pack bug; it draws nothing)
+        // each effect graphic the pack lacks is logged once (a pack bug; it draws nothing)
         private static HashSet<ushort> _missingLogged;
 #endif
 

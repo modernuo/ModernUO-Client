@@ -38,7 +38,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CUO_FILL_DIAMOND_CHECK (CLEANUP(release)): per tile of the chunk outside the diamond, a checksum of its objects'
+        // CUO_FILL_DIAMOND_CHECK: per tile of the chunk outside the diamond, a checksum of its objects'
         // alphas and handle states before the walk
         private readonly ulong[] _diamondSide = new ulong[64];
         private object _diamondSelection;

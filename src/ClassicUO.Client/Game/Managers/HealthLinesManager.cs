@@ -41,7 +41,7 @@ namespace ClassicUO.Game.Managers
             ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.ShowMobilesHP;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the checker
+        // the checker
         private static readonly bool s_check = Environment.GetEnvironmentVariable("CUO_HEALTH_LINES_CHECK") == "1";
 #else
         private const bool s_check = false;

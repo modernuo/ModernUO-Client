@@ -697,7 +697,7 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_GPU_SIG_CHECK: the old decision next to a trusted tile: every entry whose signature changed
+        // CUO_GPU_SIG_CHECK: the old decision next to a trusted tile: every entry whose signature changed
         // (or that left the chunk) is a mismatch
         private void GpuItemGenJudge(Chunk chunk, GpuItemCache cache, int s, int e)
         {
@@ -717,7 +717,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        // CLEANUP(release): CUO_GPU_SIG_CHECK: a generation rebuild that the signatures would not have asked for
+        // CUO_GPU_SIG_CHECK: a generation rebuild that the signatures would not have asked for
         private bool GpuItemAnySignatureChanged(Chunk chunk, GpuItemCache cache)
         {
             for (int i = 0; i < cache.Count; i++)

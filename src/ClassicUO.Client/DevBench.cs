@@ -1,4 +1,4 @@
-// CLEANUP(release): DevBench (scripted runs, CUO_FRAMESTATS, runtime renderer switching) is dev tooling; without
+// DevBench (scripted runs, CUO_FRAMESTATS, runtime renderer switching) is dev tooling; without
 // CUO_DEVTOOLS only the stub at the end of this file is compiled.
 #if CUO_DEVTOOLS
 using System;
@@ -2389,7 +2389,7 @@ namespace ClassicUO
 #else
 namespace ClassicUO
 {
-    // CLEANUP(release): the release build's DevBench: never enabled, so FrameStats and every bench hook stay off.
+    // the release build's DevBench: never enabled, so FrameStats and every bench hook stay off.
     internal static class DevBench
     {
         public static readonly bool FrameStats = false;

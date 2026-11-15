@@ -29,7 +29,7 @@ namespace ClassicUO.Game.Scenes
     internal static class GpuItemGen
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_GPU_ITEM_GEN=1|0)
+        // the gate's override of the setting (CUO_GPU_ITEM_GEN=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_GPU_ITEM_GEN") switch
         {
             "1" => true,
@@ -37,7 +37,7 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
-        // CLEANUP(release): CUO_GPU_SIG_CHECK=1
+        // CUO_GPU_SIG_CHECK=1
         public static readonly bool CheckEnv = Environment.GetEnvironmentVariable("CUO_GPU_SIG_CHECK") == "1";
 
         /// <summary>Tests: the checker on (null: CUO_GPU_SIG_CHECK).</summary>

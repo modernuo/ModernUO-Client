@@ -189,7 +189,7 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_CONTAINER_CONTROLS_CHECK=1 compares every update's item controls with the ones a full rebuild
+        // CUO_CONTAINER_CONTROLS_CHECK=1 compares every update's item controls with the ones a full rebuild
         // builds (a fresh set on a scratch parent): order, serial, graphic, hue, position, size, flags, visibility, tooltip.
         public static readonly bool CheckOn = Environment.GetEnvironmentVariable("CUO_CONTAINER_CONTROLS_CHECK") == "1";
         public static long Checked, Mismatched;

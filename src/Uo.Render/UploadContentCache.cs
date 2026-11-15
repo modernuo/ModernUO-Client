@@ -29,7 +29,7 @@ public sealed class UploadContentCache
     }
 
 #if CUO_DEVTOOLS
-    // CLEANUP(release): deliberately scalar, independent of SequenceEqual's vectorized comparison.
+    // deliberately scalar, independent of SequenceEqual's vectorized comparison.
     public bool EqualsStored(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length != _length) return false;

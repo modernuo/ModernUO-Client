@@ -3,7 +3,7 @@ using System;
 
 namespace ClassicUO
 {
-    // CLEANUP(release): all diagnostics storage and probes are developer-only.
+    // all diagnostics storage and probes are developer-only.
     internal static partial class Diagnostics
     {
 #if CUO_DEVTOOLS

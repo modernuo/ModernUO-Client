@@ -490,7 +490,7 @@ namespace ClassicUO.Game.Data
     /// cached answer is compared with a fresh evaluation of the rules on the wearer's tables (a scratch decision, no
     /// allocation): a key input that moved without invalidating shows as "[layers] cache mismatch". perf-11: the same for
     /// a child read served from WorldState's child-by-layer tables (against a scan; hits and checks are counted together).
-    /// <c>=1</c> checks every hit, <c>=N</c> every Nth. A summary line every 5 s while the counts change. CLEANUP(release).
+    /// <c>=1</c> checks every hit, <c>=N</c> every Nth. A summary line every 5 s while the counts change.
     /// </summary>
     internal static class LayerCacheCheck
     {

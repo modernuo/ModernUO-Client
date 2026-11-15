@@ -32,7 +32,7 @@ namespace ClassicUO.Renderer
         internal int SpriteCount;
         internal bool Valid;
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_ANIM_DUE_CHECK: the signature of the pass's last submission, folded into the frame's again when
+        // CUO_ANIM_DUE_CHECK: the signature of the pass's last submission, folded into the frame's again when
         // a later recording compares the same and is dropped (the frame shows the cached pass)
         internal ulong Signature;
         internal long SignatureSprites;

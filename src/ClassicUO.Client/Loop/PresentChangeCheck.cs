@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 #if CUO_DEVTOOLS
-// CLEANUP(release): shadows the display-grid draw decision (present_at_display_rate) next to present_on_change.
+// shadows the display-grid draw decision (present_at_display_rate) next to present_on_change.
 using System;
 using System.Diagnostics;
 using ClassicUO.Utility.Logging;

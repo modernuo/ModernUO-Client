@@ -25,7 +25,7 @@ namespace ClassicUO.Game
     internal static partial class EffectSystem
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the checker
+        // the checker
         public static readonly bool GlobalCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_CHECK") == "1";
 #else
         public const bool GlobalCheck = false;

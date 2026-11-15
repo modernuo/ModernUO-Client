@@ -64,7 +64,7 @@ namespace ClassicUO.Game.Managers
 
 
 #if CUO_DEVTOOLS
-            // CLEANUP(release): -worldrenderer [gpu|legacy] switches the world renderer mid-session (no argument toggles), for
+            // -worldrenderer [gpu|legacy] switches the world renderer mid-session (no argument toggles), for
             // parity shots, picking and A/B FPS. Not saved; players get the startup choice (world_renderer, RendererStartup).
             Register
             (

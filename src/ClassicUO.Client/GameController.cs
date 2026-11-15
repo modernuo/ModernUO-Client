@@ -98,7 +98,7 @@ namespace ClassicUO
 
         // ---- event_loop (evloop-1 arm A) ----
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the jobs' override of the settings (CUO_EVENT_LOOP=1|0, CUO_EVENT_LOOP_MAX_WAIT_MS)
+        // the jobs' override of the settings (CUO_EVENT_LOOP=1|0, CUO_EVENT_LOOP_MAX_WAIT_MS)
         private static readonly bool? _eventLoopEnv = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP") switch
         {
             "1" => true,
@@ -434,7 +434,7 @@ namespace ClassicUO
         public void SetRefreshRate(int rate)
         {
 #if CUO_DEVTOOLS
-            // CLEANUP(release): CUO_FPS=<n> caps a driver session (started with -fps 0) so the evloop-1 gates exercise the
+            // CUO_FPS=<n> caps a driver session (started with -fps 0) so the evloop-1 gates exercise the
             // event loop's waits
             if (_fpsEnv > 0)
             {

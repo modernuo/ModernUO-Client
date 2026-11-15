@@ -23,7 +23,7 @@ namespace ClassicUO.Game.Scenes
     internal static class ItemPrep
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ITEM_PREP_ROWS=1|0)
+        // the gate's override of the setting (CUO_ITEM_PREP_ROWS=1|0)
         private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_ITEM_PREP_ROWS") switch
         {
             "1" => true,
@@ -31,7 +31,7 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
-        // CLEANUP(release): CUO_ITEM_PREP_CHECK=1
+        // CUO_ITEM_PREP_CHECK=1
         public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_ITEM_PREP_CHECK") == "1";
 #else
         private static readonly bool? _env = null;

@@ -26,7 +26,7 @@ namespace ClassicUO.Renderer.Animations
             _animationLoader = animationLoader;
             int page = 4096;
 #if CUO_DEVTOOLS
-            // CLEANUP(release): smaller anim atlas pages so the anim_atlas_lru gates evict within a short scene
+            // smaller anim atlas pages so the anim_atlas_lru gates evict within a short scene
             if (int.TryParse(Environment.GetEnvironmentVariable("CUO_ANIM_ATLAS_PAGE"), out int p) && p >= 1024 && p <= 4096)
             {
                 page = p;
@@ -570,7 +570,7 @@ namespace ClassicUO.Renderer.Animations
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_ANIM_LRU_CHECK: an evicted direction loads again with the same frames (count, size, centre),
+        // CUO_ANIM_LRU_CHECK: an evicted direction loads again with the same frames (count, size, centre),
         // and no frame or recorded draw names a freed page
         public static bool LruCheck = Environment.GetEnvironmentVariable("CUO_ANIM_LRU_CHECK") == "1";
 
