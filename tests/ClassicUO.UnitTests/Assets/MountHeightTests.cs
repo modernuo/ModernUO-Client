@@ -293,14 +293,18 @@ namespace ClassicUO.UnitTests.Assets
             }
 
             // Uo.Client: the rider offset is RiderOffset (table + the original mount body's shift), taken before the alias
-            // is followed, and used for the body and every equipment layer.
-            string poc = Read("research/Uo.Client/Animation.cs");
-            poc.Should().MatchRegex(@"\(\(uint\)mountBody < \(uint\)bodies\.Length \? bodies\[mountBody\]\.MountSeat : default\)\.RiderOffset\(item\)");
-            int offsetAt = poc.IndexOf("mountOffset = RiderOffset(_bodies, item, mountBody);", StringComparison.Ordinal);
-            int aliasAt = poc.IndexOf("mountBody = _bodies[mountBody].AliasBody;", StringComparison.Ordinal);
-            offsetAt.Should().BeGreaterThan(0);
-            aliasAt.Should().BeGreaterThan(offsetAt, "the shift belongs to the original mount body, before its alias");
-            Regex.Matches(poc, @"Add\(outFrames, ref n, [^;]*mountOffset,").Count.Should().Be(2, "the body and the equipment layers are drawn at the rider offset");
+            // is followed, and used for the body and every equipment layer. The prototype is only on poc/modern-client (the clean
+            // branch leaves research/ out), so this part runs where it exists.
+            if (File.Exists(Path.Combine(root, "research/Uo.Client/Animation.cs")))
+            {
+                string poc = Read("research/Uo.Client/Animation.cs");
+                poc.Should().MatchRegex(@"\(\(uint\)mountBody < \(uint\)bodies\.Length \? bodies\[mountBody\]\.MountSeat : default\)\.RiderOffset\(item\)");
+                int offsetAt = poc.IndexOf("mountOffset = RiderOffset(_bodies, item, mountBody);", StringComparison.Ordinal);
+                int aliasAt = poc.IndexOf("mountBody = _bodies[mountBody].AliasBody;", StringComparison.Ordinal);
+                offsetAt.Should().BeGreaterThan(0);
+                aliasAt.Should().BeGreaterThan(offsetAt, "the shift belongs to the original mount body, before its alias");
+                Regex.Matches(poc, @"Add\(outFrames, ref n, [^;]*mountOffset,").Count.Should().Be(2, "the body and the equipment layers are drawn at the rider offset");
+            }
 
             // Corpses: the extract (both worlds since T9 S8a), the pick and the corpse tick take the group from GetDeathAction (whose
             // second-death fallback the death test above covers).

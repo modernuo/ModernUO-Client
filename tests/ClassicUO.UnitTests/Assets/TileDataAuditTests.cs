@@ -135,7 +135,9 @@ namespace ClassicUO.UnitTests.Assets
 
             string repo = ClassicUO.UnitTests.Ecs.WriteSiteScanner.FindRepoRoot();
             string obj = Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar;
+            // research/Uo.Client is only on poc/modern-client (the clean branch leaves research/ out)
             var hits = new[] { Path.Combine(repo, "src"), Path.Combine(repo, "research", "Uo.Client") }
+                .Where(Directory.Exists)
                 .SelectMany(d => Directory.GetFiles(d, "*.cs", SearchOption.AllDirectories))
                 .Where(f => !f.Contains(obj))
                 .Where(f => File.ReadAllText(f).Contains("0x0F65", StringComparison.OrdinalIgnoreCase))
@@ -241,7 +243,12 @@ namespace ClassicUO.UnitTests.Assets
 
             // RenderExtract uses it for every ground item
             string repo = ClassicUO.UnitTests.Ecs.WriteSiteScanner.FindRepoRoot();
-            File.ReadAllText(Path.Combine(repo, "research", "Uo.Client", "RenderExtract.cs")).Should().Contain("GroundItemDraw.Drawn(staticData, g, gargoyle)");
+            // RenderExtract is the prototype's (research/Uo.Client, only on poc/modern-client)
+            string extract = Path.Combine(repo, "research", "Uo.Client", "RenderExtract.cs");
+            if (File.Exists(extract))
+            {
+                File.ReadAllText(extract).Should().Contain("GroundItemDraw.Drawn(staticData, g, gargoyle)");
+            }
         }
     }
 }
