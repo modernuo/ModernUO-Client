@@ -112,6 +112,43 @@ namespace ClassicUO.UnitTests.Loop
             LoopTiming.MsUntilPing(true, 1000, 1000, 0.5).Should().Be(0.5);
         }
 
+        // evloop-6: a ping due just before a present is held until right after it, so its reply does not wait out a Draw
+        [Theory]
+        [InlineData(true, 0.0, true)]
+        [InlineData(false, 0.4, true)]
+        [InlineData(false, 1.0, true)]
+        [InlineData(false, 1.5, false)]
+        [InlineData(false, Interval, false)]
+        public void A_Ping_Due_Just_Before_A_Present_Is_Held(bool drawsNow, double msUntilPresent, bool held)
+        {
+            LoopTiming.HoldPingForPresent(true, drawsNow, msUntilPresent, 0).Should().Be(held);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void The_Ping_Is_Never_Held_With_The_Switch_Off(bool drawsNow)
+        {
+            LoopTiming.HoldPingForPresent(false, drawsNow, 0, 0).Should().BeFalse();
+        }
+
+        [Fact]
+        public void A_Held_Ping_Goes_Out_Once_It_Is_Too_Late()
+        {
+            LoopTiming.HoldPingForPresent(true, true, 0, LoopTiming.PingHoldMaxMs - 1).Should().BeTrue();
+            LoopTiming.HoldPingForPresent(true, true, 0, LoopTiming.PingHoldMaxMs).Should().BeFalse();
+            LoopTiming.HoldPingForPresent(true, false, 0.5, LoopTiming.PingHoldMaxMs + 10).Should().BeFalse();
+        }
+
+        [Fact]
+        public void A_Held_Ping_Without_A_Draw_Is_Not_A_Timer()
+        {
+            // held at the deadline for a present under a ms away: the deadline has passed at the next Update's start, so the
+            // wait ends at the present, not at once
+            LoopTiming.MsUntilPing(true, 1000, 1001, 0).Should().Be(double.PositiveInfinity);
+            LoopTiming.WaitMs(LoopTiming.PingHoldLeadMs, LoopTiming.MsUntilPing(true, 1000, 1001, 0), 50).Should().Be(LoopTiming.PingHoldLeadMs);
+        }
+
         [Fact]
         public void The_First_Present_Is_Due_At_Once()
         {
