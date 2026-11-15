@@ -17,8 +17,6 @@ using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SDL3;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -31,7 +29,6 @@ using System.Threading.Tasks;
 using System.Xml;
 using static ClassicUO.Game.UI.Gumps.WorldMapGump;
 using SpriteFont = ClassicUO.Renderer.SpriteFont;
-using MapImage = SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>;
 
 namespace ClassicUO.Game.UI.Gumps
 {
@@ -96,7 +93,7 @@ namespace ClassicUO.Game.UI.Gumps
         private int _mapLoading;
         private uint _mapLoadingTime;
         private Task _loadingTask;
-        private readonly MapImageHandover<MapImage> _mapImages = new MapImageHandover<MapImage>();
+        private readonly MapImageHandover<WorldMapImage> _mapImages = new MapImageHandover<WorldMapImage>();
 
         public WorldMapGump(World world) : base
         (
@@ -540,7 +537,7 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            MapImage image = _mapImages.Take();
+            WorldMapImage image = _mapImages.Take();
 
             if (image != null && ReplaceMapTexture(ref _mapTexture, image, CreateMapTexture))
             {
@@ -1260,6 +1257,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (!File.Exists(fileMapPath))
                 {
+                    // RGBA, one uint per pixel (R in the low byte); native (up to ~118 MB for Felucca), freed once written
+                    uint* imgPixels = null;
+
                     try
                     {
                         Interlocked.Increment(ref _mapLoading);
@@ -1267,13 +1267,8 @@ namespace ClassicUO.Game.UI.Gumps
                         var size = (realWidth + OFFSET_PIX) * (realHeight + OFFSET_PIX);
                         var allZ = new sbyte[size];
 
-                        using var img = new SixLabors.ImageSharp.Image<Byte4>(new SixLabors.ImageSharp.Configuration()
-                        {
-                            PreferContiguousImageBuffers = true
-                        }, realWidth + OFFSET_PIX, realHeight + OFFSET_PIX);
-
-                        img.DangerousTryGetSinglePixelMemory(out var imgBuffer);
-                        var imgSpan = imgBuffer.Span;
+                        imgPixels = (uint*)NativeMemory.AllocZeroed((nuint)size, sizeof(uint));
+                        var imgSpan = new Span<uint>(imgPixels, size);
 
                         var huesLoader = Client.Game.UO.FileManager.Hues;
 
@@ -1319,7 +1314,7 @@ namespace ClassicUO.Game.UI.Gumps
                                             {
                                                 ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cells[pos].TileId));
 
-                                                imgSpan[block].PackedValue = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
+                                                imgSpan[block] = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
                                                 allZ[block] = cells[pos].Z;
                                             }
                                         }
@@ -1334,7 +1329,7 @@ namespace ClassicUO.Game.UI.Gumps
                                                 {
                                                     var color = (ushort)(0x8000 | (sb.Hue != 0 ? huesLoader.GetColor16(16384, sb.Hue) : huesLoader.GetRadarColorData(sb.Graphic + 0x4000)));
 
-                                                    imgSpan[block].PackedValue = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
+                                                    imgSpan[block] = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
                                                     allZ[block] = sb.Z;
                                                 }
                                             }
@@ -1364,16 +1359,16 @@ namespace ClassicUO.Game.UI.Gumps
                                     continue;
                                 }
 
-                                ref var cc = ref imgSpan[blockCurrent];
-                                if (cc.PackedValue == 0)
+                                ref uint cc = ref imgSpan[blockCurrent];
+                                if (cc == 0)
                                 {
                                     continue;
                                 }
 
-                                byte r = (byte)(cc.PackedValue & 0xFF);
-                                byte g = (byte)((cc.PackedValue >> 8) & 0xFF);
-                                byte b = (byte)((cc.PackedValue >> 16) & 0xFF);
-                                byte a = (byte)((cc.PackedValue >> 24) & 0xFF);
+                                byte r = (byte)(cc & 0xFF);
+                                byte g = (byte)((cc >> 8) & 0xFF);
+                                byte b = (byte)((cc >> 16) & 0xFF);
+                                byte a = (byte)((cc >> 24) & 0xFF);
 
                                 if (r != 0 || g != 0 || b != 0)
                                 {
@@ -1390,7 +1385,7 @@ namespace ClassicUO.Game.UI.Gumps
                                         b = (byte)Math.Min(0xFF, b * MAG_1);
                                     }
 
-                                    cc.PackedValue = (uint)(r | (g << 8) | (b << 16) | (a << 24));
+                                    cc = (uint)(r | (g << 8) | (b << 16) | (a << 24));
                                 }
                             }
                         }
@@ -1412,19 +1407,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                         //quantizer.Clear();
 
-                        var imageEncoder = new PngEncoder
-                        {
-                            ColorType = PngColorType.Palette,
-                            CompressionLevel = PngCompressionLevel.DefaultCompression,
-                            SkipMetadata = true,
-                            FilterMethod = PngFilterMethod.None,
-                            ChunkFilter = PngChunkFilter.ExcludeAll,
-                            TransparentColorMode = PngTransparentColorMode.Clear,
-                        };
-
                         Directory.CreateDirectory(_mapsCachePath);
                         using var stream2 = AtomicFile.OpenWrite(fileMapPath, 3000);
-                        img.Save(stream2, imageEncoder);
+                        Uo.Render.Png.Write(stream2, realWidth + OFFSET_PIX, realHeight + OFFSET_PIX, new ReadOnlySpan<byte>(imgPixels, size * sizeof(uint)));
                         stream2.Commit();
                     }
                     catch (Exception ex)
@@ -1435,6 +1420,7 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                     finally
                     {
+                        NativeMemory.Free(imgPixels);
                         Interlocked.Decrement(ref _mapLoading);
                     }
                 }
@@ -1442,7 +1428,7 @@ namespace ClassicUO.Game.UI.Gumps
                 if (File.Exists(fileMapPath) && _mapImages.IsCurrent(load))
                 {
                     // decoded here, uploaded by Update: FNA3D/SDL_GPU textures are created and disposed on the game thread
-                    MapImage image = DecodeMapImage(fileMapPath);
+                    WorldMapImage image = DecodeMapImage(fileMapPath);
 
                     if (image != null)
                     {
@@ -1478,27 +1464,14 @@ namespace ClassicUO.Game.UI.Gumps
             public void Dispose() => _gate.Release();
         }
 
-        // unpooled: the decoded facet image (up to ~118 MB for Felucca) is native memory freed as soon as it is uploaded
-        private static readonly SixLabors.ImageSharp.Formats.DecoderOptions _mapDecodeOptions = CreateMapDecodeOptions();
-
-        private static SixLabors.ImageSharp.Formats.DecoderOptions CreateMapDecodeOptions()
-        {
-            var configuration = SixLabors.ImageSharp.Configuration.Default.Clone();
-            configuration.PreferContiguousImageBuffers = true;
-            configuration.MemoryAllocator = SixLabors.ImageSharp.Memory.MemoryAllocator.Create(
-                new SixLabors.ImageSharp.Memory.MemoryAllocatorOptions { MaximumPoolSizeMegabytes = 0 });
-
-            return new SixLabors.ImageSharp.Formats.DecoderOptions { Configuration = configuration };
-        }
-
         /// <summary>Decodes a cached world map PNG to RGBA (any thread; no GPU work). Null when it can't be read.</summary>
-        internal static MapImage DecodeMapImage(string path)
+        internal static WorldMapImage DecodeMapImage(string path)
         {
             try
             {
                 using var stream = AtomicFile.OpenRead(path);
 
-                return SixLabors.ImageSharp.Image.Load<Rgba32>(_mapDecodeOptions, stream);
+                return WorldMapImage.DecodePng(stream);
             }
             catch (Exception ex)
             {
@@ -1536,23 +1509,13 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
         /// <summary>Creates and fills the map texture (game thread); disposes it itself if the upload throws.</summary>
-        private static unsafe Texture2D CreateMapTexture(MapImage image)
+        private static Texture2D CreateMapTexture(WorldMapImage image)
         {
-            if (!image.DangerousTryGetSinglePixelMemory(out Memory<Rgba32> pixels))
-            {
-                Log.Error("worldmap image is not contiguous");
-
-                return null;
-            }
-
             var texture = new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height);
 
             try
             {
-                using (System.Buffers.MemoryHandle pin = pixels.Pin())
-                {
-                    texture.SetDataPointerEXT(0, null, (IntPtr)pin.Pointer, pixels.Length * sizeof(Rgba32));
-                }
+                texture.SetDataPointerEXT(0, null, image.Pixels, image.ByteLength);
 
                 ClassicUO.Renderer.TextureUploads.Changed();
             }
