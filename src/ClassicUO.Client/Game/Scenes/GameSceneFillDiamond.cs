@@ -9,19 +9,21 @@ namespace ClassicUO.Game.Scenes
     internal partial class GameScene
     {
         private bool _diamondWasOn;
-        private FillDiamond.Bounds _diamondPrev;
+        private FillDiamond.Bands _diamondPrev;
 
         // At the fill's start, after GetViewPort and GpuPrepareBegin: this fill's bands. Tiles outside the walk keep stale
         // positions (they missed camera moves), so a fill whose bands differ from the last one's (the switch toggled, or the
-        // bands moved while the offset held still) recomputes every walked position.
-        private FillDiamond.Bounds BeginFillDiamond(bool on)
+        // bands moved while the offset held still) recomputes every walked position. perf-18: chunks with no tile in the
+        // hidden bands skip their chunk-level work too (mesh build, visibility reset, Gpu prepare); they too enter the bands
+        // only when the bands move.
+        private FillDiamond.Bands BeginFillDiamond(bool on)
         {
-            FillDiamond.Bounds b = default;
+            FillDiamond.Bands b = default;
 
             if (on)
             {
                 bool gpu = _gpuWorld != null;
-                b = FillDiamond.Compute(_offset.X, _offset.Y, _minPixel, _maxPixel, gpu, _gpuView, gpu ? FillDiamond.MaxStaticArtHeight(_gpuArt) : 0);
+                b = FillDiamond.ComputeBands(_offset.X, _offset.Y, _minPixel, _maxPixel, gpu, _gpuView, gpu ? FillDiamond.MaxStaticArtHeight(_gpuArt) : 0);
             }
 
             if (on != _diamondWasOn || on && !b.Equals(_diamondPrev))
@@ -104,6 +106,19 @@ namespace ClassicUO.Game.Scenes
             if (calls != 0)
             {
                 FillDiamond.Hidden(head.X, head.Y, calls, in bounds);
+            }
+        }
+
+        // perf-18: the edge pass (GpuHideCulledBaked) on a tile outside the hidden bands, whose chunk a normal fill may skip
+        private void DiamondCheckEdge(TileListObject head, in FillDiamond.Bounds bounds)
+        {
+            int before = GpuWorldRenderer.OverrideCalls;
+            GpuHideCulledBaked(head);
+            int calls = GpuWorldRenderer.OverrideCalls - before;
+
+            if (calls != 0)
+            {
+                FillDiamond.EdgeHidden(head.X, head.Y, calls, in bounds);
             }
         }
 
