@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml;
+using ClassicUO.Utility;
 using ClassicUO.Configuration.Json;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
@@ -257,6 +258,7 @@ namespace ClassicUO.Configuration
 
         public int GridLootType { get; set; } // 0 = none, 1 = only grid, 2 = both
 
+        // default on (owner decision, several clients run at once); a profile.json written before holds false and keeps it
         public bool ReduceFPSWhenInactive { get; set; } = true;
 
         public bool OverrideAllFonts { get; set; }
@@ -367,11 +369,26 @@ namespace ClassicUO.Configuration
             Log.Trace("Saving done!");
         }
 
+        [JsonIgnore]
+        private bool _gumpsLoadFailed;
+
         private void SaveGumps(World world, string path)
         {
             string gumpsXmlPath = Path.Combine(path, "gumps.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(gumpsXmlPath, Encoding.UTF8)
+            if (_gumpsLoadFailed)
+            {
+                if (!AtomicFile.KeepBackup(gumpsXmlPath))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _gumpsLoadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(gumpsXmlPath);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -401,16 +418,19 @@ namespace ClassicUO.Configuration
 
                     if (gump.LocalSerial != 0)
                     {
-                        Item item = world.Items.Get(gump.LocalSerial);
+                        Item item = world.GetItem(gump.LocalSerial);
 
                         if (item != null && !item.IsDestroyed && item.Opened)
                         {
-                            while (SerialHelper.IsItem(item.Container))
+                            // T9 child-list slice B2: bounded (a loop in the Container chain has no top)
+                            int up = 0;
+
+                            while (SerialHelper.IsItem(item.Container) && up++ < Game.WorldState.MaxNestingDepth && world.FindItem(item.Container) is Item parent)
                             {
-                                item = world.Items.Get(item.Container);
+                                item = parent;
                             }
 
-                            SaveItemsGumpRecursive(item, xml, gumps);
+                            SaveItemsGumpRecursive(item, xml, gumps, item.Serial, 0);
 
                             if (first.List != null)
                             {
@@ -437,27 +457,27 @@ namespace ClassicUO.Configuration
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
 
 
             world.SkillsGroupManager.Save();
         }
 
-        private static void SaveItemsGumpRecursive(Item parent, XmlTextWriter xml, LinkedList<Gump> list)
+        private static void SaveItemsGumpRecursive(Item parent, XmlTextWriter xml, LinkedList<Gump> list, uint root, int depth)
         {
             if (parent != null && !parent.IsDestroyed && parent.Opened)
             {
                 SaveItemsGump(parent, xml, list);
 
-                Item first = (Item) parent.Items;
-
-                while (first != null)
+                // T2: the children from the ECS (WorldState.Children)
+                foreach (Item child in parent.World.State.Children(parent))
                 {
-                    Item next = (Item) first.Next;
-
-                    SaveItemsGumpRecursive(first, xml, list);
-
-                    first = next;
+                    if (depth < Game.WorldState.MaxNestingDepth && child.Serial != root)
+                    {
+                        SaveItemsGumpRecursive(child, xml, list, root, depth + 1);
+                    }
                 }
             }
         }
@@ -505,11 +525,13 @@ namespace ClassicUO.Configuration
 
                 try
                 {
-                    doc.Load(gumpsXmlPath);
+                    AtomicFile.LoadXml(doc, gumpsXmlPath);
                 }
                 catch (Exception ex)
                 {
+                    // keep the file: the next SaveGumps backs it up before replacing it
                     Log.Error(ex.ToString());
+                    _gumpsLoadFailed = true;
 
                     return gumps;
                 }

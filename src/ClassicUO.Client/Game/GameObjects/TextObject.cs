@@ -39,11 +39,26 @@ namespace ClassicUO.Game.GameObjects
 
         public byte Alpha;
         public TextObject DLeft, DRight;
+
+        /// <summary>Counts changes to any DLeft/DRight link (text_tail_cache: a renderer's kept tail is valid while it is
+        /// unchanged). Every writer of those links bumps it; all of them are on the main thread.</summary>
+        internal static uint LinkVersion;
+
+        /// <summary>Links in the owner's <see cref="TextContainer"/>.</summary>
+        public TextObject Next, Previous;
         public ushort Hue;
         public bool IsDestroyed;
         public bool IsTextGump;
         public bool IsTransparent;
         public GameObject Owner;
+
+        /// <summary>item_pool: the owner's <see cref="GameObject.Incarnation"/> when it got this text. A container item's text
+        /// lives in its gump until it expires, past the item's Destroy; a click on it must not reach the item reused since.</summary>
+        public uint OwnerIncarnation;
+
+        /// <summary>The owner, unless it was reused for another object since (item_pool; with the switch off an entity's
+        /// Incarnation never changes, so this is the owner as before).</summary>
+        public Entity LiveOwnerEntity => Owner is Entity e && e.Incarnation == OwnerIncarnation ? e : null;
 
         public RenderedText RenderedText;
         public long Time, SecondTime;
@@ -77,6 +92,11 @@ namespace ClassicUO.Game.GameObjects
 
         public void UnlinkD()
         {
+            if (DRight != null || DLeft != null)
+            {
+                LinkVersion++;
+            }
+
             if (DRight != null)
             {
                 DRight.DLeft = DLeft;

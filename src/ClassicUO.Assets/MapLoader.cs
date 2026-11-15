@@ -1,704 +1,617 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.IO;
-using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System;
+using System.Buffers;
+using System.Collections.Generic;
 using System.IO;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
     public class MapLoader : UOFileLoader
     {
-        private UOFileMul[] _mapDif;
-        private UOFileMul[] _mapDifl;
-        private UOFileMul[] _staDif;
-        private UOFileMul[] _staDifi;
-        private UOFileMul[] _staDifl;
+        private const int CACHED_REGIONS = 24;
 
-        // cannot be a const, due to UOLive implementation
+        private static readonly int RegionHeaderOffset = StructIo.SizeOf<FileHeader>();
+        private static readonly int BlockTableOffset = RegionHeaderOffset + StructIo.SizeOf<RegionHeader>();
+
         public static int MAPS_COUNT = 6;
+
+        private readonly Dictionary<long, LinkedListNode<RegionData>> _regions = new Dictionary<long, LinkedListNode<RegionData>>();
+        private readonly LinkedList<RegionData> _lru = new LinkedList<RegionData>();
+        private readonly object _sync = new object();
+        private FacetInfo[] _facets = Array.Empty<FacetInfo>();
+
+        // regions being decoded on the thread pool (PrefetchRegion); adopted into the cache by the next lookup that needs
+        // them, under _sync, so the cache itself is only changed by callers of the lookups (the main thread)
+        private readonly Dictionary<long, Task<RegionData>> _pending = new Dictionary<long, Task<RegionData>>();
+
+        /// <summary>
+        /// False (CUO_CHUNK_SYNC=1) turns prefetching off: every region decodes on the calling thread when first needed,
+        /// as before the incremental chunk loading.
+        /// </summary>
+        public static bool PrefetchEnabled = Environment.GetEnvironmentVariable("CUO_CHUNK_SYNC") != "1";
+
+        /// <summary>Statistics for FrameStats and the tests: regions decoded by a lookup (not prefetched), prefetches
+        /// started, lookups that had to wait for a prefetch still decoding, and the time spent waiting (Stopwatch ticks).</summary>
+        public int SyncLoads, PrefetchesStarted, PrefetchWaits;
+        public long PrefetchWaitTicks;
 
         public MapLoader(UOFileManager fileManager) : base(fileManager)
         {
         }
 
-        public string MapsLayouts { get; set; }
-
-        public IndexMap[][] BlockData { get; private set; }
-
         public int[,] MapBlocksSize { get; private set; }
 
-        // ReSharper disable RedundantExplicitArraySize
-        public int[,] MapsDefaultSize { get; protected set; } = new int[6, 2]
-            // ReSharper restore RedundantExplicitArraySize
+        public int[,] MapsDefaultSize { get; private set; }
+
+        public override void Load()
+        {
+            int count = 0;
+
+            foreach (var f in FileManager.Pack.Manifest.Facets)
             {
-                {
-                    7168, 4096
-                },
-                {
-                    7168, 4096
-                },
-                {
-                    2304, 1600
-                },
-                {
-                    2560, 2048
-                },
-                {
-                    1448, 1448
-                },
-                {
-                    1280, 4096
-                }
-            };
+                count = Math.Max(count, f.Index + 1);
+            }
 
-        public int PatchesCount { get; private set; }
-        public int[] MapPatchCount { get; private set; }
-        public int[] StaticPatchCount { get; private set; }
+            if (count == 0)
+            {
+                throw new FileNotFoundException("The asset pack has no maps.");
+            }
 
-        protected FileReader[] _filesStatics, _filesIdxStatics, _filesStaticsX, _filesIdxStaticsX;
-        protected FileReader[] _filesMap, _filesMapX;
-
-        protected FileReader[] _currentMapFiles;
-        protected FileReader[] _currentStaticsFiles, _currentIdxStaticsFiles;
-
-        public FileReader GetMapFile(int map)
-        {
-            return map < _currentMapFiles.Length ? _currentMapFiles[map] : null;
-        }
-
-        public FileReader GetStaticFile(int map)
-        {
-            return map < _currentStaticsFiles.Length ? _currentStaticsFiles[map] : null;
-        }
-
-        protected void Initialize()
-        {
-            _filesMap = new FileReader[MAPS_COUNT];
-            _filesStatics = new FileReader[MAPS_COUNT];
-            _filesIdxStatics = new FileReader[MAPS_COUNT];
-
-            _filesMapX = new FileReader[MAPS_COUNT];
-            _filesStaticsX = new FileReader[MAPS_COUNT];
-            _filesIdxStaticsX = new FileReader[MAPS_COUNT];
-
-            MapPatchCount = new int[MAPS_COUNT];
-            StaticPatchCount = new int[MAPS_COUNT];
+            MAPS_COUNT = Math.Max(count, 2);
+            _facets = new FacetInfo[MAPS_COUNT];
+            MapsDefaultSize = new int[MAPS_COUNT, 2];
             MapBlocksSize = new int[MAPS_COUNT, 2];
 
-            BlockData = new IndexMap[MAPS_COUNT][];
-
-            _mapDif = new UOFileMul[MAPS_COUNT];
-            _mapDifl = new UOFileMul[MAPS_COUNT];
-            _staDif = new UOFileMul[MAPS_COUNT];
-            _staDifi = new UOFileMul[MAPS_COUNT];
-            _staDifl = new UOFileMul[MAPS_COUNT];
-        }
-
-        public override unsafe void Load()
-        {
-            bool foundOneMap = false;
-
-            if (!string.IsNullOrEmpty(MapsLayouts))
+            foreach (var f in FileManager.Pack.Manifest.Facets)
             {
-                string[] values = MapsLayouts.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-
-                MAPS_COUNT = values.Length;
-                MapsDefaultSize = new int[values.Length, 2];
-
-                Log.Trace($"default maps size overraided. [count: {MAPS_COUNT}]");
-
-
-                int index = 0;
-
-                char[] splitchar = new char[1] { ',' };
-
-                foreach (string s in values)
-                {
-                    string[] v = s.Split(splitchar, StringSplitOptions.RemoveEmptyEntries);
-
-                    if (v.Length >= 2 && int.TryParse(v[0], out int width) && int.TryParse(v[1], out int height))
-                    {
-                        MapsDefaultSize[index, 0] = width;
-                        MapsDefaultSize[index, 1] = height;
-
-                        Log.Trace($"overraided map size: {width},{height}  [index: {index}]");
-                    }
-                    else
-                    {
-                        Log.Error($"Error parsing 'width,height' values: '{s}'");
-                    }
-
-                    ++index;
-                }
+                _facets[f.Index] = f;
             }
 
-
-            Initialize();
-
-            for (var i = 0; i < MAPS_COUNT; ++i)
+            // a client without map1 draws Trammel from map0, as ClassicUO did with the MUL files
+            if (_facets[1] == null)
             {
-                var path = FileManager.GetUOFilePath($"map{i}LegacyMUL.uop");
-
-                if (FileManager.IsUOPInstallation && File.Exists(path))
-                {
-                    var uopFile = new UOFileUop(path, $"build/map{i}legacymul/{{0:D8}}.dat");
-                    uopFile.FillEntries();
-
-                    _filesMap[i] = uopFile;
-
-                    path = FileManager.GetUOFilePath($"map{i}xLegacyMUL.uop");
-                    if (File.Exists(path))
-                    {
-                        var uopFileX = new UOFileUop(path, $"build/map{i}legacymul/{{0:D8}}.dat");
-                        uopFileX.FillEntries();
-                        _filesMapX[i] = uopFileX;
-                    }
-
-
-                    foundOneMap = true;
-                }
-                else
-                {
-                    path = FileManager.GetUOFilePath($"map{i}.mul");
-
-                    if (File.Exists(path))
-                    {
-                        _filesMap[i] = new UOFileMul(path);
-
-                        path = FileManager.GetUOFilePath($"map{i}x.mul");
-                        if (File.Exists(path))
-                        {
-                            _filesMapX[i] = new UOFileMul(path);
-                        }
-
-                        foundOneMap = true;
-                    }
-
-                    path = FileManager.GetUOFilePath($"mapdifl{i}.mul");
-
-                    if (File.Exists(path))
-                    {
-                        _mapDifl[i] = new UOFileMul(path);
-                        _mapDif[i] = new UOFileMul(FileManager.GetUOFilePath($"mapdif{i}.mul"));
-                        _staDifl[i] = new UOFileMul(FileManager.GetUOFilePath($"stadifl{i}.mul"));
-                        _staDifi[i] = new UOFileMul(FileManager.GetUOFilePath($"stadifi{i}.mul"));
-                        _staDif[i] = new UOFileMul(FileManager.GetUOFilePath($"stadif{i}.mul"));
-                    }
-                }
-
-                path = FileManager.GetUOFilePath($"statics{i}.mul");
-                if (File.Exists(path))
-                {
-                    _filesStatics[i] = new UOFileMul(path);
-                }
-
-                path = FileManager.GetUOFilePath($"staidx{i}.mul");
-                if (File.Exists(path))
-                {
-                    _filesIdxStatics[i] = new UOFileMul(path);
-                }
-
-
-                path = FileManager.GetUOFilePath($"statics{i}x.mul");
-                if (File.Exists(path))
-                {
-                    _filesStaticsX[i] = new UOFileMul(path);
-                }
-
-                path = FileManager.GetUOFilePath($"staidx{i}x.mul");
-                if (File.Exists(path))
-                {
-                    _filesIdxStaticsX[i] = new UOFileMul(path);
-                }
+                _facets[1] = _facets[0];
             }
 
-            if (!foundOneMap)
-            {
-                throw new FileNotFoundException("No maps found.");
-            }
-
-
-            int mapblocksize = sizeof(MapBlock);
-
-            if (_filesMap[0].Length / mapblocksize == 393216 || FileManager.Version < ClientVersion.CV_4011D)
-            {
-                MapsDefaultSize[0, 0] = MapsDefaultSize[1, 0] = 6144;
-            }
-
-            // This is an hack to patch correctly all maps when you have to fake map1
-            if (_filesMap[1] == null || _filesMap[1].Length == 0)
-            {
-                _filesMap[1] = _filesMap[0];
-                _filesStatics[1] = _filesStatics[0];
-                _filesIdxStatics[1] = _filesIdxStatics[0];
-            }
-
-            if (_filesMapX[1] == null || _filesMapX[1].Length == 0)
-            {
-                _filesMapX[1] = _filesMapX[0];
-                _filesStaticsX[1] = _filesStaticsX[0];
-                _filesIdxStaticsX[1] = _filesIdxStaticsX[0];
-            }
-
-
-            _currentMapFiles = new FileReader[_filesMap.Length];
-            _currentIdxStaticsFiles = new FileReader[_filesIdxStatics.Length];
-            _currentStaticsFiles = new FileReader[_filesStatics.Length];
-
-            _filesMap.CopyTo(_currentMapFiles, 0);
-            _filesIdxStatics.CopyTo(_currentIdxStaticsFiles, 0);
-            _filesStatics.CopyTo(_currentStaticsFiles, 0);
-        }
-
-        public unsafe void LoadMap(int i, bool useXFiles = false)
-        {
-            if (i < 0 || i + 1 > MAPS_COUNT || _currentMapFiles[i] == null)
-            {
-                i = 0;
-            }
-
-            if (useXFiles)
-            {
-                if (_currentMapFiles[i] != _filesMapX[i])
-                {
-                    BlockData[i] = null;
-                }
-            }
-            else
-            {
-                if (_currentMapFiles[i] != _filesMap[i])
-                {
-                    BlockData[i] = null;
-                }
-            }
-
-            if (BlockData[i] != null)
-            {
-                return;
-            }
-
-            _currentMapFiles[i] = _filesMap[i];
-            _currentStaticsFiles[i] = _filesStatics[i];
-            _currentIdxStaticsFiles[i] = _filesIdxStatics[i];
-
-            if (useXFiles)
-            {
-                if (_filesMapX[i] != null)
-                    _currentMapFiles[i] = _filesMapX[i];
-
-                if (_filesIdxStaticsX[i] != null)
-                    _currentIdxStaticsFiles[i] = _filesIdxStaticsX[i];
-
-                if (_filesStaticsX[i] != null)
-                    _currentStaticsFiles[i] = _filesStaticsX[i];
-            }
-
-            if (_currentMapFiles[i] == null)
-            {
-                return;
-            }
-
-            MapBlocksSize[i, 0] = MapsDefaultSize[i, 0] >> 3;
-            MapBlocksSize[i, 1] = MapsDefaultSize[i, 1] >> 3;
-
-            var mapblocksize = sizeof(MapBlock);
-            var staticidxblocksize = sizeof(StaidxBlock);
-            var staticblocksize = sizeof(StaticsBlock);
-            var width = MapBlocksSize[i, 0];
-            var height = MapBlocksSize[i, 1];
-            var maxblockcount = width * height;
-            BlockData[i] = new IndexMap[maxblockcount];
-            var file = _currentMapFiles[i];
-            var fileidx = _currentIdxStaticsFiles[i];
-            var staticfile = _currentStaticsFiles[i];
-
-            if (fileidx == null && i == 1)
-            {
-                fileidx = _currentIdxStaticsFiles[0];
-            }
-
-            if (staticfile == null && i == 1)
-            {
-                staticfile = _currentStaticsFiles[0];
-            }
-
-            ulong uopoffset = 0;
-            int fileNumber = -1;
-            bool isuop = file is UOFileUop;
-
-            for (int block = 0; block < maxblockcount; block++)
-            {
-                int blocknum = block;
-
-                if (isuop)
-                {
-                    blocknum &= 4095;
-                    int shifted = block >> 12;
-
-                    if (fileNumber != shifted)
-                    {
-                        fileNumber = shifted;
-                        var uop = file as UOFileUop;
-
-                        if (shifted < uop.Entries.Length)
-                        {
-                            uopoffset = (ulong)uop.Entries[shifted].Offset;
-                        }
-                    }
-                }
-
-                var mapPos = uopoffset + (ulong)(blocknum * mapblocksize);
-                var staticPos = 0ul;
-                var staticCount = 0u;
-
-                fileidx.Seek(block * staticidxblocksize, SeekOrigin.Begin);
-
-                var st = fileidx.Read<StaidxBlock>();
-
-                if (st.Size > 0 && st.Position != 0xFFFF_FFFF)
-                {
-                    staticPos = st.Position;
-                    staticCount = Math.Min(1024, (uint)(st.Size / staticblocksize));
-                }
-
-                ref var data = ref BlockData[i][block];
-                data.MapAddress = mapPos;
-                data.StaticAddress = staticPos;
-                data.StaticCount = staticCount;
-                data.OriginalMapAddress = mapPos;
-                data.OriginalStaticAddress = staticPos;
-                data.OriginalStaticCount = staticCount;
-
-                data.MapFile = file;
-                data.StaticFile = staticfile;
-            }
-
-            if (isuop)
-            {
-                // TODO: UOLive needs hashes! we need to find out a better solution, but keep 'em for the moment
-                //((UOFileUop)file)?.ClearHashes();
-            }
-        }
-
-        public void PatchMapBlock(UOFile file, ulong block, ulong address)
-        {
-            int w = MapBlocksSize[0, 0];
-            int h = MapBlocksSize[0, 1];
-
-            int maxBlockCount = w * h;
-
-            if (maxBlockCount < 1)
-            {
-                return;
-            }
-
-            BlockData[0][block].MapFile = file;
-            BlockData[0][block].OriginalMapAddress = address;
-            BlockData[0][block].MapAddress = address;
-        }
-
-        public unsafe void PatchStaticBlock(UOFile file, ulong block, ulong address, uint count)
-        {
-            int w = MapBlocksSize[0, 0];
-            int h = MapBlocksSize[0, 1];
-
-            int maxBlockCount = w * h;
-
-            if (maxBlockCount < 1)
-            {
-                return;
-            }
-
-            BlockData[0][block].StaticFile = file;
-            BlockData[0][block].StaticAddress = BlockData[0][block].OriginalStaticAddress = address;
-
-            count = (uint) (count / (sizeof(StaidxBlockVerdata)));
-
-            if (count > 1024)
-            {
-                count = 1024;
-            }
-
-            BlockData[0][block].StaticCount = BlockData[0][block].OriginalStaticCount = count;
-        }
-
-        public unsafe bool ApplyPatches(ref StackDataReader reader)
-        {
-            ResetPatchesInBlockTable();
-
-            PatchesCount = (int) reader.ReadUInt32BE();
-
-            if (PatchesCount < 0)
-            {
-                PatchesCount = 0;
-            }
-
-            if (PatchesCount > MAPS_COUNT)
-            {
-                PatchesCount = MAPS_COUNT;
-            }
-
-            Array.Clear(MapPatchCount, 0, MapPatchCount.Length);
-            Array.Clear(StaticPatchCount, 0, StaticPatchCount.Length);
-
-            bool result = false;
-
-            for (int i = 0; i < PatchesCount; i++)
-            {
-                int idx = i;
-
-                //SanitizeMapIndex(ref idx);
-
-                if (_currentMapFiles[idx] == null || _currentMapFiles[idx].Length == 0)
-                {
-                    reader.Skip(8);
-
-                    continue;
-                }
-
-                // Statics first, then land.
-                //
-                // This was the other way round, and it silently disabled land patching against
-                // every server that sends this packet. RunUO, ServUO and ModernUO all write the
-                // statics count first - ModernUO in OutgoingMapPackets.SendMapPatches - so
-                // reading land first takes the statics count as the land count and the land count
-                // as the statics count.
-                //
-                // The failure is invisible rather than loud: a shard that patches land and not
-                // statics sends (0, n), which reads as "no land patches" and n statics patches
-                // that then clamp to zero against an empty stadifl. Nothing throws, nothing logs,
-                // and the ground simply stays as it was while the server believes it changed. It
-                // has probably gone unnoticed because almost nothing ships map patches any more.
-                int staticPatchesCount = (int)reader.ReadUInt32BE();
-                StaticPatchCount[i] = staticPatchesCount;
-                int mapPatchesCount = (int)reader.ReadUInt32BE();
-                MapPatchCount[i] = mapPatchesCount;
-
-                int w = MapBlocksSize[i, 0];
-                int h = MapBlocksSize[i, 1];
-
-                int maxBlockCount = w * h;
-
-                if (mapPatchesCount != 0)
-                {
-                    UOFileMul difl = _mapDifl[i];
-                    UOFileMul dif = _mapDif[i];
-
-                    if (difl == null || dif == null || difl.Length == 0 || dif.Length == 0)
-                    {
-                        continue;
-                    }
-
-                    mapPatchesCount = Math.Min(mapPatchesCount, (int)difl.Length >> 2);
-
-                    difl.Seek(0, SeekOrigin.Begin);
-                    dif.Seek(0, SeekOrigin.Begin);
-
-                    for (int j = 0; j < mapPatchesCount; j++)
-                    {
-                        uint blockIndex = difl.ReadUInt32();
-
-                        if (blockIndex < maxBlockCount)
-                        {
-                            BlockData[idx][blockIndex].MapFile = dif;
-                            BlockData[idx][blockIndex].MapAddress = (ulong)dif.Position;
-
-                            result = true;
-                        }
-
-                        dif.Seek(sizeof(MapBlock), SeekOrigin.Current);
-                    }
-                }
-
-                if (staticPatchesCount != 0)
-                {
-                    UOFileMul difl = _staDifl[i];
-                    UOFileMul difi = _staDifi[i];
-
-                    if (difl == null || difi == null || _staDif[i] == null || difl.Length == 0 || difi.Length == 0 || _staDif[i].Length == 0)
-                    {
-                        continue;
-                    }
-
-                    staticPatchesCount = Math.Min(staticPatchesCount, (int)difl.Length >> 2);
-
-                    difl.Seek(0, SeekOrigin.Begin);
-                    difi.Seek(0, SeekOrigin.Begin);
-
-                    int sizeOfStaicsBlock = sizeof(StaticsBlock);
-                    int sizeOfStaidxBlock = sizeof(StaidxBlock);
-
-                    for (int j = 0; j < staticPatchesCount; j++)
-                    {
-                        if (difl.Position >= difl.Length || difi.Position >= difi.Length)
-                        {
-                            break;
-                        }
-
-                        uint blockIndex = difl.ReadUInt32();
-                        var st = difi.Read<StaidxBlock>();
-
-                        if (blockIndex < maxBlockCount)
-                        {
-                            ulong realStaticAddress = 0;
-                            uint realStaticCount = 0;
-
-                            if (st.Size > 0 && st.Position != 0xFFFF_FFFF)
-                            {
-                                realStaticAddress = st.Position;
-                                realStaticCount = Math.Min(1024, (uint)(st.Size / sizeOfStaicsBlock));
-                            }
-
-                            BlockData[idx][blockIndex].StaticFile = _staDif[i];
-                            BlockData[idx][blockIndex].StaticAddress = realStaticAddress;
-                            BlockData[idx][blockIndex].StaticCount = realStaticCount;
-
-                            result = true;
-                        }
-                    }
-                }
-            }
-
-            return result;
-        }
-
-        private void ResetPatchesInBlockTable()
-        {
             for (int i = 0; i < MAPS_COUNT; i++)
             {
-                IndexMap[] list = BlockData[i];
+                var f = _facets[i];
 
-                if (list == null)
+                if (f == null)
                 {
                     continue;
                 }
 
-                int w = MapBlocksSize[i, 0];
-                int h = MapBlocksSize[i, 1];
+                MapsDefaultSize[i, 0] = f.Width;
+                MapsDefaultSize[i, 1] = f.Height;
+                MapBlocksSize[i, 0] = f.BlocksX;
+                MapBlocksSize[i, 1] = f.BlocksY;
+            }
+        }
 
-                int maxBlockCount = w * h;
+        /// <summary>Map patch packets (0xBF/0x18) are not applied at run time. The converter bakes mapdif/stadif into the pack
+        /// for pre-UOP installs the way ModernUO serves them (land below 6.0.0.0, statics below 7.0.9.0; Uo.Converter
+        /// ClientLoad.ApplyLegacyMapRules), so the counts the server sends describe patches the pack already holds.</summary>
+        public bool ApplyPatches(ref StackDataReader reader)
+        {
+            uint maps = reader.ReadUInt32BE();
 
-                if (maxBlockCount < 1)
+            for (uint i = 0; i < maps && reader.Remaining >= 8; i++)
+            {
+                uint statics = reader.ReadUInt32BE();
+                uint land = reader.ReadUInt32BE();
+
+                if (statics != 0 || land != 0)
                 {
-                    return;
+                    Log.Warn($"Server sent map patches for map {i} ({land} land, {statics} statics); ignored: the converter bakes map diffs into the pack");
                 }
+            }
 
-                if (_currentMapFiles[i] is UOFileMul mul && mul.Length != 0)
-                {
-                    if (_currentIdxStaticsFiles[i] is UOFileMul stIdxMul && stIdxMul.Length != 0)
-                    {
-                        if (_currentStaticsFiles[i] is UOFileMul stMul && stMul.Length != 0)
-                        {
-                            for (int block = 0; block < maxBlockCount; block++)
-                            {
-                                ref IndexMap index = ref list[block];
-                                index.MapAddress = index.OriginalMapAddress;
-                                index.StaticAddress = index.OriginalStaticAddress;
-                                index.StaticCount = index.OriginalStaticCount;
-                            }
-                        }
-                    }
-                }
+            return false;
+        }
+
+        public bool HasMap(int map) => (uint)map < (uint)_facets.Length && _facets[map] != null;
+
+        public void LoadMap(int map)
+        {
+            if (!HasMap(map))
+            {
+                Log.Warn($"Map {map} is not in the asset pack");
             }
         }
 
         public void SanitizeMapIndex(ref int map)
         {
-            if (map == 1 && (_currentMapFiles[1] == null || _currentMapFiles[1].Length == 0 || _currentStaticsFiles[1] == null ||
-                _currentStaticsFiles[1].Length == 0 || _currentIdxStaticsFiles[1] == null || _currentIdxStaticsFiles[1].Length == 0))
+            if (!HasMap(map))
             {
                 map = 0;
             }
         }
 
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ref IndexMap GetIndex(int map, int x, int y)
+        public bool TryGetBlock(int map, int blockX, int blockY, out MapBlockData block)
         {
-            int block = x * MapBlocksSize[map, 1] + y;
+            block = default;
 
-            return ref BlockData[map][block];
+            if (!HasMap(map))
+            {
+                return false;
+            }
+
+            var facet = _facets[map];
+
+            if ((uint)blockX >= (uint)facet.BlocksX || (uint)blockY >= (uint)facet.BlocksY)
+            {
+                return false;
+            }
+
+            int side = facet.RegionBlocks;
+            RegionData region;
+
+            lock (_sync)
+            {
+                region = GetRegion(facet, blockX / side, blockY / side);
+            }
+
+            return region != null && region.TryGetBlock(blockX % side, blockY % side, out block);
+        }
+
+        /// <summary>
+        /// The land z of cell (x, y), or -125 when the cell has no map block (as Map.GetTileZ). The last block looked up
+        /// is remembered, so the stretch calculation's 13 neighbour lookups per land cell mostly skip the lock and the
+        /// region lookup. Main thread only (the cache is not synchronised).
+        /// </summary>
+        public sbyte GetLandZ(int map, int x, int y)
+        {
+            if (x < 0 || y < 0)
+            {
+                return -125;
+            }
+
+            int bx = x >> 3, by = y >> 3;
+            var c = _zCache;
+
+            if (c == null || c.Map != map || c.BlockX != bx || c.BlockY != by || (c.Region != null && !c.Region.Live))
+            {
+                // one cache object, reused (a chunk load moves between up to four blocks)
+                c ??= new LandZCache();
+                c.Map = map;
+                c.BlockX = bx;
+                c.BlockY = by;
+                c.Region = null;
+                c.Offset = 0;
+
+                if (HasMap(map) && (uint)bx < (uint)_facets[map].BlocksX && (uint)by < (uint)_facets[map].BlocksY)
+                {
+                    var facet = _facets[map];
+                    int side = facet.RegionBlocks;
+
+                    lock (_sync)
+                    {
+                        c.Region = GetRegion(facet, bx / side, by / side);
+                    }
+
+                    c.Offset = c.Region.BlockOffset(bx % side, by % side);
+                }
+
+                _zCache = c;
+            }
+
+            return c.Offset == 0 ? (sbyte)-125 : c.Region.LandZ(c.Offset, ((y & 7) << 3) + (x & 7));
+        }
+
+        private sealed class LandZCache
+        {
+            public int Map, BlockX, BlockY;
+            public RegionData Region;
+            public int Offset; // 0 = no block
+        }
+
+        private LandZCache _zCache;
+
+        /// <summary>Reads one region without caching it, for bulk readers such as the world map.</summary>
+        /// <summary>
+        /// Starts decoding region (rx, ry) of <paramref name="map"/> on the thread pool unless it is cached or already being
+        /// decoded. Never blocks. The decoded region joins the cache on the next lookup that needs it (or IsBlockReady).
+        /// </summary>
+        public void PrefetchRegion(int map, int rx, int ry)
+        {
+            if (!PrefetchEnabled || !HasMap(map))
+            {
+                return;
+            }
+
+            var facet = _facets[map];
+            int side = facet.RegionBlocks;
+
+            if (rx < 0 || ry < 0 || rx * side >= facet.BlocksX || ry * side >= facet.BlocksY)
+            {
+                return;
+            }
+
+            lock (_sync)
+            {
+                StartPrefetch(facet, rx, ry);
+            }
+        }
+
+        /// <summary>
+        /// Prefetches every region that the square of +/- <paramref name="radius"/> tiles around tile (x, y) touches, the
+        /// region under (x, y) first.
+        /// </summary>
+        public void PrefetchAround(int map, int x, int y, int radius)
+        {
+            if (!PrefetchEnabled || !HasMap(map) || x < 0 || y < 0)
+            {
+                return;
+            }
+
+            int tiles = _facets[map].RegionBlocks * 8;
+            PrefetchRegion(map, x / tiles, y / tiles);
+
+            int rx0 = Math.Max(0, x - radius) / tiles, rx1 = (x + radius) / tiles;
+            int ry0 = Math.Max(0, y - radius) / tiles, ry1 = (y + radius) / tiles;
+
+            for (int rx = rx0; rx <= rx1; rx++)
+            {
+                for (int ry = ry0; ry <= ry1; ry++)
+                {
+                    PrefetchRegion(map, rx, ry);
+                }
+            }
+        }
+
+        /// <summary>
+        /// True when the regions holding block (blockX, blockY) and its eight neighbours (the land stretch reads the z of
+        /// neighbouring cells) are decoded, so loading that chunk will not wait for a decode. Regions that are neither
+        /// cached nor being decoded are prefetched, finished prefetches are adopted. Never blocks. Always true when
+        /// prefetching is off or the block is outside the map.
+        /// </summary>
+        public bool IsBlockReady(int map, int blockX, int blockY)
+        {
+            if (!PrefetchEnabled || !HasMap(map))
+            {
+                return true;
+            }
+
+            var facet = _facets[map];
+
+            if ((uint)blockX >= (uint)facet.BlocksX || (uint)blockY >= (uint)facet.BlocksY)
+            {
+                return true;
+            }
+
+            int side = facet.RegionBlocks;
+            int rx0 = Math.Max(0, blockX - 1) / side, rx1 = Math.Min(facet.BlocksX - 1, blockX + 1) / side;
+            int ry0 = Math.Max(0, blockY - 1) / side, ry1 = Math.Min(facet.BlocksY - 1, blockY + 1) / side;
+            bool ready = true;
+
+            lock (_sync)
+            {
+                for (int rx = rx0; rx <= rx1; rx++)
+                {
+                    for (int ry = ry0; ry <= ry1; ry++)
+                    {
+                        long key = RegionKey(facet, rx, ry);
+
+                        if (_regions.ContainsKey(key))
+                        {
+                            continue;
+                        }
+
+                        if (_pending.TryGetValue(key, out var task))
+                        {
+                            if (task.IsCompleted)
+                            {
+                                GetRegion(facet, rx, ry); // adopts it without waiting
+
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            StartPrefetch(facet, rx, ry);
+                        }
+
+                        ready = false;
+                    }
+                }
+            }
+
+            return ready;
+        }
+
+        /// <summary>Land z of cell (x, y) as GetLandZ when its region is decoded; otherwise false and a prefetch.</summary>
+        public bool TryGetLandZ(int map, int x, int y, out sbyte z)
+        {
+            z = -125;
+
+            if (x >= 0 && y >= 0 && !IsBlockReady(map, x >> 3, y >> 3))
+            {
+                return false;
+            }
+
+            z = GetLandZ(map, x, y);
+
+            return true;
+        }
+
+        /// <summary>Number of regions being decoded on the thread pool and not yet adopted.</summary>
+        public int PendingCount
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _pending.Count;
+                }
+            }
+        }
+
+        private static long RegionKey(FacetInfo facet, int rx, int ry) => ((long)facet.Index << 40) | ((long)rx << 20) | (uint)ry;
+
+        // under _sync
+        private void StartPrefetch(FacetInfo facet, int rx, int ry)
+        {
+            long key = RegionKey(facet, rx, ry);
+
+            if (_regions.ContainsKey(key) || _pending.ContainsKey(key))
+            {
+                return;
+            }
+
+            PrefetchesStarted++;
+            _pending[key] = StartLoad(facet, rx, ry);
+        }
+
+        // out of line: a lambda in StartPrefetch made it allocate its closure on entry, on every call (several per frame,
+        // nearly all of them returning early above)
+        private Task<RegionData> StartLoad(FacetInfo facet, int rx, int ry) => Task.Run(() => LoadRegion(facet, rx, ry));
+
+        public RegionData ReadRegion(int map, int rx, int ry)
+        {
+            return HasMap(map) ? LoadRegion(_facets[map], rx, ry) : null;
+        }
+
+        public int RegionBlocks(int map) => HasMap(map) ? _facets[map].RegionBlocks : PackConst.RegionBlocks;
+
+        /// <summary>A hash of the facet's region files, from the pack manifest.</summary>
+        public string GetFacetHash(int map)
+        {
+            if (!HasMap(map))
+            {
+                return "";
+            }
+
+            var prefix = $"map/{_facets[map].Index}/";
+            var sb = new StringBuilder();
+
+            foreach (var f in FileManager.Pack.Manifest.Files)
+            {
+                if (f.Path.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    sb.Append(f.Path).Append(f.Sha256);
+                }
+            }
+
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())))[..32].ToLowerInvariant();
+        }
+
+        public override void ClearResources()
+        {
+            lock (_sync)
+            {
+                foreach (var region in _lru)
+                {
+                    region.Live = false;
+                }
+
+                // decodes still running finish into buffers nobody adopts; the GC takes them
+                _pending.Clear();
+                _regions.Clear();
+                _lru.Clear();
+                _zCache = null;
+            }
+        }
+
+        // under _sync
+        private RegionData GetRegion(FacetInfo facet, int rx, int ry)
+        {
+            long key = RegionKey(facet, rx, ry);
+
+            if (_regions.TryGetValue(key, out var node))
+            {
+                _lru.Remove(node);
+                _lru.AddFirst(node);
+
+                return node.Value;
+            }
+
+            RegionData region;
+
+            if (_pending.Remove(key, out var task))
+            {
+                // a prefetch: adopt it, waiting for the rest of its decode if it is still running. The wait is never longer
+                // than decoding here would take, and LoadRegion takes no lock this thread holds.
+                if (!task.IsCompleted)
+                {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    ((IAsyncResult)task).AsyncWaitHandle.WaitOne();
+                    PrefetchWaits++;
+                    PrefetchWaitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                }
+
+                region = task.IsCompletedSuccessfully ? task.Result : LoadRegion(facet, rx, ry);
+            }
+            else
+            {
+                SyncLoads++;
+                region = LoadRegion(facet, rx, ry);
+            }
+
+            node = _lru.AddFirst(region);
+            _regions[key] = node;
+
+            if (_lru.Count > CACHED_REGIONS)
+            {
+                // the evicted region's buffer goes back to the pool for the next load (the cache and TryGetBlock's
+                // callers are main-thread; a block span never outlives 24 further region loads)
+                var last = _lru.Last;
+                _lru.RemoveLast();
+                _regions.Remove(last.Value.Key);
+                last.Value.Live = false;
+                ReturnBuffer(last.Value.Release());
+            }
+
+            return region;
+        }
+
+        // logical region buffers (about 1.2 MB each) reused across loads
+        private readonly Stack<byte[]> _freeBuffers = new Stack<byte[]>();
+        private const int MaxFreeBuffers = 4;
+
+        private byte[] RentBuffer()
+        {
+            lock (_freeBuffers)
+            {
+                return _freeBuffers.Count > 0 ? _freeBuffers.Pop() : null;
+            }
+        }
+
+        private void ReturnBuffer(byte[] buffer)
+        {
+            if (buffer == null)
+            {
+                return;
+            }
+
+            lock (_freeBuffers)
+            {
+                if (_freeBuffers.Count < MaxFreeBuffers)
+                {
+                    _freeBuffers.Push(buffer);
+                }
+            }
+        }
+
+        // thread-safe: called by lookups and by prefetch tasks
+        private RegionData LoadRegion(FacetInfo facet, int rx, int ry)
+        {
+            long key = RegionKey(facet, rx, ry);
+            var path = PackConst.RegionPath(FileManager.Pack.PathOf(Path.Combine("map", facet.Index.ToString())), rx, ry);
+
+            if (!File.Exists(path))
+            {
+                return new RegionData(key, null, 0);
+            }
+
+            // the compressed file goes into a pooled buffer and decodes straight into a pooled logical buffer: no
+            // File.ReadAllBytes, MemoryStream or ToArray copies (those were about 3.9 MB of garbage per region)
+            using var fh = File.OpenHandle(path);
+            int size = (int)RandomAccess.GetLength(fh);
+            var file = ArrayPool<byte>.Shared.Rent(size);
+
+            try
+            {
+                RandomAccess.Read(fh, file.AsSpan(0, size), 0);
+                var logical = RentBuffer();
+                int length = RegionFile.DecompressInto(file.AsSpan(0, size), ref logical);
+
+                return new RegionData(key, logical, length);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(file);
+            }
+        }
+
+        public sealed class RegionData
+        {
+            private byte[] _logical;
+            private readonly int _length;
+            private readonly RegionHeader _header;
+
+            internal RegionData(long key, byte[] logical, int length)
+            {
+                Key = key;
+                _logical = logical;
+                _length = length;
+                Live = true;
+
+                if (logical != null)
+                {
+                    _header = MemoryMarshal.Read<RegionHeader>(logical.AsSpan(RegionHeaderOffset));
+                }
+            }
+
+            internal long Key { get; }
+
+            /// <summary>False once evicted from the cache (its buffer may then hold another region).</summary>
+            internal bool Live { get; set; }
+
+            public int BlocksW => _header.BlocksW;
+            public int BlocksH => _header.BlocksH;
+
+            internal byte[] Release()
+            {
+                var buffer = _logical;
+                _logical = null;
+
+                return buffer;
+            }
+
+            /// <summary>Byte offset of block (x, y) in the logical file, 0 when the block is empty or outside the region.</summary>
+            internal int BlockOffset(int x, int y)
+            {
+                if (_logical == null || (uint)x >= _header.BlocksW || (uint)y >= _header.BlocksH)
+                {
+                    return 0;
+                }
+
+                return (int)MemoryMarshal.Read<uint>(_logical.AsSpan(BlockTableOffset + (y * _header.BlocksW + x) * 4));
+            }
+
+            /// <summary>Land z of cell <paramref name="cell"/> (y * 8 + x) of the block at <paramref name="offset"/>.</summary>
+            internal sbyte LandZ(int offset, int cell) => (sbyte)_logical[offset + cell * 4 + 2];
+
+            public bool TryGetBlock(int x, int y, out MapBlockData block)
+            {
+                block = default;
+                int offset = BlockOffset(x, y);
+
+                if (offset == 0 || offset >= _length)
+                {
+                    return false;
+                }
+
+                var span = _logical.AsSpan(offset, _length - offset);
+                var land = MemoryMarshal.Cast<byte, LandCell>(span.Slice(0, PackConst.CellsPerBlock * 4));
+                int statics = MemoryMarshal.Read<ushort>(span.Slice(PackConst.CellsPerBlock * 4));
+                var cells = MemoryMarshal.Cast<byte, StaticCell>(span.Slice(PackConst.CellsPerBlock * 4 + 4, statics * 8));
+                block = new MapBlockData(land, cells);
+
+                return true;
+            }
         }
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct StaticsBlock
+    public readonly ref struct MapBlockData
     {
-        public ushort Color;
-        public byte X;
-        public byte Y;
-        public sbyte Z;
-        public ushort Hue;
-    }
+        public MapBlockData(ReadOnlySpan<LandCell> land, ReadOnlySpan<StaticCell> statics)
+        {
+            Land = land;
+            Statics = statics;
+        }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct StaidxBlock
-    {
-        public uint Position;
-        public uint Size;
-        public uint Unknown;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public ref struct StaidxBlockVerdata
-    {
-        public uint Position;
-        public ushort Size;
-        public byte Unknown;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct MapCells
-    {
-        public ushort TileID;
-        public sbyte Z;
-    }
-
-    [InlineArray(64)]
-    public struct MapCellsArray
-    {
-        private MapCells _a0;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct MapBlock
-    {
-        public uint Header;
-        public unsafe MapCellsArray Cells;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct RadarMapcells
-    {
-        public ushort Graphic;
-        public sbyte Z;
-        public bool IsLand;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct RadarMapBlock
-    {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)]
-        public RadarMapcells[,] Cells;
-    }
-
-    public struct IndexMap
-    {
-        public FileReader MapFile, StaticFile;
-        public ulong MapAddress;
-        public ulong OriginalMapAddress;
-        public ulong OriginalStaticAddress;
-        public uint OriginalStaticCount;
-        public ulong StaticAddress;
-        public uint StaticCount;
-
-        public static IndexMap Invalid = new IndexMap() { MapAddress = ulong.MaxValue };
-
-        public readonly bool IsValid() => MapAddress != ulong.MaxValue;
+        /// <summary>64 cells, row-major (y * 8 + x).</summary>
+        public readonly ReadOnlySpan<LandCell> Land;
+        public readonly ReadOnlySpan<StaticCell> Statics;
     }
 }

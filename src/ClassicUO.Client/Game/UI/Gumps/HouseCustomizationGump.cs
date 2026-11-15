@@ -591,7 +591,7 @@ namespace ClassicUO.Game.UI.Gumps
             _customHouseManager.Components = 0;
             _customHouseManager.Fixtures = 0;
 
-            Item foundationItem = World.Items.Get(LocalSerial);
+            Item foundationItem = World.FindItem(LocalSerial);
 
             if (foundationItem != null)
             {

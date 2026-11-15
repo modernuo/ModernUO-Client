@@ -31,6 +31,7 @@ namespace ClassicUO.Game.UI.Gumps
         private const int SCREEN_ZOOM_STEPS = 20;
 
         private static Texture2D _logoTexture2D;
+        private Combobox _worldRenderer;
         private Combobox _auraType;
         private Combobox _autoOpenCorpseOptions;
         private InputField _autoOpenCorpseRange;
@@ -99,7 +100,7 @@ namespace ClassicUO.Game.UI.Gumps
                          _chatAdditionalButtonsCheckbox,
                          _chatShiftEnterCheckbox,
                          _enableCaveBorder;
-        private Checkbox _holdShiftForContext, _holdShiftToSplitStack, _reduceFPSWhenInactive, _sallosEasyGrab, _partyInviteGump, _objectsFading, _textFading, _holdAltToMoveGumps;
+        private Checkbox _holdShiftForContext, _holdShiftToSplitStack, _reduceFPSWhenInactive, _uncapFPS, _vsync, _sallosEasyGrab, _partyInviteGump, _objectsFading, _textFading, _holdAltToMoveGumps;
         private Combobox _hpComboBox, _healtbarType, _fieldsType, _hpComboBoxShowWhen;
 
         // infobar
@@ -1583,13 +1584,35 @@ namespace ClassicUO.Game.UI.Gumps
                 rightArea,
                 Constants.MIN_FPS,
                 Constants.MAX_FPS,
-                Settings.GlobalSettings.FPS,
+                Settings.GlobalSettings.FPS > 0 ? Settings.GlobalSettings.FPS : 240,
                 startX,
                 startY,
                 250
             );
 
             startY += text.Bounds.Bottom + 5;
+
+            _uncapFPS = AddCheckBox
+            (
+                rightArea,
+                ResGumps.UncapFPS,
+                Settings.GlobalSettings.FPS <= 0,
+                startX,
+                startY
+            );
+
+            startY += _uncapFPS.Height + 2;
+
+            _vsync = AddCheckBox
+            (
+                rightArea,
+                ResGumps.VSync,
+                Settings.GlobalSettings.VSync,
+                startX,
+                startY
+            );
+
+            startY += _vsync.Height + 2;
 
             _reduceFPSWhenInactive = AddCheckBox
             (
@@ -1601,6 +1624,21 @@ namespace ClassicUO.Game.UI.Gumps
             );
 
             startY += _reduceFPSWhenInactive.Height + 2;
+
+            Label rendererLabel = AddLabel(rightArea, "World renderer (takes effect on next start)", startX, startY);
+            startY += rendererLabel.Height + 2;
+
+            _worldRenderer = AddCombobox
+            (
+                rightArea,
+                new[] { "Automatic (recommended)", "GPU", "Compatibility" },
+                (int)RendererSelection.ParseMode(Settings.GlobalSettings.WorldRendererSetting, null, out _, out _),
+                startX,
+                startY,
+                200
+            );
+
+            startY += _worldRenderer.Height + 2;
 
             startX = 5;
             startY += 20;
@@ -3619,7 +3657,9 @@ namespace ClassicUO.Game.UI.Gumps
             switch (ActivePage)
             {
                 case 1: // general
-                    _sliderFPS.Value = 60;
+                    _sliderFPS.Value = 240;
+                    _uncapFPS.IsChecked = true;
+                    _vsync.IsChecked = false;
                     _reduceFPSWhenInactive.IsChecked = true;
                     _highlightObjects.IsChecked = true;
                     _enableTopbar.IsChecked = false;
@@ -3853,9 +3893,24 @@ namespace ClassicUO.Game.UI.Gumps
             WorldViewportGump vp = UIManager.GetGump<WorldViewportGump>();
 
             // general
-            if (Settings.GlobalSettings.FPS != _sliderFPS.Value)
+            int fps = _uncapFPS.IsChecked ? 0 : _sliderFPS.Value;
+
+            if (Settings.GlobalSettings.FPS != fps)
             {
-                Client.Game.SetRefreshRate(_sliderFPS.Value);
+                Client.Game.SetRefreshRate(fps);
+            }
+
+            if (Settings.GlobalSettings.VSync != _vsync.IsChecked)
+            {
+                Client.Game.SetVSync(_vsync.IsChecked);
+            }
+
+            string renderer = RendererSelection.SettingValue((WorldRendererMode)_worldRenderer.SelectedIndex);
+
+            if (RendererSelection.ParseMode(Settings.GlobalSettings.WorldRendererSetting, null, out _, out _) != (WorldRendererMode)_worldRenderer.SelectedIndex)
+            {
+                Settings.GlobalSettings.WorldRendererSetting = renderer;
+                Settings.GlobalSettings.Save();
             }
 
             _currentProfile.HighlightGameObjects = _highlightObjects.IsChecked;
@@ -4428,6 +4483,11 @@ namespace ClassicUO.Game.UI.Gumps
 
             _currentProfile?.Save(World, ProfileManager.ProfilePath);
         }
+
+#if CUO_DEVTOOLS
+        // driver command "optionsdrop" (the Options screenshot job): opens the World renderer dropdown
+        internal void OpenWorldRendererListForDriver() => _worldRenderer.InvokeMouseUp(new Microsoft.Xna.Framework.Point(_worldRenderer.ScreenCoordinateX + 1, _worldRenderer.ScreenCoordinateY + 1), MouseButtonType.Left);
+#endif
 
         internal void UpdateVideo()
         {

@@ -5,28 +5,30 @@ using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using ClassicUO.Utility.Platforms;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
     public sealed class UOFileManager : IDisposable
     {
         private readonly UOFilesOverrideMap _overrideMap;
+        private readonly bool _packHasLoose;
 
-        public UOFileManager(ClientVersion clientVersion, string uoPath) : this(clientVersion, uoPath, new UOFilesOverrideMap())
+        public UOFileManager(ClientVersion clientVersion, string uoPath, PackAssets pack) : this(clientVersion, uoPath, new UOFilesOverrideMap(), pack)
         {
         }
-        
-        public UOFileManager(ClientVersion clientVersion, string uoPath, UOFilesOverrideMap overrideMap)
+
+        public UOFileManager(ClientVersion clientVersion, string uoPath, UOFilesOverrideMap overrideMap, PackAssets pack)
         {
             Version = clientVersion;
             BasePath = uoPath;
+            Pack = pack;
 
             _overrideMap = overrideMap;
-            IsUOPInstallation = Version >= ClientVersion.CV_7000 && File.Exists(GetUOFilePath("MainMisc.uop"));
+            _packHasLoose = pack != null && Directory.Exists(pack.PathOf(MiscConst.LooseDir));
 
             Animations = new AnimationsLoader(this);
             AnimData = new AnimDataLoader(this);
@@ -44,7 +46,6 @@ namespace ClassicUO.Assets
             Lights = new LightsLoader(this);
             Sounds = new SoundsLoader(this);
             MultiMaps = new MultiMapLoader(this);
-            Verdata = new VerdataLoader(this);
             Professions = new ProfessionLoader(this);
             TileArt = new TileArtLoader(this);
             StringDictionary = new StringDictionaryLoader(this);
@@ -52,12 +53,12 @@ namespace ClassicUO.Assets
 
         public ClientVersion Version { get; }
         public string BasePath { get; }
-        public bool IsUOPInstallation { get; private set; }
+        public PackAssets Pack { get; }
 
         public AnimationsLoader Animations { get; }
         public AnimDataLoader AnimData { get; }
         public ArtLoader Arts { get; }
-        public MapLoader Maps { get; set; }
+        public MapLoader Maps { get; }
         public ClilocLoader Clilocs { get; }
         public GumpsLoader Gumps { get; }
         public FontsLoader Fonts { get; }
@@ -70,7 +71,6 @@ namespace ClassicUO.Assets
         public LightsLoader Lights { get; }
         public SoundsLoader Sounds { get; }
         public MultiMapLoader MultiMaps { get; }
-        public VerdataLoader Verdata { get; }
         public ProfessionLoader Professions { get; }
         public TileArtLoader TileArt { get; }
         public StringDictionaryLoader StringDictionary { get; }
@@ -95,11 +95,33 @@ namespace ClassicUO.Assets
             Lights.Dispose();
             Sounds.Dispose();
             MultiMaps.Dispose();
-            Verdata.Dispose();
+            Pack.Dispose();
             Professions.Dispose();
             TileArt.Dispose();
             StringDictionary.Dispose();
         }
+
+        /// <summary>
+        /// The path of a pack file the client can't run without: a pack converted before that file existed is refused
+        /// (there is no MUL/UOP fallback), so it must be converted again.
+        /// </summary>
+        public string RequirePackFile(string relative)
+        {
+            string path = Pack?.PathOf(relative);
+
+            if (path == null || !File.Exists(path))
+            {
+                throw MissingPackFile(relative, path);
+            }
+
+            return path;
+        }
+
+        public static FileNotFoundException MissingPackFile(string relative, string path) =>
+            new FileNotFoundException($"Incomplete asset pack: '{relative}' is missing (convert the client again with Uo.Converter).", path);
+
+        /// <summary>Tests: run the alternative-casing lookup on any OS (default: off on Windows).</summary>
+        internal bool CaseInsensitiveFallback = !PlatformHelper.IsWindows;
 
         public string GetUOFilePath(string file)
         {
@@ -109,327 +131,106 @@ namespace ClassicUO.Assets
             }
 
             //If the file with the given name doesn't exist, check for it with alternative casing if not on windows
-            if (!PlatformHelper.IsWindows && !File.Exists(uoFilePath))
+            if (CaseInsensitiveFallback && !File.Exists(uoFilePath))
             {
-                FileInfo finfo = new FileInfo(uoFilePath);
-                var dir = Path.GetFullPath(finfo.DirectoryName ?? BasePath);
-
-                if (Directory.Exists(dir))
+                try
                 {
-                    var files = Directory.GetFiles(dir);
-                    var matches = 0;
+                    // absolute, so the comparison below sees the same form as the directory entries (a relative base such as ./UO never matched)
+                    string full = Path.GetFullPath(uoFilePath);
+                    var dir = Path.GetDirectoryName(full) ?? Path.GetFullPath(BasePath);
 
-                    foreach (var f in files)
+                    if (Directory.Exists(dir))
                     {
-                        if (string.Equals(f, uoFilePath, StringComparison.OrdinalIgnoreCase))
+                        var matches = 0;
+                        string found = null;
+
+                        foreach (var f in Directory.GetFiles(dir))
                         {
-                            matches++;
-                            uoFilePath = f;
+                            if (string.Equals(f, full, StringComparison.OrdinalIgnoreCase))
+                            {
+                                matches++;
+                                found = f;
+                            }
+                        }
+
+                        if (found != null)
+                        {
+                            uoFilePath = found;
+                        }
+
+                        if (matches > 1)
+                        {
+                            Log.Warn($"Multiple files with ambiguous case found for {file}, using {Path.GetFileName(uoFilePath)}. Check your data directory for duplicate files.");
                         }
                     }
-
-                    if (matches > 1)
-                    {
-                        Log.Warn($"Multiple files with ambiguous case found for {file}, using {Path.GetFileName(uoFilePath)}. Check your data directory for duplicate files.");
-                    }
+                }
+                catch (Exception e) when (e is ArgumentException || e is NotSupportedException || e is IOException || e is UnauthorizedAccessException)
+                {
+                    // an empty or invalid path (a bad files_override target): no alternative casing to find; the caller sees a file that does not exist
+                    Log.Trace($"No case-insensitive lookup for '{file}' ({e.Message})");
                 }
             }
 
             return uoFilePath;
         }
 
-        public void Load(bool useVerdata, string lang, string mapsLayouts = "")
+        /// <summary>
+        /// A text or def file shards edit by hand (Prof.txt, citytext.enu, stitchin.def, Anim1.def, the house
+        /// customization tables): a files_override entry wins, else the pack's verbatim copy in loose/ (absent when the
+        /// install had none). A pack converted before loose/ existed has no such folder; the file then comes from the
+        /// loose-file folder as before.
+        /// </summary>
+        public string GetLooseFilePath(string file)
         {
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            
-            Maps.MapsLayouts = mapsLayouts;
-
-            Animations.Load();
-            AnimData.Load();
-            Arts.Load();
-            Maps.Load();
-            Clilocs.Load(lang);
-            Gumps.Load();
-            Fonts.Load();
-            Hues.Load();
-            TileData.Load();
-            Multis.Load();
-            Skills.Load();
-            Professions.Load();
-            Texmaps.Load();
-            Speeches.Load();
-            Lights.Load();
-            Sounds.Load();
-            MultiMaps.Load();
-            TileArt.Load();
-            StringDictionary.Load();
-            Verdata.Load();
-
-            ReadArtDefFile();
-
-            var verdata = Verdata.File;
-            bool forceVerdata = Version < ClientVersion.CV_500A || verdata != null && verdata.Length != 0 && Verdata.Patches.Length != 0;
-
-            if (!useVerdata && forceVerdata)
+            if (!_packHasLoose || _overrideMap.ContainsKey(file.ToLowerInvariant()))
             {
-                useVerdata = true;
+                return GetUOFilePath(file);
             }
 
-            Log.Trace($"Use verdata.mul: {(useVerdata ? "Yes" : "No")}");
-
-            if (useVerdata)
-            {
-                if (verdata != null && Verdata.Patches.Length != 0)
-                {
-                    Log.Info(">> PATCHING WITH VERDATA.MUL");
-
-                    var buf = new byte[256];
-                    Span<VerdataHuesGroup> group = stackalloc VerdataHuesGroup[1];
-
-                    for (int i = 0; i < Verdata.Patches.Length; i++)
-                    {
-                        ref var vh = ref Verdata.Patches[i];
-                        Log.Info($">>> patching  FileID: {vh.FileID}  -  BlockID: {vh.BlockID}");
-
-                        if (vh.FileID == 0)
-                        {
-                            Maps.PatchMapBlock(verdata, vh.BlockID, vh.Position);
-                        }
-                        else if (vh.FileID == 2)
-                        {
-                            Maps.PatchStaticBlock(verdata, vh.BlockID, vh.Position, vh.Length);
-                        }
-                        else if (vh.FileID == 4)
-                        {
-                            if (vh.BlockID < Arts.File.Entries.Length)
-                            {
-                                Arts.File.Entries[vh.BlockID] = new UOFileIndex
-                                (
-                                    verdata,
-                                    vh.Position,
-                                    (int)vh.Length,
-                                    0
-                                );
-                            }
-                        }
-                        else if (vh.FileID == 12)
-                        {
-                            Gumps.File.Entries[vh.BlockID] = new UOFileIndex
-                            (
-                                verdata,
-                                vh.Position,
-                                (int)vh.Length,
-                                0,
-                                0,
-                                (short)(vh.GumpData >> 16),
-                                (short)(vh.GumpData & 0xFFFF)
-                            );
-                        }
-                        else if (vh.FileID == 14 && vh.BlockID < Multis.File.Entries.Length)
-                        {
-                            Multis.File.Entries[vh.BlockID] = new UOFileIndex
-                            (
-                                verdata,
-                                vh.Position,
-                                (int)vh.Length,
-                                0
-                            );
-                        }
-                        else if (vh.FileID == 16 && vh.BlockID < Skills.SkillsCount)
-                        {
-                            var skill = Skills.Skills[(int)vh.BlockID];
-
-                            if (skill != null)
-                            {
-                                skill.HasAction = verdata.ReadUInt8() != 0;
-                                if (buf.Length < vh.Length)
-                                    buf = new byte[vh.Length];
-
-                                skill.Name = Encoding.ASCII.GetString(buf.AsSpan(0, (int)(vh.Length - 1)));
-                            }
-                        }
-                        else if (vh.FileID == 30)
-                        {
-                            verdata.Seek(vh.Position, SeekOrigin.Begin);
-
-                            if (vh.Length == 836)
-                            {
-                                int offset = (int)(vh.BlockID * 32);
-
-                                if (offset + 32 > TileData.LandData.Length)
-                                {
-                                    continue;
-                                }
-
-                                verdata.ReadUInt32();
-
-                                for (int j = 0; j < 32; j++)
-                                {
-                                    ulong flags;
-
-                                    if (Version < ClientVersion.CV_7090)
-                                    {
-                                        flags = verdata.ReadUInt32();
-                                    }
-                                    else
-                                    {
-                                        flags = verdata.ReadUInt64();
-                                    }
-
-                                    var textId = verdata.ReadUInt16();
-                                    var str = Encoding.ASCII.GetString(buf.AsSpan(0, 20));
-                                    TileData.LandData[offset + j] = new LandTiles(flags, textId, str);
-                                }
-                            }
-                            else if (vh.Length == 1188)
-                            {
-                                int offset = (int)((vh.BlockID - 0x0200) * 32);
-
-                                if (offset + 32 > TileData.StaticData.Length)
-                                {
-                                    continue;
-                                }
-
-                                verdata.ReadUInt32();
-
-                                for (int j = 0; j < 32; j++)
-                                {
-                                    ulong flags;
-
-                                    if (Version < ClientVersion.CV_7090)
-                                    {
-                                        flags = verdata.ReadUInt32();
-                                    }
-                                    else
-                                    {
-                                        flags = verdata.ReadUInt64();
-                                    }
-
-                                    var weight = verdata.ReadUInt8();
-                                    var layer = verdata.ReadUInt8();
-                                    var count = verdata.ReadInt32();
-                                    var animId = verdata.ReadUInt16();
-                                    var hue = verdata.ReadUInt16();
-                                    var lightIdx = verdata.ReadUInt16();
-                                    var height = verdata.ReadUInt8();
-                                    var str = Encoding.ASCII.GetString(buf.AsSpan(0, 20));
-
-                                    TileData.StaticData[offset + j] = new StaticTiles
-                                    (
-                                        flags,
-                                        weight,
-                                        layer,
-                                        count,
-                                        animId,
-                                        hue,
-                                        lightIdx,
-                                        height,
-                                        str
-                                    );
-                                }
-                            }
-                        }
-                        else if (vh.FileID == 32)
-                        {
-                            if (vh.BlockID < Hues.HuesCount)
-                            {
-                                verdata.Seek(vh.Position, SeekOrigin.Begin);
-                                verdata.Read(MemoryMarshal.AsBytes(group));
-
-                                HuesGroup[] hues = Hues.HuesRange;
-                                hues[vh.BlockID].Header = group[0].Header;
-
-                                for (int j = 0; j < 8; j++)
-                                {
-                                    hues[vh.BlockID].Entries[j].ColorTable = group[0].Entries[j].ColorTable;
-                                }
-                            }
-                        }
-                        else if (vh.FileID != 5 && vh.FileID != 6)
-                        {
-                            Log.Warn($"Unused verdata block\tFileID: {vh.FileID}\tBlockID: {vh.BlockID}");
-                        }
-                    }
-
-                    Log.Info("<< PATCHED.");
-                }
-            }
-
-
-            Log.Trace($"Files loaded in: {stopwatch.ElapsedMilliseconds} ms!");
-            stopwatch.Stop();
+            return Pack.PathOf(MiscConst.LoosePath(file));
         }
 
-        private void ReadArtDefFile()
+        public void Load(string lang)
         {
-            string pathdef = GetUOFilePath("art.def");
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            long alloc0 = GC.GetTotalAllocatedBytes(true);
+            var timings = new System.Text.StringBuilder();
 
-            if (!File.Exists(pathdef))
+            void Timed(string name, Action load)
             {
-                return;
+                long t = Stopwatch.GetTimestamp();
+                long a = GC.GetAllocatedBytesForCurrentThread();
+                load();
+                timings.Append($" {name} {Stopwatch.GetElapsedTime(t).TotalMilliseconds:0.0}ms/{(GC.GetAllocatedBytesForCurrentThread() - a) / 1024}KB");
             }
 
-            using (var reader = new DefReader(pathdef, 1))
-            {
-                while (reader.Next())
-                {
-                    int index = reader.ReadInt();
+            Timed("anims", Animations.Load);
+            Timed("animdata", AnimData.Load);
+            Timed("art", Arts.Load);
+            Timed("maps", Maps.Load);
+            Timed("cliloc", () => Clilocs.Load(lang));
+            Timed("gumps", Gumps.Load);
+            Timed("fonts", Fonts.Load);
+            Timed("hues", Hues.Load);
+            Timed("tiledata", TileData.Load);
+            Timed("multis", Multis.Load);
+            Timed("skills", Skills.Load);
+            Timed("professions", Professions.Load);
+            Timed("texmaps", Texmaps.Load);
+            Timed("speech", Speeches.Load);
+            Timed("lights", Lights.Load);
+            Timed("sounds", Sounds.Load);
+            Timed("multimaps", MultiMaps.Load);
+            Timed("tileart", TileArt.Load);
+            Timed("stringdict", StringDictionary.Load);
 
-                    if (index < 0 || index >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT + TileData.StaticData.Length)
-                    {
-                        continue;
-                    }
-
-                    int[] group = reader.ReadGroup();
-
-                    if (group == null)
-                    {
-                        continue;
-                    }
-
-                    for (int i = 0; i < group.Length; i++)
-                    {
-                        int checkIndex = group[i];
-
-                        if (checkIndex < 0 || checkIndex >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT + TileData.StaticData.Length)
-                        {
-                            continue;
-                        }
-
-                        if (index < Arts.File.Entries.Length && checkIndex < Arts.File.Entries.Length)
-                        {
-                            ref UOFileIndex currentEntry = ref Arts.File.GetValidRefEntry(index);
-                            ref UOFileIndex checkEntry = ref Arts.File.GetValidRefEntry(checkIndex);
-
-                            if (currentEntry.Equals(UOFileIndex.Invalid) && !checkEntry.Equals(UOFileIndex.Invalid))
-                            {
-                                Arts.File.Entries[index] = Arts.File.Entries[checkIndex];
-                            }
-                        }
-
-                        if (index < ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
-                            checkIndex < ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
-                            checkIndex < TileData.LandData.Length &&
-                            index < TileData.LandData.Length &&
-                            !TileData.LandData[checkIndex].Equals(default) &&
-                            TileData.LandData[index].Equals(default))
-                        {
-                            TileData.LandData[index] = TileData.LandData[checkIndex];
-
-                            break;
-                        }
-
-                        if (index >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT && checkIndex >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
-                            index < TileData.StaticData.Length && checkIndex < TileData.StaticData.Length &&
-                            TileData.StaticData[index].Equals(default) && !TileData.StaticData[checkIndex].Equals(default))
-                        {
-                            TileData.StaticData[index] = TileData.StaticData[checkIndex];
-
-                            break;
-                        }
-                    }
-                }
-            }
+            Log.Trace($"Files loaded in: {stopwatch.ElapsedMilliseconds} ms!");
+            double ms = stopwatch.Elapsed.TotalMilliseconds;
+            long allocated = GC.GetTotalAllocatedBytes(true) - alloc0;
+            // CUO_LOAD_MEM=1: a full collection first, so the heap size is what the loaders keep (measurements only)
+            long heap = GC.GetTotalMemory(Environment.GetEnvironmentVariable("CUO_LOAD_MEM") == "1");
+            Log.Trace($"[load] {ms:0.0} ms, {allocated / 1024} KB allocated, GC heap {heap / 1024} KB after:{timings}");
+            stopwatch.Stop();
         }
     }
 }

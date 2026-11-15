@@ -18,25 +18,21 @@ namespace ClassicUO.Game.Managers
         private uint _processTime;
 
 
-        public unsafe void Initialize()
+        public void Initialize()
         {
-            UOFile file = Client.Game.UO.FileManager.AnimData.AnimDataFile;
+            Initialize(Client.Game.UO.FileManager.TileData.StaticData, Client.Game.UO.FileManager.AnimData);
+        }
 
-            if (file == null)
-            {
-                return;
-            }
-
-            uint lastaddr = (uint)(file.Length - sizeof(AnimDataFrame));
-
+        /// <summary>The registration itself, on explicit tables (tests run it on a loaded pack without a game).</summary>
+        internal void Initialize(StaticTiles[] statics, AnimDataLoader animData)
+        {
             var infos = new List<StaticAnimationInfo>();
-            for (int i = 0; i < Client.Game.UO.FileManager.TileData.StaticData.Length; i++)
-            {
-                if (Client.Game.UO.FileManager.TileData.StaticData[i].IsAnimated)
-                {
-                    uint addr = (uint)(i * 68 + 4 * (i / 8 + 1));
 
-                    if (addr <= lastaddr)
+            for (int i = 0; i < statics.Length; i++)
+            {
+                if (statics[i].IsAnimated)
+                {
+                    if (animData.TryGetAnimData((ushort)i, out _))
                     {
                         infos.Add
                         (
@@ -53,6 +49,24 @@ namespace ClassicUO.Game.Managers
             _staticInfos = infos.ToArray();
         }
 
+        /// <summary>The registered static ids, in table order (for tests).</summary>
+        internal IEnumerable<ushort> RegisteredIds
+        {
+            get
+            {
+                foreach (var info in _staticInfos)
+                {
+                    yield return info.Index;
+                }
+            }
+        }
+
+        /// <summary>Whether any static graphic animates.</summary>
+        internal bool HasAnimations => _staticInfos.Length != 0;
+
+        /// <summary>present_on_change_anim_due: the earliest graphic's next frame (it advances once Time.Ticks is past it).</summary>
+        internal uint NextChange => _processTime;
+
         public unsafe void Process()
         {
             if (_staticInfos.Length == 0 || _processTime >= Time.Ticks)
@@ -60,19 +74,14 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-            var file = Client.Game.UO.FileManager.AnimData.AnimDataFile;
-
-            if (file == null)
-            {
-                return;
-            }
+            var animData = Client.Game.UO.FileManager.AnimData;
 
 
             // fix static animations time to reflect the standard client
             uint delay = Constants.ITEM_EFFECT_ANIMATION_DELAY * 2;
             uint next_time = Time.Ticks + 250;
             bool no_animated_field = ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.FieldsType != 0;
-            UOFileIndex[] static_data = Client.Game.UO.FileManager.Arts.File.Entries;
+            ArtEntry[] static_data = Client.Game.UO.FileManager.Arts.Entries;
 
             for (int i = 0; i < _staticInfos.Length; i++)
             {
@@ -87,9 +96,7 @@ namespace ClassicUO.Game.Managers
 
                 if (o.Time < Time.Ticks)
                 {
-                    uint addr = (uint)(o.Index * 68 + 4 * (o.Index / 8 + 1));
-                    file.Seek(addr, System.IO.SeekOrigin.Begin);
-                    var info = file.Read<AnimDataFrame>();
+                    animData.TryGetAnimData(o.Index, out var info);
 
                     byte offset = o.AnimIndex;
 

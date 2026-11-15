@@ -86,8 +86,9 @@ namespace ClassicUO.Game.UI.Gumps
             int x = (Client.Game.Scene.Camera.Bounds.Width >> 1) - (gox - goy) * 22;
             int y = (Client.Game.Scene.Camera.Bounds.Height >> 1) - (gox + goy) * 22;
 
-            x -= (int) World.Player.Offset.X;
-            y -= (int) (World.Player.Offset.Y - World.Player.Offset.Z);
+            Vector3 playerOffset = World.Player.Offset;
+            x -= (int) playerOffset.X;
+            y -= (int) (playerOffset.Y - playerOffset.Z);
             y += World.Player.Z << 2;
 
 
@@ -172,6 +173,9 @@ namespace ClassicUO.Game.UI.Gumps
                 _timer = Time.Ticks + 1000;
                 _needHue = !_needHue;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At((long)_timer, ClassicUO.Loop.VisualSource.Gump);
 
             _arrow.Hue = (ushort) (_needHue ? 0 : 0x21);
         }

@@ -64,6 +64,10 @@ namespace ClassicUO.Game.Managers
 
         public readonly Dictionary<uint, WMapEntity> Entities = new Dictionary<uint, WMapEntity>();
 
+        /// <summary>W5: whether <see cref="AddOrUpdate"/> without from_packet does anything now (a party/guild position
+        /// packet within 10 s, and <see cref="Enabled"/>). World.Update asks once per frame instead of per ally.</summary>
+        public bool AcceptsLocalUpdates => _lastPacketRecv >= Time.Ticks && Enabled;
+
         public void SetACKReceived()
         {
             _ackReceived = true;
@@ -223,7 +227,7 @@ namespace ClassicUO.Game.Managers
                     {
                         if (e != null && SerialHelper.IsValid(e.Serial))
                         {
-                            Mobile mob = _world.Mobiles.Get(e.Serial);
+                            Mobile mob = _world.FindMobile(e.Serial);
 
                             if (mob == null || mob.Distance > _world.ClientViewRange)
                             {

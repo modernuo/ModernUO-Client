@@ -2,6 +2,7 @@
 
 using ClassicUO.Assets;
 using ClassicUO.Configuration;
+using ClassicUO.Loop;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
@@ -23,29 +24,33 @@ namespace ClassicUO.Game.Scenes
 {
     internal partial class GameScene : Scene
     {
-        private static readonly Func<BlendState> _darknessBlend = new(() =>
+        // the light composite's blend states and hues, created once (they used to be allocated every frame)
+        private static readonly BlendState _darknessBlendState = new BlendState
         {
-            return new BlendState
-            {
-                ColorSourceBlend = Blend.Zero,
-                ColorDestinationBlend = Blend.SourceColor,
-                ColorBlendFunction = BlendFunction.Add
-            };
-        });
+            ColorSourceBlend = Blend.Zero,
+            ColorDestinationBlend = Blend.SourceColor,
+            ColorBlendFunction = BlendFunction.Add
+        };
 
-        private static readonly Func<BlendState> _altLightsBlend = new(() =>
+        private static readonly BlendState _altLightsBlendState = new BlendState
         {
-            return new BlendState
-            {
-                ColorSourceBlend = Blend.DestinationColor,
-                ColorDestinationBlend = Blend.One,
-                ColorBlendFunction = BlendFunction.Add
-            };
-        });
+            ColorSourceBlend = Blend.DestinationColor,
+            ColorDestinationBlend = Blend.One,
+            ColorBlendFunction = BlendFunction.Add
+        };
+
+        private static readonly Func<BlendState> _darknessBlend = () => _darknessBlendState;
+        private static readonly Func<BlendState> _altLightsBlend = () => _altLightsBlendState;
+        private static readonly Func<BlendState> _noLightsBlend = () => null;
+        private static readonly Func<Vector3> _lightsHue = () => new Vector3(0f, 0f, 1f);
+        private static readonly Func<Vector3> _altLightsHue = () => new Vector3(0f, 0f, 0.5f);
 
         private const float MAX_LAYER_DEPTH = 0x8000;
         private uint _time_cleanup = Time.Ticks + 5000;
         private bool _alphaChanged;
+        // present_on_change_anim_due: the last list fill walked an animated static or item (tiledata Animation flag); kept
+        // until the next fill, so a frame that reuses the list keeps it
+        private bool _animatedArtInView;
         private long _alphaTimer;
         private bool _forceStopScene;
         private HealthLinesManager _healthLinesManager;
@@ -60,15 +65,39 @@ namespace ClassicUO.Game.Scenes
             _rectanglePlayer;
         private long _timePing;
 
+        /// <summary>The game time after which the next ping is sent (Time.Ticks &gt; this); 0 before the first.</summary>
+        internal long PingDueTick => _timePing;
+
+        /// <summary>
+        /// present_on_change: GameController sends the ping after its draw decision (ServicePing), so it can hold it until
+        /// after a Present that is about to happen; the scene then does not send it from Update.
+        /// </summary>
+        internal bool LoopSendsPing;
+
+        internal bool PingDue => _world.InGame && Time.Ticks > _timePing;
+
+        internal void SendPing()
+        {
+            NetClient.Socket.Statistics.SendPing();
+            _timePing = (long)Time.Ticks + 1000;
+        }
+
         private uint _timeToPlaceMultiInHouseCustomization;
         private readonly UseItemQueue _useItemQueue;
         private bool _useObjectHandles;
+        // the player's race and the profile's name-overhead filter for NameOverHeadManager.IsAllowed, read once per
+        // render-list pass (an ECS lookup and a profile read per object)
+        private bool _handlesPlayerIsGargoyle;
+        private NameOverheadTypeAllowed _handlesTypeAllowed;
         private AnimatedStaticsManager _animatedStaticsManager;
 
         private readonly World _world;
 
         // Track the previously highlighted mesh sprite so we can restore its hue
         private GameObject _prevMeshHighlight;
+        // its Incarnation when highlighted: a land or static can be retired and reused for another cell (MapObjectRecycler)
+        // before the next draw restores its hue (updates without draws can outlast the recycler's quarantine)
+        private uint _prevMeshHighlightIncarnation;
 
         public GameScene(World world)
         {
@@ -148,8 +177,6 @@ namespace ClassicUO.Game.Scenes
 
                 Client.Game.SetWindowSize(w, h);
             }
-
-            Plugin.OnConnected();
         }
 
         private void ChatOnMessageReceived(object sender, MessageEventArgs e)
@@ -271,12 +298,33 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        /// <summary>
+        /// T9 S9: the house placement preview item. Its graphic and hue live in a preview record of its own (owner: the scene,
+        /// <see cref="WorldEcs.ReleasePreviews"/> when it goes), as the preview gumps' objects.
+        /// </summary>
+        internal static Item CreatePlacementPreview(World world, object owner, ushort model, ushort hue)
+        {
+            Item preview = Item.Create(world, HouseManager.PLACEMENT_PREVIEW_SERIAL);
+            preview.IsMulti = true;
+            world.Writer.SetPreviewItem(owner, preview, model, hue, Layer.Invalid, 0xFFFF_FFFF);
+
+            return preview;
+        }
+
         public override void Unload()
         {
+
             if (IsDestroyed)
             {
                 return;
             }
+
+            // a login that never reached its hold (disconnect): the warm-up collection must not wait for a later scene
+            Map.MapWarmup.Cancel("game scene unloaded");
+
+            // T9 S9: the house placement preview's record, when the scene goes while placing
+            _world.Ecs.ReleasePreviews(this);
+
 
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
                 Camera.Bounds.X,
@@ -294,11 +342,12 @@ namespace ClassicUO.Game.Scenes
             Client.Game.SetWindowTitle(string.Empty);
             Client.Game.UO.GameCursor.ItemHold.Clear();
 
-            try
-            {
-                Plugin.OnDisconnected();
-            }
-            catch { }
+            // first-sight art decoded for the chunk loader is drained only by Map.UpdateLoading, which stops with the scene, and
+            // animation directions only by drawing: return the finished decodes' buffers and decode-budget bytes now, take the
+            // waiting ones out of the budget (workers still running return theirs when they finish)
+            Client.Game.UO.Arts?.CancelPending();
+            Client.Game.UO.Texmaps?.CancelPending();
+            Client.Game.UO.Animations?.CancelPending();
 
             _world.TargetManager.Reset();
 
@@ -341,6 +390,14 @@ namespace ClassicUO.Game.Scenes
 
         private void SocketOnDisconnected(object sender, SocketError e)
         {
+            Log.Warn($"Disconnected from the game server: {e}");
+
+            // a clean close by the server reports Success; say what it is
+            if (e == SocketError.Success)
+            {
+                e = SocketError.ConnectionReset;
+            }
+
             if (Settings.GlobalSettings.Reconnect)
             {
                 _forceStopScene = true;
@@ -399,6 +456,11 @@ namespace ClassicUO.Game.Scenes
             );
         }
 
+        internal (byte Id, ushort Color, bool IsHue, int X, int Y) LightAt(int i) =>
+            (_lights[i].ID, _lights[i].Color, _lights[i].IsHue, _lights[i].DrawX, _lights[i].DrawY);
+
+        internal void TruncateLights(int count) => _lightCount = Math.Min(_lightCount, Math.Max(count, 0));
+
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
             if (
@@ -415,18 +477,22 @@ namespace ClassicUO.Game.Scenes
             int testX = obj.X + 1;
             int testY = obj.Y + 1;
 
-            GameObject tile = _world.Map.GetTile(testX, testY);
+            TileListObject tile = _world.Map.GetTile(testX, testY);
 
             if (tile != null)
             {
                 sbyte z5 = (sbyte)(obj.Z + 5);
 
-                for (GameObject o = tile; o != null; o = o.TNext)
+                ArtLoader arts = Client.Game.UO.FileManager.Arts;
+
+                for (TileListObject o = tile; o != null; o = o.TNext)
                 {
+                    // a component without art (empty tiledata entry) is invisible: it cannot shade the light
                     if (
                         (!(o is Static s) || s.ItemData.IsTransparent)
                             && (!(o is Multi m) || m.ItemData.IsTransparent)
                         || !o.AllowedToDraw
+                        || !MaxDrawZState.HasDrawableArt(arts, o.Graphic)
                     )
                     {
                         continue;
@@ -547,21 +613,44 @@ namespace ClassicUO.Game.Scenes
 
         private void FillGameObjectList()
         {
+            FrameStats.Inc(FrameCounter.PrepareFullRuns);
+            FrameStats.Inc(FrameCounter.FillListFullRuns);
+            FrameStats.Inc(FrameCounter.PrepareRuns);
             _renderLists.Clear();
             _visibleChunks.Clear();
 
             _foliageCount = 0;
+            _drawFrame++;
+            _animatedArtInView = false;
 
             if (!_world.InGame)
             {
                 return;
             }
 
-            _alphaChanged = _alphaTimer < Time.Ticks;
+            PickSkip.BeginFill(UIManager.IsMouseOverWorld);
+            ItemOffsets.BeginFrame();
+            PickBox.BeginFill();
+
+            // T6a: the tile lists exactly as this frame's walk (both renderers) is about to read them
+            if (Map.TileOrder.Check)
+            {
+                Map.TileOrder.CheckFrame(_world);
+            }
+
+            long setupStart = FrameStats.Stamp();
+            BeginMeshHueFrame();
+            BeginMeshVisFrame();
+            // while the world settle gate holds the last frame nobody sees the fades: alphas jump to their targets, so the
+            // first frame after the hold doesn't show statics of freshly loaded chunks fading in (they start at 0)
+            _snapAlphas = _settle.Holding;
+            int fadeSteps = FadeSteps(Time.Ticks, ref _alphaTimer, Client.Game.DisplayCapActive);
+            _alphaStepSize = 25 * Math.Max(1, fadeSteps);
+            _alphaChanged = fadeSteps != 0 || _snapAlphas;
 
             if (_alphaChanged)
             {
-                _alphaTimer = Time.Ticks + Constants.ALPHA_TIME;
+                _alphaMoved = false;
             }
 
             if (ProfileManager.CurrentProfile.UseCircleOfTransparency)
@@ -585,6 +674,22 @@ namespace ClassicUO.Game.Scenes
             }
 
             GetViewPort();
+            GpuPrepareBegin();
+            // perf-16 world_fill_diamond: walk only the square's tiles that can reach the screen (FillDiamond)
+            bool diamondOn = FillDiamond.Enabled;
+            FillDiamond.Bands diamond = BeginFillDiamond(diamondOn);
+            bool gpuFill = _gpuWorld != null;
+            // CUO_FILL_DIAMOND_CHECK: this fill walks the whole square and judges what the diamond would skip
+            bool diamondCheck = diamondOn && FillDiamond.BeginCheckFrame();
+#if CUO_DEVTOOLS
+            _diamondSelection = SelectedObject.Object;
+#endif
+
+            if (UpdateDrawPosition)
+            {
+                // a camera move: every RealScreenPosition computed before this frame is stale (ScreenPositionGen)
+                _screenPositionGen++;
+            }
 
             var ctrlShiftHeld = Keyboard.Ctrl && Keyboard.Shift;
             var useObjectHandles = _world.NameOverHeadManager.IsToggled || ctrlShiftHeld;
@@ -609,17 +714,18 @@ namespace ClassicUO.Game.Scenes
                 _world.NameOverHeadManager.SetMenuVisible(ctrlShiftHeld);
             }
 
+            Vector3 playerOffset = _world.Player.Offset;
             _rectanglePlayer.X = (int)(
                 _world.Player.RealScreenPosition.X
                 - _world.Player.FrameInfo.X
                 + 22
-                + _world.Player.Offset.X
+                + playerOffset.X
             );
             _rectanglePlayer.Y = (int)(
                 _world.Player.RealScreenPosition.Y
                 - _world.Player.FrameInfo.Y
                 + 22
-                + (_world.Player.Offset.Y - _world.Player.Offset.Z)
+                + (playerOffset.Y - playerOffset.Z)
             );
             _rectanglePlayer.Width = _world.Player.FrameInfo.Width;
             _rectanglePlayer.Height = _world.Player.FrameInfo.Height;
@@ -630,49 +736,258 @@ namespace ClassicUO.Game.Scenes
             int maxY = _maxTile.Y;
             Map.Map map = _world.Map;
             bool use_handles = _useObjectHandles;
+            _handlesPlayerIsGargoyle = use_handles && GameObject.PlayerIsGargoyle(_world);
+            _handlesTypeAllowed = use_handles ? _world.NameOverHeadManager.TypeAllowed : NameOverheadTypeAllowed.None;
+            GpuItemCacheBegin(use_handles);
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);
+            long loopStart = FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
+            map.DrawPending = 0;
+
+            // FrameStats per chunk (masks, walk, hidden) only for the Gpu world and in detail mode. Legacy times the whole
+            // chunk loop as PrepWalk, without two timestamps per chunk (~1,400 chunks at the 4K zoom-out, each
+            // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
+            bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
+            int nTiles = 0;
+            // clip-4: meshes built with the other depth_model setting are rebuilt (their vertices carry the shapes or not)
+            bool meshGeo = DepthModel.On;
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
                 for (var chunkY = minChunkY; chunkY <= maxChunkY; chunkY++)
                 {
-                    var chunk = map.GetChunk2(chunkX, chunkY, true);
+                    var chunk = map.GetChunkForDraw(chunkX, chunkY); // unloaded chunks are queued (Map.UpdateLoading)
                     if (chunk == null || chunk.IsDestroyed)
                         continue;
 
+                    // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
+                    // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it. A check
+                    // frame (CUO_FILL_DIAMOND_CHECK) does everything and judges what the masks leave out.
+                    ulong inWalk = FillDiamond.ChunkMasks(diamondOn, gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
+
+                    if (inHidden == 0 && !diamondCheck)
+                        continue;
+
                     // Build chunk mesh if dirty
-                    if (chunk.Mesh.IsDirty)
+                    if (chunk.Mesh.IsDirty || chunk.Mesh.BuiltGeo != meshGeo)
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
+                        // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
+                        chunk.GpuMaskDirty = true;
+                        chunk.GpuFreshSteps = GPU_FADE_STEPS;
                     }
 
                     // Reset visibility and alpha for this frame
-                    chunk.Mesh.Land.ResetVisibility();
-                    chunk.Mesh.Land.ResetAlpha();
-                    chunk.Mesh.Statics.ResetVisibility();
-                    chunk.Mesh.Statics.ResetAlpha();
+                    if (_gpuWorld == null)
+                    {
+                        chunk.Mesh.Land.ResetVisibility(_meshVisBits, _meshVisCheck);
+                        chunk.Mesh.Land.ResetAlpha();
+                        chunk.Mesh.Statics.ResetVisibility(_meshVisBits, _meshVisCheck);
+                        chunk.Mesh.Statics.ResetAlpha();
+                    }
 
                     _visibleChunks.Add(chunk);
+                    long walkStart = chunkStamps ? FrameStats.Stamp() : 0;
 
-                    for (var x = 0; x < 8; x++)
+                    // Gpu prepare skipping baked objects (GameSceneGpuPrepare): fullTiles are walked in full, walkTiles
+                    // without their baked land and statics, the rest not at all
+                    ulong fullTiles = ulong.MaxValue, walkTiles = 0, edgeTiles = 0;
+
+                    if (_gpuSkipEnabled)
+                    {
+                        GpuPrepareChunk(chunk, out fullTiles, out walkTiles, out edgeTiles);
+                        walkStart = FrameStats.AddSince(FramePhase.PrepGpuMasks, walkStart);
+
+                        if (_gpuItemCacheOn && walkTiles != 0)
+                        {
+                            // W4: tiles of settled ground items leave walkTiles for _gpuServeTiles
+                            GpuItemCachePrepare(chunk, ref walkTiles);
+                            walkStart = FrameStats.AddSince(FramePhase.PrepItemCache, walkStart);
+                        }
+                    }
+
+                    // T6b: the tiles whose walk merges the dynamic index
+                    ulong mergeCells = ClassicUO.Game.Map.TileWalk.MergeCells(chunk);
+                    // perf-16: the tiles this fill walks (the diamond's, or all with the switch off or on a check frame);
+                    // perf-18: the tiles its Gpu hidden pass visits
+                    ulong tileMask = diamondCheck ? ulong.MaxValue : inWalk;
+                    ulong hiddenMask = diamondCheck ? ulong.MaxValue : inHidden;
+#if CUO_DEVTOOLS
+                    ulong probeTiles = diamondCheck ? ~inWalk : 0;
+                    ulong probeHidden = diamondCheck ? ~inHidden : 0;
+
+                    if (diamondCheck)
+                    {
+                        FillDiamond.CountChunk(inWalk, inHidden);
+                    }
+
+                    if (probeTiles != 0)
+                    {
+                        DiamondCheckBefore(chunk, probeTiles, mergeCells);
+                    }
+#endif
+
+                    for (var x = 0; x < 8 && tileMask != 0; x++)
                     {
                         for (var y = 0; y < 8; y++)
                         {
-                            var firstObj = chunk.GetHeadObject(x, y);
+                            ulong bit = 1UL << (x << 3 | y);
+
+                            if ((tileMask & bit) == 0)
+                            {
+                                continue;
+                            }
+
+                            bool full = (fullTiles & bit) != 0;
+
+                            if (!full && (walkTiles & bit) == 0)
+                            {
+                                // W4: settled ground items come from the chunk's item cache; a tile whose items changed
+                                // since it was extracted is walked instead
+                                if ((_gpuServeTiles & bit) == 0 || GpuServeCachedTile(chunk, x << 3 | y))
+                                    continue;
+                            }
+                            else if ((_gpuServeTiles & bit) != 0 && GpuServeCachedTile(chunk, x << 3 | y))
+                            {
+                                // a served tile with mobiles: the walk visits the mobiles alone (they are all its other
+                                // unbaked objects; GpuMobiles is in tile-list order)
+                                int b = x << 3 | y;
+
+                                for (int m = chunk.GpuMobileStart[b], mEnd = chunk.GpuMobileStart[b + 1]; m < mEnd; m++)
+                                {
+                                    GameObject mobile = chunk.GpuMobiles[m];
+
+                                    if (!mobile.IsDestroyed)
+                                    {
+                                        nTiles++;
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, true);
+                                    }
+                                }
+
+                                continue;
+                            }
+                            else if ((_gpuCheckTiles & bit) != 0)
+                            {
+                                // CUO_GPU_ITEM_CHECK: what the cache would serve, compared with the walk after the capture
+                                GpuExpectCachedTile(chunk, x << 3 | y);
+                            }
+
+                            // T6b part 3: a tile holding only dynamics has no list head once the list drops them
+                            var firstObj = ClassicUO.Game.Map.TileWalk.First(chunk, x, y);
                             if (firstObj == null || firstObj.IsDestroyed)
                                 continue;
 
+                            nTiles++;
                             AddTileToRenderList(
                                 firstObj,
                                 use_handles,
-                                150,
-                                chunk
+                                GPU_WALK_MAX_Z,
+                                chunk,
+                                !full,
+                                _gpuSkipEnabled,
+                                false,
+                                (mergeCells & bit) != 0
                             );
+                        }
+                    }
+
+                    if (chunkStamps)
+                    {
+                        FrameStats.Enter(FrameStats.NoBucket);
+                        walkStart = FrameStats.AddSince(FramePhase.PrepWalk, walkStart);
+                    }
+
+#if CUO_DEVTOOLS
+                    if (probeTiles != 0)
+                    {
+                        DiamondCheckAfterWalk(chunk, probeTiles, mergeCells, in diamond.Walk);
+                    }
+#endif
+
+                    // after the chunk's walk: CollectGpuHidden only reads what the walk stamped on this tile's objects
+                    if (_gpuWorld != null && (hiddenMask | edgeTiles) != 0)
+                    {
+                        for (var x = 0; x < 8; x++)
+                        {
+                            for (var y = 0; y < 8; y++)
+                            {
+                                ulong bit = 1UL << (x << 3 | y);
+                                bool full = (fullTiles & bit) != 0;
+
+                                if (!full && ((walkTiles | edgeTiles) & bit) == 0)
+                                    continue;
+
+                                var firstObj = chunk.GetHeadObject(x, y);
+                                if (firstObj == null || firstObj.IsDestroyed)
+                                    continue;
+
+                                // perf-16: nothing of a tile outside the hidden bands reaches the view. perf-18: a tile inside
+                                // them but outside the walk's was not walked; the walk would have drawn (stamped) nothing there
+                                if ((full || (walkTiles & bit) != 0) && (hiddenMask & bit) != 0)
+                                {
+#if CUO_DEVTOOLS
+                                    if ((probeHidden & bit) != 0)
+                                    {
+                                        DiamondCheckHidden(firstObj, !full, in diamond.Hidden);
+                                    }
+                                    else
+#endif
+                                    {
+                                        CollectGpuHidden(firstObj, !full);
+                                    }
+                                }
+
+                                if ((edgeTiles & bit) != 0)
+                                {
+#if CUO_DEVTOOLS
+                                    if ((probeHidden & bit) != 0)
+                                    {
+                                        DiamondCheckEdge(firstObj, in diamond.Hidden);
+                                    }
+                                    else
+#endif
+                                    {
+                                        GpuHideCulledBaked(firstObj);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (chunkStamps)
+                        {
+                            FrameStats.AddSince(FramePhase.PrepHidden, walkStart);
                         }
                     }
                 }
             }
+
+            if (FrameStats.On)
+            {
+                if (!chunkStamps)
+                {
+                    FrameStats.AddSince(FramePhase.PrepWalk, loopStart);
+                }
+
+                FrameStats.Add(FrameCounter.Tiles, nTiles);
+            }
+
+            if (FrameStats.Detail)
+            {
+                FrameStats.End(FramePhase.WorldPrepare);
+                BareWalk(map, minChunkX, minChunkY, maxChunkX, maxChunkY);
+                FrameStats.Begin(FramePhase.WorldPrepare);
+            }
+
+#if CUO_DEVTOOLS
+            if (diamondCheck)
+            {
+                DiamondCheckSelection(in diamond.Walk);
+                FillDiamond.Report(_gpuWorld != null);
+            }
+#endif
+
+            long foliageStart = FrameStats.Stamp();
+            GpuPrepareEnd();
 
             if (_alphaChanged)
             {
@@ -691,25 +1006,141 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
-            UpdateTextServerEntities(_world.Mobiles.Values, true);
-            UpdateTextServerEntities(_world.Items.Values, false);
+            long textStart = FrameStats.AddSince(FramePhase.PrepFoliageFinish, foliageStart);
+            FlushWalkCounters();
+            UpdateTextServerEntities();
+
+            if (PrepCheck.On)
+            {
+                PrepCheck.Report();
+            }
+#if CUO_DEVTOOLS
+            if (_meshHueCheck)
+            {
+                ReportMeshHueCheck();
+            }
+
+            if (_meshVisCheck)
+            {
+                ReportMeshVisCheck();
+            }
+#endif
+            FrameStats.AddSince(FramePhase.PrepText, textStart);
 
             UpdateDrawPosition = false;
         }
 
-        private void UpdateTextServerEntities<T>(IEnumerable<T> entities, bool force)
-            where T : Entity
+        // FrameStats detail mode: the floor cost of visiting every object of the walked tiles, with no work per object
+        private void BareWalk(Map.Map map, int minChunkX, int minChunkY, int maxChunkX, int maxChunkY)
         {
-            foreach (T e in entities)
+            long start = FrameStats.Stamp();
+            int n = 0;
+
+            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
-                if (
-                    e.TextContainer != null
-                    && !e.TextContainer.IsEmpty
-                    && (force || e.Graphic == 0x2006)
-                )
+                for (int chunkY = minChunkY; chunkY <= maxChunkY; chunkY++)
                 {
-                    e.UpdateRealScreenPosition(_offset.X, _offset.Y);
+                    var chunk = map.GetChunk2(chunkX, chunkY, false);
+
+                    if (chunk == null || chunk.IsDestroyed)
+                    {
+                        continue;
+                    }
+
+                    for (int x = 0; x < 8; x++)
+                    {
+                        for (int y = 0; y < 8; y++)
+                        {
+                            for (TileListObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                            {
+                                n += obj.Z;
+                            }
+                        }
+                    }
                 }
+            }
+
+            _bareWalkSink = n;
+            FrameStats.AddSince(FramePhase.BareWalk, start);
+        }
+
+        private static int _bareWalkSink;
+
+        // the dictionary's value collection, not IEnumerable<T>: that boxed an enumerator twice a frame
+        // the text of every mobile, and of corpses, follows the camera (items' text is placed by their view). Only entities
+        // that got text are listed (World.TextOwners); scanning all of World.Mobiles and World.Items cost 0.2 ms per frame
+        // with 25,000 items in range
+        private void UpdateTextServerEntities()
+        {
+            List<Entity> owners = _world.TextOwners;
+
+            for (int i = owners.Count - 1; i >= 0; i--)
+            {
+                Entity e = owners[i];
+
+                if (e.IsDestroyed || e.TextContainer == null || e.TextContainer.IsEmpty)
+                {
+                    e.InTextOwners = false;
+                    owners[i] = owners[owners.Count - 1];
+                    owners.RemoveAt(owners.Count - 1);
+
+                    continue;
+                }
+
+                if (e is Mobile || e.Graphic == 0x2006)
+                {
+                    if (e.TextAllExpired())
+                    {
+                        // W5: UpdateRealScreenPosition without the text layout, which would place nothing
+                        e.UpdateRealScreenPositionOnly(_offset.X, _offset.Y);
+
+                        if (World.ActiveCheck)
+                        {
+                            _world.CheckSkippedTextLayout(e);
+                        }
+                    }
+                    else
+                    {
+                        e.UpdateRealScreenPosition(_offset.X, _offset.Y);
+                    }
+                }
+            }
+        }
+
+        // present_on_change_anim_due (evloop-4): the scene's own visual changes that no packet or input causes. The mobiles,
+        // corpses and world text report from their own walks (World.Update, TextRenderer.Draw).
+        private void NoteVisualDue()
+        {
+            if (_animatedArtInView && _animatedStaticsManager.HasAnimations)
+            {
+                VisualDue.At(_animatedStaticsManager.NextChange, VisualSource.StaticAnim);
+            }
+
+            if (_alphaMoved)
+            {
+                VisualDue.At(_alphaTimer, VisualSource.Other);
+            }
+
+            if (_world.Weather.IsActive)
+            {
+                VisualDue.Now(VisualSource.Weather);
+            }
+
+            if (_settle.Holding || _isMouseLeftDown || _world.Player.Pathfinder.AutoWalking || _followingMode)
+            {
+                // the settle hold ends on chunk arrival; a held left button picks up after a delay; auto-walk and follow
+                // request steps on their own
+                VisualDue.Now(VisualSource.Scene);
+            }
+
+            if (ProfileManager.CurrentProfile is { AnimatedWaterEffect: true })
+            {
+                VisualDue.Now(VisualSource.Other);
+            }
+
+            if (_world.Player.IsDead && _world.PlayerState.DeathScreenTimer > Time.Ticks)
+            {
+                VisualDue.At(_world.PlayerState.DeathScreenTimer, VisualSource.Scene);
             }
         }
 
@@ -720,6 +1151,11 @@ namespace ClassicUO.Game.Scenes
             SelectedObject.TranslatedMousePositionByViewport = Camera.MouseToWorldPosition();
 
             base.Update();
+
+            if (Map.MapObjectRecycler.Check)
+            {
+                Map.MapObjectRecycler.CheckFrame(_world, _prevMeshHighlight);
+            }
 
             if (_time_cleanup < Time.Ticks)
             {
@@ -743,17 +1179,19 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            if (Time.Ticks > _timePing)
+            if (!LoopSendsPing && PingDue)
             {
-                NetClient.Socket.Statistics.SendPing();
-                _timePing = (long)Time.Ticks + 1000;
+                SendPing();
             }
 
-            _world.Update();
+            // the animated statics advance first: World.Update's chunk loader waits for the frame an animated static
+            // shows (FirstSightArt.RequestCurrentFrame), which must be the frame this frame's draw uses
             _animatedStaticsManager.Process();
+            _world.Update();
             _world.BoatMovingManager.Update();
             _world.Player.Pathfinder.ProcessAutoWalk();
             _world.DelayedObjectClickManager.Update();
+            NoteVisualDue();
 
             if (!MoveCharacterByMouseInput() && !currentProfile.DisableArrowBtn)
             {
@@ -774,7 +1212,7 @@ namespace ClassicUO.Game.Scenes
                 _followingMode && SerialHelper.IsMobile(_followingTarget) && !_world.Player.Pathfinder.AutoWalking
             )
             {
-                Mobile follow = _world.Mobiles.Get(_followingTarget);
+                Mobile follow = _world.FindMobile(_followingTarget);
 
                 if (follow != null)
                 {
@@ -823,10 +1261,7 @@ namespace ClassicUO.Game.Scenes
             {
                 if (_multi == null)
                 {
-                    _multi = Item.Create(_world, 0);
-                    _multi.Graphic = _world.TargetManager.MultiTargetInfo.Model;
-                    _multi.Hue = _world.TargetManager.MultiTargetInfo.Hue;
-                    _multi.IsMulti = true;
+                    _multi = CreatePlacementPreview(_world, this, _world.TargetManager.MultiTargetInfo.Model, _world.TargetManager.MultiTargetInfo.Hue);
                 }
 
                 if (SelectedObject.Object is GameObject gobj)
@@ -838,6 +1273,8 @@ namespace ClassicUO.Game.Scenes
                     int cellX = gobj.X % 8;
                     int cellY = gobj.Y % 8;
 
+                    // the tile's anchor: its land, or on a landless tile a list object. T6b part 3 (list dropped): never an item,
+                    // mobile or effect, so a tile holding only dynamics has none and the selected object's own position is used
                     GameObject o = _world.Map.GetChunk(gobj.X, gobj.Y)?.Tiles[cellX, cellY];
 
                     if (o != null)
@@ -885,6 +1322,7 @@ namespace ClassicUO.Game.Scenes
                 _world.HouseManager.RemoveMultiTargetHouse();
                 _multi.Destroy();
                 _multi = null;
+                _world.Ecs.ReleasePreviews(this);
             }
 
             if (_isMouseLeftDown && !Client.Game.UO.GameCursor.ItemHold.Enabled)
@@ -922,6 +1360,18 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        // skip_draw_when_minimized: the frame's draw is not run. The settle hold's timeout stops counting (nothing streams meanwhile,
+        // so the restore must still wait for readiness), and the weather's wind timer and sounds, which live in Draw, keep going.
+        public void OnDrawSkipped(double elapsedMs)
+        {
+            _settle.SkipTime(elapsedMs);
+
+            if (_world.InGame)
+            {
+                _world.Weather.SimulateSkippedDraw();
+            }
+        }
+
         public override bool Draw(UltimaBatcher2D batcher, RenderTargets renderTargets)
         {
             if (!_world.InGame)
@@ -938,12 +1388,103 @@ namespace ClassicUO.Game.Scenes
             Viewport camera_viewport = Camera.GetViewport();
             Matrix matrix = Camera.ViewTransformMatrix;
 
-            bool can_draw_lights = false;
+            var gpu = Client.Game.GetGpuWorld();
+            // anim_frame_count_tables: the advance reads the frame counts from the tables only while the Gpu world draws
+            AnimFrameCount.GpuWorld = gpu != null;
 
-            can_draw_lights = PrepareLightsRendering(batcher, ref matrix, renderTargets);
-            batcher.GraphicsDevice.Viewport = camera_viewport;
+            if (gpu != null)
+            {
+                // No Legacy fallback: after a world entry, teleport, facet change or world-pass recreation the last presented
+                // world frame (and its lights) stays in the world and light targets while the GPU world streams, until its
+                // view is ready or the timeout passes (WorldSettleGate)
+                var target = renderTargets.WorldRenderTarget;
+                bool targetOk = target != null && !target.IsDisposed && target.RenderTargetUsage == RenderTargetUsage.PreserveContents;
+                bool ready = targetOk && gpu.EnsureFacet(_world.MapIndex);
+                bool hold = true;
 
-            DrawWorld(batcher, ref matrix, renderTargets);
+                if (ready)
+                {
+                    // the player's world pixel, which a teleport moves in Update: the draw offset (the camera) only follows
+                    // during this frame's list fill, after the hold decision
+                    var player = _world.Player;
+                    gpu.ApplyBakeInputs(_world.Season);
+                    GpuUpdateStaticSeason(gpu);
+                    hold = _settle.Begin(Time.Ticks, gpu.World, _world.MapIndex, (player.X - player.Y) * 22, (player.X + player.Y) * 22 - (player.Z << 2),
+                        ReferenceEquals(target, _settleTarget), gpu.Rebakes);
+                    _settleTarget = target;
+                }
+
+                FrameStats.WorldHeld = hold;
+                FrameStats.WorldShown |= !hold;
+
+                if (!hold)
+                {
+                    FrameStats.Begin(FramePhase.Lights);
+                    PrepareLightsRendering(batcher, ref matrix, renderTargets);
+                    FrameStats.End(FramePhase.Lights);
+                }
+                else
+                {
+                    // the light target keeps the held frame's lights
+                    InitializeRenderTargets(renderTargets);
+                    _lightCount = 0;
+                }
+
+                batcher.GraphicsDevice.Viewport = camera_viewport;
+
+                if (ready)
+                {
+                    DrawWorldGpu(batcher, ref matrix, renderTargets, gpu, hold);
+
+                    // ready = the world pass has everything near its view, and the client has loaded every chunk its walk
+                    // visited (a chunk still in the ChunkLoadQueue has no dynamic objects or overrides yet)
+                    bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
+                    _settle.End(visibleReady);
+
+                    if (Map.MapWarmup.CollectPending)
+                    {
+                        // the login's deliberate collection, in a frame whose world isn't shown (MapWarmup)
+                        Map.MapWarmup.OnWorldFrame(true, hold, visibleReady, _settle.Episode == WorldDiscontinuity.Entry, _settle.TimeoutMs);
+                    }
+
+                    if (SettleLog && !hold && !visibleReady)
+                    {
+                        LogUnsettledFrame(gpu);
+                    }
+                }
+
+                renderTargets.WorldFade = ready ? _settle.Fade : 0f;
+            }
+            else if (GpuDeviceLost.WorldSetupFailed)
+            {
+                // the client exits at the end of this frame: no world, and never Legacy in its place
+                renderTargets.WorldFade = 0f;
+            }
+            else
+            {
+                // the developer comparison mode (-worldrenderer legacy, DevBench world:legacy), never a fallback
+                FrameStats.Begin(FramePhase.Lights);
+                PrepareLightsRendering(batcher, ref matrix, renderTargets);
+                FrameStats.End(FramePhase.Lights);
+                batcher.GraphicsDevice.Viewport = camera_viewport;
+
+                DrawWorld(batcher, ref matrix, renderTargets);
+                _settle.OnOtherRenderer();
+                FrameStats.WorldShown = true;
+
+                if (Map.MapWarmup.CollectPending)
+                {
+                    // no settle hold in Legacy: the first world frame is the login transition (MapWarmup)
+                    Map.MapWarmup.OnWorldFrame(false, false, true, true, 0);
+                }
+
+                _settleTarget = renderTargets.WorldRenderTarget;
+                renderTargets.WorldFade = 1f;
+                FrameStats.Set(FrameCounter.GpuInstances, 0);
+                FrameStats.Set(FrameCounter.GpuDynamic, 0);
+                FrameStats.Set(FrameCounter.GpuOverrides, 0);
+                FrameStats.Set(FrameCounter.GpuDrawCalls, 0);
+            }
 
             batcher.GraphicsDevice.Viewport = r_viewport;
 
@@ -952,7 +1493,15 @@ namespace ClassicUO.Game.Scenes
 
         private void DrawWorld(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets)
         {
+            FrameStats.Begin(FramePhase.WorldPrepare);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.WorldRenderTarget);
+
+            if (renderTargets.WorldRenderTarget.RenderTargetUsage == RenderTargetUsage.PreserveContents)
+            {
+                // a GPU-mode target (the GPU pass is unavailable for this map): binding it no longer clears it
+                batcher.GraphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, Color.Black, 1f, 0);
+            }
+
             SelectedObject.Object = null;
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
             FillGameObjectList();
@@ -960,6 +1509,7 @@ namespace ClassicUO.Game.Scenes
             // Restore previous highlight's original hue before applying new one
             if (_prevMeshHighlight != null
                 && !_prevMeshHighlight.IsDestroyed
+                && _prevMeshHighlight.Incarnation == _prevMeshHighlightIncarnation
                 && _prevMeshHighlight.InChunkMesh
                 && _prevMeshHighlight.MeshSpriteIndex >= 0)
             {
@@ -991,10 +1541,13 @@ namespace ClassicUO.Game.Scenes
                         shaderType
                     );
                     _prevMeshHighlight = selObj;
+                    _prevMeshHighlightIncarnation = selObj.Incarnation;
                 }
             }
 
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
+            FrameStats.End(FramePhase.WorldPrepare);
+            FrameStats.Begin(FramePhase.WorldDraw);
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
             batcher.SetSampler(SamplerState.PointClamp);
 
@@ -1016,6 +1569,12 @@ namespace ClassicUO.Game.Scenes
             // https://shawnhargreaves.com/blog/depth-sorting-alpha-blended-objects.html
             batcher.SetStencil(DepthStencilState.Default);
 
+            if (DepthModel.On)
+            {
+                // clip-4: the geometric depth (HueGeoTechnique) for the rest of the world pass, relative to the view's centre
+                batcher.SetGeoDepth(true, LegacyGeo.CamSum(_offset.Y + (batcher.GraphicsDevice.Viewport.Height >> 1)));
+            }
+
             RenderedObjectsCount = _renderLists.DrawRenderLists(
                 batcher,
                 _maxGroundZ,
@@ -1031,12 +1590,7 @@ namespace ClassicUO.Game.Scenes
                 && _world.TargetManager.TargetingState == CursorTarget.MultiPlacement
             )
             {
-                _multi.Draw(
-                    batcher,
-                    _multi.RealScreenPosition.X,
-                    _multi.RealScreenPosition.Y,
-                    _multi.CalculateDepthZ()
-                );
+                LegacySpriteSink.DrawPreview(batcher, _multi, _multi.CalculateDepthZ());
             }
 
             // draw weather
@@ -1049,10 +1603,10 @@ namespace ClassicUO.Game.Scenes
             batcher.SetCircleOfTransparencyRadius(0f);
             batcher.End();
 
-            int flushes = batcher.FlushesDone;
-            int switches = batcher.TextureSwitches;
             batcher.GraphicsDevice.SetRenderTarget(null);
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
+            FrameStats.End(FramePhase.WorldDraw);
+            FrameStats.Set(FrameCounter.RenderListEntries, RenderedObjectsCount);
         }
 
         private bool PrepareLightsRendering(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets)
@@ -1141,24 +1695,29 @@ namespace ClassicUO.Game.Scenes
         private void InitializeRenderTargets(RenderTargets renderTargets)
         {
             renderTargets.SetLightsConfiguration(
-                UseAltLights ? _altLightsBlend : (UseLights ? _darknessBlend : () => null),
-                () =>
-                {
-                    Vector3 v = Vector3.Zero;
-                    v.Z = UseAltLights ? 0.5f : 1f;
-                    return v;
-                }
+                UseAltLights ? _altLightsBlend : (UseLights ? _darknessBlend : _noLightsBlend),
+                UseAltLights ? _altLightsHue : _lightsHue
             );
         }
 
         public override void DrawUI(UltimaBatcher2D batcher)
         {
             _healthLinesManager.Draw(batcher, 0f);
+#if CUO_DEVTOOLS
+            BaseGameObject fillSelection = SelectedObject.Object;
+#endif
 
             if (!UIManager.IsMouseOverWorld)
             {
                 SelectedObject.Object = null;
             }
+
+#if CUO_DEVTOOLS
+            if (PickSkip.Check)
+            {
+                PickSkip.Judge(fillSelection, SelectedObject.Object);
+            }
+#endif
 
             _world.WorldTextManager.ProcessWorldText(true);
             _world.WorldTextManager.Draw(batcher, Camera.Bounds.X, Camera.Bounds.Y, 0);
@@ -1229,7 +1788,7 @@ namespace ClassicUO.Game.Scenes
             {
                 if (_world.InGame)
                 {
-                    if (_world.Player.IsDead && _world.Player.DeathScreenTimer > Time.Ticks)
+                    if (_world.Player.IsDead && _world.PlayerState.DeathScreenTimer > Time.Ticks)
                     {
                         batcher.Begin();
                         _youAreDeadText.Draw(

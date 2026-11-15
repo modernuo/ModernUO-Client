@@ -21,27 +21,7 @@ namespace ClassicUO.Game.UI.Controls
             float layerDepth = layerDepthRef;
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(Hue, false, Alpha);
 
-            renderLists.AddGumpNoAtlas
-            (
-                batcher =>
-                {
-                    batcher.Draw
-                    (
-                        SolidColorTextureCache.GetTexture(Color.Black),
-                        new Rectangle
-                        (
-                            x,
-                            y,
-                            Width,
-                            Height
-                        ),
-                        hueVector,
-                        layerDepth
-                    );
-
-                    return true;
-                }
-            );
+            renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(SolidColorTextureCache.GetTexture(Color.Black), new Rectangle(x, y, Width, Height), hueVector, layerDepth));
 
             return true;
         }

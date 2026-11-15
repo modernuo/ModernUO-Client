@@ -19,9 +19,13 @@ using ClassicUO.Network;
 
 namespace ClassicUO.Game
 {
-    internal sealed class World
+    internal sealed partial class World
     {
         private readonly EffectManager _effectManager;
+
+        /// <summary>The graphic effects (moving, fixed, drag, lightning) alive in this world; DevBench's effect tooling, the
+        /// T8 tests and the effect checker read it.</summary>
+        internal EffectManager Effects => _effectManager;
         private readonly List<uint> _toRemove = new List<uint>();
         private uint _timeToDelete;
 
@@ -48,11 +52,31 @@ namespace ClassicUO.Game
             CommandManager = new CommandManager(this);
             Weather = new Weather(this);
             InfoBars = new InfoBarManager(this);
+            Ecs = new WorldEcs(this);
+            State = new WorldState(this);
+            MapRecycler = new Map.MapObjectRecycler(this);
+            ChunkPool = new Map.ChunkPool(this);
+            Writer = new WorldWriter(this);
         }
+
+        public WorldEcs Ecs { get; }
+
+        /// <summary>T2: the world state the ECS owns (container contents first), read by the client.</summary>
+        public WorldState State { get; }
+
+        /// <summary>T1: the mutation funnel (ecs-transition-plan.md); converted packet groups write world state through it.</summary>
+        public WorldWriter Writer { get; }
 
         public Point RangeSize;
 
         public PlayerMobile Player { get; private set; }
+
+        /// <summary>
+        /// The player's session data (stats, skills, buffs, abilities), held here rather than on <see cref="Player"/>
+        /// (ecs-transition-plan Q4). Replaced with a fresh store by <see cref="CreatePlayer"/> and emptied by
+        /// <see cref="Clear"/>, the lifetime the fields had on the PlayerMobile.
+        /// </summary>
+        public PlayerState PlayerState { get; private set; } = new PlayerState();
 
         public HouseCustomizationManager CustomHouseManager;
 
@@ -100,11 +124,100 @@ namespace ClassicUO.Game
 
         public InfoBarManager InfoBars { get; }
 
-        public Dictionary<uint, Item> Items { get; } = new Dictionary<uint, Item>();
+        public ItemTable Items { get; } = new ItemTable();
 
-        public Dictionary<uint, Mobile> Mobiles { get; } = new Dictionary<uint, Mobile>();
+        public MobileTable Mobiles { get; } = new MobileTable();
 
         public Map.Map Map { get; private set; }
+
+        /// <summary>Land and statics of evicted chunks, reused by later chunk loads (Chunk.Destroy, Chunk.Load).</summary>
+        public Map.MapObjectRecycler MapRecycler { get; }
+
+        /// <summary>Destroyed chunks of this World, reused by Chunk.Create. Owned by the World like <see cref="MapRecycler"/>:
+        /// kept across <see cref="Clear"/> (relog), released by <see cref="ReleasePools"/>.</summary>
+        public Map.ChunkPool ChunkPool { get; }
+
+        // the slot array of the last destroyed Map, handed to the next one (a ~3.5 MiB LOH array otherwise per login/facet
+        // change). Held only while no Map owns it: RentChunkSlots takes it out, ReturnChunkSlots (Map.Destroy) puts it back.
+        private Chunk[] _spareSlots;
+
+        /// <summary>A cleared slot array of at least <paramref name="count"/> entries: the spare one if it is large enough
+        /// (the caller then owns it exclusively), else a new one.</summary>
+        internal Chunk[] RentChunkSlots(int count)
+        {
+            Chunk[] spare = _spareSlots;
+
+            if (spare != null && spare.Length >= count)
+            {
+                _spareSlots = null;
+
+                return spare;
+            }
+
+            return new Chunk[count];
+        }
+
+        /// <summary>The Map that owned <paramref name="slots"/> is destroyed; the array must already be cleared.</summary>
+        internal void ReturnChunkSlots(Chunk[] slots)
+        {
+            if (_spareSlots == null || _spareSlots.Length < slots.Length)
+            {
+                _spareSlots = slots;
+            }
+        }
+
+        internal Chunk[] SpareChunkSlots => _spareSlots;
+
+        /// <summary>item_pool: the destroyed items World dropped, reused by <see cref="GetOrCreateItem(uint, out bool)"/>. Kept
+        /// across <see cref="Clear"/>, released by <see cref="ReleasePools"/>.</summary>
+        internal ItemPool ItemPool => _itemPool ??= new ItemPool(this);
+
+        // created at the first use with the switch on: with item_pool off the World allocates nothing for it
+        private ItemPool _itemPool;
+
+        /// <summary>Tests: whether this World created its pool.</summary>
+        internal bool ItemPoolCreated => _itemPool != null;
+
+        /// <summary>Tests: the switch for this World (null: the <c>item_pool</c> setting, read once at startup).</summary>
+        internal bool? ItemPoolOverride;
+
+        internal bool ItemPoolOn => ItemPoolOverride ?? ItemPool.SettingOn;
+
+        // every removal of a destroyed item from Items: with item_pool on, the item is offered to the pool
+        private void DropItem(uint serial)
+        {
+            if (!ItemPoolOn)
+            {
+                Items.Remove(serial);
+
+                return;
+            }
+
+            Item item = Items.Get(serial);
+
+            if (Items.Remove(serial) && item.IsDestroyed)
+            {
+                ItemPool.Offer(item);
+            }
+        }
+
+        /// <summary>MapWarmup filled this World's pools for the current login (World.Clear re-arms it).</summary>
+        internal bool WarmupDone;
+
+        /// <summary>The World is finished (client unload, or a test's end): drops its chunk, land and static pools, so nothing
+        /// keeps its chunks or map objects alive.</summary>
+        public void ReleasePools()
+        {
+            if (_itemPool != null || ItemPoolOn)
+            {
+                ItemPool.Close();
+            }
+
+            ChunkPool.Close();
+            MapRecycler.Close();
+            _spareSlots = null;
+            WarmupDone = false;
+        }
 
         public byte ClientViewRange { get; set; } = Constants.MAX_VIEW_RANGE;
 
@@ -116,6 +229,10 @@ namespace ClassicUO.Game
         public int OldMusicIndex { get; set; }
 
         public WorldTextManager WorldTextManager { get; }
+
+        /// <summary>Mobiles and items that got overhead text (GameObject.AddMessage): the scene refreshes their text position
+        /// each frame from this list instead of scanning every entity. Entries whose text is gone are dropped there.</summary>
+        public readonly List<Entity> TextOwners = new List<Entity>();
 
         public JournalManager Journal { get; } = new JournalManager();
 
@@ -155,16 +272,20 @@ namespace ClassicUO.Game
                             value = 0;
                         }
 
-                        Client.Game.UO.FileManager.Maps.LoadMap(value, ClientFeatures.Flags.HasFlag(CharacterListFlags.CLF_UNLOCK_FELUCCA_AREAS));
+                        Client.Game.UO.FileManager.Maps.LoadMap(value);
                         Map = new Map.Map(this, value);
+                        ClassicUO.Game.Map.MapWarmup.OnMapCreated(this);
 
-                        Player.SetInWorldTile(x, y, z);
-                        Player.ClearSteps();
+                        // T1 (funnel part 9, the gate's last direct writes: a map change at login): the player re-placed on
+                        // the new map and its walk queue emptied, as funnel operations (after ClearForMapChange's scope)
+                        Writer.MoveMobile(Player, x, y, z);
+                        Writer.StopMobile(Player);
                     }
                     else
                     {
-                        Client.Game.UO.FileManager.Maps.LoadMap(value, ClientFeatures.Flags.HasFlag(CharacterListFlags.CLF_UNLOCK_FELUCCA_AREAS));
+                        Client.Game.UO.FileManager.Maps.LoadMap(value);
                         Map = new Map.Map(this, value);
+                        ClassicUO.Game.Map.MapWarmup.OnMapCreated(this);
                     }
 
                     // force cursor update when switching map
@@ -204,13 +325,21 @@ namespace ClassicUO.Game
                 ProfileManager.Load(ServerName, LoginScene.Account, lastChar);
             }
 
+            CreatePlayer(serial, Client.Game.UO.FileManager.Skills.Skills);
+        }
+
+        /// <summary>The player object and a fresh <see cref="PlayerState"/> with these skills (tests pass their own list).</summary>
+        internal void CreatePlayer(uint serial, IReadOnlyList<SkillEntry> skills)
+        {
             if (Player != null)
             {
                 Clear();
             }
 
             Player = new PlayerMobile(this, serial);
+            PlayerState = new PlayerState(skills);
             Mobiles.Add(Player);
+            Ecs.Sync(Player);
 
             Log.Trace($"Player [0x{serial:X8}] created");
         }
@@ -225,13 +354,19 @@ namespace ClassicUO.Game
                 {
                     for (int y = 0; y < 8; y++)
                     {
-                        for (GameObject obj = chunk?.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                        // order does not matter (each object updates itself); the merged walk also reaches the index's objects
+                        TileReader reader = default;
+
+                        for (GameObject obj = chunk == null ? null : TileReader.Open(chunk, x << 3 | y, null, out reader); obj != null; obj = reader.Next())
                         {
                             obj.UpdateGraphicBySeason();
                         }
                     }
                 }
             }
+
+            // the season's graphics change the tiledata flags the max-Z decision reads, without touching the tile lists
+            Map.InvalidateDecision();
 
             //TODO(deccer): refactor this out into _audioPlayer.PlayMusic(...)
             UOMusic currentMusic = Client.Game.Audio.GetCurrentMusic();
@@ -256,40 +391,9 @@ namespace ClassicUO.Game
         {
             if (Player != null)
             {
-                if (SerialHelper.IsValid(ObjectToRemove))
-                {
-                    Item rem = Items.Get(ObjectToRemove);
-                    ObjectToRemove = 0;
-
-                    if (rem != null)
-                    {
-                        Entity container = Get(rem.Container);
-
-                        RemoveItem(rem, true);
-
-                        if (rem.Layer == Layer.OneHanded || rem.Layer == Layer.TwoHanded)
-                        {
-                            Player.UpdateAbilities();
-                        }
-
-                        if (container != null)
-                        {
-                            if (SerialHelper.IsMobile(container.Serial))
-                            {
-                                UIManager.GetGump<PaperDollGump>(container.Serial)?.RequestUpdateContents();
-                            }
-                            else if (SerialHelper.IsItem(container.Serial))
-                            {
-                                UIManager.GetGump<ContainerGump>(container.Serial)?.RequestUpdateContents();
-
-                                if (container.Graphic == 0x2006)
-                                {
-                                    UIManager.GetGump<GridLootGump>(container)?.RequestUpdateContents();
-                                }
-                            }
-                        }
-                    }
-                }
+                // T5d: World.Update as ordered stages. The order of the side effects is the order the body had before.
+                RunStage(WorldStage.ChunkLoading);
+                RunStage(WorldStage.ObjectToRemove);
 
                 bool do_delete = _timeToDelete < Time.Ticks;
 
@@ -298,155 +402,692 @@ namespace ClassicUO.Game
                     _timeToDelete = Time.Ticks + 50;
                 }
 
-                foreach (Mobile mob in Mobiles.Values)
+                RunStage(WorldStage.Mobiles, do_delete);
+                RunStage(WorldStage.ActiveItems, do_delete);
+                RunStage(WorldStage.EffectsText);
+                RunStage(WorldStage.EcsBookkeeping);
+            }
+        }
+
+        private void RunStage(WorldStage stage, bool do_delete = false)
+        {
+            if (stage != WorldStage.EffectsText)
+            {
+                StageObserver?.Invoke(stage);
+            }
+
+            switch (stage)
+            {
+                case WorldStage.ChunkLoading:
+                    StageChunkLoading();
+
+                    break;
+
+                case WorldStage.ObjectToRemove:
+                    StageObjectToRemove();
+
+                    break;
+
+                case WorldStage.Mobiles:
+                    StageMobiles(do_delete);
+
+                    break;
+
+                case WorldStage.ActiveItems:
+                    StageActiveItems(do_delete);
+
+                    break;
+
+                case WorldStage.EffectsText:
+                    StageEffectsText();
+
+                    break;
+
+                case WorldStage.EcsBookkeeping:
+                    StageEcsBookkeeping();
+
+                    break;
+            }
+        }
+
+        // 1. region prefetch around the player and this frame's share of the queued chunk loads (Map.UpdateLoading)
+        private void StageChunkLoading()
+        {
+            Map?.UpdateLoading(Player.X, Player.Y);
+        }
+
+        // 2. the item the player picked up and the server confirmed gone
+        private void StageObjectToRemove()
+        {
+            if (SerialHelper.IsValid(ObjectToRemove))
+            {
+                Item rem = FindItem(ObjectToRemove);
+                ObjectToRemove = 0;
+
+                if (rem != null)
                 {
-                    mob.Update();
+                    Entity container = Get(rem.Container);
 
-                    if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
+                    // T1 (funnel part 9): the removal with force, as a funnel operation
+                    Writer.RemovePickedUpItem(rem);
+
+                    if (rem.Layer == Layer.OneHanded || rem.Layer == Layer.TwoHanded)
                     {
-                        RemoveMobile(mob);
+                        Player.UpdateAbilities();
                     }
 
-                    if (mob.IsDestroyed)
+                    if (container != null)
                     {
-                        _toRemove.Add(mob.Serial);
-                    }
-                    else
-                    {
-                        if (mob.NotorietyFlag == NotorietyFlag.Ally)
+                        if (SerialHelper.IsMobile(container.Serial))
                         {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                true,
-                                mob.Name
-                            );
+                            UIManager.GetGump<PaperDollGump>(container.Serial)?.RequestUpdateContents();
                         }
-                        else if (Party.Leader != 0 && Party.Contains(mob))
+                        else if (SerialHelper.IsItem(container.Serial))
                         {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                false,
-                                mob.Name
-                            );
+                            UIManager.GetGump<ContainerGump>(container.Serial)?.RequestUpdateContents();
+
+                            if (container.Graphic == 0x2006)
+                            {
+                                UIManager.GetGump<GridLootGump>(container)?.RequestUpdateContents();
+                            }
                         }
                     }
                 }
+            }
+        }
 
-                if (_toRemove.Count != 0)
+        // 3.-5. steps (T6c StepSystem, run by the T5b advance system), the mobile clock and advance (T5b), the range sweep and the world-map pass
+        // (T5c). The E4 clock path keeps them in one method, so they are one stage here.
+        private void StageMobiles(bool do_delete)
+        {
+            FrameStats.Begin(FramePhase.WorldMobiles);
+
+            // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
+            // nothing in the loop changes them
+            bool wmap = WMapManager.AcceptsLocalUpdates;
+
+            UpdateMobilesByClock(do_delete, wmap);
+
+            FrameStats.End(FramePhase.WorldMobiles);
+        }
+
+        // 6. active items
+        private void StageActiveItems(bool do_delete)
+        {
+            FrameStats.Begin(FramePhase.WorldItems);
+
+            UpdateActiveItems(do_delete);
+
+            FrameStats.End(FramePhase.WorldItems);
+        }
+
+        // 7. effects (T8, still legacy), 8. world text, the world-map pruning of entities nobody updated
+        private void StageEffectsText()
+        {
+            FrameStats.Begin(FramePhase.WorldEffectsText);
+            StageObserver?.Invoke(WorldStage.Effects);
+            _effectManager.Update();
+            StageObserver?.Invoke(WorldStage.WorldText);
+            WorldTextManager.Update();
+            StageObserver?.Invoke(WorldStage.WorldMapPrune);
+            WMapManager.RemoveUnupdatedWEntity();
+            FrameStats.End(FramePhase.WorldEffectsText);
+        }
+
+        // 10. ECS bookkeeping
+        private void StageEcsBookkeeping()
+        {
+            FrameStats.Begin(FramePhase.WorldEcs);
+            Ecs.Update();
+            FrameStats.End(FramePhase.WorldEcs);
+            FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
+            FrameStats.Set(FrameCounter.Items, Items.Count);
+        }
+
+        // E4 (the mobile clock path) ---------------------------------------------------------------------------
+        private readonly List<uint> _dueMobiles = new List<uint>();
+        private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
+        private bool _mobileClockStarted;
+
+        internal void OnMobileDestroyed(Mobile mobile)
+        {
+            // the queue is read by the clock path, from the first update on
+            if (_mobileClockStarted)
+            {
+                _destroyedMobiles.Add(mobile);
+            }
+        }
+
+        // T5b: due mobiles update in the ECS (T9 deleted world_anim_system's off path; S8b deleted Mobile.Update)
+        private readonly MobileAnimationAdvanceSystem _animAdvance = new MobileAnimationAdvanceSystem();
+
+        // T6c: due mobiles process their steps in the ECS (T9 deleted world_step_system's off path)
+
+        /// <summary>T6c: the step processing of a due mobile with queued steps (<see cref="MobileAnimationAdvanceSystem"/> runs it).</summary>
+        internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
+
+        private readonly List<Mobile> _dueObjects = new List<Mobile>();
+        private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
+
+        /// <summary>
+        /// E4/E10: sorts <paramref name="list"/> into the order <c>Mobiles.Values</c> enumerates, which is the order the legacy
+        /// loop updated mobiles in and which tile lists, picking ties and footstep sounds depend on. <see cref="MobileTable"/>
+        /// keeps each mobile's slot in <see cref="Mobile.Ordinal"/> on add and remove, so this is a plain sort; every mobile in
+        /// <paramref name="list"/> must be in <c>Mobiles</c> (the caller fetched it from there this frame).
+        /// </summary>
+        internal void SortInMobilesOrder(List<Mobile> list)
+        {
+            list.Sort(s_byOrdinal);
+        }
+
+        /// <summary>
+        /// The mobile loop of <see cref="Update"/> driven by the ECS clocks. What <c>Mobile.Update</c> would do for a mobile that
+        /// is not due is nothing (see <see cref="MobileClockRules.IsDue"/>), so only due mobiles are updated; the rest of the
+        /// legacy loop body is split out: the range removal runs in its own pass every 50 ms, destroyed mobiles come from
+        /// <see cref="OnMobileDestroyed"/>, and the world-map pass runs only while the map accepts updates.
+        /// </summary>
+        private void UpdateMobilesByClock(bool do_delete, bool wmap)
+        {
+            // T9 S8c: the clocks, timers and queues exist from each record's creation (nothing to build here)
+            _mobileClockStarted = true;
+            _dueMobiles.Clear();
+            long t0 = WorldEcs.MobileUpdateStats ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles);
+
+            if (t0 != 0)
+            {
+                WorldEcs.ClockCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
+
+            if (WorldEcs.MobileUpdateStats)
+            {
+                WorldEcs.ClockFrames++;
+                WorldEcs.ClockDue += _dueMobiles.Count;
+                WorldEcs.ClockScanned += Ecs.Clock.Scanned;
+            }
+
+            // the due list follows archetype order, which equipment tags reshuffle; the legacy loop's order decides tile lists,
+            // picking ties and which footstep wins, so the due mobiles run in Mobiles.Values order
+            _dueObjects.Clear();
+
+            for (int i = 0; i < _dueMobiles.Count; i++)
+            {
+                Mobile due = FindMobile(_dueMobiles[i]);
+
+                if (due != null)
                 {
-                    for (int i = 0; i < _toRemove.Count; i++)
-                    {
-                        Mobiles.Remove(_toRemove[i]);
-                    }
-
-                    _toRemove.Clear();
+                    _dueObjects.Add(due);
                 }
+            }
+
+            SortInMobilesOrder(_dueObjects);
+
+            for (int i = 0; i < _dueObjects.Count; i++)
+            {
+                Mobile mob = _dueObjects[i];
+
+                // T5b/S8b: every due mobile updates in the ECS, in table order, so the random draws keep their sequence
+                _animAdvance.TryRun(this, mob);
+
+                // the update may have opened or ended the handles (the timer and queue writes kept the rest of the clock)
+                Ecs.PushClock(mob);
+
+                if (ClassicUO.Loop.VisualDue.Tracking)
+                {
+                    NoteMobileVisual(mob);
+                }
+            }
+
+            NoteVisualTick(Ecs.Clock.NextVisualTick, ClassicUO.Loop.VisualSource.MobileAnim);
+
+            if (AnimFrameCount.UseTables)
+            {
+                // anim_frame_count_tables: the advance no longer calls GetAnimationFrames, whose first step uploads the
+                // directions the anim workers finished (picking may have queued some); drain them each frame as it did
+                Client.Game?.UO?.Animations?.DrainFinished();
+            }
+
+            if (t0 != 0)
+            {
+                WorldEcs.ClockUpdateTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            }
+
+            if (do_delete)
+            {
+                SweepMobiles(); // T5c: the range sweep
+            }
+
+            for (int i = 0; i < _destroyedMobiles.Count; i++)
+            {
+                Mobile dead = _destroyedMobiles[i];
+
+                // a newer mobile may hold the serial by now
+                if (Holds(dead))
+                {
+                    Mobiles.Remove(dead.Serial);
+                }
+            }
+
+            _destroyedMobiles.Clear();
+
+            if (wmap)
+            {
+                WorldMapPass(); // T5c: the world-map pass
+            }
+        }
+
+        // present_on_change_anim_due (evloop-4): a due mobile's next visual change after its update this frame
+        private static void NoteMobileVisual(Mobile mob)
+        {
+            if (!mob.IsDestroyed && mob.TryRecord(out Friflo.Engine.ECS.Entity e))
+            {
+                NoteVisualTick(ClassicUO.Ecs.MobileClockRules.NextVisualTick(
+                    in ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.MobileClock>(e), in ClassicUO.Ecs.EcsRead.Get<ClassicUO.Ecs.AnimationTimer>(e), Time.Ticks),
+                    ClassicUO.Loop.VisualSource.MobileAnim);
+            }
+        }
+
+        private static void NoteVisualTick(long tick, ClassicUO.Loop.VisualSource source)
+        {
+            if (tick == ClassicUO.Ecs.MobileClockRules.VisualEveryFrame)
+            {
+                ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.MobileBusy);
+            }
+            else if (tick != ClassicUO.Ecs.MobileClockRules.NoVisualChange)
+            {
+                ClassicUO.Loop.VisualDue.At(tick, source);
+            }
+        }
+
+        // W5: items whose Update does something this frame (Item.NeedsFrameUpdate). T9: the ActiveItemEntry entities
+        // (ActiveItemStore) are the list. Read and change membership through the members below.
+        private ActiveItemStore _activeStore;
+        // items destroyed since the last update; World.Update drops them from Items as the full loop did
+        private readonly List<Item> _destroyedItems = new List<Item>();
+        private bool _activeItemsValid;
+
+        private ActiveItemStore ActiveStore => _activeStore ??= new ActiveItemStore(Ecs.Mirror.Store);
+
+        /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
+        public int ActiveItemCount => ActiveStore.Count;
+
+        /// <summary>The per-frame update list in visiting order (tests; readers index it with <see cref="ActiveItemAt"/>).</summary>
+        internal IReadOnlyList<Item> ActiveItems => ActiveStore;
+
+        /// <summary>The item in visiting position <paramref name="index"/> (0 to <see cref="ActiveItemCount"/> - 1).</summary>
+        internal Item ActiveItemAt(int index) => ActiveStore[index];
+
+        /// <summary>Whether <paramref name="item"/> is in the per-frame update list (O(1)).</summary>
+        internal bool IsItemListed(Item item) => item.ActiveEntryId != 0;
+
+        /// <summary>T9: the item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity (null when it has none; tests and the checker).</summary>
+        internal Friflo.Engine.ECS.Entity ActiveItemEntryOf(Item item) => ActiveStore.EntryOf(item);
+
+        /// <summary>T9 tests: the store's item table (handles in use, used range; 0 and 0 when the world has no store).</summary>
+        internal (int InUse, int End) ActiveItemHandles => _activeStore?.Handles ?? (0, 0);
+
+        /// <summary>perf-13: the active list holds every item that needs updates (false from World.Clear until the next
+        /// update's first pass rebuilds it).</summary>
+        internal bool ActiveItemsListed => _activeItemsValid;
+
+        /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
+        public void QueueItemUpdate(Item item)
+        {
+            ActiveStore.Add(item);
+        }
+
+        // World.Clear: the list must not keep destroyed items alive; the next update rebuilds it from a scan
+        private void ClearActiveItems()
+        {
+            // whatever its count: the item table may still name items whose entries were deleted outside the store
+            _activeStore?.Clear();
+        }
+
+        internal void OnItemDestroyed(Item item)
+        {
+            _destroyedItems.Add(item);
+            _destroyedSeen++;
+        }
+
+        // W5: the work of ClassicUO's every-item loop. Item.Update is a no-op for every item not in the active list
+        // (Item.NeedsFrameUpdate), the range removal only runs every 50 ms (do_delete), and destroyed items are known
+        // from Entity.Destroy, so the full pass runs only on do_delete frames.
+        private void UpdateActiveItems(bool do_delete)
+        {
+            if (ActiveCheck)
+            {
+                CheckActiveItems();
+            }
+
+            if (ActiveItemsCheckOn)
+            {
+                CheckActiveItemsSystem();
+            }
+
+            if (!_activeItemsValid)
+            {
+                // first update (or the first after World.Clear): find every item that needs updates
+                _activeItemsValid = true;
 
                 foreach (Item item in Items.Values)
                 {
-                    item.Update();
-
-                    if (do_delete && item.OnGround && item.Distance > ClientViewRange /*CheckToRemove(item, ClientViewRange)*/)
+                    if (item.NeedsFrameUpdate)
                     {
-                        if (item.IsMulti)
-                        {
-                            if (HouseManager.TryToRemove(item, ClientViewRange))
-                            {
-                                RemoveItem(item);
-                            }
-                        }
-                        else
-                        {
-                            RemoveItem(item);
-                        }
+                        QueueItemUpdate(item);
+                    }
+                }
+            }
+
+            if (!Ecs.ItemAnimTimerEnabled)
+            {
+                // T5b-items: the corpse timers are written with the item records from the first update on: build them all
+                Ecs.ItemAnimTimerEnabled = true;
+
+                foreach (Item corpse in Items.Values)
+                {
+                    Ecs.PushItemTimer(corpse);
+                }
+            }
+
+            // T9: the visiting order is the ECS's, rebuilt from the ActiveItemEntry slots
+            RebuildActiveOrder();
+            ActiveItemStore store = _activeStore;
+
+            for (int i = 0; i < store.Count; i++)
+            {
+                Item item = store[i];
+
+                UpdateActiveItem(item);
+
+                if (ClassicUO.Loop.VisualDue.Tracking && item.IsCorpse && item.CorpseFrameMoves())
+                {
+                    ClassicUO.Loop.VisualDue.At(item.LastAnimationChangeTime, ClassicUO.Loop.VisualSource.ItemAnim);
+                }
+
+                if (!item.NeedsFrameUpdate || !HeldItem(item))
+                {
+                    store.SwapRemoveAt(i);
+                    i--;
+                }
+            }
+
+            if (do_delete)
+            {
+                PrepareItemSweep(); // T5c
+
+                foreach (Item item in Items.Values)
+                {
+                    if (ItemBeyond(item))
+                    {
+                        SweepItemBeyond(item);
                     }
 
                     if (item.IsDestroyed)
                     {
                         _toRemove.Add(item.Serial);
                     }
+                    else if (!IsItemListed(item) && item.NeedsFrameUpdate)
+                    {
+                        // a corpse the change hooks missed: update it from now on
+                        QueueItemUpdate(item);
+                        MissedActiveItems++;
+                    }
                 }
 
-                if (_toRemove.Count != 0)
+                FinishItemSweep(); // T5c
+            }
+
+            QueueDestroyedForRemoval();
+
+            if (_toRemove.Count != 0)
+            {
+                for (int i = 0; i < _toRemove.Count; i++)
                 {
-                    for (int i = 0; i < _toRemove.Count; i++)
+                    DropItem(_toRemove[i]);
+                }
+
+                _toRemove.Clear();
+            }
+
+            if (ItemPoolOn)
+            {
+                ItemPool.Commit(Time.Ticks);
+            }
+
+            if (ActiveCheck)
+            {
+                // the full loop left no destroyed item in Items
+                foreach (Item item in Items.Values)
+                {
+                    if (item.IsDestroyed)
                     {
-                        Items.Remove(_toRemove[i]);
+                        _checkDestroyedLeft++;
+                    }
+                }
+            }
+        }
+
+        // Holds(item) for the per-frame item loops from the table's held state (no lookup); CUO_ACTIVE_ITEMS_CHECK compares
+        // it with Holds at every use
+        private bool HeldItem(Item item)
+        {
+            bool held = Items.Holds(item);
+
+            if (ActiveItemsCheckOn && held != Holds(item))
+            {
+                ActiveMismatch($"item 0x{item.Serial:X8}: held flag {held}, table lookup {!held}");
+            }
+
+            return held;
+        }
+
+        // the destroyed items World still holds (not a newer object with the same serial) go to _toRemove
+        private void QueueDestroyedForRemoval()
+        {
+            for (int i = 0; i < _destroyedItems.Count; i++)
+            {
+                Item item = _destroyedItems[i];
+
+                if (item.IsDestroyed && HeldItem(item))
+                {
+                    _toRemove.Add(item.Serial);
+                }
+            }
+
+            _destroyedItems.Clear();
+        }
+
+        /// <summary>W5: drops the items destroyed since the last update from <see cref="Items"/>, as World.Update does
+        /// (exposed for the unit tests). Returns how many were dropped.</summary>
+        internal int DropDestroyedItems()
+        {
+            QueueDestroyedForRemoval();
+            int n = _toRemove.Count;
+
+            for (int i = 0; i < _toRemove.Count; i++)
+            {
+                DropItem(_toRemove[i]);
+            }
+
+            _toRemove.Clear();
+
+            return n;
+        }
+
+        /// <summary>Items the 50 ms sweep found needing updates that no hook had queued (should stay 0).</summary>
+        public int MissedActiveItems;
+
+        // CUO_W5_CHECK=1: every frame, before the active update, every item is checked against what the full loop would
+        // have done: an item whose Update does something must be listed, and every entity's hits percentage must equal
+        // the per-frame rule's. Logged every 5 s as [w5-check]. Costs a full pass per frame; don't measure with it on.
+        public static readonly bool ActiveCheck = System.Environment.GetEnvironmentVariable("CUO_W5_CHECK") == "1";
+        private long _checkFrames, _checkItems, _checkUnlisted, _checkHits, _checkHitsWrong, _checkCorpses, _checkHandles, _checkDestroyedLeft;
+        private int _destroyedSeen;
+        private uint _checkNextLog;
+
+        private void CheckActiveItems()
+        {
+            _checkFrames++;
+
+            foreach (Item item in Items.Values)
+            {
+                _checkItems++;
+
+                if (item.NeedsFrameUpdate)
+                {
+                    if (item.IsCorpse)
+                    {
+                        _checkCorpses++;
+                    }
+                    else
+                    {
+                        _checkHandles++;
                     }
 
-                    _toRemove.Clear();
+                    if (!IsItemListed(item) && _activeItemsValid)
+                    {
+                        _checkUnlisted++;
+
+                        if (_checkUnlisted <= 10)
+                        {
+                            Log.Warn($"[w5-check] unlisted item 0x{item.Serial:X8} graphic 0x{item.Graphic:X4} corpse={item.IsCorpse} handles={item.ObjectHandlesStatus}");
+                        }
+                    }
                 }
 
-                _effectManager.Update();
-                WorldTextManager.Update();
-                WMapManager.RemoveUnupdatedWEntity();
+                CheckHits(item);
             }
-        }
 
-        public bool Contains(uint serial)
-        {
-            if (SerialHelper.IsItem(serial))
+            foreach (Mobile mob in Mobiles.Values)
             {
-                return Items.Contains(serial);
+                CheckHits(mob);
             }
 
-            return SerialHelper.IsMobile(serial) && Mobiles.Contains(serial);
+            if (Time.Ticks >= _checkNextLog)
+            {
+                _checkNextLog = Time.Ticks + 5000;
+                Log.Info($"[w5-check] {_checkFrames} frames, {_checkItems} item checks: {_checkUnlisted} needing an update but unlisted, {MissedActiveItems} caught by the sweep; {_checkCorpses} corpse and {_checkHandles} handle updates seen; {_checkHits} hits checks, {_checkHitsWrong} wrong; {_destroyedSeen} items destroyed, {_checkDestroyedLeft} left in Items after the update; active list {ActiveItemCount}; text layouts skipped {_checkTextSkips}, {_checkTextMoved} would have moved a text");
+            }
         }
 
+        private long _checkTextSkips, _checkTextMoved;
+
+        /// <summary>CUO_W5_CHECK: the text layout the overhead text pass skipped (W5, expired texts) must place nothing.</summary>
+        internal void CheckSkippedTextLayout(Entity e)
+        {
+            System.Span<(int X, int Y, int OffsetY)> before = stackalloc (int, int, int)[16];
+            int n = 0;
+
+            for (TextObject t = (TextObject)e.TextContainer.Items; t != null && n < before.Length; t = (TextObject)t.Next)
+            {
+                before[n++] = (t.RealScreenPosition.X, t.RealScreenPosition.Y, t.OffsetY);
+            }
+
+            e.UpdateTextCoordsV();
+            _checkTextSkips++;
+            int i = 0;
+            bool moved = false;
+
+            for (TextObject t = (TextObject)e.TextContainer.Items; t != null && i < n; t = (TextObject)t.Next, i++)
+            {
+                if (t.RealScreenPosition.X != before[i].X || t.RealScreenPosition.Y != before[i].Y || t.OffsetY != before[i].OffsetY)
+                {
+                    moved = true;
+                    t.RealScreenPosition.X = before[i].X;
+                    t.RealScreenPosition.Y = before[i].Y;
+                    t.OffsetY = before[i].OffsetY;
+                }
+            }
+
+            if (moved && _checkTextMoved++ < 10)
+            {
+                Log.Warn($"[w5-check] skipped text layout of 0x{e.Serial:X8} would have moved a text");
+            }
+        }
+
+        private void CheckHits(Entity e)
+        {
+            if (e.HitsMax > 0 && !e.IsDestroyed)
+            {
+                _checkHits++;
+
+                if (e.HitsPercentage != Entity.HitsPercent(e.Hits, e.HitsMax))
+                {
+                    _checkHitsWrong++;
+
+                    if (_checkHitsWrong <= 10)
+                    {
+                        Log.Warn($"[w5-check] hits 0x{e.Serial:X8} {e.Hits}/{e.HitsMax} percentage {e.HitsPercentage}");
+                    }
+                }
+            }
+        }
+
+        /// <summary>Whether a live object is under <paramref name="serial"/>: <see cref="Get"/>'s answer, so a destroyed object
+        /// not yet swept does not count (T9, owner decision 2026-11-08; it used to).</summary>
+        public bool Contains(uint serial) => Get(serial) != null;
+
+        /// <summary>T9: the live object under <paramref name="serial"/> from the mirror's serial index (the record's handle;
+        /// null if none or destroyed). Where an item and a mobile share a serial (an item sent with a mobile-range serial,
+        /// which no sane server does) the mirror keeps one record, so this returns the kind written last.</summary>
         public Entity Get(uint serial)
         {
-            Entity ent;
+            object handle = Ecs.Mirror.GetHandle(serial);
 
-            if (SerialHelper.IsMobile(serial))
+            if (handle == null)
             {
-                ent = Mobiles.Get(serial);
-
-                if (ent == null)
-                {
-                    ent = Items.Get(serial);
-                }
-            }
-            else
-            {
-                ent = Items.Get(serial);
-
-                if (ent == null)
-                {
-                    ent = Mobiles.Get(serial);
-                }
+                return null;
             }
 
-            if (ent != null && ent.IsDestroyed)
-            {
-                ent = null;
-            }
+            // WorldEcs writes only Item and Mobile handles
+            Entity ent = System.Runtime.CompilerServices.Unsafe.As<Entity>(handle);
 
-            return ent;
+            return ent.IsDestroyed ? null : ent;
         }
 
         public Item GetOrCreateItem(uint serial)
         {
+            Item item = GetOrCreateItem(serial, out bool isNew);
+
+            if (isNew)
+            {
+                Ecs.Sync(item);
+            }
+
+            return item;
+        }
+
+        /// <summary>T1: <see cref="GetOrCreateItem(uint)"/> without the ECS write; the funnel commits the new item itself.</summary>
+        internal Item GetOrCreateItem(uint serial, out bool isNew)
+        {
+            // the table's own bookkeeping (T9 slice 3): a destroyed item not yet swept, or one created earlier in this
+            // operation and not committed, is found here and nowhere else (the index has no live record for either): T9 keeps
+            // the serial dictionaries for this bookkeeping
             Item item = Items.Get(serial);
 
             if (item != null && item.IsDestroyed)
             {
-                Items.Remove(serial);
+                DropItem(serial);
                 item = null;
             }
 
-            if (item == null /*|| item.IsDestroyed*/)
+            isNew = item == null;
+
+            if (isNew)
             {
-                item = Item.Create(this, serial);
+                // item_pool: a reused item comes back reset to a new Item's state
+                item = ItemPoolOn ? ItemPool.Take(Time.Ticks) : null;
+
+                if (item != null)
+                {
+                    item.Serial = serial;
+                }
+                else
+                {
+                    item = Item.Create(this, serial);
+                }
+
                 Items.Add(item);
             }
 
@@ -455,6 +1096,7 @@ namespace ClassicUO.Game
 
         public Mobile GetOrCreateMobile(uint serial)
         {
+            // the table's own bookkeeping, as GetOrCreateItem
             Mobile mob = Mobiles.Get(serial);
 
             if (mob != null && mob.IsDestroyed)
@@ -467,6 +1109,7 @@ namespace ClassicUO.Game
             {
                 mob = Mobile.Create(this, serial);
                 Mobiles.Add(mob);
+                Ecs.Sync(mob);
             }
 
             return mob;
@@ -474,7 +1117,7 @@ namespace ClassicUO.Game
 
         public void RemoveItemFromContainer(uint serial)
         {
-            Item it = Items.Get(serial);
+            Item it = FindItem(serial);
 
             if (it != null)
             {
@@ -485,9 +1128,22 @@ namespace ClassicUO.Game
         public void RemoveItemFromContainer(Item obj)
         {
             uint containerSerial = obj.Container;
+            UnlinkFromContainer(obj, containerSerial);
 
             // if entity is running the "dying" animation we have to reset container too.
             // SerialHelper.IsValid(containerSerial) is not ideal in this case
+            // (T9 S5: the record is the Container's only copy: the Sync writes it without one)
+            Ecs.Sync(obj, detach: containerSerial != 0xFFFF_FFFF);
+        }
+
+        /// <summary>
+        /// The link half of <see cref="RemoveItemFromContainer(Item)"/>: the parent's gump and the item's tile (the parent's
+        /// child list went in T9: the children are the ECS's). It writes no world state of the item (its Container stays as it is, and nothing syncs): the
+        /// caller writes the resulting Container itself (T1: <see cref="WorldWriter"/> computes it, commits it to the ECS and the
+        /// cache, never reading it back).
+        /// </summary>
+        internal void UnlinkFromContainer(Item obj, uint containerSerial)
+        {
             if (containerSerial != 0xFFFF_FFFF)
             {
                 if (SerialHelper.IsMobile(containerSerial))
@@ -498,24 +1154,26 @@ namespace ClassicUO.Game
                 {
                     UIManager.GetGump<ContainerGump>(containerSerial)?.RequestUpdateContents();
                 }
-
-                Entity container = Get(containerSerial);
-
-                if (container != null)
-                {
-                    container.Remove(obj);
-                }
-
-                obj.Container = 0xFFFF_FFFF;
             }
 
-            obj.Next = null;
-            obj.Previous = null;
             obj.RemoveFromTile();
         }
 
-        public bool RemoveItem(uint serial, bool forceRemove = false)
+        /// <summary>Tests: each object the destroy cascades destroy, in order (before its OPL entry and Destroy).</summary>
+        internal System.Action<uint> RemovalObserver;
+
+        public bool RemoveItem(uint serial, bool forceRemove = false) => RemoveItem(serial, forceRemove, 0xFFFF_FFFF);
+
+        /// <summary>
+        /// <see cref="RemoveItem(uint, bool)"/> for a clear: the cascade never removes <paramref name="keep"/> (the container
+        /// being cleared; T9 slice B2: should a loop in the serial graph lead back to it, it stays).
+        /// </summary>
+        internal bool RemoveItem(uint serial, bool forceRemove, uint keep) => RemoveItem(serial, forceRemove, serial, keep, 0);
+
+        private bool RemoveItem(uint serial, bool forceRemove, uint root, uint keep, int depth)
         {
+            // the table's own bookkeeping (T9 slice 3): the cascade removes the item a mobile wears under its own serial,
+            // which the index (one record per serial) may answer as the mobile
             Item item = Items.Get(serial);
 
             if (item == null || item.IsDestroyed)
@@ -523,31 +1181,63 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            LinkedObject first = item.Items;
-            RemoveItemFromContainer(item);
-
-            while (first != null)
+            // T9 child-list slice A: the children from the ECS, copied before the item leaves its container
+            using (ContentsSnapshot children = State.SnapshotChildren(item))
             {
-                LinkedObject next = first.Next;
-
-                RemoveItem(first as Item, forceRemove);
-
-                first = next;
-            }
-
-            OPL.Remove(serial);
-            item.Destroy();
-
-            if (forceRemove)
-            {
-                Items.Remove(serial);
+                RemoveItemFromContainer(item);
+                RemoveContentsAndDestroy(item, children.Serials, forceRemove, root, keep, depth);
             }
 
             return true;
         }
 
+        /// <summary>
+        /// T1: the rest of <see cref="RemoveItem(uint, bool)"/> for an item the caller has already taken out of its container
+        /// (<see cref="UnlinkFromContainer"/> with the parent it captured, and the detached Container written): its contents,
+        /// OPL, Destroy. It never reads the item's Container (<see cref="WorldWriter"/> computes it; T4's ECS-backed getter
+        /// would return the committed detached value). <paramref name="item"/> is the live item World holds for its serial.
+        /// </summary>
+        internal void RemoveDetachedItem(Item item, bool forceRemove)
+        {
+            using (ContentsSnapshot children = State.SnapshotChildren(item))
+            {
+                RemoveContentsAndDestroy(item, children.Serials, forceRemove, item.Serial, 0xFFFF_FFFF, 0);
+            }
+        }
+
+        // T9 child-list slice A: each child by serial in child order, its contents first, then the parent (the list walk's
+        // order). The spellbook's detached spell entries are not in the ECS contents; the list walk skipped them as well
+        // (RemoveItem by serial 1-64, which no item has). T9 slice B2: WorldWriter refuses an attach that would close a loop
+        // in the serial graph; should one exist anyway, the cascade does not come back to its root's serial or to the kept
+        // container, and stops at WorldState.MaxNestingDepth.
+        private void RemoveContentsAndDestroy(Item item, System.ReadOnlySpan<uint> children, bool forceRemove, uint root, uint keep, int depth)
+        {
+            uint serial = item.Serial;
+
+            if (depth < WorldState.MaxNestingDepth)
+            {
+                foreach (uint child in children)
+                {
+                    if (child != keep && child != root)
+                    {
+                        RemoveItem(child, forceRemove, root, keep, depth + 1);
+                    }
+                }
+            }
+
+            RemovalObserver?.Invoke(serial);
+            OPL.Remove(serial);
+            item.Destroy();
+
+            if (forceRemove)
+            {
+                DropItem(serial);
+            }
+        }
+
         public bool RemoveMobile(uint serial, bool forceRemove = false)
         {
+            // the table's own bookkeeping, as RemoveItem
             Mobile mobile = Mobiles.Get(serial);
 
             if (mobile == null || mobile.IsDestroyed)
@@ -555,17 +1245,16 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            LinkedObject first = mobile.Items;
-
-            while (first != null)
+            // T9 slice B2: the item a mobile wears under its own serial is its child; below it that serial is a loop
+            using (ContentsSnapshot children = State.SnapshotChildren(mobile))
             {
-                LinkedObject next = first.Next;
-
-                RemoveItem(first as Item, forceRemove);
-
-                first = next;
+                foreach (uint child in children.Serials)
+                {
+                    RemoveItem(child, forceRemove, serial, 0xFFFF_FFFF, 1);
+                }
             }
 
+            RemovalObserver?.Invoke(serial);
             OPL.Remove(serial);
             mobile.Destroy();
 
@@ -686,13 +1375,45 @@ namespace ClassicUO.Game
             return serial;
         }
 
+        private readonly List<Item> _scanItems = new List<Item>();
+        private readonly List<Mobile> _scanMobiles = new List<Mobile>();
+
         public uint FindNext(ScanTypeObject scanType, uint lastSerial, bool reverse)
+        {
+            try
+            {
+                return FindNextCore(scanType, lastSerial, reverse);
+            }
+            finally
+            {
+                // don't keep the world's objects alive between scans
+                _scanItems.Clear();
+                _scanMobiles.Clear();
+            }
+        }
+
+        private uint FindNextCore(ScanTypeObject scanType, uint lastSerial, bool reverse)
         {
             bool found = false;
 
             if (scanType == ScanTypeObject.Objects)
             {
-                var items = reverse ? Items.Values.Reverse() : Items.Values;
+                // W5: the same order as Items.Values / .Reverse(), without LINQ's per-call copy and the boxed enumerator
+                List<Item> items = _scanItems;
+                items.Clear();
+                items.EnsureCapacity(Items.Count);
+
+                // a loop, not AddRange: the table's ValueCollection is a struct, which AddRange would box with its enumerator
+                foreach (Item item in Items.Values)
+                {
+                    items.Add(item);
+                }
+
+                if (reverse)
+                {
+                    items.Reverse();
+                }
+
                 foreach (Item item in items)
                 {
                     if (item.IsMulti || item.IsDestroyed || !item.OnGround)
@@ -716,7 +1437,20 @@ namespace ClassicUO.Game
             }
             else
             {
-                IEnumerable<Mobile> mobiles = reverse ? Mobiles.Values.Reverse() : Mobiles.Values;
+                List<Mobile> mobiles = _scanMobiles;
+                mobiles.Clear();
+                mobiles.Capacity = System.Math.Max(mobiles.Capacity, Mobiles.Count);
+
+                foreach (Mobile m in Mobiles.Values)
+                {
+                    mobiles.Add(m);
+                }
+
+                if (reverse)
+                {
+                    mobiles.Reverse();
+                }
+
                 foreach (Mobile mobile in mobiles)
                 {
                     if (mobile.IsDestroyed || mobile == Player)
@@ -777,15 +1511,10 @@ namespace ClassicUO.Game
 
         public void Clear()
         {
-            foreach (Mobile mobile in Mobiles.Values)
-            {
-                RemoveMobile(mobile);
-            }
+            TextOwners.Clear();
 
-            foreach (Item item in Items.Values)
-            {
-                RemoveItem(item);
-            }
+            // T1 (funnel part 8): the removals of every mobile, then every item, through the funnel
+            Writer.ClearWorld();
 
             UIManager.GetGump<BaseHealthBarGump>(Player?.Serial)?.Dispose();
 
@@ -793,8 +1522,10 @@ namespace ClassicUO.Game
             LastObject = 0;
             Items.Clear();
             Mobiles.Clear();
+            _destroyedMobiles.Clear();
             Player?.Destroy();
             Player = null;
+            PlayerState = new PlayerState();
             Map?.Destroy();
             Map = null;
             Light.Overall = Light.RealOverall = 0;
@@ -805,6 +1536,11 @@ namespace ClassicUO.Game
             MessageManager.PromptData = default;
             _effectManager.Clear();
             _toRemove.Clear();
+            _itemPool?.ClearPending();
+
+            ClearActiveItems();
+            _destroyedItems.Clear();
+            _activeItemsValid = false;
             CorpseManager.Clear();
             OPL.Clear();
             WMapManager.Clear();
@@ -818,9 +1554,15 @@ namespace ClassicUO.Game
             ActiveSpellIcons.Clear();
 
             SkillsRequested = false;
+            WarmupDone = false; // the next login tops the pools up (they stay: same World, bounded)
+            Ecs.OnWorldCleared();
         }
 
-        private void InternalMapChangeClear(bool noplayer)
+        // T1 (funnel part 9): the removals run as a funnel operation (WorldWriter.ClearForMapChange)
+        private void InternalMapChangeClear(bool noplayer) => Writer.ClearForMapChange(noplayer);
+
+        /// <summary>The old body of <c>InternalMapChangeClear</c>, run only by <see cref="WorldWriter.ClearForMapChange"/>.</summary>
+        internal void MapChangeRemovals(bool noplayer)
         {
             if (!noplayer)
             {
@@ -828,6 +1570,7 @@ namespace ClassicUO.Game
                 Map = null;
                 Player.Destroy();
                 Player = null;
+                PlayerState = new PlayerState();
             }
 
             foreach (Item item in Items.Values)

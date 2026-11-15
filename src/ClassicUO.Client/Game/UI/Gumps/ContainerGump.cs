@@ -24,6 +24,7 @@ namespace ClassicUO.Game.UI.Gumps
         private readonly bool _hideIfEmpty;
         private HitBox _hitBox;
         private bool _isMinimized;
+        private readonly ContainerItemControls _itemControls = new ContainerItemControls();
 
         internal const int CORPSES_GUMP = 0x0009;
 
@@ -31,7 +32,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public ContainerGump(World world, uint serial, ushort gumpid, bool playsound) : base(world, serial, 0)
         {
-            Item item = world.Items.Get(serial);
+            Item item = world.FindItem(serial);
 
             if (item == null)
             {
@@ -88,12 +89,12 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (Graphic == CORPSES_GUMP)
             {
-                if (world.Player.ManualOpenedCorpses.Contains(LocalSerial))
+                if (world.PlayerState.ManualOpenedCorpses.Contains(LocalSerial))
                 {
-                    world.Player.ManualOpenedCorpses.Remove(LocalSerial);
+                    world.PlayerState.ManualOpenedCorpses.Remove(LocalSerial);
                 }
                 else if (
-                    world.Player.AutoOpenedCorpses.Contains(LocalSerial)
+                    world.PlayerState.AutoOpenedCorpses.Contains(LocalSerial)
                     && ProfileManager.CurrentProfile != null
                     && ProfileManager.CurrentProfile.SkipEmptyCorpse
                 )
@@ -151,7 +152,7 @@ namespace ClassicUO.Game.UI.Gumps
             CanCloseWithRightClick = true;
             WantUpdateSize = false;
 
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item == null)
             {
@@ -254,7 +255,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
             else
             {
-                Entity thisCont = World.Items.Get(dropcontainer);
+                Entity thisCont = World.FindItem(dropcontainer);
 
                 if (thisCont == null)
                 {
@@ -281,7 +282,7 @@ namespace ClassicUO.Game.UI.Gumps
                     {
                         candrop = true;
 
-                        Item target = World.Items.Get(serial);
+                        Item target = World.FindItem(serial);
 
                         if (target != null)
                         {
@@ -469,7 +470,7 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.GetItem(LocalSerial);
 
             if (item == null || item.IsDestroyed)
             {
@@ -497,14 +498,38 @@ namespace ClassicUO.Game.UI.Gumps
                 _eyeGumpPic.Width = (int)(_eyeGumpPic.Width * scale);
                 _eyeGumpPic.Height = (int)(_eyeGumpPic.Height * scale);
             }
+
+            if (Graphic == CORPSES_GUMP)
+            {
+                // present_on_change_anim_due: the corpse gump's eye blinks
+                ClassicUO.Loop.VisualDue.At(_corpseEyeTicks, ClassicUO.Loop.VisualSource.Gump);
+            }
         }
 
         protected override void UpdateContents()
         {
-            Clear();
+            // art_container_prefetch: the contents' art decoded on the workers before ItemsOnAdded looks it up
+            if (global::ClassicUO.Game.Map.ContentsArt.Enabled && !IsChessboard && !IsBackgammonBoard)
+            {
+                global::ClassicUO.Game.Map.ContentsArt.PrefetchContents(World, World.Get(LocalSerial));
+            }
+
+            // perf-8: Clear(), keeping the item controls of items still shown for ItemsOnAdded to reuse
+            _itemControls.Begin(this, ContainerItemControls.Enabled && !ContainerItemControls.InputHeld(this));
             BuildGump();
             IsMinimized = IsMinimized;
+#if CUO_DEVTOOLS
+            int start = Children.Count;
+#endif
             ItemsOnAdded();
+#if CUO_DEVTOOLS
+            if (ContainerItemControls.CheckOn && !IsDisposed)
+            {
+                ContainerItemControls.Verify(this, start, Children.Count, World.Get(LocalSerial), IsChessboard, IsBackgammonBoard,
+                    IsMinimized, GetScale());
+            }
+#endif
+            _itemControls.End(this);
         }
 
         public override void Save(XmlTextWriter writer)
@@ -538,76 +563,12 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            bool is_corpse = container.Graphic == 0x2006;
-
-            if (!container.IsEmpty && _hideIfEmpty && !IsVisible)
+            if (World.State.HasChildren(container) && _hideIfEmpty && !IsVisible)
             {
                 IsVisible = true;
             }
 
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
-            {
-                Item item = (Item)i;
-
-                // NOTE: Switched from 'item.Layer' property which comes from server to 'ItemData.Layer' from tiledata.mul.
-                //       In the past I found some issues using the server property.
-                //       Probably lack of knowledge about some client behaviour.
-                //       Remember it.
-
-                if (item.Amount <= 0)
-                {
-                    continue;
-                }
-
-                var layer = (Layer)item.ItemData.Layer;
-
-                if (is_corpse && item.Layer > 0 && !Constants.BAD_CONTAINER_LAYERS[(int)layer])
-                {
-                    continue;
-                }
-
-                // some items has layer = [face | beard | hair] and we need to check if it's a wearable item or not.
-                // when the item is wearable we dont add it to the container.
-                // Tested with --> client = 7.0.95.0 | graphic = 0x0A02
-                if (
-                    item.ItemData.IsWearable
-                    && (layer == Layer.Face || layer == Layer.Beard || layer == Layer.Hair)
-                )
-                {
-                    continue;
-                }
-
-                ItemGump itemControl = new ItemGump(
-                    this,
-                    item.Serial,
-                    (ushort)(
-                        item.DisplayedGraphic
-                        - ((IsChessboard || IsBackgammonBoard) ? Constants.ITEM_GUMP_TEXTURE_OFFSET : 0)
-                    ),
-                    item.Hue,
-                    item.X,
-                    item.Y,
-                    (IsChessboard || IsBackgammonBoard)
-                );
-
-                itemControl.IsVisible = !IsMinimized;
-
-                float scale = GetScale();
-
-                if (
-                    ProfileManager.CurrentProfile != null
-                    && ProfileManager.CurrentProfile.ScaleItemsInsideContainers
-                )
-                {
-                    itemControl.Width = (int)(itemControl.Width * scale);
-                    itemControl.Height = (int)(itemControl.Height * scale);
-                }
-
-                itemControl.X = (int)((short)item.X * scale);
-                itemControl.Y = (int)(((short)item.Y - (IsChessboard ? 20 : 0)) * scale);
-
-                Add(itemControl);
-            }
+            ContainerItemControls.AddItems(this, _itemControls, container, IsChessboard, IsBackgammonBoard, IsMinimized, GetScale());
         }
 
         public void CheckItemControlPosition(Item item)
@@ -619,41 +580,48 @@ namespace ClassicUO.Game.UI.Gumps
             int boundWidth = dataBounds.Width;
             int boundHeight = dataBounds.Height + (IsChessboard ? 20 : 0);
 
-            ref readonly var spriteInfo = ref (
-                (IsChessboard || IsBackgammonBoard)
-                    ? ref Client.Game.UO.Gumps.GetGump(
-                        (ushort)(
-                            item.DisplayedGraphic
-                            - Constants.ITEM_GUMP_TEXTURE_OFFSET
-                        )
-                    )
-                    : ref Client.Game.UO.Arts.GetArt(item.DisplayedGraphic)
-            );
+            bool isGump = IsChessboard || IsBackgammonBoard;
 
-            if (spriteInfo.Texture != null)
+            // perf-6: the size without decoding the art
+            if (ItemGump.TryGetSpriteSize(
+                    (ushort)(item.DisplayedGraphic - (isGump ? Constants.ITEM_GUMP_TEXTURE_OFFSET : 0)),
+                    isGump,
+                    out int spriteWidth,
+                    out int spriteHeight))
             {
                 float scale = GetScale();
 
-                boundWidth -= (int)(spriteInfo.UV.Width / scale);
-                boundHeight -= (int)(spriteInfo.UV.Height / scale);
+                boundWidth -= (int)(spriteWidth / scale);
+                boundHeight -= (int)(spriteHeight / scale);
             }
 
-            if (item.X < boundX)
+            // T1 (funnel part 8): the clamp computed here, written through the funnel (with the item's Sync)
+            ClampToBounds(item.X, item.Y, boundX, boundY, boundWidth, boundHeight, out ushort x, out ushort y);
+            World.Writer.ClampContainerPosition(item, x, y);
+        }
+
+        /// <summary>T1 (funnel part 8): <see cref="CheckItemControlPosition"/>'s clamp of an item position to the bounds.</summary>
+        internal static void ClampToBounds(ushort itemX, ushort itemY, int boundX, int boundY, int boundWidth, int boundHeight, out ushort x, out ushort y)
+        {
+            x = itemX;
+            y = itemY;
+
+            if (itemX < boundX)
             {
-                item.X = (ushort)boundX;
+                x = (ushort)boundX;
             }
-            else if (item.X > boundWidth)
+            else if (itemX > boundWidth)
             {
-                item.X = (ushort)boundWidth;
+                x = (ushort)boundWidth;
             }
 
-            if (item.Y < boundY)
+            if (itemY < boundY)
             {
-                item.Y = (ushort)boundY;
+                y = (ushort)boundY;
             }
-            else if (item.Y > boundHeight)
+            else if (itemY > boundHeight)
             {
-                item.Y = (ushort)boundHeight;
+                y = (ushort)boundHeight;
             }
         }
 
@@ -673,20 +641,18 @@ namespace ClassicUO.Game.UI.Gumps
 
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        batcher.DrawRectangle(
-                            SolidColorTextureCache.GetTexture(Color.Red),
-                            x + boundX,
-                            y + boundY,
-                            boundWidth - boundX,
-                            boundHeight - boundY,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
+                renderLists.AddGumpNoAtlas
+                (
+                    GumpCommand.Outline
+                    (
+                        SolidColorTextureCache.GetTexture(Color.Red),
+                        x + boundX,
+                        y + boundY,
+                        boundWidth - boundX,
+                        boundHeight - boundY,
+                        hueVector,
+                        layerDepth
+                    )
                 );
             }
 
@@ -695,7 +661,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override void Dispose()
         {
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item != null)
             {
@@ -707,9 +673,9 @@ namespace ClassicUO.Game.UI.Gumps
                     UIManager.SavePosition(item, Location);
                 }
 
-                for (LinkedObject i = item.Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item child in World.State.Children(item))
                 {
-                    Item child = (Item)i;
 
                     if (child.Container == item)
                     {

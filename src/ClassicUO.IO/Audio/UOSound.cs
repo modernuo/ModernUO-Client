@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: BSD-2-Clause
+// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
 
@@ -8,11 +8,18 @@ namespace ClassicUO.IO.Audio
     {
         private readonly byte[] _waveBuffer;
 
+        /// <param name="buffer">
+        /// 22,050 Hz mono 16-bit PCM, the whole array: FNA's SubmitBuffer checks the array's length, so it must not carry
+        /// anything after the samples (SoundsLoader.TryGetSound hands out exactly the PCM).
+        /// </param>
         public UOSound(string name, int index, byte[] buffer) : base(name, index)
         {
             _waveBuffer = buffer;
             Delay = (uint) ((buffer.Length - 32) / 88.2f);
         }
+
+        /// <summary>Bytes of PCM this sound submits per play (FNA copies them into native memory while it plays).</summary>
+        public int PcmBytes => _waveBuffer?.Length ?? 0;
 
         public bool CalculateByDistance { get; set; }
         public int X, Y;
@@ -60,7 +67,7 @@ namespace ClassicUO.IO.Audio
 
         protected override ArraySegment<byte> GetBuffer()
         {
-            return _waveBuffer;
+            return _waveBuffer ?? ArraySegment<byte>.Empty;
         }
     }
 }

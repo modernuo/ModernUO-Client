@@ -151,10 +151,10 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _graphic = graphic;
 
-                ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(_graphic);
-
-                Width = artInfo.UV.Width;
-                Height = artInfo.UV.Height;
+                // perf-6: the size without decoding; the art decodes at first draw
+                Client.Game.UO.Arts.TryGetArtSize(_graphic, out int width, out int height);
+                Width = width;
+                Height = height;
                 _hue = hue;
                 _isPartial = Client.Game.UO.FileManager.TileData.StaticData[graphic].IsPartialHue;
             }

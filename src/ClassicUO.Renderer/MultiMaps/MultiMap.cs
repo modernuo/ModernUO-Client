@@ -34,6 +34,7 @@ namespace ClassicUO.Renderer.MultiMaps
                 fixed (uint* ptr = multiMapInfo.Pixels)
                 {
                     texture.SetDataPointerEXT(0, null, (IntPtr)ptr, sizeof(uint) * multiMapInfo.Width * multiMapInfo.Height);
+                    TextureUploads.Changed();
                 }
             }
 

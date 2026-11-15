@@ -369,12 +369,20 @@ namespace ClassicUO.Game.Managers
 
             float layerDepth = -10000;
 
+            FrameStats.Begin(FramePhase.UiTraverse);
             for (LinkedListNode<Gump> last = Gumps.Last; last != null; last = last.Previous)
             {
-                Control g = last.Value;
+                Gump g = last.Value;
                 layerDepth+=10;
-                g.AddToRenderLists(_renderLists, g.X, g.Y, ref layerDepth);
+                if (!UiGumpRecording.TryQueue(g, _renderLists, ref layerDepth, Settings.GlobalSettings.UiGumpDirty, batcher.IsRecording))
+                {
+                    // Dropping recordings on disable makes a later re-enable independent of off-period uploads.
+                    g.Recording = null;
+                    FrameStats.Inc(FrameCounter.GumpsWalked);
+                    g.AddToRenderLists(_renderLists, g.X, g.Y, ref layerDepth);
+                }
             }
+            FrameStats.End(FramePhase.UiTraverse);
 
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_UI);
             _renderLists.DrawRenderLists(batcher, sbyte.MaxValue);
@@ -481,6 +489,11 @@ namespace ClassicUO.Game.Managers
                 gump.InvokeMouseOver(Mouse.Position);
             }
 
+            if (MouseOverControl != gump)
+            {
+                MouseOverControl?.InvalidateDraw();
+                gump?.InvalidateDraw();
+            }
             MouseOverControl = gump;
 
             //for (int i = 0; i < (int) MouseButtonType.Size; i++)
@@ -632,8 +645,14 @@ namespace ClassicUO.Game.Managers
                         {
                             if (first.Value == c)
                             {
+                                // Reuses the node (AddFirst(c) allocated a new one). Remove used to leave `el` unlinked, which
+                                // ended this walk after the first Over gump; keep that: with the node relinked it would walk on
+                                // and move Over gumps to the front again and again.
                                 Gumps.Remove(first);
-                                Gumps.AddFirst(c);
+                                Gumps.AddFirst(first);
+                                _needSort = false;
+
+                                return;
                             }
                         }
                     }

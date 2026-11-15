@@ -7,7 +7,7 @@ using System;
 
 namespace ClassicUO.Game.UI.Controls
 {
-    internal class ScrollFlag : ScrollBarBase
+    internal class ScrollFlag : ScrollBarBase, IGumpDeferredDraw
     {
         private readonly bool _showButtons;
 
@@ -57,51 +57,50 @@ namespace ClassicUO.Game.UI.Controls
 
         public override ClickPriority Priority { get; set; } = ClickPriority.High;
 
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            var hueVector = ShaderHueTranslator.GetHueVector(0);
+
+            ref readonly var gumpInfoFlag = ref Client.Game.UO.Gumps.GetGump(BUTTON_FLAG);
+            ref readonly var gumpInfoUp = ref Client.Game.UO.Gumps.GetGump(BUTTON_UP);
+            ref readonly var gumpInfoDown = ref Client.Game.UO.Gumps.GetGump(BUTTON_DOWN);
+
+            if (MaxValue != MinValue && gumpInfoFlag.Texture != null)
+            {
+                batcher.Draw(
+                    gumpInfoFlag.Texture,
+                    new Vector2(x, y + _sliderPosition),
+                    gumpInfoFlag.UV,
+                    hueVector,
+                    layerDepth
+                );
+            }
+
+            if (_showButtons)
+            {
+                if (gumpInfoUp.Texture != null)
+                {
+                    batcher.Draw(gumpInfoUp.Texture, new Vector2(x, y), gumpInfoUp.UV, hueVector, layerDepth);
+                }
+
+                if (gumpInfoDown.Texture != null)
+                {
+                    batcher.Draw(
+                        gumpInfoDown.Texture,
+                        new Vector2(x, y + Height),
+                        gumpInfoDown.UV,
+                        hueVector,
+                        layerDepth
+                    );
+                }
+            }
+            return true;
+        }
+
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
             float layerDepth = layerDepthRef;
-            renderLists.AddGumpWithAtlas
-            (
-                (batcher) =>
-                {
-                    var hueVector = ShaderHueTranslator.GetHueVector(0);
-
-                    ref readonly var gumpInfoFlag = ref Client.Game.UO.Gumps.GetGump(BUTTON_FLAG);
-                    ref readonly var gumpInfoUp = ref Client.Game.UO.Gumps.GetGump(BUTTON_UP);
-                    ref readonly var gumpInfoDown = ref Client.Game.UO.Gumps.GetGump(BUTTON_DOWN);
-
-                    if (MaxValue != MinValue && gumpInfoFlag.Texture != null)
-                    {
-                        batcher.Draw(
-                            gumpInfoFlag.Texture,
-                            new Vector2(x, y + _sliderPosition),
-                            gumpInfoFlag.UV,
-                            hueVector,
-                            layerDepth
-                        );
-                    }
-
-                    if (_showButtons)
-                    {
-                        if (gumpInfoUp.Texture != null)
-                        {
-                            batcher.Draw(gumpInfoUp.Texture, new Vector2(x, y), gumpInfoUp.UV, hueVector, layerDepth);
-                        }
-
-                        if (gumpInfoDown.Texture != null)
-                        {
-                            batcher.Draw(
-                                gumpInfoDown.Texture,
-                                new Vector2(x, y + Height),
-                                gumpInfoDown.UV,
-                                hueVector,
-                                layerDepth
-                            );
-                        }
-                    }
-                    return true;
-                }
-            );
+            renderLists.AddGumpWithAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
         }
 

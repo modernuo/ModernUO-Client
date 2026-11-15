@@ -3,6 +3,7 @@
 using ClassicUO.Assets;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Input;
+using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using ClassicUO.Utility.Platforms;
@@ -11,7 +12,7 @@ using System.Collections.Generic;
 
 namespace ClassicUO.Game.UI.Controls
 {
-    internal class HtmlControl : Control
+    internal class HtmlControl : Control, IGumpDeferredDraw
     {
         private RenderedText _gameText;
         private ScrollBarBase _scrollBar;
@@ -220,42 +221,45 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            float layerDepth = layerDepthRef;
             if (IsDisposed)
             {
                 return false;
             }
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    if (batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        RenderLists childRenderLists = new();
 
-                        base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
-                        childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+            return true;
+        }
 
-                        int offset = HasBackground ? 4 : 0;
+        // the children draw inside the clip, through a RenderLists of their own that is reused every frame
+        private RenderLists _childRenderLists;
 
-                        _gameText.Draw
-                        (
-                            batcher,
-                            x + offset,
-                            y + offset,
-                            ScrollX,
-                            ScrollY,
-                            Width + ScrollX,
-                            Height + ScrollY,
-                            layerDepth
-                        );
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            if (batcher.ClipBegin(x, y, Width, Height))
+            {
+                RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+                childRenderLists.Clear();
+                base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
+                childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                childRenderLists.Clear();
 
-                        batcher.ClipEnd();
-                    }
-                    return true;
-                }
-            );
+                int offset = HasBackground ? 4 : 0;
 
+                _gameText.Draw
+                (
+                    batcher,
+                    x + offset,
+                    y + offset,
+                    ScrollX,
+                    ScrollY,
+                    Width + ScrollX,
+                    Height + ScrollY,
+                    layerDepth
+                );
+
+                batcher.ClipEnd();
+            }
 
             return true;
         }

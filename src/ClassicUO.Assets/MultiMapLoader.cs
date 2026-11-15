@@ -5,17 +5,19 @@ using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
+    /// <summary>
+    /// Multimap.rle and the facet0*.mul images, from the pack's multimap.bin (the files' RLE streams, slot 0 the rle,
+    /// slot 1 + n the n-th facet image in the order the client indexed the folder's files). Each call decodes the record
+    /// it needs: the server asks for a map rarely (a map item opened), and nothing is kept between calls.
+    /// </summary>
     public sealed class MultiMapLoader : UOFileLoader
     {
-        private UOFileMul[] _facets;
-        private UOFile _file;
+        private RecordStore _store;
 
         public MultiMapLoader(UOFileManager fileManager) : base(fileManager)
         {
@@ -23,25 +25,65 @@ namespace ClassicUO.Assets
 
         public bool HasFacet(int map)
         {
-            return map >= 0 && map < _facets.Length && _facets[map] != null;
+            return map >= 0 && _store != null && _store.TryGet(MiscConst.MultiMapFacetSlot(map), out _, out _);
         }
 
         public override void Load()
         {
-            string path = FileManager.GetUOFilePath("Multimap.rle");
+            string path = FileManager.Pack?.PathOf(MiscConst.MultiMapFile);
 
-            if (File.Exists(path))
+            if (path == null || !File.Exists(path))
             {
-                _file = new UOFile(path);
+                Log.Trace("MultiMap: the pack has no multimap.bin");
+
+                return;
             }
 
-            _facets = Directory.GetFiles(FileManager.BasePath, "*.mul", SearchOption.TopDirectoryOnly)
-                .Select(s => Regex.Match(s, "facet0.*\\.mul", RegexOptions.IgnoreCase))
-                .Where(s => s.Success)
-                .Select(s => Path.Combine(FileManager.BasePath, s.Value))
-                .OrderBy(s => s)
-                .Select(s => new UOFileMul(s))
-                .ToArray();
+            try
+            {
+                _store = MiscConst.OpenMultiMapStore(path);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"MultiMap: cannot open '{path}' ({e.Message})");
+            }
+        }
+
+        public override void Dispose()
+        {
+            _store?.Dispose();
+            _store = null;
+            base.Dispose();
+        }
+
+        private byte[] ReadSlot(int slot)
+        {
+            if (_store == null || !_store.TryGet(slot, out _, out var record) || record.RawBytes == 0)
+            {
+                return null;
+            }
+
+            // a forged size must not allocate before the decode finds the payload corrupt
+            if (record.RawBytes > MiscConst.MaxMultiMapRecordBytes)
+            {
+                Log.Error($"MultiMap: slot {slot} declares {record.RawBytes} bytes; at most {MiscConst.MaxMultiMapRecordBytes}");
+
+                return null;
+            }
+
+            try
+            {
+                var data = new byte[record.RawBytes];
+                _store.Read(record, data);
+
+                return data;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"MultiMap: cannot read slot {slot} ({e.Message})");
+
+                return null;
+            }
         }
 
         public unsafe MultiMapInfo LoadMap
@@ -54,17 +96,19 @@ namespace ClassicUO.Assets
             int endy
         )
         {
-            if (_file == null || _file.Length == 0)
+            byte[] rle = ReadSlot(MiscConst.MultiMapRleSlot);
+
+            if (rle == null)
             {
                 Log.Warn("MultiMap.rle is not loaded!");
 
                 return default;
             }
 
-            _file.Seek(0, SeekOrigin.Begin);
+            var file = new StackDataReader(rle);
 
-            int w = _file.ReadInt32();
-            int h = _file.ReadInt32();
+            int w = file.ReadInt32LE();
+            int h = file.ReadInt32LE();
 
             if (w < 1 || h < 1)
             {
@@ -105,9 +149,9 @@ namespace ClassicUO.Assets
             int maxPixelValue = 1;
             int startHeight = starty * pheight;
 
-            while (_file.Position < _file.Length)
+            while (file.Position < file.Length)
             {
-                byte pic = _file.ReadUInt8();
+                byte pic = file.ReadUInt8();
                 byte size = (byte) (pic & 0x7F);
                 bool colored = (pic & 0x80) != 0;
 
@@ -203,16 +247,23 @@ namespace ClassicUO.Assets
             int endy
         )
         {
-            if (_file == null || facet < 0 || facet > MapLoader.MAPS_COUNT || facet >= _facets.Length || _facets[facet] == null)
+            // as before: no facet image without Multimap.rle
+            if (_store == null || !_store.TryGet(MiscConst.MultiMapRleSlot, out _, out _) || facet < 0 || facet > MapLoader.MAPS_COUNT)
             {
                 return default;
             }
 
-            var file = _facets[facet];
-            file.Seek(0, SeekOrigin.Begin);
+            byte[] data = ReadSlot(MiscConst.MultiMapFacetSlot(facet));
 
-            int w = file.ReadUInt16();
-            int h = file.ReadUInt16();
+            if (data == null)
+            {
+                return default;
+            }
+
+            var file = new StackDataReader(data);
+
+            int w = file.ReadUInt16LE();
+            int h = file.ReadUInt16LE();
 
             if (w < 1 || h < 1)
             {
@@ -234,13 +285,13 @@ namespace ClassicUO.Assets
             {
                 int x = 0;
 
-                int colorCount = file.ReadInt32() / 3;
+                int colorCount = file.ReadInt32LE() / 3;
 
                 for (int i = 0; i < colorCount; i++)
                 {
                     int size = file.ReadUInt8();
 
-                    uint color = HuesHelper.Color16To32(file.ReadUInt16()) | 0xFF_00_00_00;
+                    uint color = HuesHelper.Color16To32(file.ReadUInt16LE()) | 0xFF_00_00_00;
 
                     for (int j = 0; j < size; j++)
                     {

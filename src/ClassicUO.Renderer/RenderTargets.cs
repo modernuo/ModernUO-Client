@@ -10,6 +10,7 @@ namespace ClassicUO.Renderer
         private RenderTarget2D _uiRenderTarget;
         private RenderTarget2D _lightRenderTarget;
         private RenderTarget2D _worldRenderTarget;
+        private RenderTarget2D _uiCacheRenderTarget;
 
         private Rectangle _gameWindowOnScreen;
         private Rectangle _gameWindowAfterDPI;
@@ -26,6 +27,23 @@ namespace ClassicUO.Renderer
         public RenderTarget2D LightRenderTarget { get => _lightRenderTarget; }
         public RenderTarget2D WorldRenderTarget { get => _worldRenderTarget; }
 
+        /// <summary>B8: the scene UI and gumps without the cursor, kept between frames (null while <see cref="UiCache"/> is off).</summary>
+        public RenderTarget2D UiCacheRenderTarget { get => _uiCacheRenderTarget; }
+
+        /// <summary>B8, the UI render cache: the UI target keeps its contents between frames and a second UI-sized target holds
+        /// the UI without the cursor. Set before <see cref="EnsureSizes"/>.</summary>
+        public bool UiCache { get; set; }
+
+        /// <summary>Changes whenever the UI target or the UI cache target is (re)created: their old pixels are gone.</summary>
+        public int UiTargetsVersion { get; private set; }
+
+        // The GPU world pass draws into the world target outside FNA: FNA must load it instead of clearing it on bind.
+        public bool PreserveWorldContents { get; set; }
+
+        // The world area's opacity over black (1 = normal): 0 while there is no world frame to show yet (first entry),
+        // then a short fade-in. Covers the world and its lights, not the UI.
+        public float WorldFade { get; set; } = 1f;
+
         public void SetLightsConfiguration(Func<BlendState> lightsBlendState, Func<Vector3> lightsHue)
         {
             _lightsBlendState = lightsBlendState;
@@ -39,9 +57,28 @@ namespace ClassicUO.Renderer
             _gameWorldSceneOnScreen = ScaleRectangle(gameWorldSceneAfterDPI, 1/dpiScale);
             _gameWorldSceneAfterDPI = gameWorldSceneAfterDPI;
 
-            EnsureSize(graphicsDevice, ref _uiRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height);
+            RenderTarget2D ui = _uiRenderTarget, uiCache = _uiCacheRenderTarget;
+            EnsureSize(graphicsDevice, ref _uiRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height,
+                UiCache ? RenderTargetUsage.PreserveContents : (RenderTargetUsage?)null);
+
+            if (UiCache)
+            {
+                EnsureSize(graphicsDevice, ref _uiCacheRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height,
+                    RenderTargetUsage.PreserveContents);
+            }
+            else if (_uiCacheRenderTarget != null)
+            {
+                _uiCacheRenderTarget.Dispose();
+                _uiCacheRenderTarget = null;
+            }
+
+            if (ui != _uiRenderTarget || uiCache != _uiCacheRenderTarget)
+            {
+                UiTargetsVersion++;
+            }
             EnsureSize(graphicsDevice, ref _lightRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height);
-            EnsureSize(graphicsDevice, ref _worldRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height);
+            EnsureSize(graphicsDevice, ref _worldRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height,
+                PreserveWorldContents ? RenderTargetUsage.PreserveContents : (RenderTargetUsage?)null);
 
             if (dpiScale == Math.Floor(dpiScale))
             {
@@ -62,16 +99,18 @@ namespace ClassicUO.Renderer
                 (int)(gameWindowOnScreen.Height / dpiScale)
             );
 
-        private static void EnsureSize(GraphicsDevice graphicsDevice, ref RenderTarget2D renderTarget, int width, int height)
+        private static void EnsureSize(GraphicsDevice graphicsDevice, ref RenderTarget2D renderTarget, int width, int height, RenderTargetUsage? usage = null)
         {
             if (width <= 0 || height <= 0)
                 return;
 
-            if (renderTarget == null || renderTarget.IsDisposed || renderTarget.Width != width || renderTarget.Height != height)
+            PresentationParameters pp = graphicsDevice.PresentationParameters;
+            RenderTargetUsage targetUsage = usage ?? pp.RenderTargetUsage;
+
+            if (renderTarget == null || renderTarget.IsDisposed || renderTarget.Width != width || renderTarget.Height != height
+                || renderTarget.RenderTargetUsage != targetUsage)
             {
                 renderTarget?.Dispose();
-
-                PresentationParameters pp = graphicsDevice.PresentationParameters;
 
                 renderTarget = new RenderTarget2D(
                     graphicsDevice,
@@ -81,7 +120,7 @@ namespace ClassicUO.Renderer
                     pp.BackBufferFormat,
                     pp.DepthStencilFormat,
                     pp.MultiSampleCount,
-                    pp.RenderTargetUsage
+                    targetUsage
                     );
             }
         }
@@ -133,6 +172,16 @@ namespace ClassicUO.Renderer
             );
 
             batcher.SetBlendState(null);
+
+            if (WorldFade < 1f)
+            {
+                batcher.Draw(
+                    SolidColorTextureCache.GetTexture(Color.Black),
+                    _gameWorldSceneOnScreen,
+                    new Vector3(0, 0, 1f - Math.Max(0f, WorldFade)),
+                    0f
+                );
+            }
 
             // Draw UI at original window size (render target is DPI-scaled but destination is not)
             batcher.Draw(

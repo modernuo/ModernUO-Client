@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
 using ClassicUO.Assets;
@@ -13,17 +14,19 @@ namespace ClassicUO.Game.GameObjects
     {
         private readonly EffectManager _manager;
 
+        /// <summary>Links in <see cref="EffectManager"/>'s list.</summary>
+        public GameEffect Next, Previous;
+
         protected GameEffect(World world, EffectManager manager, ushort graphic, ushort hue, int duration, byte speed) : base(world)
         {
             _manager = manager;
 
-            Graphic = graphic;
-            Hue = hue;
+            CreatedGraphic = graphic;
+            CreatedHue = hue;
             AllowedToDraw = CanBeDrawn(world, graphic);
             AlphaHue = 0xFF;
             AnimDataFrame = Client.Game?.UO?.FileManager?.AnimData?.CalculateCurrentGraphic(graphic) ?? default;
             IsEnabled = true;
-            AnimIndex = 0;
 
 
             speed *= 10;
@@ -54,79 +57,44 @@ namespace ClassicUO.Game.GameObjects
             Duration = duration > 0 ? Time.Ticks + duration : -1;
         }
 
-        public bool IsMoving => Target != null || TargetX != 0 && TargetY != 0;
+        public bool IsMoving => (!EcsEntity.IsNull ? EffectSystem.HasTarget(this) : Target != null) || TargetX != 0 && TargetY != 0;
+
+        /// <summary>T9 S9: the constructor's graphic and hue, for <see cref="EffectSystem.Register"/> only: from then on the
+        /// effect's Graphic and Hue are its state's (0 before it registers and once it is destroyed).</summary>
+        internal readonly ushort CreatedGraphic, CreatedHue;
 
         public bool CanCreateExplosionEffect;
-        public ushort AnimationGraphic = 0xFFFF;
         public AnimDataFrame AnimDataFrame;
-        public byte AnimIndex;
-        public float AngleToTarget;
         public GraphicEffectBlendMode Blend;
         public long Duration = -1;
         public uint IntervalInMs;
         public bool IsEnabled;
-        public long NextChangeFrameTime;
+
+        /// <summary>T8: this effect's entity, created when it joins the manager's list (default before that and once the effect
+        /// is destroyed). From then on source and target are the state's references, read from the ECS, and the kind's motion
+        /// is <see cref="EffectSystem"/>'s motion step over the state. The frame, offset and angle live only in the state (T9
+        /// S7); the position here is written from it for the tile placement, the target coordinates for a gone target.</summary>
+        internal Friflo.Engine.ECS.Entity EcsEntity;
+
+        internal EffectManager Manager => _manager;
+
+        /// <summary>The motion step's <c>IsPositionChanged = true</c> (MovingEffect.UpdateOffset sets it every update).</summary>
+        internal void MarkPositionChanged() => IsPositionChanged = true;
+
+        /// <summary>The constructor's source and target objects, until <see cref="EffectSystem.Register"/> turns them into the
+        /// state's references and drops them.</summary>
         public GameObject Source;
-        protected GameObject Target;
-        protected ushort TargetX;
-        protected ushort TargetY;
-        protected sbyte TargetZ;
+        internal GameObject Target;
+        internal ushort TargetX;
+        internal ushort TargetY;
+        internal sbyte TargetZ;
 
+        /// <summary>The source object for the views (depth, light) and the client-side target cursor.</summary>
+        internal GameObject SourceObject => !EcsEntity.IsNull ? EffectSystem.SourceObjectOf(this) : Source;
 
-        public override void Update()
-        {
-            base.Update();
-
-
-            if (Source != null && Source.IsDestroyed)
-            {
-                Destroy();
-
-                return;
-            }
-
-            if (IsDestroyed)
-            {
-                return;
-            }
-
-            if (IsEnabled)
-            {
-                if (Duration < Time.Ticks && Duration >= 0)
-                {
-                    Destroy();
-                }
-                else if (NextChangeFrameTime < Time.Ticks)
-                {
-                    if (AnimDataFrame.FrameCount != 0)
-                    {
-                        unsafe
-                        {
-                            AnimationGraphic = (ushort) (Graphic + AnimDataFrame.FrameData[AnimIndex]);
-                        }
-
-                        AnimIndex++;
-
-                        if (AnimIndex >= AnimDataFrame.FrameCount)
-                        {
-                            AnimIndex = 0;
-                        }
-                    }
-                    else
-                    {
-                        AnimationGraphic = Graphic;
-                    }
-
-                    NextChangeFrameTime = (long)Time.Ticks + IntervalInMs;
-                }
-            }
-            else
-            {
-                AnimationGraphic = Graphic;
-            }
-        }
-
-        protected (ushort x, ushort y, sbyte z) GetSource()
+        /// <summary>The source object's position, the effect's own for a ground point (before the effect registers, and a
+        /// moving effect's update after its source ended it).</summary>
+        internal (ushort x, ushort y, sbyte z) ObjectSource()
         {
             return Source == null ? (X, Y, Z) : (Source.X, Source.Y, Source.Z);
         }
@@ -135,14 +103,38 @@ namespace ClassicUO.Game.GameObjects
         {
             if (CanCreateExplosionEffect)
             {
-                (var targetX, var targetY, var targetZ) = GetTarget();
-
-                FixedEffect effect = new FixedEffect(World, _manager, 0x36CB, Hue, 400, 0);
-                effect.Blend = Blend;
-                effect.SetSource(targetX, targetY, targetZ);
-
-                _manager.PushToBack(effect);
+                (var targetX, var targetY, var targetZ) = ObjectTarget();
+                CreateExplosionAt(targetX, targetY, targetZ);
             }
+        }
+
+        /// <summary>The explosion at the target (the motion step passes the target it resolved).</summary>
+        internal void CreateExplosionAt(ushort targetX, ushort targetY, sbyte targetZ)
+        {
+            FixedEffect effect = new FixedEffect(World, _manager, 0x36CB, Hue, 400, 0);
+            effect.Blend = Blend;
+            effect.SetSource(targetX, targetY, targetZ);
+
+            _manager.Add(effect);
+        }
+
+        /// <summary>T8: copies position and target to <paramref name="s"/>, with the starting offset (a moving effect's
+        /// <see cref="MovingEffect.START_OFFSET_X"/>) and no angle (Register; the source and target references and serials are
+        /// bound before).</summary>
+        internal void Publish(ref EffectState s)
+        {
+            (ushort tx, ushort ty, sbyte tz) = ObjectTarget();
+            s.X = X;
+            s.Y = Y;
+            s.Z = Z;
+            s.TargetX = tx;
+            s.TargetY = ty;
+            s.TargetZ = tz;
+            s.OffsetX = this is MovingEffect ? MovingEffect.START_OFFSET_X : 0;
+            s.OffsetY = 0;
+            s.OffsetZ = 0;
+            s.Angle = 0;
+            s.Flags = (byte)(IsMoving ? s.Flags | EffectState.FLAG_MOVING : s.Flags & ~EffectState.FLAG_MOVING);
         }
 
         public void SetSource(GameObject source)
@@ -155,10 +147,17 @@ namespace ClassicUO.Game.GameObjects
         {
             Source = null;
 
+            if (!EcsEntity.IsNull)
+            {
+                EffectSystem.DropSource(this);
+            }
+
             SetInWorldTile(x, y,z);
         }
 
-        protected (ushort x, ushort y, sbyte z) GetTarget()
+        /// <summary>The target object's position, the effect's target coordinates for a ground point (see
+        /// <see cref="ObjectSource"/>).</summary>
+        internal (ushort x, ushort y, sbyte z) ObjectTarget()
         {
             return Target == null ? (TargetX, TargetY, TargetZ) : (Target.X, Target.Y, Target.Z);
         }
@@ -171,6 +170,11 @@ namespace ClassicUO.Game.GameObjects
         public void SetTarget(ushort x, ushort y, sbyte z)
         {
             Target = null;
+
+            if (!EcsEntity.IsNull)
+            {
+                EffectSystem.DropTarget(this);
+            }
             TargetX = x;
             TargetY = y;
             TargetZ = z;
@@ -179,8 +183,8 @@ namespace ClassicUO.Game.GameObjects
         public override void Destroy()
         {
             _manager?.Remove(this);
+            EffectSystem.Unregister(this);
 
-            AnimIndex = 0;
             Source = null;
             Target = null;
             base.Destroy();

@@ -17,6 +17,14 @@ namespace ClassicUO.Game.UI.Controls
 {
     internal abstract class Control
     {
+        internal long DrawVersion { get; private set; }
+
+        internal void InvalidateDraw()
+        {
+            unchecked { DrawVersion++; }
+            _parent?.InvalidateDraw();
+        }
+
         protected const float CHILD_LAYER_INCREMENT = 0.01f;
         internal static int _StepsDone = 1;
         internal static int _StepChanger = 1;
@@ -27,11 +35,12 @@ namespace ClassicUO.Game.UI.Controls
         private bool _handlesKeyboardFocus;
         private Point _offset;
         private Control _parent;
+        private bool _outOfParentList;
 
         protected Control(Control parent = null)
         {
             Parent = parent;
-            Children = new List<Control>();
+            Children = new ControlChildren(this);
             AllowedToDraw = true;
             AcceptMouseInput = true;
             Page = 0;
@@ -48,7 +57,19 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsFromServer { get; set; }
 
-        public int Page { get; set; }
+        private int _page = 0;
+        public int Page
+        {
+            get => _page;
+            set
+            {
+                if (_page != value)
+                {
+                    _page = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public Point Location
         {
@@ -61,15 +82,50 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        public ref Rectangle Bounds => ref _bounds;
+        public Rectangle Bounds
+        {
+            get => _bounds;
+            set
+            {
+                if (_bounds != value)
+                {
+                    _bounds = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public Point Offset => _offset;
 
         public bool IsDisposed { get; private set; }
 
-        public bool IsVisible { get; set; } = true;
+        private bool _isVisible = true;
+        public bool IsVisible
+        {
+            get => _isVisible;
+            set
+            {
+                if (_isVisible != value)
+                {
+                    _isVisible = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public bool IsEnabled { get; set; }
+        private bool _isEnabled = false;
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                if (_isEnabled != value)
+                {
+                    _isEnabled = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public bool HasKeyboardFocus => UIManager.KeyboardFocusControl == this;
 
@@ -85,9 +141,21 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool IsFocused { get; set; }
 
-        public float Alpha { get; set; } = 1.0f;
+        private float _alpha = 1.0f;
+        public float Alpha
+        {
+            get => _alpha;
+            set
+            {
+                if (_alpha != value)
+                {
+                    _alpha = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public List<Control> Children { get; }
+        public ControlChildren Children { get; }
 
         public object Tag { get; set; }
 
@@ -107,13 +175,57 @@ namespace ClassicUO.Game.UI.Controls
             set => _acceptMouseInput = value;
         }
 
-        public ref int X => ref _bounds.X;
+        public int X
+        {
+            get => _bounds.X;
+            set
+            {
+                if (_bounds.X != value)
+                {
+                    _bounds.X = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public ref int Y => ref _bounds.Y;
+        public int Y
+        {
+            get => _bounds.Y;
+            set
+            {
+                if (_bounds.Y != value)
+                {
+                    _bounds.Y = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public ref int Width => ref _bounds.Width;
+        public int Width
+        {
+            get => _bounds.Width;
+            set
+            {
+                if (_bounds.Width != value)
+                {
+                    _bounds.Width = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
-        public ref int Height => ref _bounds.Height;
+        public int Height
+        {
+            get => _bounds.Height;
+            set
+            {
+                if (_bounds.Height != value)
+                {
+                    _bounds.Height = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
         public int ParentX => Parent != null ? Parent.X + Parent.ParentX : 0;
 
@@ -130,18 +242,36 @@ namespace ClassicUO.Game.UI.Controls
             get => _parent;
             internal set
             {
-                if (value == null)
-                {
-                    _parent?.Children.Remove(this);
-                }
-                else
-                {
-                    _parent?.Children.Remove(this);
-                    value.Children.Add(this);
-                }
+                LeaveParentList();
+
+                value?.Children.Add(this);
 
                 _parent = value;
+                InvalidateDraw();
             }
+        }
+
+        /// <summary>
+        /// perf-9: the caller took this control out of its parent's child list itself and keeps <see cref="Parent"/> as it
+        /// is (ContainerItemControls.Begin keeps a container window's item controls for reuse). The next re-parent skips the
+        /// list scan, which would not find it: re-adding n controls this way scanned the list n times. A caller that puts
+        /// the control back into the list directly calls <see cref="InParentList"/>.
+        /// </summary>
+        internal void OutOfParentList() => _outOfParentList = true;
+
+        /// <summary>Undoes <see cref="OutOfParentList"/>: the caller put the control back into its parent's child list.</summary>
+        internal void InParentList() => _outOfParentList = false;
+
+        private void LeaveParentList()
+        {
+            if (_outOfParentList)
+            {
+                _outOfParentList = false;
+
+                return;
+            }
+
+            _parent?.Children.Remove(this);
         }
 
         public Control RootParent
@@ -206,6 +336,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _activePage;
             set
             {
+                if (_activePage != value) InvalidateDraw();
                 _activePage = value;
 
                 OnPageChanged();
@@ -274,8 +405,22 @@ namespace ClassicUO.Game.UI.Controls
 
                     if (c.IsDisposed)
                     {
-                        OnChildRemoved();
-                        Children.RemoveAt(i--);
+                        // perf-10: the run of disposed children from here goes at once. No Update runs between them, so it is
+                        // what one RemoveAt per child did, but a rebuild that disposed n children is one shift, not n.
+                        int end = i + 1;
+
+                        while (end < Children.Count && Children[end].IsDisposed)
+                        {
+                            end++;
+                        }
+
+                        for (int k = i; k < end; k++)
+                        {
+                            OnChildRemoved();
+                        }
+
+                        Children.RemoveRange(i, end - i);
+                        i--;
 
                         continue;
                     }
@@ -327,28 +472,17 @@ namespace ClassicUO.Game.UI.Controls
 
         private void DrawDebug(RenderLists renderLists, int x, int y, float layerDepth)
         {
-            if (IsVisible && CUOEnviroment.Debug)
+            // a struct command, not a closure: C# allocates a closure's captures at method entry, so even the
+            // debug-off path allocated one per visible control per frame
+            if (!IsVisible || !CUOEnviroment.Debug)
             {
-                Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
-
-                renderLists.AddGumpNoAtlas
-                (
-                    (batcher) =>
-                    {
-                        batcher.DrawRectangle
-                        (
-                            SolidColorTextureCache.GetTexture(Color.Green),
-                            x,
-                            y,
-                            Width,
-                            Height,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                return;
             }
+
+            renderLists.AddGumpNoAtlas
+            (
+                GumpCommand.Outline(SolidColorTextureCache.GetTexture(Color.Green), x, y, Width, Height, ShaderHueTranslator.GetHueVector(0), layerDepth)
+            );
         }
 
         public void BringOnTop()
@@ -480,7 +614,7 @@ namespace ClassicUO.Game.UI.Controls
         {
             c.Page = 0;
 
-            c._parent?.Children.Remove(c);
+            c.LeaveParentList();
 
             c._parent = this;
 
@@ -549,7 +683,13 @@ namespace ClassicUO.Game.UI.Controls
             int x = position.X - X - ParentX;
             int y = position.Y - Y - ParentY;
             OnMouseOver(x, y);
-            MouseOver.Raise(new MouseEventArgs(x, y), this);
+            // the handler is read after OnMouseOver, as Raise did; no listeners means no MouseEventArgs (hover runs every frame)
+            EventHandler<MouseEventArgs> handler = MouseOver;
+
+            if (handler != null)
+            {
+                handler(this, new MouseEventArgs(x, y));
+            }
         }
 
         public void InvokeMouseEnter(Point position)
@@ -557,7 +697,13 @@ namespace ClassicUO.Game.UI.Controls
             int x = position.X - X - ParentX;
             int y = position.Y - Y - ParentY;
             OnMouseEnter(x, y);
-            MouseEnter.Raise(new MouseEventArgs(x, y), this);
+            // the handler is read after OnMouseEnter, as Raise did; no listeners means no MouseEventArgs (hover runs every frame)
+            EventHandler<MouseEventArgs> handler = MouseEnter;
+
+            if (handler != null)
+            {
+                handler(this, new MouseEventArgs(x, y));
+            }
         }
 
         public void InvokeMouseExit(Point position)
@@ -565,7 +711,13 @@ namespace ClassicUO.Game.UI.Controls
             int x = position.X - X - ParentX;
             int y = position.Y - Y - ParentY;
             OnMouseExit(x, y);
-            MouseExit.Raise(new MouseEventArgs(x, y), this);
+            // the handler is read after OnMouseExit, as Raise did; no listeners means no MouseEventArgs (hover runs every frame)
+            EventHandler<MouseEventArgs> handler = MouseExit;
+
+            if (handler != null)
+            {
+                handler(this, new MouseEventArgs(x, y));
+            }
         }
 
         public bool InvokeMouseDoubleClick(Point position, MouseButtonType button)
@@ -813,6 +965,7 @@ namespace ClassicUO.Game.UI.Controls
             }
 
             IsDisposed = true;
+            InvalidateDraw();
         }
     }
 }

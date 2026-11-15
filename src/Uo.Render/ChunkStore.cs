@@ -1,0 +1,594 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+
+namespace Uo.Render;
+
+/// <summary>Map streaming: decides which 8×8 chunks are needed around the camera, loads regions and bakes chunks on
+/// workers, sub-allocates baked instances into one persistent GPU buffer, evicts far chunks, and builds the per-frame
+/// visible chunk table. Main thread only (workers only see jobs). Fixed-capacity arrays: no steady-state allocation.</summary>
+public sealed unsafe class ChunkStore
+{
+    public const int MaxPagesPerChunk = 32;
+    public const int MaxSlots = 16384;
+    const int TopMargin = 800, BottomMargin = 600, SideMargin = 200; // art above its tile / negative z / wide art
+    const int EvictAfterFrames = 30;          // and at least EvictAfterSeconds: hysteresis independent of fps
+    const double EvictAfterSeconds = 1.0;
+    readonly long[] _lastNeededTicks = new long[MaxSlots];
+    long _nowTicks;
+    /// <summary>Bounds the bake job pool (and its memory) and keeps worker latency predictable after a camera jump.</summary>
+    public const int MaxBakesInFlight = 256;
+
+    enum State : byte { Free, WaitRegions, Baking, Baked, Ready }
+
+    PackSet _pack;
+    readonly WorkerPool _workers;
+    public readonly RangeAllocator Alloc;
+
+    readonly int[] _key = new int[MaxSlots], _bx = new int[MaxSlots], _by = new int[MaxSlots];
+    readonly State[] _state = new State[MaxSlots];
+    readonly int[] _first = new int[MaxSlots], _count = new int[MaxSlots];
+    readonly int[] _minX = new int[MaxSlots], _minY = new int[MaxSlots], _maxX = new int[MaxSlots], _maxY = new int[MaxSlots];
+    readonly ushort[] _pages = new ushort[MaxSlots * MaxPagesPerChunk];
+    readonly byte[] _pageCount = new byte[MaxSlots];
+    readonly long[] _lastNeeded = new long[MaxSlots];
+    readonly BakeJob[] _job = new BakeJob[MaxSlots];
+    // CPU mirror of the instance buffer at the same offsets, with each instance's object key: override lookup,
+    // translucent sort keys, debug rects. The allocator is first-fit, so only the low part is used; the mirror starts at
+    // 512k instances (19 MB; the 4K bench path, zoom 0.5 included, peaks below that) and doubles past it if ever needed.
+    SpriteInstance[] _cpuInst;
+    uint[] _cpuKeys;
+    // Per chunk: the translucent pass's sort keys (WorldRenderer.SortKey) of its baked translucent instances, set at
+    // upload; the arrays are kept per slot and only grow (no steady-state allocation).
+    readonly ulong[][] _transKeys = new ulong[MaxSlots][];
+    readonly int[] _transCount = new int[MaxSlots];
+    readonly int[] _visTrans = new int[MaxSlots];
+    int _visTransCount;
+    readonly int[] _active = new int[MaxSlots], _activePos = new int[MaxSlots];
+    int _activeCount;
+    readonly int[] _freeSlots = new int[MaxSlots];
+    int _freeCount;
+    readonly Dictionary<int, int> _map = new(MaxSlots);
+    readonly Stack<BakeJob> _jobPool = new(1024);
+
+    readonly int[] _uploadQueue = new int[MaxSlots];
+    int _uqHead, _uqCount;
+
+    // regions
+    readonly Dictionary<int, Region> _regions = new(64);
+    readonly Region[] _regionList = new Region[256];
+    int _regionCount;
+    readonly Stack<RegionJob> _regionJobPool = new(64);
+    readonly Stack<Region> _regionPool = new(64);
+    const int MaxRegions = 24;
+
+    // upload records for this frame (executed in the copy pass)
+    public readonly uint[] UploadSrc = new uint[4096], UploadDst = new uint[4096], UploadSize = new uint[4096];
+    public int UploadCount;
+
+    public int ReadyChunks, PendingChunks, BakesInFlight;
+    public JobStats BakeStats, RegionStats;
+    /// <summary>Chunks intersecting the view that are not drawable yet this frame (visible pop-in).</summary>
+    public int MissingVisible;
+    /// <summary>Chunks not drawable yet whose art may reach the view (the land footprint widened by the art margins the
+    /// streaming uses): what a host holding its frame waits for.</summary>
+    public int MissingNear;
+    public bool OutOfGpuSpace;
+
+    public long ChangeEpoch { get; private set; }
+    /// <summary>Times <see cref="EvictAll"/> dropped every chunk (a bake input changed): the view is unbuilt until it
+    /// re-streams, which a host holding its frame treats as a discontinuity.</summary>
+    public long EvictAllCount { get; private set; }
+    // Only skip eviction when every active chunk was needed and ready at the last full scan.
+    public bool CanReuseMaintenance { get; private set; }
+    long _lastMaintenanceFrame, _reuseFrame, _reuseTicks;
+    readonly ushort[] _visiblePages = new ushort[ushort.MaxValue + 1];
+    readonly bool[] _pageSeen = new bool[ushort.MaxValue + 1];
+    int _visiblePageCount;
+
+    public void ReuseMaintenance(long frame)
+    {
+        _reuseFrame = frame;
+        _reuseTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        if ((frame & 63) == 0) EvictRegions(frame);
+    }
+
+    public void TouchVisiblePages(PageResidency residency, long frame)
+    {
+        for (int i = 0; i < _visiblePageCount; i++) residency.Touch(_visiblePages[i], frame);
+    }
+
+    public ChunkStore(PackSet pack, WorkerPool workers, int instanceCapacity)
+    {
+        _pack = pack;
+        _workers = workers;
+        Alloc = new RangeAllocator(instanceCapacity);
+        _cpuInst = new SpriteInstance[Math.Min(instanceCapacity, 1 << 19)];
+        _cpuKeys = new uint[_cpuInst.Length];
+        for (int i = MaxSlots - 1; i >= 0; i--) _freeSlots[_freeCount++] = i;
+        for (int i = 0; i < MaxBakesInFlight; i++) _jobPool.Push(new BakeJob()); // pre-sized: no steady-state allocation
+        BakeJob.Pack = pack;
+    }
+
+    public int ActiveChunks => _activeCount;
+    public int RegionsLoaded => _regionCount;
+
+    /// <summary>Marks the chunks overlapping <paramref name="need"/> (world pixels) as needed, starting loads/bakes, and evicts stale ones.</summary>
+    public void Update(long frame, in RectI view, in RectI need)
+    {
+        _nowTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_reuseFrame > _lastMaintenanceFrame)
+        {
+            // On resumed motion, the old view's chunks were needed through the LAST reused frame.
+            for (int i = 0; i < _activeCount; i++)
+            {
+                int slot = _active[i];
+                if (_lastNeeded[slot] != _lastMaintenanceFrame) continue;
+                _lastNeeded[slot] = _reuseFrame;
+                _lastNeededTicks[slot] = _reuseTicks;
+            }
+        }
+        _lastMaintenanceFrame = frame;
+        RenderDiagnostics.Add(DiagMetric.StreamingMarks, 2);
+        // Visible chunks first so they win the in-flight bake budget, then the prefetch ring.
+        MarkRange(frame, view);
+        MarkRange(frame, need);
+
+        // evict stale chunks
+        PendingChunks = 0; ReadyChunks = 0;
+        CanReuseMaintenance = true;
+        RenderDiagnostics.Add(DiagMetric.EvictionScans, 1);
+        for (int i = _activeCount - 1; i >= 0; i--)
+        {
+            int slot = _active[i];
+            var st = _state[slot];
+            if (st != State.Ready || _lastNeeded[slot] != frame) CanReuseMaintenance = false;
+            if (st == State.Ready) ReadyChunks++; else PendingChunks++;
+            if (_lastNeeded[slot] >= frame - EvictAfterFrames || st == State.Baking) continue;
+            if (_nowTicks - _lastNeededTicks[slot] < (long)(EvictAfterSeconds * System.Diagnostics.Stopwatch.Frequency)) continue;
+            if (st == State.Ready && _count[slot] > 0) Alloc.Free(_first[slot], _count[slot]);
+            if (st == State.Baked) { ReturnJob(_job[slot]); _job[slot] = null; }
+            FreeSlot(slot);
+        }
+
+        if ((frame & 63) == 0) EvictRegions(frame);
+    }
+
+    /// <summary>Drops every chunk (they re-stream and rebake from the next <see cref="Update"/>): after a change of the
+    /// bake inputs, e.g. <see cref="PackSet.LandRemap"/>. Bakes in flight are discarded when they finish.</summary>
+    public void EvictAll()
+    {
+        ChangeEpoch++;
+        EvictAllCount++;
+        CanReuseMaintenance = false;
+        for (int i = _activeCount - 1; i >= 0; i--)
+        {
+            int slot = _active[i];
+            var st = _state[slot];
+            if (st == State.Ready && _count[slot] > 0) Alloc.Free(_first[slot], _count[slot]);
+            if (st == State.Baked) ReturnJob(_job[slot]);
+            _job[slot] = null;
+            FreeSlot(slot);
+        }
+    }
+
+    /// <summary>Streams another facet of the same pack (<see cref="PackSet.WithFacet"/>) from the next
+    /// <see cref="Update"/>: every chunk and region is dropped, while the instance allocator (with ranges reserved before
+    /// any chunk, e.g. the dynamic range), the CPU mirror and the job pools are kept. Bakes and region loads in flight are
+    /// discarded when they finish: their regions are orphaned rather than pooled, so a worker never writes into a region
+    /// the new facet reuses.</summary>
+    public void ChangeFacet(PackSet pack)
+    {
+        EvictAll();
+        for (int i = 0; i < _regionCount; i++)
+        {
+            var r = _regionList[i];
+            _regionList[i] = null;
+            if (r.Loaded && r.Pins == 0)
+            {
+                r.Data = null;
+                _regionPool.Push(r);
+            }
+        }
+        _regionCount = 0;
+        _regions.Clear();
+        _pack = pack;
+        BakeJob.Pack = pack;
+        MissingVisible = 0;
+        MissingNear = 0;
+        OutOfGpuSpace = false;
+    }
+
+    void MarkRange(long frame, in RectI need)
+    {
+        // world px -> tile: X-Y = sx/22, X+Y = sy/22. Expand by margins so tall art and z offsets are covered.
+        float l = need.X0 - SideMargin, r = need.X1 + SideMargin, t = need.Y0 - BottomMargin, b = need.Y1 + TopMargin;
+        int txMin = (int)MathF.Floor((l + t) / 44f) - 1, txMax = (int)MathF.Ceiling((r + b) / 44f) + 1;
+        int tyMin = (int)MathF.Floor((t - r) / 44f) - 1, tyMax = (int)MathF.Ceiling((b - l) / 44f) + 1;
+        int bx0 = Math.Max(0, txMin >> 3), bx1 = Math.Min(_pack.BlocksX - 1, txMax >> 3);
+        int by0 = Math.Max(0, tyMin >> 3), by1 = Math.Min(_pack.BlocksY - 1, tyMax >> 3);
+
+        for (int by = by0; by <= by1; by++)
+            for (int bx = bx0; bx <= bx1; bx++)
+            {
+                // conservative screen bounds of the block
+                int x0 = (bx * 8 - (by * 8 + 7)) * 22 - 22 - SideMargin, x1 = ((bx * 8 + 7) - by * 8) * 22 + 22 + SideMargin;
+                int y0 = (bx * 8 + by * 8) * 22 - 22 - TopMargin, y1 = (bx * 8 + by * 8 + 14) * 22 + 22 + BottomMargin;
+                if (x1 < need.X0 || x0 > need.X1 || y1 < need.Y0 || y0 > need.Y1) continue;
+                int key = by * _pack.BlocksX + bx;
+                if (!_map.TryGetValue(key, out int slot))
+                {
+                    if (_freeCount == 0) continue;
+                    slot = _freeSlots[--_freeCount];
+                    _map[key] = slot;
+                    _key[slot] = key; _bx[slot] = bx; _by[slot] = by;
+                    _state[slot] = State.WaitRegions;
+                    ChangeEpoch++;
+                    _activePos[slot] = _activeCount;
+                    _active[_activeCount++] = slot;
+                }
+                _lastNeeded[slot] = frame;
+                _lastNeededTicks[slot] = _nowTicks;
+                if (_state[slot] == State.WaitRegions && BakesInFlight < MaxBakesInFlight) TryDispatch(slot, frame);
+            }
+    }
+
+    void FreeSlot(int slot)
+    {
+        ChangeEpoch++;
+        _map.Remove(_key[slot]);
+        _state[slot] = State.Free;
+        int pos = _activePos[slot];
+        int last = _active[--_activeCount];
+        _active[pos] = last;
+        _activePos[last] = pos;
+        _freeSlots[_freeCount++] = slot;
+    }
+
+    void TryDispatch(int slot, long frame)
+    {
+        int rb = _pack.RegionBlocks;
+        int bx = _bx[slot], by = _by[slot];
+        int rx = bx / rb, ry = by / rb;
+        int lbx = bx - rx * rb, lby = by - ry * rb;
+        // Neighbour regions are needed only for blocks on a region edge (stretched land samples x-1..x+2).
+        int dx0 = lbx == 0 ? -1 : 0, dx1 = lbx == rb - 1 ? 1 : 0, dy0 = lby == 0 ? -1 : 0, dy1 = lby == rb - 1 ? 1 : 0;
+        bool ready = true;
+        for (int dy = dy0; dy <= dy1; dy++)
+            for (int dx = dx0; dx <= dx1; dx++)
+            {
+                var reg = GetRegion(rx + dx, ry + dy, frame);
+                if (reg != null && !reg.Loaded) ready = false;
+            }
+        if (!ready) return;
+
+        var job = _jobPool.Count > 0 ? _jobPool.Pop() : new BakeJob();
+        Array.Clear(job.Regions);
+        job.Rx0 = rx - 1; job.Ry0 = ry - 1;
+        for (int dy = dy0; dy <= dy1; dy++)
+            for (int dx = dx0; dx <= dx1; dx++)
+            {
+                var reg = GetRegion(rx + dx, ry + dy, frame);
+                if (reg == null) continue;
+                reg.Pins++;
+                job.Regions[(dy + 1) * 3 + dx + 1] = reg;
+            }
+        job.Slot = slot; job.Bx = bx; job.By = by;
+        _job[slot] = job;
+        _state[slot] = State.Baking;
+        ChangeEpoch++;
+        BakesInFlight++;
+        _workers.Enqueue(job, high: false);
+    }
+
+    Region GetRegion(int rx, int ry, long frame)
+    {
+        int rb = _pack.RegionBlocks;
+        if (rx < 0 || ry < 0 || rx * rb >= _pack.BlocksX || ry * rb >= _pack.BlocksY) return null;
+        int key = ry * 4096 + rx;
+        if (_regions.TryGetValue(key, out var reg)) { reg.LastUsed = frame; return reg; }
+        reg = _regionPool.Count > 0 ? _regionPool.Pop() : new Region();
+        reg.Rx = rx; reg.Ry = ry; reg.Loaded = false; reg.Pins = 0; reg.Data = null; reg.LastUsed = frame;
+        _regions[key] = reg;
+        _regionList[_regionCount++] = reg;
+        var job = _regionJobPool.Count > 0 ? _regionJobPool.Pop() : new RegionJob();
+        job.Region = reg;
+        job.Path = RegionPath(rx, ry);
+        _workers.Enqueue(job, high: false);
+        return reg;
+    }
+
+    // Region paths are created once per region load (rare), not per frame.
+    string RegionPath(int rx, int ry) => Uo.Pack.PackConst.RegionPath(_pack.FacetDir, rx, ry);
+
+    void EvictRegions(long frame)
+    {
+        while (_regionCount > MaxRegions)
+        {
+            int victim = -1;
+            for (int i = 0; i < _regionCount; i++)
+            {
+                var r = _regionList[i];
+                if (r.Pins > 0 || !r.Loaded || r.LastUsed >= frame - 120) continue;
+                if (victim < 0 || r.LastUsed < _regionList[victim].LastUsed) victim = i;
+            }
+            if (victim < 0) return;
+            var reg = _regionList[victim];
+            _regions.Remove(reg.Ry * 4096 + reg.Rx);
+            _regionList[victim] = _regionList[--_regionCount];
+            reg.Data = null;
+            _regionPool.Push(reg);
+        }
+    }
+
+    public void OnRegionLoaded(RegionJob job)
+    {
+        ChangeEpoch++;
+        RegionStats.Add(job);
+        job.Region.Loaded = true;
+        job.Region = null;
+        _regionJobPool.Push(job);
+    }
+
+    /// <summary>Debug: injects a hand-built instance list as one chunk (uploaded through the normal path).
+    /// Used by --hue-sheet with map streaming disabled.</summary>
+    public void InjectDebugChunk(SpriteInstance[] instances, int count)
+    {
+        ChangeEpoch++;
+        int slot = _freeSlots[--_freeCount];
+        _map[-1] = slot;
+        _key[slot] = -1;
+        _activePos[slot] = _activeCount;
+        _active[_activeCount++] = slot;
+        var job = _jobPool.Pop();
+        if (job.Instances.Length < count) job.Instances = new SpriteInstance[count];
+        if (job.Keys.Length < count) job.Keys = new uint[count];
+        Array.Copy(instances, job.Instances, count);
+        Array.Clear(job.Keys, 0, count);
+        job.Count = count;
+        job.MinX = job.MinY = int.MaxValue; job.MaxX = job.MaxY = int.MinValue;
+        job.PageCount = 0;
+        job.TranslucentCount = 0;
+        for (int i = 0; i < count; i++)
+        {
+            ref var e = ref instances[i];
+            if (e.Alpha < 255)
+            {
+                if (job.TranslucentCount == job.Translucent.Length) Array.Resize(ref job.Translucent, job.Translucent.Length * 2);
+                job.Translucent[job.TranslucentCount++] = i;
+            }
+            job.MinX = Math.Min(job.MinX, e.X); job.MinY = Math.Min(job.MinY, e.Y);
+            job.MaxX = Math.Max(job.MaxX, e.X + (int)(e.Whf & 0xFFF)); job.MaxY = Math.Max(job.MaxY, e.Y + (int)((e.Whf >> 12) & 0xFFF));
+            ushort pg = (ushort)(e.PageHue & 0xFFFF);
+            bool have = false;
+            for (int k = 0; k < job.PageCount; k++) have |= job.Pages[k] == pg;
+            if (!have && job.PageCount < job.Pages.Length) job.Pages[job.PageCount++] = pg;
+        }
+        job.Slot = slot;
+        _job[slot] = job;
+        _state[slot] = State.Baking;
+        BakesInFlight++;
+        OnBaked(job);
+    }
+
+    public void OnBaked(BakeJob job)
+    {
+        ChangeEpoch++;
+        BakeStats.Add(job);
+        BakesInFlight--;
+        for (int i = 0; i < 9; i++) if (job.Regions[i] != null) job.Regions[i].Pins--;
+        Array.Clear(job.Regions);
+        int slot = job.Slot;
+        if (_state[slot] != State.Baking || _job[slot] != job) { ReturnJob(job); return; }
+        _state[slot] = State.Baked;
+        _uploadQueue[(_uqHead + _uqCount) % MaxSlots] = slot;
+        _uqCount++;
+    }
+
+    void ReturnJob(BakeJob job) => _jobPool.Push(job);
+
+    /// <summary>Copies baked chunks into the mapped frame transfer buffer (up to the budgets) and records GPU uploads.</summary>
+    public int StageUploads(byte* mapped, ref uint offset, uint capacity, int maxChunks)
+    {
+        UploadCount = 0;
+        int uploaded = 0;
+        int stride = sizeof(SpriteInstance);
+        while (_uqCount > 0 && uploaded < maxChunks && UploadCount < UploadSrc.Length)
+        {
+            int slot = _uploadQueue[_uqHead];
+            if (_state[slot] != State.Baked) { _uqHead = (_uqHead + 1) % MaxSlots; _uqCount--; continue; }
+            var job = _job[slot];
+            int n = job.Count;
+            uint bytes = (uint)(n * stride);
+            if (offset + bytes > capacity) break;
+            int first = 0;
+            if (n > 0)
+            {
+                first = Alloc.Alloc(n);
+                if (first < 0) { OutOfGpuSpace = true; break; }
+                fixed (SpriteInstance* src = job.Instances)
+                    Buffer.MemoryCopy(src, mapped + offset, capacity - offset, bytes);
+                UploadSrc[UploadCount] = offset;
+                UploadDst[UploadCount] = (uint)(first * stride);
+                UploadSize[UploadCount] = bytes;
+                UploadCount++;
+                offset += bytes;
+            }
+            _uqHead = (_uqHead + 1) % MaxSlots; _uqCount--;
+            _first[slot] = first;
+            _count[slot] = n;
+            _minX[slot] = job.MinX; _minY[slot] = job.MinY; _maxX[slot] = job.MaxX; _maxY[slot] = job.MaxY;
+            int pc = job.PageCount;
+            _pageCount[slot] = (byte)pc;
+            job.Pages.AsSpan(0, pc).CopyTo(_pages.AsSpan(slot * MaxPagesPerChunk, pc));
+            _state[slot] = State.Ready;
+            ChangeEpoch++;
+            _job[slot] = null;
+            int tn = n > 0 ? job.TranslucentCount : 0;
+            _transCount[slot] = tn;
+            if (tn > 0)
+            {
+                ref var tk = ref _transKeys[slot];
+                if (tk == null || tk.Length < tn) tk = new ulong[Math.Max(tn, 16)];
+                for (int t = 0; t < tn; t++)
+                {
+                    int local = job.Translucent[t];
+                    tk[t] = WorldRenderer.SortKey(job.Instances[local].Depth, (uint)(first + local));
+                }
+            }
+            if (n > 0)
+            {
+                if (first + n > _cpuInst.Length)
+                {
+                    int len = Math.Min(Alloc.Capacity, Math.Max(first + n, _cpuInst.Length * 2));
+                    Array.Resize(ref _cpuInst, len);
+                    Array.Resize(ref _cpuKeys, len);
+                }
+                job.Instances.AsSpan(0, n).CopyTo(_cpuInst.AsSpan(first));
+                job.Keys.AsSpan(0, n).CopyTo(_cpuKeys.AsSpan(first));
+            }
+            ReturnJob(job);
+            uploaded++;
+        }
+        return uploaded;
+    }
+
+    public int UploadQueueLength => _uqCount;
+
+    /// <summary>Finds the baked instances of a map object in a ready chunk: the land tile at (x, y)
+    /// (<paramref name="isStatic"/> false; z and graphic ignored), or the statics there with this graphic and z
+    /// (<c>int.MinValue</c> = any z). Writes chunk-local instance indices; global index = <see cref="FirstInstance"/> + local.</summary>
+    public int FindObject(int x, int y, bool isStatic, int z, int graphic, out int slot, Span<int> locals)
+    {
+        slot = -1;
+        if (x < 0 || y < 0 || (x >> 3) >= _pack.BlocksX || (y >> 3) >= _pack.BlocksY) return 0;
+        if (!_map.TryGetValue((y >> 3) * _pack.BlocksX + (x >> 3), out slot) || _state[slot] != State.Ready) return 0;
+        var keys = _cpuKeys.AsSpan(_first[slot], _count[slot]);
+        int n = keys.Length;
+        uint cell = (uint)((y & 7) * 8 + (x & 7));
+        int lo = 0, hi = n;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (keys[mid] >> 25 < cell) lo = mid + 1; else hi = mid;
+        }
+        int found = 0;
+        for (int i = lo; i < n && keys[i] >> 25 == cell && found < locals.Length; i++)
+        {
+            uint k = keys[i];
+            if (((k >> 24 & 1) != 0) != isStatic) continue;
+            if (isStatic && ((k & 0xFFFF) != (uint)graphic || z != int.MinValue && (sbyte)(k >> 16) != z)) continue;
+            locals[found++] = i;
+        }
+        return found;
+    }
+
+    public bool TryGetReadySlot(int bx, int by, out int slot)
+        => _map.TryGetValue(by * _pack.BlocksX + bx, out slot) && _state[slot] == State.Ready;
+
+    public ReadOnlySpan<uint> ObjectKeys(int slot) => _state[slot] == State.Ready ? _cpuKeys.AsSpan(_first[slot], _count[slot]) : default;
+
+    /// <summary>Ready chunks whose sprite bounds meet <paramref name="rect"/> (world pixels).</summary>
+    public int ReadySlotsInRect(in RectI rect, Span<int> slots)
+    {
+        int n = 0;
+        for (int i = 0; i < _activeCount && n < slots.Length; i++)
+        {
+            int slot = _active[i];
+            if (_state[slot] != State.Ready || _count[slot] == 0) continue;
+            if (_maxX[slot] < rect.X0 || _minX[slot] > rect.X1 || _maxY[slot] < rect.Y0 || _minY[slot] > rect.Y1) continue;
+            slots[n++] = slot;
+        }
+        return n;
+    }
+
+    public int FirstInstance(int slot) => _first[slot];
+
+    /// <summary>The CPU mirror of the instance at a global index (a ready chunk's, from <see cref="TranslucentKeys"/>).</summary>
+    public ref readonly SpriteInstance CpuInstanceAt(uint gi) => ref _cpuInst[gi];
+
+    /// <summary>Translucent-pass sort keys of a ready chunk's baked translucent instances.</summary>
+    public ReadOnlySpan<ulong> TranslucentKeys(int slot) => _state[slot] == State.Ready ? _transKeys[slot].AsSpan(0, _transCount[slot]) : default;
+
+    /// <summary>The last <see cref="BuildDrawList"/>'s visible chunks that have baked translucent instances.</summary>
+    public ReadOnlySpan<int> VisibleTranslucentSlots => _visTrans.AsSpan(0, _visTransCount);
+    public int VisibleTranslucentCount => _visTransCount;
+    public ReadOnlySpan<SpriteInstance> CpuInstances(int slot) => _state[slot] == State.Ready ? _cpuInst.AsSpan(_first[slot], _count[slot]) : default;
+    /// <summary>Elements in the CPU instance mirror (grows to the allocator's high-water mark).</summary>
+    public int CpuMirrorLength => _cpuInst.Length;
+
+    /// <summary>Visible chunk table for this frame. Touches the pages of every visible chunk in the residency manager.</summary>
+    public int BuildDrawList(in RectI view, Span<ChunkDraw> table, PageResidency residency, long frame, out int instances, bool cachePages = true)
+    {
+        if (cachePages)
+        {
+            for (int i = 0; i < _visiblePageCount; i++) _pageSeen[_visiblePages[i]] = false;
+            _visiblePageCount = 0;
+        }
+        int n = 0;
+        uint total = 0;
+        MissingVisible = 0;
+        MissingNear = 0;
+        _visTransCount = 0;
+        for (int i = 0; i < _activeCount && n < table.Length; i++)
+        {
+            int slot = _active[i];
+            if (_state[slot] != State.Ready)
+            {
+                // Not drawable yet: does its land footprint (no art margins) intersect the view? Then it pops in later.
+                int bx = _bx[slot], by = _by[slot];
+                int x0 = (bx * 8 - (by * 8 + 7)) * 22 - 22, x1 = ((bx * 8 + 7) - by * 8) * 22 + 22;
+                int y0 = (bx * 8 + by * 8) * 22 - 22, y1 = (bx * 8 + by * 8 + 14) * 22 + 22;
+                if (!(x1 < view.X0 || x0 > view.X1 || y1 < view.Y0 || y0 > view.Y1)) MissingVisible++;
+                // art above the tile (TopMargin) reaches up from chunks below the view, negative z (BottomMargin) down
+                if (!(x1 + SideMargin < view.X0 || x0 - SideMargin > view.X1 || y1 + BottomMargin < view.Y0 || y0 - TopMargin > view.Y1)) MissingNear++;
+                continue;
+            }
+            if (_count[slot] == 0) continue;
+            if (_maxX[slot] < view.X0 || _minX[slot] > view.X1 || _maxY[slot] < view.Y0 || _minY[slot] > view.Y1) continue;
+            int pc = _pageCount[slot];
+            int pb = slot * MaxPagesPerChunk;
+            for (int p = 0; p < pc; p++)
+            {
+                ushort page = _pages[pb + p];
+                residency.Touch(page, frame);
+                if (!cachePages || _pageSeen[page]) continue;
+                _pageSeen[page] = true;
+                _visiblePages[_visiblePageCount++] = page;
+            }
+            table[n].First = (uint)_first[slot];
+            table[n].Prefix = total;
+            total += (uint)_count[slot];
+            if (_transCount[slot] > 0) _visTrans[_visTransCount++] = slot;
+            n++;
+        }
+        instances = (int)total;
+        return n;
+    }
+}
+
+public struct RectI
+{
+    public int X0, Y0, X1, Y1;
+    public RectI(int x0, int y0, int x1, int y1) { X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; }
+}
+
+/// <summary>Run time and end-to-end latency (enqueue → drained on the main thread) of a job type.</summary>
+public struct JobStats
+{
+    public long Count, RunTicks, LatencyTicks, MaxLatencyTicks;
+
+    public void Add(Job j)
+    {
+        long lat = System.Diagnostics.Stopwatch.GetTimestamp() - j.EnqueuedAt;
+        Count++;
+        RunTicks += j.RunTicks;
+        LatencyTicks += lat;
+        if (lat > MaxLatencyTicks) MaxLatencyTicks = lat;
+    }
+
+    public override readonly string ToString()
+    {
+        double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        return Count == 0 ? "none" : $"{Count} jobs, run avg {RunTicks * f / Count:F3} ms, latency avg {LatencyTicks * f / Count:F2} ms max {MaxLatencyTicks * f:F1} ms";
+    }
+}

@@ -1,65 +1,46 @@
-﻿// SPDX-License-Identifier: BSD-2-Clause
+// SPDX-License-Identifier: BSD-2-Clause
 
-using ClassicUO.IO;
-using ClassicUO.Utility;
 using System;
-using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
     public sealed class LightsLoader : UOFileLoader
     {
-        private UOFileMul _file;
+        private LightEntry[] _lights = Array.Empty<LightEntry>();
+        private byte[] _data = Array.Empty<byte>();
 
         public const int MAX_LIGHTS_DATA_INDEX_COUNT = 100;
 
         public LightsLoader(UOFileManager fileManager) : base(fileManager) { }
 
-        public UOFileMul File => _file;
+        public int Count => _lights.Length;
 
         public override void Load()
         {
-            string path = FileManager.GetUOFilePath("light.mul");
-            string pathidx = FileManager.GetUOFilePath("lightidx.mul");
-
-            FileSystemHelper.EnsureFileExists(path);
-            FileSystemHelper.EnsureFileExists(pathidx);
-
-            _file = new UOFileMul(path, pathidx);
-            _file.FillEntries();
+            (_lights, _data) = LightFile.Read(FileManager.Pack.PathOf(TableConst.LightsFile));
         }
 
         public LightInfo GetLight(uint idx)
         {
-            ref var entry = ref _file.GetValidRefEntry((int)idx);
-
-            if (entry.Width == 0 && entry.Height == 0)
+            if (idx >= _lights.Length)
             {
                 return default;
             }
 
-            _file.Seek(entry.Offset, System.IO.SeekOrigin.Begin);
-            var buffer = new uint[entry.Width * entry.Height];
+            ref readonly var entry = ref _lights[idx];
 
-            for (int i = 0; i < entry.Height; i++)
+            if (entry.Width == 0 || entry.Height == 0)
             {
-                int pos = i * entry.Width;
+                return default;
+            }
 
-                for (int j = 0; j < entry.Width; j++)
-                {
-                    ushort val = _file.ReadUInt8();
-                    // Light can be from -31 to 31. When they are below 0 they are bit inverted
-                    if (val > 0x1F)
-                    {
-                        val = (ushort)(~val & 0x1F);
-                    }
-                    uint rgb24 = (uint)((val << 19) | (val << 11) | (val << 3));
+            var texels = _data.AsSpan((int)entry.Offset, entry.Width * entry.Height);
+            var buffer = new uint[texels.Length];
 
-                    if (val != 0)
-                    {
-                        buffer[pos + j] = rgb24 | 0xFF_00_00_00;
-                    }
-                }
+            for (int i = 0; i < texels.Length; i++)
+            {
+                buffer[i] = LightFile.ToRgba8(texels[i]);
             }
 
             return new LightInfo()

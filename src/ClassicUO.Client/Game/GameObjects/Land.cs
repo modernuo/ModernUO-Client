@@ -10,7 +10,7 @@ using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal sealed partial class Land : GameObject
+    internal sealed partial class Land : TileListObject
     {
         //private static readonly QueuedPool<Land> _pool = new QueuedPool<Land>
         //(
@@ -39,14 +39,32 @@ namespace ClassicUO.Game.GameObjects
 
         private Land(World world) : base(world) { }
 
-        public static Land Create(World world, ushort graphic)
+        /// <summary>A new Land for MapObjectRecycler.Prefill (login warm-up); Create puts it to use like any retired one.</summary>
+        internal static Land NewForRecycler(World world) => new Land(world);
+
+        /// <summary>Allocated because the recycler had none ([gcs] pool lines).</summary>
+        public static long TotalNew;
+
+        /// <summary>A new Land, or <paramref name="reuse"/> (a retired Land from MapObjectRecycler) put back to a new one's state.</summary>
+        public static Land Create(World world, ushort graphic, Land reuse = null)
         {
-            Land land = new Land(world); // _pool.GetOne();
+            Land land;
+
+            if (reuse != null && ReferenceEquals(reuse.World, world))
+            {
+                land = reuse;
+                land.ResetForReuse();
+            }
+            else
+            {
+                land = new Land(world);
+                TotalNew++;
+            }
+
             land.AlphaHue = 0xFF;
             land.Graphic = graphic;
             land.OriginalGraphic = graphic;
             land.IsStretched = land.TileData.TexID == 0 && land.TileData.IsWet;
-            land.AllowedToDraw = graphic > 2;
             land.UpdateGraphicBySeason();
 
             return land;
@@ -60,14 +78,29 @@ namespace ClassicUO.Game.GameObjects
             }
 
             base.Destroy();
-            //_pool.ReturnOne(this);
+            // reuse: Chunk.Destroy retires evicted map objects into MapObjectRecycler (the QueuedPool above predates World)
+        }
+
+        public override void ResetForReuse()
+        {
+            base.ResetForReuse();
+            AverageZ = 0;
+            IsStretched = false;
+            MinZ = 0;
+            NormalTop = NormalRight = NormalLeft = NormalBottom = Vector3.Zero;
+            OriginalGraphic = 0;
+            YOffsets = default;
         }
 
         public override void UpdateGraphicBySeason()
         {
             Graphic = SeasonManager.GetLandSeasonGraphic(World.Season, OriginalGraphic);
-            AllowedToDraw = Graphic > 2;
+            AllowedToDraw = IsDrawn(Client.Game.UO.FileManager.TileData.LandData, Graphic);
         }
+
+        /// <summary>Whether a land graphic (after the season swap) is drawn: the pack's tiledata draw flag.</summary>
+        internal static bool IsDrawn(LandTiles[] landData, ushort graphic) =>
+            graphic < landData.Length && Uo.Pack.TileDraw.Land(landData[graphic].PackFlags);
 
         public int CalculateCurrentAverageZ(int direction)
         {
@@ -95,7 +128,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void ApplyStretch(Map.Map map, int x, int y, sbyte z)
         {
-            if (IsStretched || Client.Game.UO.FileManager.Texmaps.File.GetValidRefEntry(TileData.TexID).Length <= 0)
+            if (IsStretched || !Client.Game.UO.FileManager.Texmaps.Exists(TileData.TexID))
             {
                 IsStretched = false;
                 AverageZ = z;

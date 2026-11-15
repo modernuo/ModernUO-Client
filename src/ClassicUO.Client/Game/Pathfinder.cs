@@ -6,6 +6,7 @@ using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
+using ClassicUO.Game.Map;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework;
 using MathHelper = ClassicUO.Utility.MathHelper;
@@ -37,6 +38,14 @@ namespace ClassicUO.Game
         };
         private Point _startPoint, _endPoint;
 
+        // perf-alloc-5: the tile lists CalculateMinMaxZ and CalculateNewZ fill on every call. A walk into a wall (the player
+        // holding a direction, or the scripted driver) runs CanWalk every frame, which allocated two lists and a PathObject
+        // per tile object each time. Main thread only; CalculateNewZ calls CalculateMinMaxZ, so each has its own.
+        private readonly List<PathObject> _minMaxList = new List<PathObject>();
+        private readonly List<PathObject> _newZList = new List<PathObject>();
+        // List<T>.Sort() without a comparison wraps the default comparer in a new delegate per call under NativeAOT
+        private static readonly Comparison<PathObject> _compare = static (a, b) => a.CompareTo(b);
+
         private readonly World _world;
 
         public Pathfinder(World world)
@@ -55,9 +64,13 @@ namespace ClassicUO.Game
 
         private bool CreateItemList(List<PathObject> list, int x, int y, int stepState)
         {
-            GameObject tile = _world.Map.GetTile(x, y, false);
+            // the draw walk used to load every chunk on screen the first time it saw it; it now loads them over a few frames
+            // (Map.UpdateLoading), so chunks within the view range load here on demand and walking right after a teleport
+            // sees the same tiles as before
+            bool inView = Math.Max(Math.Abs(x - _world.Player.X), Math.Abs(y - _world.Player.Y)) <= _world.ClientViewRange + 8;
+            GameObject obj = _world.Map.OpenTile(x, y, inView, out TileReader reader);
 
-            if (tile == null)
+            if (obj == null)
             {
                 return false;
             }
@@ -66,14 +79,7 @@ namespace ClassicUO.Game
 
             bool isGM = _world.Player.Graphic == 0x03DB;
 
-            GameObject obj = tile;
-
-            while (obj.TPrevious != null)
-            {
-                obj = obj.TPrevious;
-            }
-
-            for (; obj != null; obj = obj.TNext)
+            for (; obj != null; obj = reader.Next())
             {
                 if (_world.CustomHouseManager != null && obj.Z < _world.Player.Z)
                 {
@@ -311,7 +317,8 @@ namespace ClassicUO.Game
             int direction = newDirection ^ 4;
             newX += _offsetX[direction];
             newY += _offsetY[direction];
-            List<PathObject> list = new List<PathObject>();
+            List<PathObject> list = _minMaxList;
+            list.Clear();
 
             if (!CreateItemList(list, newX, newY, stepState) || list.Count == 0)
             {
@@ -406,7 +413,8 @@ namespace ClassicUO.Game
                 stepState
             );
 
-            List<PathObject> list = new List<PathObject>();
+            List<PathObject> list = _newZList;
+            list.Clear();
 
             if (_world.CustomHouseManager != null)
             {
@@ -423,7 +431,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            list.Sort();
+            list.Sort(_compare);
 
             list.Add
             (
@@ -1053,7 +1061,8 @@ namespace ClassicUO.Game
             POF_NO_DIAGONAL = 0x00000008
         }
 
-        private class PathObject : IComparable<PathObject>
+        // a struct (perf-alloc-5): the lists hold the values, so filling them allocates nothing once their arrays have grown
+        private readonly struct PathObject : IComparable<PathObject>
         {
             public PathObject(uint flags, int z, int avgZ, int h, GameObject obj)
             {

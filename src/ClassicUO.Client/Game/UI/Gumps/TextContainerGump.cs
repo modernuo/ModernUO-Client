@@ -3,10 +3,11 @@
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
+using ClassicUO.Renderer;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal abstract class TextContainerGump : Gump
+    internal abstract class TextContainerGump : Gump, IGumpDeferredDraw
     {
         protected TextContainerGump(World world, uint local, uint server) : base(world, local, server)
         {
@@ -42,6 +43,19 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
 
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            TextRenderer.Draw
+            (
+                batcher,
+                x,
+                y,
+                layerDepth,
+                true
+            );
+            return true;
+        }
+
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
             base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
@@ -50,20 +64,7 @@ namespace ClassicUO.Game.UI.Gumps
             //TextRenderer.MoveToTopIfSelected();
             TextRenderer.ProcessWorldText(true);
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    TextRenderer.Draw
-                    (
-                        batcher,
-                        x,
-                        y,
-                        layerDepth,
-                        true
-                    );
-                    return true;
-                }
-            );
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
 
             return true;
         }

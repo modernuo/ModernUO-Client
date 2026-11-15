@@ -105,18 +105,23 @@ namespace ClassicUO.Game.Managers
         public byte WalkSequence;
         public bool WantChangeCoordinates;
 
+        /// <summary>Walk requests the server refused (0x21), for DevBench's walk checks.</summary>
+        public int ServerDenies;
+
         public void DenyWalk(byte sequence, int x, int y, sbyte z)
         {
-            _player.ClearSteps();
+            // T1 (funnel part 5): the step clear and the move through the funnel
+            _player.World.Writer.StopMobile(_player);
 
             Reset();
 
             if (x != -1)
             {
+                ServerDenies++;
                 _player.World.RangeSize.X = x;
                 _player.World.RangeSize.Y = y;
 
-                _player.SetInWorldTile((ushort) x, (ushort) y, z);
+                _player.World.Writer.MoveMobile(_player, (ushort) x, (ushort) y, z);
             }
 
             _player.SyncServerDirection();

@@ -7,11 +7,39 @@
   <ItemGroup>
     <ProjectReference Include="..\ClassicUO.Utility\ClassicUO.Utility.csproj" />
     <ProjectReference Include="..\..\external\FNA\FNA.Core.csproj" />
-    <ProjectReference Include="..\..\external\MP3Sharp\MP3Sharp\MP3Sharp.csproj" />
   </ItemGroup>
 
-  <!--<ItemGroup>
-    <PackageReference Include="MP3Sharp" Version="1.0.5" />
-  </ItemGroup>-->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>ClassicUO.UnitTests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- cuo_mp3 (dr_mp3, src/native/cuo_mp3) for JIT builds and tests. NativeAOT publishes link the static library
+       into the executable instead (ClassicUO.Client.csproj), so the shared library is never published from here.
+       The platform is the RuntimeIdentifier's when one is given, else the build machine's. Only win-x64's library is
+       committed; Linux and macOS need `bash src/native/cuo_mp3/build-linux.sh` or `build-macos.sh` first, and the build fails with an
+       error saying so instead of silently shipping a client without music. -p:CuoMp3Optional=true makes it a warning. -->
+  <PropertyGroup>
+    <CuoMp3Platform Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</CuoMp3Platform>
+    <CuoMp3Platform Condition="'$(CuoMp3Platform)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-x64</CuoMp3Platform>
+    <CuoMp3Platform Condition="'$(CuoMp3Platform)' == '' and $([MSBuild]::IsOSPlatform('Linux'))">linux-x64</CuoMp3Platform>
+    <CuoMp3Platform Condition="'$(CuoMp3Platform)' == '' and $([MSBuild]::IsOSPlatform('OSX'))">osx</CuoMp3Platform>
+    <CuoMp3SharedLib Condition="'$(CuoMp3Platform)' == 'win-x64'">$(MSBuildThisFileDirectory)..\..\external\x64\cuo_mp3.dll</CuoMp3SharedLib>
+    <CuoMp3SharedLib Condition="'$(CuoMp3Platform)' == 'linux-x64'">$(MSBuildThisFileDirectory)..\..\external\lib64\libcuo_mp3.so</CuoMp3SharedLib>
+    <CuoMp3SharedLib Condition="$(CuoMp3Platform.StartsWith('osx'))">$(MSBuildThisFileDirectory)..\..\external\osx\libcuo_mp3.dylib</CuoMp3SharedLib>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CuoMp3SharedLib)' != '' and Exists('$(CuoMp3SharedLib)')">
+    <None Include="$(CuoMp3SharedLib)" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <Target Name="CuoMp3CheckSharedLibrary" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <_CuoMp3Missing Condition="'$(CuoMp3SharedLib)' == ''">no cuo_mp3 MP3 decoder library is defined for platform '$(CuoMp3Platform)' (supported: win-x64, linux-x64, osx-*)</_CuoMp3Missing>
+      <_CuoMp3Missing Condition="'$(CuoMp3SharedLib)' != '' and !Exists('$(CuoMp3SharedLib)')">the cuo_mp3 MP3 decoder library is missing: $(CuoMp3SharedLib). Build it with `bash src/native/cuo_mp3/build-linux.sh`, `build-macos.sh` or `build-windows.sh` before building</_CuoMp3Missing>
+    </PropertyGroup>
+    <Error Condition="'$(_CuoMp3Missing)' != '' and '$(CuoMp3Optional)' != 'true'" Code="CUOMP3" Text="$(_CuoMp3Missing). Without it the client has no music; pass -p:CuoMp3Optional=true to build anyway." />
+    <Warning Condition="'$(_CuoMp3Missing)' != '' and '$(CuoMp3Optional)' == 'true'" Code="CUOMP3" Text="$(_CuoMp3Missing). Building without it (CuoMp3Optional): music is disabled at run time." />
+  </Target>
 
 </Project>

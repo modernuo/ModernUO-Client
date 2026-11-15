@@ -93,33 +93,9 @@ namespace ClassicUO.Game.UI.Controls
             ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(
                 IsChecked ? _active : _inactive
             );
-            var texture = gumpInfo.Texture;
             var sourceRectangle = gumpInfo.UV;
-            renderLists.AddGumpWithAtlas
-            (
-                (batcher) =>
-                {
-                    batcher.Draw(
-                        texture,
-                        new Vector2(x, y),
-                        sourceRectangle,
-                        ShaderHueTranslator.GetHueVector(0),
-                        layerDepth
-                     );
-
-                    return true;
-                }
-            );
-
-            renderLists.AddGumpNoAtlas
-            (
-                (batcher) =>
-                {
-                    _text.Draw(batcher, x + sourceRectangle.Width + 2, y, layerDepth);
-
-                    return true;
-                }
-            );
+            renderLists.AddGumpWithAtlas(GumpCommand.SpriteAt(gumpInfo.Texture, x, y, sourceRectangle, ShaderHueTranslator.GetHueVector(0), layerDepth));
+            renderLists.AddGumpNoAtlas(_text, x + sourceRectangle.Width + 2, y, layerDepth);
 
             return ok;
         }

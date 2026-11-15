@@ -14,7 +14,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             CanCloseWithRightClick = true;
 
-            Mobile mobile = World.Mobiles.Get(inviter);
+            Mobile mobile = World.FindMobile(inviter);
 
             var nameWidthAdjustment = mobile == null || mobile.Name.Length < 10 ? 0 : mobile.Name.Length * 5;
 

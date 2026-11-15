@@ -94,7 +94,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         private void BuildGump()
         {
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item == null)
             {
@@ -186,7 +186,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             int totalSpells = 0;
 
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item == null)
             {
@@ -199,9 +199,10 @@ namespace ClassicUO.Game.UI.Gumps
             // and its arrival triggers a rebuild that fills the right "Abilities" page.
             World.OPL.Contains(LocalSerial);
 
-            for (LinkedObject i = item.Items; i != null; i = i.Next)
+            // T2: the children from the ECS (WorldState.Children: the spell entries of 0xBF.1B's
+            // set, then the items in the book)
+            foreach (Item spell in World.State.Children(item))
             {
-                Item spell = (Item)i;
                 int currentCount = spell.Amount;
 
                 if (currentCount > 0 && currentCount <= maxSpellsCount)
@@ -312,7 +313,7 @@ namespace ClassicUO.Game.UI.Gumps
                     if (page == 1 && _spellBookType == SpellBookType.Chivalry)
                     {
                         Label label = new Label(
-                            ResGumps.TithingPointsAvailable + World.Player.TithingPoints,
+                            ResGumps.TithingPointsAvailable + World.PlayerState.TithingPoints,
                             false,
                             0x0288,
                             font: 6
@@ -750,7 +751,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         protected override void UpdateContents()
         {
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item == null)
             {
@@ -1245,7 +1246,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             base.Update();
 
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item == null)
             {

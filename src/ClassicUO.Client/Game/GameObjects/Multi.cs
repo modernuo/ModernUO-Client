@@ -8,7 +8,7 @@ using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal sealed partial class Multi : GameObject
+    internal sealed partial class Multi : TileListObject
     {
         //private static readonly QueuedPool<Multi> _pool = new QueuedPool<Multi>
         //(
@@ -38,17 +38,24 @@ namespace ClassicUO.Game.GameObjects
         public int MultiOffsetY;
         public int MultiOffsetZ;
         public bool IsMovable;
+
+        /// <summary>A boat component's offset while its boat steps (WorldWriter.FollowBoatComponents); components are not
+        /// world objects, so it stays on the object (T9 S7 moved it here from GameObject).</summary>
+        public Vector3 Offset;
         public CUSTOM_HOUSE_MULTI_OBJECT_FLAGS State = 0;
 
 
         public Multi(World world) : base(world) { }
 
-        public static Multi Create(World world, ushort graphic)
+        public static Multi Create(World world, ushort graphic) => Create(world, graphic, PlayerIsGargoyle(world));
+
+        /// <summary><see cref="Create(World, ushort)"/> with the player's race read once by the caller (Item's multi
+        /// build creates every component in one pass).</summary>
+        public static Multi Create(World world, ushort graphic, bool playerIsGargoyle)
         {
             Multi m = new Multi(world); // _pool.GetOne();
             m.Graphic = m._originalGraphic = graphic;
-            m.UpdateGraphicBySeason();
-            m.AllowedToDraw = CanBeDrawn(world, m.Graphic);
+            m.UpdateGraphicBySeason(playerIsGargoyle); // also sets AllowedToDraw for the swapped graphic
 
             if (m.ItemData.Height > 5 || m.ItemData.Height == 0)
             {
@@ -70,10 +77,24 @@ namespace ClassicUO.Game.GameObjects
             return m;
         }
 
-        public override void UpdateGraphicBySeason()
+        public override void UpdateGraphicBySeason() => UpdateGraphicBySeason(PlayerIsGargoyle(World));
+
+        private void UpdateGraphicBySeason(bool playerIsGargoyle)
         {
             Graphic = SeasonManager.GetSeasonGraphic(World.Season, _originalGraphic);
+            AllowedToDraw = CanBeDrawn(Graphic, playerIsGargoyle); // the swapped graphic's draw flags, like Static.UpdateGraphicBySeason
             IsVegetation = StaticFilters.IsVegetation(Graphic);
+
+            if (TileChunk != null || PendingBlock >= 0)
+            {
+                RequestFirstSightArt(); // a season change on a placed component: the new graphic
+            }
+        }
+
+        // house and boat components are built from the multi data after their chunk was: request their art when placed
+        protected override void RequestFirstSightArt()
+        {
+            global::ClassicUO.Game.Map.FirstSightArt.RequestPlaced(Graphic);
         }
 
         public override void Destroy()

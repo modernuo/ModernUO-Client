@@ -21,29 +21,31 @@ namespace ClassicUO
 {
     internal static class Bootstrap
     {
-        [UnmanagedCallersOnly(EntryPoint = "Initialize", CallConvs = new Type[] { typeof(CallConvCdecl) })]
-        static unsafe void Initialize(IntPtr* argv, int argc, HostBindings* hostSetup)
-        {
-            var args = new string[argc];
-            for (int i = 0; i < argc; i++)
-            {
-                args[i] = Marshal.PtrToStringAnsi(argv[i]);
-            }
-
-            var host = new UnmanagedAssistantHost(hostSetup);
-            Boot(host, args);
-        }
-
-
         [STAThread]
-        public static void Main(string[] args) => Boot(null, args);
+        public static void Main(string[] args) => Boot(args);
+
+#if CUO_DEVTOOLS
+        private const bool ClientBuiltWithDevTools = true;
+#else
+        private const bool ClientBuiltWithDevTools = false;
+#endif
+
+        /// <summary>
+        /// True for a language code that names no language: the invariant culture's "IVL" (what the OS language reads
+        /// as under invariant globalization; earlier runs may have saved it in settings.json) or ZZZ (no language).
+        /// </summary>
+        internal static bool IsNoLanguage(string code) =>
+            OsLanguage.IsNoLanguage(code);
 
 
-        public static void Boot(UnmanagedAssistantHost pluginHost, string[] args)
+        public static void Boot(string[] args)
         {
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
             Log.Start(LogTypes.All);
+#if CUO_DEVTOOLS
+            MemLog.Start();
+#endif
 
             DllMap.Init();
 
@@ -70,7 +72,7 @@ namespace ClassicUO
                 if (Settings.GlobalSettings != null)
                 {
                     sb.AppendLine($"Shard: {Settings.GlobalSettings.IP}");
-                    sb.AppendLine($"ClientVersion: {Settings.GlobalSettings.ClientVersion}");
+                    sb.AppendLine($"ClientVersion: {Client.Game?.UO?.VersionText ?? Settings.GlobalSettings.ClientVersion}");
                     sb.AppendLine();
                 }
 
@@ -103,7 +105,6 @@ namespace ClassicUO
             Environment.SetEnvironmentVariable("FNA3D_BACKBUFFER_SCALE_NEAREST", "1");
             Environment.SetEnvironmentVariable("FNA3D_OPENGL_FORCE_COMPATIBILITY_PROFILE", "1");
             Environment.SetEnvironmentVariable(SDL.SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-            Environment.SetEnvironmentVariable("PATH", Environment.GetEnvironmentVariable("PATH") + ";" + Path.Combine(CUOEnviroment.ExecutablePath, "Data", "Plugins"));
 
             string globalSettingsPath = Settings.GetSettingsFilepath();
 
@@ -127,96 +128,48 @@ namespace ClassicUO
                 Settings.GlobalSettings.Save();
             }
 
-            if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.Language))
+            // The language is chosen later, once the cliloc languages that exist are known (UltimaOnline.LoadUOFiles ->
+            // OsLanguage.Select, before any text loads). A saved "no language" placeholder is dropped here.
+            if (OsLanguage.IsNoLanguage(Settings.GlobalSettings.Language))
             {
-                Log.Trace("language is not set. Trying to get the OS language.");
-                try
-                {
-                    Settings.GlobalSettings.Language = CultureInfo.InstalledUICulture.ThreeLetterWindowsLanguageName;
-
-                    if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.Language))
-                    {
-                        Log.Warn("cannot read the OS language. Rolled back to ENU");
-
-                        Settings.GlobalSettings.Language = "ENU";
-                    }
-
-                    Log.Trace($"language set: '{Settings.GlobalSettings.Language}'");
-                }
-                catch
-                {
-                    Log.Warn("cannot read the OS language. Rolled back to ENU");
-
-                    Settings.GlobalSettings.Language = "ENU";
-                }
+                Settings.GlobalSettings.Language = "";
             }
 
-            if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.UltimaOnlineDirectory))
+            // The pack is the asset source and is required; the UO directory is optional (AssetSource).
+            string startupError = null;
+            string packPath = AssetSource.PackPath(Settings.GlobalSettings);
+
+            if (Uo.Render.BuildInfo.DevTools != ClientBuiltWithDevTools)
             {
-                Settings.GlobalSettings.UltimaOnlineDirectory = CUOEnviroment.ExecutablePath;
+                startupError = $"Mixed build: the client was built with CuoDevTools={ClientBuiltWithDevTools} but Uo.Render.dll with CuoDevTools={Uo.Render.BuildInfo.DevTools}. Rebuild both with the same setting.";
+                Log.Error(startupError);
+            }
+            else if (!AssetSource.TryReadManifest(packPath, out var packManifest, out startupError))
+            {
+                Log.Error(startupError);
+            }
+            else if (!AssetSource.TryResolveVersion(Settings.GlobalSettings, packManifest, out _, out string clientVersionText))
+            {
+                startupError = $"No valid client version: set \"clientversion\" in settings.json (the pack records '{clientVersionText}').";
+                Log.Error(startupError);
             }
 
-            const uint INVALID_UO_DIRECTORY = 0x100;
-            const uint INVALID_UO_VERSION = 0x200;
-
-            uint flags = 0;
-
-            if (!Directory.Exists(Settings.GlobalSettings.UltimaOnlineDirectory) || !File.Exists(Path.Combine(Settings.GlobalSettings.UltimaOnlineDirectory, "tiledata.mul")))
+            if (!string.IsNullOrWhiteSpace(Settings.GlobalSettings.UltimaOnlineDirectory) && AssetSource.ConfiguredUODirectory(Settings.GlobalSettings) == null)
             {
-                flags |= INVALID_UO_DIRECTORY;
+                Log.Warn($"UO directory '{Settings.GlobalSettings.UltimaOnlineDirectory}' does not exist; it is optional, continuing without it");
             }
 
-            string clientVersionText = Settings.GlobalSettings.ClientVersion;
-
-            if (!ClientVersionHelper.IsClientVersionValid(Settings.GlobalSettings.ClientVersion, out ClientVersion clientVersion))
+            if (startupError != null)
             {
-                Log.Warn($"Client version [{clientVersionText}] is invalid, let's try to read the client.exe");
-
-                // mmm something bad happened, try to load from client.exe [windows only]
-                if (!ClientVersionHelper.TryParseFromFile(Path.Combine(Settings.GlobalSettings.UltimaOnlineDirectory, "client.exe"), out clientVersionText) || !ClientVersionHelper.IsClientVersionValid(clientVersionText, out clientVersion))
-                {
-                    Log.Error("Invalid client version: " + clientVersionText);
-
-                    flags |= INVALID_UO_VERSION;
-                }
-                else
-                {
-                    Log.Trace($"Found a valid client.exe [{clientVersionText} - {clientVersion}]");
-
-                    // update the wrong/missing client version in settings.json
-                    Settings.GlobalSettings.ClientVersion = clientVersionText;
-                }
-            }
-
-            if (flags != 0)
-            {
-                if ((flags & INVALID_UO_DIRECTORY) != 0)
-                {
-                    Client.ShowErrorMessage(ResGeneral.YourUODirectoryIsInvalid);
-                }
-                else if ((flags & INVALID_UO_VERSION) != 0)
-                {
-                    Client.ShowErrorMessage(ResGeneral.YourUOClientVersionIsInvalid);
-                }
-
-                PlatformHelper.LaunchBrowser(ResGeneral.ClassicUOLink);
+                Client.ShowErrorMessage(startupError);
             }
             else
             {
-                switch (Settings.GlobalSettings.ForceDriver)
-                {
-                    case 1: // OpenGL
-                        Environment.SetEnvironmentVariable("FNA3D_FORCE_DRIVER", "OpenGL");
+                // world_renderer auto/gpu/legacy: probes SDL_GPU on Vulkan before FNA creates its device and picks FNA3D's
+                // driver (force_driver / FNA3D_FORCE_DRIVER still win)
+                RendererStartup.BeforeDevice();
 
-                        break;
-
-                    case 2: // Vulkan
-                        Environment.SetEnvironmentVariable("FNA3D_FORCE_DRIVER", "Vulkan");
-
-                        break;
-                }
-
-                Client.Run(pluginHost);
+                Client.Run();
             }
 
             Log.Trace("Closing...");
@@ -245,7 +198,7 @@ namespace ClassicUO
                     }
                 }
 
-                Log.Trace($"ARG: {cmd}, VALUE: {value}");
+                Log.Trace($"ARG: {cmd}, VALUE: {(cmd.StartsWith("password") ? "***" : value)}");
 
                 switch (cmd)
                 {
@@ -326,9 +279,13 @@ namespace ClassicUO
                         break;
 
                     case "fps":
-                        int v = int.Parse(value);
+                        int v = value == "uncapped" ? 0 : int.Parse(value);
 
-                        if (v < Constants.MIN_FPS)
+                        if (v <= 0)
+                        {
+                            v = 0;
+                        }
+                        else if (v < Constants.MIN_FPS)
                         {
                             v = Constants.MIN_FPS;
                         }
@@ -389,6 +346,11 @@ namespace ClassicUO
 
                         break;
 
+                    case "vsync":
+                        Settings.GlobalSettings.VSync = bool.Parse(value);
+
+                        break;
+
                     case "fixed_time_step":
                         Settings.GlobalSettings.FixedTimeStep = bool.Parse(value);
 
@@ -399,21 +361,29 @@ namespace ClassicUO
 
                         break;
 
-                    case "plugins":
-                        Settings.GlobalSettings.Plugins = string.IsNullOrEmpty(value) ? new string[0] : value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    case "pack":
+                        Settings.GlobalSettings.PackDirectory = value;
 
                         break;
 
-                    case "use_verdata":
-                        Settings.GlobalSettings.UseVerdata = bool.Parse(value);
+                    case "worldrenderer":
+                        // auto|gpu|legacy for this run, over settings.json's world_renderer; not saved
+                        Settings.WorldRendererOverride = value;
 
                         break;
 
-                    case "maps_layouts":
-
-                        Settings.GlobalSettings.MapsLayouts = value;
+                    case "ecscheck":
+                        CUOEnviroment.EcsCheckFrames = int.TryParse(value, out int frames) ? frames : 60;
 
                         break;
+
+#if CUO_DEVTOOLS
+                    case "ecsdriver":
+                        CUOEnviroment.EcsDriverScript = value;
+                        FocusRule.DriverSession = true;
+
+                        break;
+#endif
 
                     case "encryption":
                         Settings.GlobalSettings.Encryption = byte.Parse(value);
@@ -468,6 +438,7 @@ namespace ClassicUO
                             case "PTB": Settings.GlobalSettings.Language = "PTB"; break;
                             case "ITA": Settings.GlobalSettings.Language = "ITA"; break;
                             case "CHT": Settings.GlobalSettings.Language = "CHT"; break;
+                            case "CHS": Settings.GlobalSettings.Language = "CHS"; break;
                             default:
 
                                 Settings.GlobalSettings.Language = "ENU";
@@ -480,6 +451,12 @@ namespace ClassicUO
                     case "no_server_ping":
 
                         CUOEnviroment.NoServerPing = true;
+
+                        break;
+
+                    case "nomessagebox":
+
+                        CUOEnviroment.NoMessageBox = true;
 
                         break;
                 }

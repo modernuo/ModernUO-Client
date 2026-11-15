@@ -25,11 +25,25 @@ namespace ClassicUO.Game.GameObjects
         public bool AllowedToDraw = true;
         public bool InChunkMesh;
         public int MeshSpriteIndex = -1;
+        // GameScene's frame stamp when the list fill decided to draw this object (the GPU world pass reads it)
+        public uint DrawnFrame;
+        // T7b part 2b: this object's entry in SpritePickTable (the draw stamp it was recorded under, and its slot)
+        internal uint PickStamp;
+        internal int PickSlot;
         public ObjectHandlesStatus ObjectHandlesStatus;
         public Rectangle FrameInfo;
         protected bool IsFlipped;
 
-        public abstract bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth);
+        /// <summary>The mirror bit Draw keeps (GetAnimDirection history) for mobiles and corpses; the ECS sprite path writes it back for picking.</summary>
+        internal bool ViewFlipped
+        {
+            get => IsFlipped;
+            set => IsFlipped = value;
+        }
+
+        /// <summary>The view's draw: Land, Static and Multi only. Mobiles, items and effects draw through the ECS extracts' sinks
+        /// (LegacySpriteSink, EffectSpriteSink, GpuWorldRenderer); T9 S8a deleted their view bodies, so they draw nothing here.</summary>
+        public virtual bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth) => false;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public float CalculateDepthZ()
@@ -37,45 +51,46 @@ namespace ClassicUO.Game.GameObjects
             int x = X;
             int y = Y;
             int z = PriorityZ;
+            Vector3 offset = ScreenOffset;
 
             // Offsets are in SCREEN coordinates
-            if (Offset.X > 0 && Offset.Y < 0)
+            if (offset.X > 0 && offset.Y < 0)
             {
                 // North
             }
-            else if (Offset.X > 0 && Offset.Y == 0)
+            else if (offset.X > 0 && offset.Y == 0)
             {
                 // Northeast
                 x++;
             }
-            else if (Offset.X > 0 && Offset.Y > 0)
+            else if (offset.X > 0 && offset.Y > 0)
             {
                 // East
-                z += Math.Max(0, (int)Offset.Z);
+                z += Math.Max(0, (int)offset.Z);
                 x++;
             }
-            else if (Offset.X == 0 && Offset.Y > 0)
+            else if (offset.X == 0 && offset.Y > 0)
             {
                 // Southeast
                 x++;
                 y++;
             }
-            else if (Offset.X < 0 && Offset.Y > 0)
+            else if (offset.X < 0 && offset.Y > 0)
             {
                 // South
-                z += Math.Max(0, (int)Offset.Z);
+                z += Math.Max(0, (int)offset.Z);
                 y++;
             }
-            else if (Offset.X < 0 && Offset.Y == 0)
+            else if (offset.X < 0 && offset.Y == 0)
             {
                 // Southwest
                 y++;
             }
-            else if (Offset.X < 0 && Offset.Y > 0)
+            else if (offset.X < 0 && offset.Y > 0)
             {
                 // West
             }
-            else if (Offset.X == 0 && Offset.Y < 0)
+            else if (offset.X == 0 && offset.Y < 0)
             {
                 // Northwest
             }
@@ -87,8 +102,9 @@ namespace ClassicUO.Game.GameObjects
         {
             Rectangle prect = Rectangle.Empty;
 
-            prect.X = (int)(RealScreenPosition.X - FrameInfo.X + 22 + Offset.X);
-            prect.Y = (int)(RealScreenPosition.Y - FrameInfo.Y + 22 + (Offset.Y - Offset.Z));
+            Vector3 offset = ScreenOffset;
+            prect.X = (int)(RealScreenPosition.X - FrameInfo.X + 22 + offset.X);
+            prect.Y = (int)(RealScreenPosition.Y - FrameInfo.Y + 22 + (offset.Y - offset.Z));
             prect.Width = FrameInfo.Width;
             prect.Height = FrameInfo.Height;
 
@@ -114,7 +130,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (artInfo.Texture != null)
             {
-                ref var index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
                 index.Width = (short)((artInfo.UV.Width >> 1) - 22);
                 index.Height = (short)(artInfo.UV.Height - 44);
 
@@ -156,69 +172,6 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        protected static void DrawGump(
-            UltimaBatcher2D batcher,
-            ushort graphic,
-            int x,
-            int y,
-            Vector3 hue,
-            float depth
-        )
-        {
-            ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(graphic);
-
-            if (gumpInfo.Texture != null)
-            {
-                batcher.Draw(
-                    gumpInfo.Texture,
-                    new Vector2(x, y),
-                    gumpInfo.UV,
-                    hue,
-                    0f,
-                    Vector2.Zero,
-                    1f,
-                    SpriteEffects.None,
-                    depth + 0.5f
-                );
-            }
-        }
-
-        protected static void DrawStaticRotated(
-            UltimaBatcher2D batcher,
-            ushort graphic,
-            int x,
-            int y,
-            float angle,
-            Vector3 hue,
-            float depth
-        )
-        {
-            ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(graphic);
-
-            if (artInfo.Texture != null)
-            {
-                ref var index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
-                index.Width = (short)((artInfo.UV.Width >> 1) - 22);
-                index.Height = (short)(artInfo.UV.Height - 44);
-
-                batcher.Draw(
-                    artInfo.Texture,
-                    new Rectangle(
-                        x - index.Width,
-                        y - index.Height,
-                        artInfo.UV.Width,
-                        artInfo.UV.Height
-                    ),
-                    artInfo.UV,
-                    hue,
-                    angle,
-                    Vector2.Zero,
-                    SpriteEffects.None,
-                    depth + 0.5f
-                );
-            }
-        }
-
         protected static void DrawStaticAnimated(
             UltimaBatcher2D batcher,
             ushort graphic,
@@ -230,7 +183,7 @@ namespace ClassicUO.Game.GameObjects
             bool isWet = false
         )
         {
-            ref UOFileIndex index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+            ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
 
             graphic = (ushort)(graphic + index.AnimOffset);
 
@@ -238,7 +191,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (artInfo.Texture != null)
             {
-                index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+                index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
                 index.Width = (short)((artInfo.UV.Width >> 1) - 22);
                 index.Height = (short)(artInfo.UV.Height - 44);
 

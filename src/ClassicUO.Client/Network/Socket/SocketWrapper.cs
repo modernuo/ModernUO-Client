@@ -2,15 +2,8 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using ClassicUO.Utility.Logging;
-using System.Net.WebSockets;
 
 namespace ClassicUO.Network.Socket;
-
-public enum SocketWrapperType
-{
-    TcpSocket,
-    WebSocket
-}
 
 abstract class SocketWrapper : IDisposable
 {
@@ -26,7 +19,20 @@ abstract class SocketWrapper : IDisposable
     public abstract void Connect(Uri uri);
     public abstract void Send(byte[] buffer, int offset, int count);
 
+    /// <summary>
+    /// Reads whatever is ready, up to buffer.Length, without blocking. Returns 0 when nothing is ready. A peer close or a
+    /// socket error raises OnDisconnected / OnError (and closes) instead of returning data.
+    /// </summary>
     public abstract int Read(byte[] buffer);
+
+    /// <summary>Bytes ready to read (diagnostics only).</summary>
+    public virtual int Available => 0;
+
+    /// <summary>
+    /// event_loop (Windows): signal <paramref name="evt"/> when the connected socket becomes readable or closes
+    /// (WSAEventSelect). False when not connected or not supported; the caller retries on a later frame.
+    /// </summary>
+    public virtual bool TryEventSelect(IntPtr evt) => false;
 
     public abstract void Disconnect();
 

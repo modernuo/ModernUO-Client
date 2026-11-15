@@ -1,49 +1,33 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
+using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Network;
-using ClassicUO.Utility.Collections;
+using EcsEntity = Friflo.Engine.ECS.Entity;
+using Entity = ClassicUO.Game.GameObjects.Entity;
 
 namespace ClassicUO.Game.Managers
 {
+    /// <summary>
+    /// Smooth boat movement (0xF6 with the profile's <c>UseSmoothBoatMovement</c>). The queued steps and the passenger lists
+    /// are the boat's <c>BoatSteps</c> component, filled by WorldWriter's boat operations and advanced by
+    /// <see cref="BoatStepSystem"/> (T9 deleted <c>ecs_boat_steps</c>' off path, this manager's dictionaries).
+    /// </summary>
     internal sealed class BoatMovingManager
     {
-        private const int SLOW_INTERVAL = 1000;
-        private const int NORMAL_INTERVAL = 500;
-        private const int FAST_INTERVAL = 250;
-
-
-        private readonly Dictionary<uint, Deque<BoatStep>> _steps = new Dictionary<uint, Deque<BoatStep>>();
-        private readonly List<uint> _toRemove = new List<uint>();
-        private readonly Dictionary<uint, List<ItemInside>> _items = new Dictionary<uint, List<ItemInside>>();
-
         private uint _timePacket;
         private readonly World _world;
+        private readonly BoatStepSystem _system;
 
         public BoatMovingManager(World world)
         {
             _world = world;
+            _system = new BoatStepSystem(world);
         }
 
-
-        private int GetVelocity(byte speed)
-        {
-            switch (speed)
-            {
-                case 0x02: return SLOW_INTERVAL;
-
-                default:
-                case 0x03: return NORMAL_INTERVAL;
-
-                case 0x04: return FAST_INTERVAL;
-
-                case > 0x04: return speed * 10;
-            }
-        }
+        /// <summary>The step system (its boat order is kept by <c>WorldWriter.QueueBoatStep</c>).</summary>
+        internal BoatStepSystem Steps => _system;
 
         public void MoveRequest(Direction direciton, byte speed)
         {
@@ -63,379 +47,127 @@ namespace ClassicUO.Game.Managers
             sbyte z
         )
         {
-            Item item = _world.Items.Get(serial);
+            Item item = _world.GetItem(serial);
 
             if (item == null || item.IsDestroyed)
             {
                 return;
             }
 
-            if (!_steps.TryGetValue(serial, out Deque<BoatStep> deque))
-            {
-                deque = new Deque<BoatStep>();
-                _steps[serial] = deque;
-            }
-
-            bool empty = deque.Count == 0;
-
-            while (deque.Count > 5)
-            {
-                deque.RemoveFromFront();
-            }
-
-            //deque.Clear();
-
-
-            //GetEndPosition(
-            //    item,
-            //    deque,
-            //    out ushort currX,
-            //    out ushort currY,
-            //    out sbyte currZ,
-            //    out Direction endDir);
-
-            //if (currX == x && currY == y && currZ == z && endDir == movingDir)
-            //{
-            //    return;
-            //}
-
-            if (empty)
-            {
-                item.LastStepTime = Time.Ticks;
-            }
-
-            //Direction moveDir = DirectionHelper.CalculateDirection(currX, currY, x, y);
-
-            BoatStep step = new BoatStep();
-            step.Serial = serial;
-            step.TimeDiff = _timePacket == 0 || empty ? GetVelocity(speed) : (int) (Time.Ticks - _timePacket);
-
-            step.Speed = speed;
-            step.X = x;
-            step.Y = y;
-            step.Z = z;
-            step.MovingDir = movingDir;
-            deque.AddToBack(step);
-
-            ClearEntities(serial);
+            _world.Writer.QueueBoatStep(item, speed, movingDir, x, y, z, _timePacket);
             _timePacket = Time.Ticks;
-            Console.WriteLine("CURRENT PACKET TIME: {0}", _timePacket);
         }
 
         public void ClearSteps(uint serial)
         {
-            if (_steps.TryGetValue(serial, out Deque<BoatStep> deque) && deque.Count != 0)
+            Item boat = _world.FindItem(serial);
+
+            if (boat != null && BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
             {
-                Item multiItem = _world.Items.Get(serial);
+                ref BoatSteps s = ref e.GetComponent<BoatSteps>();
 
-                if (multiItem != null)
+                if (s.Count != 0)
                 {
-                    multiItem.Offset.X = 0;
-                    multiItem.Offset.Y = 0;
-                    multiItem.Offset.Z = 0;
-                }
+                    // copies: the resets below can move the record to another archetype
+                    BoatPassenger[] passengers = s.Passengers;
+                    int count = s.PassengerCount;
 
-                if (_items.TryGetValue(serial, out var list))
-                {
-                    var span = CollectionsMarshal.AsSpan(list);
-                    for (int i = 0; i < span.Length; i++)
+                    // T1 (funnel part 6)
+                    _world.Writer.ResetBoatOffset(boat);
+
+                    for (int i = 0; i < count; i++)
                     {
-                        ref var it = ref span[i];
+                        Entity ent = _world.Get(passengers[i].Serial);
 
-                        Entity ent = _world.Get(it.Serial);
-
-                        if (ent == null)
+                        if (ent != null)
                         {
-                            continue;
+                            _world.Writer.ResetBoatOffset(ent);
                         }
-
-                        ent.Offset.X = 0;
-                        ent.Offset.Y = 0;
-                        ent.Offset.Z = 0;
                     }
 
-                    list.Clear();
+                    _world.Writer.DropBoatSteps(boat, steps: true);
+                }
+            }
+            else if (_system.TakeParked(serial, out BoatSteps parked))
+            {
+                // the boat's record was removed with steps queued and the new one has none yet (a multi reloaded as it is
+                // recreated): the old dictionaries still held the queue and passengers under the serial
+                if (boat != null)
+                {
+                    _world.Writer.ResetBoatOffset(boat);
                 }
 
-                deque.Clear();
+                for (int i = 0; i < parked.PassengerCount; i++)
+                {
+                    Entity ent = _world.Get(parked.Passengers[i].Serial);
+
+                    if (ent != null)
+                    {
+                        _world.Writer.ResetBoatOffset(ent);
+                    }
+                }
             }
         }
 
+#if CUO_DEVTOOLS
+        /// <summary>
+        /// Dev trace (T1 part 7): null when <paramref name="serial"/> has no queued step (<see cref="ClearSteps"/> then
+        /// resets nothing), else the queue length, the boat's offset and its passengers' offsets that are not zero.
+        /// </summary>
+        internal string DescribeQueuedSteps(uint serial)
+        {
+            Item boat = _world.FindItem(serial);
+            int passengers = 0, moved = 0;
+            BoatSteps s;
+
+            if (boat != null && BoatStepSystem.TryBoatSteps(boat, out EcsEntity e) && e.GetComponent<BoatSteps>().Count != 0)
+            {
+                s = e.GetComponent<BoatSteps>();
+            }
+            else if (!_system.TryParked(serial, out s))
+            {
+                return null;
+            }
+
+            for (int i = 0; i < s.PassengerCount; i++)
+            {
+                passengers++;
+
+                if (_world.Get(s.Passengers[i].Serial) is { } ent && ent.ScreenOffset != Microsoft.Xna.Framework.Vector3.Zero)
+                {
+                    moved++;
+                }
+            }
+
+            return $"steps {s.Count}, boat offset {(boat == null ? "none" : ItemOffsets.Read(boat).ToString())}, " +
+                $"passengers {passengers} ({moved} with a non-zero offset)";
+        }
+#endif
+
         public void ClearEntities(uint serial)
         {
-            _items.Remove(serial);
-
-            //if (_items.TryGetValue(serial, out var list))
-            //{
-            //    list.Clear();
-            //}
+            if (_world.FindItem(serial) is { } boat)
+            {
+                _world.Writer.DropBoatSteps(boat, steps: false);
+            }
+            else
+            {
+                _system.DropParkedPassengers(serial);
+            }
         }
 
 
         public void PushItemToList(uint serial, uint objSerial, int x, int y, int z)
         {
-            if (!_items.TryGetValue(serial, out var list))
+            if (_world.FindItem(serial) is { } boat)
             {
-                list = new List<ItemInside>();
-
-                _items[serial] = list;
+                _world.Writer.SetBoatPassenger(boat, objSerial, x, y, z);
             }
-
-            var span = CollectionsMarshal.AsSpan(list);
-            for (int i = 0; i < span.Length; i++)
-            {
-                ref var item = ref span[i];
-
-                if (!SerialHelper.IsValid(item.Serial))
-                {
-                    break;
-                }
-
-                if (item.Serial == objSerial)
-                {
-                    item.X = x;
-                    item.Y = y;
-                    item.Z = z;
-
-                    return;
-                }
-            }
-
-            list.Add
-            (
-                new ItemInside
-                {
-                    Serial = objSerial,
-                    X = x,
-                    Y = y,
-                    Z = z
-                }
-            );
         }
 
         public void Update()
         {
-            foreach (Deque<BoatStep> deques in _steps.Values)
-            {
-                while (deques.Count != 0)
-                {
-                    ref BoatStep step = ref deques.Front();
-
-                    Item item = _world.Items.Get(step.Serial);
-
-                    if (item == null || item.IsDestroyed)
-                    {
-                        _toRemove.Add(step.Serial);
-
-                        break;
-                    }
-
-                    bool drift = step.MovingDir != step.FacingDir;
-                    int maxDelay = step.TimeDiff /*- (int) Client.Game.FrameDelay[1]*/;
-
-                    int delay = (int) Time.Ticks - (int) item.LastStepTime;
-                    bool removeStep = delay >= maxDelay;
-                    bool directionChange = false;
-
-
-                    if ( /*step.FacingDir == step.MovingDir &&*/
-                        item.X != step.X || item.Y != step.Y)
-                    {
-                        if (maxDelay != 0)
-                        {
-                            float steps = maxDelay / (float) Constants.CHARACTER_ANIMATION_DELAY;
-                            float x = delay / (float) Constants.CHARACTER_ANIMATION_DELAY;
-                            float y = x;
-                            item.Offset.Z = (sbyte) ((step.Z - item.Z) * x * (4.0f / steps));
-                            MovementSpeed.GetPixelOffset((byte) step.MovingDir, ref x, ref y, steps);
-                            item.Offset.X = (sbyte) x;
-                            item.Offset.Y = (sbyte) y;
-                        }
-                    }
-                    else
-                    {
-                        directionChange = true;
-                        removeStep = true;
-                    }
-
-                    //item.BoatDirection = step.MovingDir;
-
-                    _world.HouseManager.TryGetHouse(item, out House house);
-
-                    if (removeStep)
-                    {
-                        item.X = step.X;
-                        item.Y = step.Y;
-                        item.Z = step.Z;
-                        item.UpdateScreenPosition();
-
-                        item.Offset.X = 0;
-                        item.Offset.Y = 0;
-                        item.Offset.Z = 0;
-
-                        deques.RemoveFromFront();
-
-
-                        if (item.TNext != null || item.TPrevious != null)
-                        {
-                            item.AddToTile();
-                        }
-
-                        house?.Generate(true, true, true);
-
-                        UpdateEntitiesInside
-                        (
-                            item,
-                            removeStep,
-                            step.X,
-                            step.Y,
-                            step.Z,
-                            step.MovingDir
-                        );
-
-                        item.LastStepTime = Time.Ticks;
-                    }
-                    else
-                    {
-                        if (house != null)
-                        {
-                            foreach (Multi c in house.Components)
-                            {
-                                c.Offset = item.Offset;
-                            }
-                        }
-
-                        UpdateEntitiesInside
-                        (
-                            item,
-                            removeStep,
-                            item.X,
-                            item.Y,
-                            item.Z,
-                            step.MovingDir
-                        );
-                    }
-
-                    if (!directionChange)
-                    {
-                        break;
-                    }
-                }
-            }
-
-
-            if (_toRemove.Count != 0)
-            {
-                for (int i = 0; i < _toRemove.Count; i++)
-                {
-                    _steps.Remove(_toRemove[i]);
-                    _items.Remove(_toRemove[i]);
-                }
-
-                _toRemove.Clear();
-            }
-        }
-
-        private void UpdateEntitiesInside
-        (
-            uint serial,
-            bool removeStep,
-            int x,
-            int y,
-            int z,
-            Direction direction
-        )
-        {
-            if (_items.TryGetValue(serial, out var list))
-            {
-                Item item = _world.Items.Get(serial);
-
-                var span = CollectionsMarshal.AsSpan(list);
-                for (int i = 0; i < span.Length; i++)
-                {
-                    ref var it = ref span[i];
-
-                    //if (!SerialHelper.IsValid(it.Serial))
-                    //    break;
-
-                    Entity entity = _world.Get(it.Serial);
-
-                    if (entity == null || entity.IsDestroyed)
-                    {
-                        continue;
-                    }
-
-                    //entity.BoatDirection = direction;
-
-                    if (removeStep)
-                    {
-                        entity.X = (ushort) (x - it.X);
-                        entity.Y = (ushort) (y - it.Y);
-                        entity.Z = (sbyte) (z - it.Z);
-                        entity.UpdateScreenPosition();
-
-                        entity.Offset.X = 0;
-                        entity.Offset.Y = 0;
-                        entity.Offset.Z = 0;
-
-                        if (entity.TPrevious != null || entity.TNext != null)
-                        {
-                            entity.AddToTile();
-                        }
-                    }
-                    else
-                    {
-                        if (item != null)
-                        {
-                            entity.Offset = item.Offset;
-                        }
-                    }
-                }
-            }
-        }
-
-        private void GetEndPosition
-        (
-            Item item,
-            Deque<BoatStep> deque,
-            out ushort x,
-            out ushort y,
-            out sbyte z,
-            out Direction dir
-        )
-        {
-            if (deque.Count == 0)
-            {
-                x = item.X;
-                y = item.Y;
-                z = item.Z;
-                dir = item.Direction & Direction.Up;
-                dir &= Direction.Running;
-            }
-            else
-            {
-                ref BoatStep s = ref deque.Back();
-                x = s.X;
-                y = s.Y;
-                z = s.Z;
-                dir = s.MovingDir;
-            }
-        }
-
-        private struct BoatStep
-        {
-            public uint Serial;
-            public int TimeDiff;
-            public ushort X, Y;
-            public sbyte Z;
-            public byte Speed;
-            public Direction MovingDir, FacingDir;
-        }
-
-        private struct ItemInside
-        {
-            public uint Serial;
-            public int X, Y, Z;
+            _system.Run();
         }
     }
 }

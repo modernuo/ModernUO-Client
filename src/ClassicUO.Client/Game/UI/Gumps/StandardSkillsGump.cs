@@ -80,7 +80,7 @@ namespace ClassicUO.Game.UI.Gumps
             (
                 _skillsLabelSum = new Label
                 (
-                    World.Player.Skills.Sum(s => s.Value).ToString("F1"),
+                    World.PlayerState.Skills.Sum(s => s.Value).ToString("F1"),
                     false,
                     600,
                     0,
@@ -352,7 +352,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         private void SumTotalSkills()
         {
-            _skillsLabelSum.Text = World.Player.Skills.Sum(s => _checkReal.IsChecked ? s.Base : s.Value).ToString("F1");
+            _skillsLabelSum.Text = World.PlayerState.Skills.Sum(s => _checkReal.IsChecked ? s.Base : s.Value).ToString("F1");
         }
 
 
@@ -540,9 +540,9 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 foreach (SkillItemControl c in _skills)
                 {
-                    if (c.Index == index && index >= 0 && index < _gump.World.Player.Skills.Length)
+                    if (c.Index == index && index >= 0 && index < _gump.World.PlayerState.Skills.Length)
                     {
-                        Skill skill = _gump.World.Player.Skills[index];
+                        Skill skill = _gump.World.PlayerState.Skills[index];
 
                         if (skill == null)
                         {
@@ -787,7 +787,7 @@ namespace ClassicUO.Game.UI.Gumps
                     return;
                 }
 
-                Skill skill = gump.World.Player.Skills[Index];
+                Skill skill = gump.World.PlayerState.Skills[Index];
 
                 if (skill != null)
                 {
@@ -854,7 +854,7 @@ namespace ClassicUO.Game.UI.Gumps
                         return;
                     }
 
-                    Skill skill = _gump.World.Player.Skills[Index];
+                    Skill skill = _gump.World.PlayerState.Skills[Index];
                     byte newStatus = (byte) skill.Lock;
 
                     if (newStatus < 2)
@@ -885,12 +885,12 @@ namespace ClassicUO.Game.UI.Gumps
 
             public void UpdateValueText(bool showReal, bool showCap)
             {
-                if (_gump.World.Player == null || Index < 0 || Index >= _gump.World.Player.Skills.Length)
+                if (_gump.World.Player == null || Index < 0 || Index >= _gump.World.PlayerState.Skills.Length)
                 {
                     return;
                 }
 
-                Skill skill = _gump.World.Player.Skills[Index];
+                Skill skill = _gump.World.PlayerState.Skills[Index];
 
                 if (skill != null)
                 {
@@ -932,15 +932,15 @@ namespace ClassicUO.Game.UI.Gumps
 
                 Client.Game.UO.GameCursor.IsDraggingCursorForced = false;
 
-                if (UIManager.LastControlMouseDown(MouseButtonType.Left) == this && _gump.World.Player.Skills[Index].IsClickable)
+                if (UIManager.LastControlMouseDown(MouseButtonType.Left) == this && _gump.World.PlayerState.Skills[Index].IsClickable)
                 {
                     if (UIManager.MouseOverControl == null || UIManager.MouseOverControl.RootParent != RootParent)
                     {
                         GetSpellFloatingButton(Index)?.Dispose();
 
-                        if (Index >= 0 && Index < _gump.World.Player.Skills.Length)
+                        if (Index >= 0 && Index < _gump.World.PlayerState.Skills.Length)
                         {
-                            UIManager.Add(new SkillButtonGump(_gump.World, _gump.World.Player.Skills[Index], Mouse.Position.X - 44, Mouse.Position.Y - 22));
+                            UIManager.Add(new SkillButtonGump(_gump.World, _gump.World.PlayerState.Skills[Index], Mouse.Position.X - 44, Mouse.Position.Y - 22));
                         }
                     }
                 }

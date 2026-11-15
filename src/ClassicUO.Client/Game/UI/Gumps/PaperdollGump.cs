@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause
+﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
@@ -32,6 +32,12 @@ namespace ClassicUO.Game.UI.Gumps
         private GumpPic _picBase;
         private GumpPic _profilePic;
         private readonly List<EquipmentSlot> _slots = new List<EquipmentSlot>();
+        // perf-8: the mobile every slot's per-frame update looks at, one lookup while it stays valid
+        private EntityRef _slotMobile;
+        // perf-12: set by PrepareSlots for the children's Update of this gump update only (see there)
+        private bool _slotsPrepared;
+        private bool _hadMobile;
+        private Mobile _preparedSlotMobile;
         private Label _titleLabel;
         private GumpPic _virtueMenuPic;
         private Button _warModeBtn;
@@ -197,7 +203,7 @@ namespace ClassicUO.Game.UI.Gumps
                 );
 
                 // TOGGLE PEACE/WAR BUTTON
-                Mobile mobile = World.Mobiles.Get(LocalSerial);
+                Mobile mobile = World.FindMobile(LocalSerial);
 
                 _isWarMode = mobile?.InWarMode ?? false;
                 ushort[] btngumps = _isWarMode ? WarModeBtnGumps : PeaceModeBtnGumps;
@@ -383,14 +389,18 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            Mobile mobile = World.Mobiles.Get(LocalSerial);
+            Mobile mobile = World.FindMobile(LocalSerial);
 
-            if (mobile != null && mobile.IsDestroyed)
+            // the paperdoll closes when its mobile is destroyed (Mobile.Destroy closes it for every mobile but the player).
+            // T9 slice 3: a destroyed mobile not yet swept is not found, so "the mobile shown before is gone" stands for it
+            if (mobile != null ? mobile.IsDestroyed : _hadMobile)
             {
                 Dispose();
 
                 return;
             }
+
+            _hadMobile = mobile != null;
 
             // This is to update the state of the war mode button.
             if (mobile != null && _isWarMode != mobile.InWarMode && LocalSerial == World.Player)
@@ -402,7 +412,17 @@ namespace ClassicUO.Game.UI.Gumps
                 _warModeBtn.ButtonGraphicOver = btngumps[2];
             }
 
-            base.Update();
+            PrepareSlots();
+
+            try
+            {
+                base.Update();
+            }
+            finally
+            {
+                _slotsPrepared = false;
+                _preparedSlotMobile = null;
+            }
 
             if (_paperDollInteractable != null && (CanLift || LocalSerial == World.Player.Serial))
             {
@@ -449,7 +469,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             if (button == MouseButtonType.Left && World.InGame)
             {
-                Mobile container = World.Mobiles.Get(LocalSerial);
+                Mobile container = World.FindMobile(LocalSerial);
 
                 if (Client.Game.UO.GameCursor.ItemHold.Enabled)
                 {
@@ -549,7 +569,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         protected override void UpdateContents()
         {
-            Mobile mobile = World.Mobiles.Get(LocalSerial);
+            Mobile mobile = World.FindMobile(LocalSerial);
 
             if (mobile != null && mobile.Title != _titleLabel.Text)
             {
@@ -560,11 +580,31 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (mobile != null)
             {
+                // perf-12: one worn view for both loops (FindItemByLayer validated the WornCache per slot per loop)
+                WornItems worn = World.State.WornView(mobile);
+
                 for (int i = 0; i < _slots.Count; i++)
                 {
-                    int idx = (int)_slots[i].Layer;
+                    _slots[i].LocalSerial = worn[_slots[i].Layer]?.Serial ?? 0;
+                }
 
-                    _slots[i].LocalSerial = mobile.FindItemByLayer((Layer)idx)?.Serial ?? 0;
+                // art_container_prefetch: the slots' item art decoded on the workers before their controls look it up
+                if (_slots.Count > 1 && global::ClassicUO.Game.Map.ContentsArt.Enabled)
+                {
+                    Span<uint> graphics = stackalloc uint[32];
+                    int n = 0;
+
+                    for (int i = 0; i < _slots.Count && n < graphics.Length; i++)
+                    {
+                        Item item = worn[_slots[i].Layer];
+
+                        if (item != null)
+                        {
+                            graphics[n++] = item.DisplayedGraphic;
+                        }
+                    }
+
+                    global::ClassicUO.Game.Map.ContentsArt.Prefetch(graphics.Slice(0, n));
                 }
             }
         }
@@ -700,6 +740,62 @@ namespace ClassicUO.Game.UI.Gumps
             Status
         }
 
+        private Mobile SlotMobile() => _slotMobile.Mobile(World, LocalSerial);
+
+        /// <summary>
+        /// perf-12: the slot mobile and every slot's worn item, read before the children update through one worn view
+        /// (WorldState.WornView: the mobile's WornCache validated once, not once per slot by FindItemByLayer). Valid only
+        /// during this gump's base.Update: gumps and controls do not write world state in Update (the funnel's survey: the
+        /// only gump-side write is ContainerGump's clamp, from 0x25's handler), so the answers are what each slot's own
+        /// lookup would read.
+        /// </summary>
+        private void PrepareSlots()
+        {
+            Mobile mobile = SlotMobile();
+            _preparedSlotMobile = mobile;
+            _slotsPrepared = true;
+
+            if (mobile != null)
+            {
+                WornItems worn = World.State.WornView(mobile);
+
+                for (int i = 0; i < _slots.Count; i++)
+                {
+                    _slots[i].SetWorn(worn[_slots[i].Layer]);
+                }
+            }
+        }
+
+#if CUO_DEVTOOLS
+        // CUO_PAPERDOLL_SLOTS_CHECK=1 compares every slot's prepared worn item with its own FindItemByLayer
+        public static readonly bool SlotsCheckOn = Environment.GetEnvironmentVariable("CUO_PAPERDOLL_SLOTS_CHECK") == "1";
+        public static long SlotsChecked, SlotsMismatched;
+
+        private static void CheckSlot(Mobile mobile, Layer layer, Item prepared)
+        {
+            Item own = mobile.FindItemByLayer(layer);
+            SlotsChecked++;
+
+            if (!ReferenceEquals(own, prepared))
+            {
+                SlotsMismatched++;
+
+                if (SlotsMismatched <= 20)
+                {
+                    ClassicUO.Utility.Logging.Log.Warn($"[paperdoll-slots-check] 0x{mobile.Serial:X8} {layer}: prepared 0x{prepared?.Serial ?? 0:X8}, lookup 0x{own?.Serial ?? 0:X8}");
+                }
+            }
+        }
+#endif
+
+        /// <summary>The slots' mobile: the one <see cref="PrepareSlots"/> read during this gump's update, else a lookup.</summary>
+        private Mobile UpdatingSlotMobile(out bool prepared)
+        {
+            prepared = _slotsPrepared;
+
+            return prepared ? _preparedSlotMobile : SlotMobile();
+        }
+
         private class EquipmentSlot : Control
         {
             private ItemGumpFixed _itemGump;
@@ -732,22 +828,51 @@ namespace ClassicUO.Game.UI.Gumps
 
             public Layer Layer { get; }
 
+            private string _emptySlotTooltip;
+            private EntityRef _item;
+            // perf-12: this update's worn item on Layer, from the gump's PrepareSlots
+            private bool _wornSet;
+            private Item _worn;
+
+            internal void SetWorn(Item item)
+            {
+                _worn = item;
+                _wornSet = true;
+            }
+
             public override void Update()
             {
-                Item item = _paperDollGump.World.Items.Get(LocalSerial);
+                Item item = _item.Item(_paperDollGump.World, LocalSerial);
 
                 if (item == null || item.IsDestroyed)
                 {
                     _itemGump?.Dispose();
                     _itemGump = null;
-                    SetTooltip($"{Layer} slot");
+
+                    // built once and set only when it isn't already the tooltip (this runs every frame)
+                    _emptySlotTooltip ??= $"{Layer} slot";
+
+                    if (!ReferenceEquals(Tooltip, _emptySlotTooltip))
+                    {
+                        SetTooltip(_emptySlotTooltip);
+                    }
                 }
 
-                Mobile mobile = _paperDollGump.World.Mobiles.Get(_paperDollGump.LocalSerial);
+                Mobile mobile = _paperDollGump.UpdatingSlotMobile(out bool prepared);
+                bool fromView = prepared && _wornSet;
+                Item worn = _worn;
+                _wornSet = false;
+                _worn = null;
 
                 if (mobile != null)
                 {
-                    Item it_at_layer = mobile.FindItemByLayer(Layer);
+                    Item it_at_layer = fromView ? worn : mobile.FindItemByLayer(Layer);
+#if CUO_DEVTOOLS
+                    if (fromView && SlotsCheckOn)
+                    {
+                        CheckSlot(mobile, Layer, it_at_layer);
+                    }
+#endif
 
                     if ((it_at_layer != null && _itemGump != null && _itemGump.LocalSerial != it_at_layer.Serial) || _itemGump == null)
                     {
@@ -789,9 +914,10 @@ namespace ClassicUO.Game.UI.Gumps
             private class ItemGumpFixed : ItemGump
             {
                 private readonly PaperDollGump _gump;
-                private readonly Point _originalSize;
-                private readonly Point _point;
-                private readonly Rectangle _rect;
+                private Point _originalSize;
+                private Point _point;
+                private Rectangle _rect;
+                private bool _boundsSet;
 
                 public ItemGumpFixed(PaperDollGump gump, Item item, int w, int h)
                     : base(gump, item.Serial, item.DisplayedGraphic, item.Hue, item.X, item.Y)
@@ -800,8 +926,14 @@ namespace ClassicUO.Game.UI.Gumps
                     Width = w;
                     Height = h;
                     WantUpdateSize = false;
+                }
 
-                    _rect = Client.Game.UO.Arts.GetRealArtBounds(item.DisplayedGraphic);
+                // perf-6: the art's visible bounds exist once it is decoded, so they are read at the first draw (the
+                // constructor's graphic, as before) instead of decoding the art at construction
+                private void SetBounds()
+                {
+                    _boundsSet = true;
+                    _rect = Client.Game.UO.Arts.GetRealArtBounds(Graphic);
 
                     _originalSize.X = Width;
                     _originalSize.Y = Height;
@@ -821,7 +953,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
                 {
-                    Item item = _gump.World.Items.Get(LocalSerial);
+                    Item item = ShownItem();
 
                     if (item == null)
                     {
@@ -842,34 +974,28 @@ namespace ClassicUO.Game.UI.Gumps
 
                     ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(item.DisplayedGraphic);
 
+                    if (!_boundsSet)
+                    {
+                        Client.Game.UO.Arts.GetArt(Graphic);
+                        SetBounds();
+                    }
+
                     var texture = artInfo.Texture;
                     if (texture != null)
                     {
                         float layerDepth = layerDepthRef;
                         var sourceRectangle = artInfo.UV;
+                        // a value command: the closure it replaces (plus its display class) was allocated per slot per frame
                         renderLists.AddGumpWithAtlas
                         (
-                            (batcher) =>
-                            {
-                                batcher.Draw(
-                                    texture,
-                                    new Rectangle(
-                                        x + _point.X,
-                                        y + _point.Y,
-                                        _originalSize.X,
-                                        _originalSize.Y
-                                    ),
-                                    new Rectangle(
-                                        sourceRectangle.X + _rect.X,
-                                        sourceRectangle.Y + _rect.Y,
-                                        _rect.Width,
-                                        _rect.Height
-                                    ),
-                                    hueVector,
-                                    layerDepth
-                                );
-                                return true;
-                            }
+                            GumpCommand.Sprite
+                            (
+                                texture,
+                                new Rectangle(x + _point.X, y + _point.Y, _originalSize.X, _originalSize.Y),
+                                new Rectangle(sourceRectangle.X + _rect.X, sourceRectangle.Y + _rect.Y, _rect.Width, _rect.Height),
+                                hueVector,
+                                layerDepth
+                            )
                         );
 
                         return true;

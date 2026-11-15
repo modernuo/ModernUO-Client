@@ -22,6 +22,8 @@ namespace ClassicUO.Game.UI.Gumps
             AcceptKeyboardInput = false;
         }
 
+        internal UiGumpRecording Recording;
+
         public World World { get; }
 
         public bool CanBeSaved => GumpType != Gumps.GumpType.None;
@@ -51,7 +53,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override void Dispose()
         {
-            Item it = World.Items.Get(LocalSerial);
+            Item it = World.FindItem(LocalSerial);
 
             if (it != null && it.Opened)
             {

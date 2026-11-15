@@ -22,7 +22,6 @@ namespace ClassicUO.Game.GameObjects
     internal abstract class Entity : GameObject, IEquatable<Entity>
     {
         private static readonly RenderedText[] _hitsPercText = new RenderedText[101];
-        private Direction _direction;
 
 
         protected Entity(World world, uint serial) : base(world)
@@ -30,17 +29,147 @@ namespace ClassicUO.Game.GameObjects
             Serial = serial;
         }
 
-        public byte AnimIndex;
-        public bool ExecuteAnimation = true;
-        internal long LastAnimationChangeTime;
-        public Flags Flags;
-        public ushort Hits;
-        public ushort HitsMax;
+        /// <summary>
+        /// E5 (mobiles) and T4 (every entity): the mirror entity last found for <see cref="EcsEntitySerial"/>, so a read skips
+        /// the serial dictionary. Valid while <see cref="EcsEntityEpoch"/> is the mirror's <c>Epoch</c> (no record was deleted
+        /// since: a deletion, the death re-key and the map clear all bump it) and the serial is the entity's own; 0 = none.
+        /// The Gpu world's E5 draw writes it for the mobiles it draws without the identity check, so the scalar reads trust
+        /// it only while <see cref="EcsEntityHeld"/> (set by their own lookup, which checks World holds this instance).
+        /// </summary>
+        internal Friflo.Engine.ECS.Entity EcsEntity;
+        internal uint EcsEntitySerial, EcsEntityEpoch;
+        internal bool EcsEntityHeld;
+
+        /// <summary>
+        /// T4 (ecs_owns_scalars): this entity's mirror record, when World holds this instance (not destroyed, the instance
+        /// under its serial in <c>World.Items</c>/<c>World.Mobiles</c>) and the mirror has a record for its serial. False for
+        /// a destroyed or stale instance (a reused serial's old object), a detached one (the character-creation preview, a
+        /// player not in World yet) and a serial without a record: the getters then return the defaults (null, 0; T9 removed
+        /// the caches). A miss is not cached (a later record creation does not bump the epoch).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool TryScalarEntity(out Friflo.Engine.ECS.Entity e)
+        {
+            e = EcsEntity;
+
+            return EcsEntityHeld && EcsEntitySerial == _serial && EcsEntityEpoch == World.Ecs.Mirror.Epoch && !IsDestroyed || FindScalarEntity(out e);
+        }
+
+        /// <summary>
+        /// T9 S5: the record the record-only getters read: <see cref="TryScalarEntity"/>'s world record or, for a detached
+        /// preview object (the character-creation and race-change gumps'), its preview record (<c>WorldEcs.Previews</c>).
+        /// Only the getters use it: the systems and extracts that call <see cref="TryScalarEntity"/> stay world-only.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool TryRecord(out Friflo.Engine.ECS.Entity e) => TryScalarEntity(out e) || FindPreviewRecord(out e);
+
+        /// <summary>
+        /// T9 S8c: the record the Mobile's timer and step writes go to: the world record only when its handle is this instance
+        /// (checked, not the cached handle: a replaced instance's cache can still name the record its successor took over
+        /// without an epoch change), else its preview record. Writes are rare next to the reads; the reads use
+        /// <see cref="TryRecord"/>.
+        /// </summary>
+        internal bool TryOwnRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            if (IsDestroyed || World?.Ecs == null)
+            {
+                return false;
+            }
+
+            return _serial != 0 && World.TryGetLiveRecord(this, _serial, out e) || FindPreviewRecord(out e);
+        }
+
+        // previews are rare: no handle caching (the preview mirror has its own epoch)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool FindPreviewRecord(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            return !IsDestroyed && World?.Ecs != null && World.Ecs.TryGetPreviewRecord(this, out e);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool FindScalarEntity(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            if (IsDestroyed || _serial == 0 || World?.Ecs == null)
+            {
+                return false;
+            }
+
+            if (!World.TryGetLiveRecord(this, _serial, out e))
+            {
+                return false;
+            }
+
+            EcsEntity = e;
+            EcsEntitySerial = _serial;
+            EcsEntityEpoch = World.Ecs.Mirror.Epoch;
+            EcsEntityHeld = true;
+
+            return true;
+        }
+
+        // T9 S6: Flags and Direction live only in the record (Flags, Facing: every record has both); WorldWriter's operations
+        // commit them. Without one (an item before its first commit, the house placement preview, a destroyed or stale
+        // instance, the detached player): None and North, the values a new object had
+        public Flags Flags
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Flags)EcsScalars.FlagBits(e) : Flags.None;
+        }
+
+        // T9 S9: Graphic and Hue live only in the record (Graphic, Hue: every record has both); WorldWriter's operations commit
+        // them. Without one (an item before its first commit, a destroyed or stale instance, the detached player): 0, the
+        // value a new object had; a spellbook's spell entry (no record) has the scroll graphic FillSpellbook gave it.
+        // GameObject.Graphic/Hue dispatch here for items and mobiles
+        internal ushort RecordGraphic
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Graphic(e) : RecordlessGraphic();
+        }
+
+        internal const ushort SPELL_ENTRY_GRAPHIC = 0x1F2E;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private ushort RecordlessGraphic() =>
+            this is Item item && !IsDestroyed && World != null && World.State.IsSpellEntry(item, out _) ? SPELL_ENTRY_GRAPHIC : (ushort)0;
+
+
+        internal ushort RecordHue
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hue(e) : (ushort)0;
+        }
+
+        /// <summary>
+        /// T9 S9: what the removed Graphic setter did besides its field write, for <see cref="WorldWriter"/>'s item operations
+        /// to call after committing the record: a placed item whose graphic changed in place notes its cell's content change
+        /// (its tiledata flags are an input of the max-Z decision; the setter skipped mobiles).
+        /// </summary>
+        internal void GraphicCommitted(ushort before)
+        {
+            if (this is not Mobile && TileChunk != null && Graphic != before)
+            {
+                TileChunk.OwnerMap?.NoteContentChanged(TileChunk.X, TileChunk.Y);
+            }
+        }
+
         public byte HitsPercentage;
+
+        // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
+        // set HitsPercentage from the values they write (RefreshHitsPercentage)
+        public ushort Hits => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hits(e) : (ushort)0;
+
+        public ushort HitsMax => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.HitsMax(e) : (ushort)0;
         public bool IsClicked;
-        public uint LastStepTime;
-        public string Name;
-        public uint Serial;
+        private uint _serial;
+        public string Name => TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Name(e) : null;
+
+        public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }
         public HitsRequestStatus HitsRequest;
 
 
@@ -48,15 +177,24 @@ namespace ClassicUO.Game.GameObjects
 
         public Direction Direction
         {
-            get => _direction;
-            set
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => TryRecord(out Friflo.Engine.ECS.Entity e) ? (Direction)EcsScalars.Facing(e) : Direction.North;
+        }
+
+        /// <summary>
+        /// T9 S6: what the removed Direction setter did after its field write, for <see cref="WorldWriter"/>'s operations to
+        /// call where they wrote it, after committing the record: the direction-change hook (the player's door check) when the
+        /// committed direction differs from <paramref name="before"/>, then the Sync (folded inside a folding operation;
+        /// for an unfolded mobile it publishes the inputs, as the setter's Sync did).
+        /// </summary>
+        internal void DirectionCommitted(Direction before)
+        {
+            if (Direction != before)
             {
-                if (_direction != value)
-                {
-                    _direction = value;
-                    OnDirectionChanged();
-                }
+                OnDirectionChanged();
             }
+
+            World.Ecs.Sync(this);
         }
 
         public bool Exists => World.Contains(Serial);
@@ -69,7 +207,8 @@ namespace ClassicUO.Game.GameObjects
             return e != null && Serial == e.Serial;
         }
 
-        public void FixHue(ushort hue)
+        /// <summary>T1: the hue an entity keeps for a packet hue (pure; the funnel writes the result itself).</summary>
+        internal static ushort FixedHue(ushort hue)
         {
             ushort fixedColor = (ushort) (hue & 0x3FFF);
 
@@ -87,7 +226,7 @@ namespace ClassicUO.Game.GameObjects
                 fixedColor = (ushort) (hue & 0x8000);
             }
 
-            Hue = fixedColor;
+            return fixedColor;
         }
 
         public void UpdateHits(byte perc)
@@ -132,6 +271,12 @@ namespace ClassicUO.Game.GameObjects
             {
                 ObjectHandlesStatus = ObjectHandlesStatus.DISPLAYING;
 
+                if (this is Item)
+                {
+                    // pa-gpusig: handle state the Gpu item cache reads, changed outside the walk
+                    Scenes.GpuItemGen.Touch(this);
+                }
+
                 // TODO: Some servers may not want to receive this (causing original client to not send it),
                 //but all servers tested (latest POL, old POL, ServUO, Outlands) do.
                 if ( /*Client.Game.UO.Version > ClientVersion.CV_200 &&*/ SerialHelper.IsMobile(Serial))
@@ -141,14 +286,25 @@ namespace ClassicUO.Game.GameObjects
 
                 UIManager.Add(new NameOverheadGump(World, this));
             }
+        }
 
+        /// <summary>The per-frame rule Entity.Update applied: for HitsMax &gt; 0, the clamped percentage of Hits.</summary>
+        public static byte HitsPercent(ushort hits, ushort hitsMax)
+        {
+            int perc = MathHelper.PercetangeOf(hits, hitsMax);
 
-            if (HitsMax > 0)
+            return (byte)(perc > 100 ? 100 : perc < 0 ? 0 : perc);
+        }
+
+        /// <summary>
+        /// T9 (cold-caches): the funnel's hits operations (0xA1, 0x2D, 0x11) call this with the values they commit, so the
+        /// percentage and its text change with the hits and are never read back from the record. HitsMax 0 keeps the old one.
+        /// </summary>
+        internal void RefreshHitsPercentage(ushort hits, ushort hitsMax)
+        {
+            if (hitsMax > 0)
             {
-                var perc = MathHelper.PercetangeOf(Hits, HitsMax);
-                perc = perc > 100 ? 100 : perc < 0 ? 0 : perc;
-
-                UpdateHits((byte)perc);
+                UpdateHits(HitsPercent(hits, hitsMax));
             }
         }
 
@@ -158,11 +314,46 @@ namespace ClassicUO.Game.GameObjects
 
             GameActions.SendCloseStatus(World, Serial, HitsRequest >= HitsRequestStatus.Pending);
 
-            AnimIndex = 0;
-            LastAnimationChangeTime = 0;
+            // T9 S8c: a mobile's timer goes with its record (OnDestroyed); an item's frame stays on the Item
+            if (this is Item destroyed)
+            {
+                destroyed.AnimIndex = 0;
+                destroyed.LastAnimationChangeTime = 0;
+            }
+
+            World.Ecs.OnDestroyed(this);
+
+            if (this is Item item)
+            {
+                World.OnItemDestroyed(item);
+            }
+            else if (this is Mobile mobile)
+            {
+                World.OnMobileDestroyed(mobile);
+            }
         }
 
-        public Item FindItem(ushort graphic, ushort hue = 0xFFFF)
+        /// <summary>item_pool (ItemPool.Take): the Entity fields back to the constructor's values. Serial goes to 0; the
+        /// caller sets the new one. The mirror handle cache goes, so a reused item never answers from its old record.</summary>
+        public override void ResetForReuse()
+        {
+            base.ResetForReuse();
+            EcsEntity = default;
+            EcsEntitySerial = 0;
+            EcsEntityEpoch = 0;
+            EcsEntityHeld = false;
+            HitsPercentage = 0;
+            IsClicked = false;
+            _serial = 0;
+            HitsRequest = HitsRequestStatus.None;
+        }
+
+        public Item FindItem(ushort graphic, ushort hue = 0xFFFF) => FindItem(graphic, hue, Serial, 0);
+
+        // T9 child-list slice B2: the walk does not come back to its root's serial below the root's own children (a mobile's
+        // children may include the item worn under its serial), and stops at WorldState.MaxNestingDepth: should a loop get
+        // into the serial graph (WorldWriter refuses one), it ends
+        private Item FindItem(ushort graphic, ushort hue, uint root, int depth)
         {
             Item item = null;
 
@@ -170,9 +361,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 int minColor = 0xFFFF;
 
-                for (LinkedObject i = Items; i != null; i = i.Next)
+                // T2: the children from the ECS (WorldState.Children)
+                foreach (Item it in World.State.Children(this))
                 {
-                    Item it = (Item) i;
 
                     if (it.Graphic == graphic)
                     {
@@ -183,9 +374,9 @@ namespace ClassicUO.Game.GameObjects
                         }
                     }
 
-                    if (SerialHelper.IsValid(it.Container))
+                    if (SerialHelper.IsValid(it.Container) && depth < WorldState.MaxNestingDepth && (depth == 0 || it.Serial != root))
                     {
-                        Item found = it.FindItem(graphic, hue);
+                        Item found = it.FindItem(graphic, hue, root, depth + 1);
 
                         if (found != null && found.Hue < minColor)
                         {
@@ -197,18 +388,18 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                for (LinkedObject i = Items; i != null; i = i.Next)
+                // T2: the children from the ECS (WorldState.Children)
+                foreach (Item it in World.State.Children(this))
                 {
-                    Item it = (Item) i;
 
                     if (it.Graphic == graphic && it.Hue == hue)
                     {
                         item = it;
                     }
 
-                    if (SerialHelper.IsValid(it.Container))
+                    if (SerialHelper.IsValid(it.Container) && depth < WorldState.MaxNestingDepth && (depth == 0 || it.Serial != root))
                     {
-                        Item found = it.FindItem(graphic, hue);
+                        Item found = it.FindItem(graphic, hue, root, depth + 1);
 
                         if (found != null)
                         {
@@ -221,24 +412,30 @@ namespace ClassicUO.Game.GameObjects
             return item;
         }
 
-        public Item GetItemByGraphic(ushort graphic, bool deepsearch = false)
-        {
-            for (LinkedObject i = Items; i != null; i = i.Next)
-            {
-                Item item = (Item) i;
+        public Item GetItemByGraphic(ushort graphic, bool deepsearch = false) => GetItemByGraphic(graphic, deepsearch, Serial, 0);
 
+        // T9 child-list slice B2: bounded and not back to its root's serial, as FindItem
+        private Item GetItemByGraphic(ushort graphic, bool deepsearch, uint root, int depth)
+        {
+            // T2: the children from the ECS (WorldState.Children)
+            foreach (Item item in World.State.Children(this))
+            {
                 if (item.Graphic == graphic)
                 {
                     return item;
                 }
 
-                if (deepsearch && !item.IsEmpty)
+                // (legacy: the deep search walks this entity's children again, not the item's)
+                if (deepsearch && depth < WorldState.MaxNestingDepth && World.State.HasChildren(item))
                 {
-                    for (LinkedObject ic = Items; ic != null; ic = ic.Next)
+                    foreach (Item childItem in World.State.Children(this))
                     {
-                        Item childItem = (Item) ic;
+                        if (depth != 0 && childItem.Serial == root)
+                        {
+                            continue;
+                        }
 
-                        Item res = childItem.GetItemByGraphic(graphic, deepsearch);
+                        Item res = childItem.GetItemByGraphic(graphic, deepsearch, root, depth + 1);
 
                         if (res != null)
                         {
@@ -251,17 +448,27 @@ namespace ClassicUO.Game.GameObjects
             return null;
         }
 
+        /// <summary>
+        /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile, the ECS's worn item
+        /// (<see cref="WorldState.WornItem"/>: WornLayers). Every equipment reader goes through here: IsMounted, the animation
+        /// group's hands, the abilities, the paperdoll, the layering rules, Legacy's MobileView. An item's (a corpse's laid
+        /// equipment) is its first child on the layer in the ECS's child order (<see cref="WorldState.FindChild"/>).
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
         {
-            for (LinkedObject i = Items; i != null; i = i.Next)
+            if (World?.State is WorldState state)
             {
-                Item it = (Item) i;
-
-                if (!it.IsDestroyed && it.Layer == layer)
+                if (this is Mobile mobile)
                 {
-                    return it;
+#if CUO_DEVTOOLS
+                    FrameStats.Inc(FrameCounter.FindByLayer);
+#endif
+                    return state.WornItem(mobile, layer);
                 }
+
+                // T9 child-list slice A: an item's (a corpse's) children from the ECS
+                return state.FindChild(this, layer);
             }
 
             return null;
@@ -292,7 +499,6 @@ namespace ClassicUO.Game.GameObjects
             return (int) Serial;
         }
 
-        public abstract void ProcessAnimation(bool evalutate = false);
 
         public abstract ushort GetGraphicForAnimation();
     }

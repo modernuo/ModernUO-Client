@@ -97,6 +97,9 @@ namespace ClassicUO.Game.UI.Gumps
                 _draw = !_draw;
                 _timeMS = (long)Time.Ticks + 500;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At(_timeMS, ClassicUO.Loop.VisualSource.Gump);
         }
 
         public bool ToggleSize(bool? large = null)
@@ -137,6 +140,20 @@ namespace ClassicUO.Game.UI.Gumps
                         Dispose();
 
                         return false;
+                    }
+
+                    // Drawn before its first Update (or before the player exists): the blank pixel buffers are built in CreateMap,
+                    // which Update has not run yet. Build them now, or draw the empty frame only.
+                    if (_blankGumpsPixels[_useLargeMap ? 1 : 0] == null)
+                    {
+                        if (!World.InGame || World.Player == null)
+                        {
+                            batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
+
+                            return true;
+                        }
+
+                        CreateMap();
                     }
 
                     batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
@@ -252,6 +269,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             int maxBlockIndex = World.Map.BlocksCount;
+            bool gargoyle = GameObject.PlayerIsGargoyle(World);
             int mapBlockHeight = Client.Game.UO.FileManager.Maps.MapBlocksSize[World.MapIndex, 1];
             int index = _useLargeMap ? 1 : 0;
 
@@ -281,32 +299,27 @@ namespace ClassicUO.Game.UI.Gumps
                         break;
                     }
 
-                    ref var indexMap = ref World.Map.GetIndex(i, j);
-
-                    if (!indexMap.IsValid())
+                    if (!World.Map.TryGetBlock(i, j, out var mapBlock))
                     {
                         break;
                     }
 
                     staticsZ.Fill(d);
-                    indexMap.StaticFile.Seek((long)indexMap.StaticAddress, System.IO.SeekOrigin.Begin);
-                    indexMap.MapFile.Seek((long)indexMap.MapAddress, System.IO.SeekOrigin.Begin);
-                    var cells = indexMap.MapFile.Read<MapBlock>().Cells;
+                    var cells = mapBlock.Land;
 
                     Chunk block = World.Map.GetChunk(blockIndex);
                     int realBlockX = i << 3;
                     int realBlockY = j << 3;
 
 
-                    for (int c = 0; c < indexMap.StaticCount; ++c)
+                    foreach (ref readonly var stblock in mapBlock.Statics)
                     {
-                        var stblock = indexMap.StaticFile.Read<StaticsBlock>();
-                        if (stblock.Color > 0 && stblock.Color != 0xFFFF && GameObject.CanBeDrawn(World, stblock.Color))
+                        if (GameObject.CanBeDrawn(stblock.Graphic, gargoyle))
                         {
                             ref var st = ref staticsZ[stblock.Y * 8 + stblock.X];
                             if (st.Z < stblock.Z)
                             {
-                                st.Color = stblock.Hue > 0 ? (ushort)(stblock.Hue + 0x4000) : stblock.Color;
+                                st.Color = stblock.Hue > 0 ? (ushort)(stblock.Hue + 0x4000) : stblock.Graphic;
                                 st.Z = stblock.Z;
                                 st.IsLand = stblock.Hue > 0;
                             }
@@ -320,7 +333,7 @@ namespace ClassicUO.Game.UI.Gumps
                         for (int y = 0; y < 8; y++)
                         {
                             ref readonly var cell = ref cells[(y << 3) + x];
-                            int color = cell.TileID;
+                            int color = cell.TileId;
                             bool isLand = true;
                             int z = cell.Z;
 
@@ -334,7 +347,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                             if (block != null)
                             {
-                                GameObject obj = block.Tiles[x, y];
+                                TileListObject obj = block.Tiles[x, y];
 
                                 while (obj?.TNext != null)
                                 {
@@ -401,6 +414,7 @@ namespace ClassicUO.Game.UI.Gumps
             fixed (uint* ptr = data)
             {
                 texture.SetDataPointerEXT(0, bounds, (IntPtr)ptr, data.Length * sizeof(uint));
+                ClassicUO.Renderer.TextureUploads.Changed();
             }
         }
 

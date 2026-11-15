@@ -283,12 +283,12 @@ namespace ClassicUO.Utility.Platforms
 
                         switch (wParam)
                         {
-                            case 0: return _world.Player.Strength;
-                            case 1: return _world.Player.Intelligence;
-                            case 2: return _world.Player.Dexterity;
-                            case 3: return _world.Player.Weight;
+                            case 0: return _world.PlayerState.Strength;
+                            case 1: return _world.PlayerState.Intelligence;
+                            case 2: return _world.PlayerState.Dexterity;
+                            case 3: return _world.PlayerState.Weight;
                             case 4: return _world.Player.HitsMax;
-                            case 5: return (int)_world.Player.TithingPoints;
+                            case 5: return (int)_world.PlayerState.TithingPoints;
                         }
 
                         return 0;

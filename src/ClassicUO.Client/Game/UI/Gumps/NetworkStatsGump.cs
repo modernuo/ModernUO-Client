@@ -105,6 +105,9 @@ namespace ClassicUO.Game.UI.Gumps
                 _trans.Height = Height = (int) (size.Y + 20);
                 WantUpdateSize = true;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At(_time_to_update, ClassicUO.Loop.VisualSource.Gump);
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)

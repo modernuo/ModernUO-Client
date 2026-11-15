@@ -210,6 +210,12 @@
   <data name="FPSInactive" xml:space="preserve">
     <value>Reduce FPS when game is inactive</value>
   </data>
+  <data name="UncapFPS" xml:space="preserve">
+    <value>Uncapped FPS (no frame limiter)</value>
+  </data>
+  <data name="VSync" xml:space="preserve">
+    <value>VSync</value>
+  </data>
   <data name="GridLoot_Both" xml:space="preserve">
     <value>Both</value>
   </data>

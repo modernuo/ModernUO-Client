@@ -186,7 +186,7 @@ namespace ClassicUO.Network
                 writer.WriteZero(length - writer.BytesWritten);
             }
 
-            socket.Send(writer.BufferWritten, true, true);
+            socket.Send(writer.BufferWritten, skipEncryption: true);
 
             writer.Dispose();
         }
@@ -196,7 +196,7 @@ namespace ClassicUO.Network
             var writer = new StackDataWriter(4);
             writer.WriteUInt32BE(v);
 
-            socket.Send(writer.BufferWritten, true, true);
+            socket.Send(writer.BufferWritten, skipEncryption: true);
 
             writer.Dispose();
         }
@@ -303,6 +303,8 @@ namespace ClassicUO.Network
         (
             this NetClient socket,
             PlayerMobile character,
+            string name,
+            PlayerState stats,
             int cityIndex,
             uint clientIP,
             int serverIndex,
@@ -335,7 +337,7 @@ namespace ClassicUO.Network
             writer.WriteUInt32BE(0xEDEDEDED);
             writer.WriteUInt32BE(0xFFFF_FFFF);
             writer.WriteUInt8(0x00);
-            writer.WriteASCII(character.Name, 30);
+            writer.WriteASCII(name, 30);
             writer.WriteZero(2);
 
             writer.WriteUInt32BE((uint) Client.Game.UO.Protocol);
@@ -363,11 +365,11 @@ namespace ClassicUO.Network
             }
 
             writer.WriteUInt8(val);
-            writer.WriteUInt8((byte) character.Strength);
-            writer.WriteUInt8((byte) character.Dexterity);
-            writer.WriteUInt8((byte) character.Intelligence);
+            writer.WriteUInt8((byte) stats.Strength);
+            writer.WriteUInt8((byte) stats.Dexterity);
+            writer.WriteUInt8((byte) stats.Intelligence);
 
-            List<Skill> skills = character.Skills.OrderByDescending(o => o.Value).Take(skillcount).ToList();
+            List<Skill> skills = stats.Skills.OrderByDescending(o => o.Value).Take(skillcount).ToList();
 
             foreach (Skill skill in skills)
             {
@@ -2566,6 +2568,7 @@ namespace ClassicUO.Network
             }
 
             writer.WriteUInt16BE(0x0B);
+            ClassicUO.Utility.Logging.Log.Info($"language packet: sending '{lang}'");
             writer.WriteASCII(lang, 3);
             writer.WriteUInt8(0x00);
 
@@ -3084,7 +3087,8 @@ namespace ClassicUO.Network
             writer.Dispose();
         }
 
-        public static void Send_MegaClilocRequest(this NetClient socket, List<uint> serials)
+        // a batch of up to 15 serials (OplRequestQueue, OplRequestList)
+        public static void Send_MegaClilocRequest(this NetClient socket, ReadOnlySpan<uint> serials)
         {
             const byte ID = 0xD6;
 
@@ -3099,14 +3103,12 @@ namespace ClassicUO.Network
                 writer.WriteZero(2);
             }
 
-            int count = Math.Min(15, serials.Count);
+            int count = Math.Min(15, serials.Length);
 
             for (int i = 0; i < count; ++i)
             {
                 writer.WriteUInt32BE(serials[i]);
             }
-
-            serials.RemoveRange(0, count);
 
             if (length < 0)
             {
@@ -4543,128 +4545,6 @@ namespace ClassicUO.Network
             }
 
             socket.Send(writer.BufferWritten);
-            writer.Dispose();
-        }
-
-
-        public static void Send_ToPlugins_AllSpells(this NetClient socket)
-        {
-            const byte ID = 0xBF;
-
-            int length = socket.PacketsTable.GetPacketLength(ID);
-
-            var writer = new StackDataWriter(length < 0 ? 64 : length);
-
-            writer.WriteUInt8(ID);
-
-            if (length < 0)
-            {
-                writer.WriteZero(2);
-            }
-
-            writer.WriteUInt16BE(0xBEEF);
-            writer.WriteUInt8(0x00);
-
-            void writeDef(IReadOnlyDictionary<int, SpellDefinition> dict, ref StackDataWriter w)
-            {
-                w.WriteUInt16BE((ushort)dict.Count);
-
-                foreach (KeyValuePair<int, SpellDefinition> m in dict)
-                {
-                    // spell id
-                    w.WriteUInt16BE((ushort)m.Key);
-
-                    // mana cost
-                    w.WriteUInt16BE((ushort)m.Value.ManaCost);
-
-                    // min skill
-                    w.WriteUInt16BE((ushort)m.Value.MinSkill);
-
-                    // target type
-                    w.WriteUInt8((byte)m.Value.TargetType);
-
-                    // spell name
-                    w.WriteUInt16BE((ushort)m.Value.Name.Length);
-                    w.WriteUnicodeBE(m.Value.Name, m.Value.Name.Length);
-
-                    // power of word
-                    w.WriteUInt16BE((ushort)m.Value.PowerWords.Length);
-                    w.WriteUnicodeBE(m.Value.PowerWords, m.Value.PowerWords.Length);
-
-                    // reagents
-                    w.WriteUInt16BE((ushort)m.Value.Regs.Length);
-
-                    foreach (Reagents r in m.Value.Regs)
-                    {
-                        w.WriteUInt8((byte)r);
-                    }
-                }
-            }
-
-            writeDef(SpellsMagery.GetAllSpells, ref writer);
-            writeDef(SpellsNecromancy.GetAllSpells, ref writer);
-            writeDef(SpellsBushido.GetAllSpells, ref writer);
-            writeDef(SpellsNinjitsu.GetAllSpells, ref writer);
-            writeDef(SpellsChivalry.GetAllSpells, ref writer);
-            writeDef(SpellsSpellweaving.GetAllSpells, ref writer);
-            writeDef(SpellsMastery.GetAllSpells, ref writer);
-
-            if (length < 0)
-            {
-                writer.Seek(1, SeekOrigin.Begin);
-                writer.WriteUInt16BE((ushort)writer.BytesWritten);
-            }
-            else
-            {
-                writer.WriteZero(length - writer.BytesWritten);
-            }
-
-            int len = writer.BytesWritten;
-            Plugin.ProcessRecvPacket(writer.AllocatedBuffer, ref len);
-            writer.Dispose();
-        }
-
-        public static void Send_ToPlugins_AllSkills(this NetClient socket)
-        {
-            const byte ID = 0xBF;
-
-            int length = socket.PacketsTable.GetPacketLength(ID);
-
-            var writer = new StackDataWriter(length < 0 ? 64 : length);
-
-            writer.WriteUInt8(ID);
-
-            if (length < 0)
-            {
-                writer.WriteZero(2);
-            }
-
-            writer.WriteUInt16BE(0xBEEF);
-            writer.WriteUInt8(0x01);
-
-            writer.WriteUInt16BE((ushort)Client.Game.UO.FileManager.Skills.SortedSkills.Count);
-
-            foreach (SkillEntry s in Client.Game.UO.FileManager.Skills.SortedSkills)
-            {
-                writer.WriteUInt16BE((ushort) s.Index);
-                writer.WriteBool(s.HasAction);
-
-                writer.WriteUInt16BE((ushort) s.Name.Length);
-                writer.WriteUnicodeBE(s.Name, s.Name.Length);
-            }
-
-            if (length < 0)
-            {
-                writer.Seek(1, SeekOrigin.Begin);
-                writer.WriteUInt16BE((ushort)writer.BytesWritten);
-            }
-            else
-            {
-                writer.WriteZero(length - writer.BytesWritten);
-            }
-
-            int len = writer.BytesWritten;
-            Plugin.ProcessRecvPacket(writer.AllocatedBuffer, ref len);
             writer.Dispose();
         }
     }

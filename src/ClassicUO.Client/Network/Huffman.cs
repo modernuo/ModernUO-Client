@@ -280,7 +280,7 @@ namespace ClassicUO.Network
         public bool Decompress(Span<byte> src, Span<byte> dest, ref int size)
         {
             var destIndex = 0;
-            dest.Clear();
+            // (no dest.Clear(): only dest[..size] is read, and the drain loop calls this once per 4 KB slice)
 
             while (true)
             {

@@ -8,6 +8,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Input;
+using ClassicUO.Loop;
 using ClassicUO.Network;
 using ClassicUO.Network.Encryption;
 using ClassicUO.Renderer;
@@ -18,6 +19,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -25,7 +27,7 @@ using static SDL3.SDL;
 
 namespace ClassicUO
 {
-    internal unsafe class GameController : Microsoft.Xna.Framework.Game
+    internal unsafe partial class GameController : Microsoft.Xna.Framework.Game
     {
         private SDL_EventFilter _filter;
 
@@ -37,10 +39,14 @@ namespace ClassicUO
         private RenderTargets _renderTargets = new();
         private readonly RenderLists _renderLists = new();
         private bool _suppressedDraw;
-        private bool _pluginsInitialized = false;
+        private bool _loggedWorldTexture;
+        private IntPtr _gpuDevice;
+        private GpuWorldRenderer _gpuWorld;
+        private bool _gpuWorldFailed;
+        private string _worldShotPath;
         private float _displayScale;
 
-        public GameController(IPluginHost pluginHost)
+        public GameController()
         {
             GraphicManager = new GraphicsDeviceManager(this);
 
@@ -51,7 +57,7 @@ namespace ClassicUO
             };
 
             GraphicManager.PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8;
-            SetVSync(false);
+            GraphicManager.SynchronizeWithVerticalRetrace = Settings.GlobalSettings.VSync;
 
             Window.ClientSizeChanged += WindowOnClientSizeChanged;
             Window.AllowUserResizing = true;
@@ -60,13 +66,11 @@ namespace ClassicUO
 
             IsFixedTimeStep = false; // Settings.GlobalSettings.FixedTimeStep;
             TargetElapsedTime = TimeSpan.FromMilliseconds(1000.0 / 250.0);
-            PluginHost = pluginHost;
         }
 
         public Scene Scene { get; private set; }
         public AudioManager Audio { get; private set; }
         public UltimaOnline UO { get; } = new UltimaOnline();
-        public IPluginHost PluginHost { get; private set; }
         public GraphicsDeviceManager GraphicManager { get; }
 
         public Rectangle ClientBounds
@@ -85,11 +89,158 @@ namespace ClassicUO
 
         public readonly uint[] FrameDelay = new uint[2];
 
-        private readonly List<(uint, Action)> _queuedActions = new ();
+        private readonly QueuedActions _queuedActions = new QueuedActions();
 
         public void EnqueueAction(uint time, Action action)
         {
-            _queuedActions.Add((Time.Ticks + time, action));
+            _queuedActions.Add(Time.Ticks + time, action);
+        }
+
+        // ---- event_loop (evloop-1 arm A) ----
+#if CUO_DEVTOOLS
+        // the jobs' override of the settings (CUO_EVENT_LOOP=1|0, CUO_EVENT_LOOP_MAX_WAIT_MS)
+        private static readonly bool? _eventLoopEnv = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+        private static readonly int _eventLoopMaxWaitEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MAX_WAIT_MS"), out var mw) && mw > 0 ? mw : 0;
+        private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
+#else
+        private static readonly bool? _eventLoopEnv = null;
+        private const int _eventLoopMaxWaitEnv = 0;
+#endif
+
+        private LoopWaiter _waiter;
+        private bool _waiterTried;
+        private readonly LateWakeMonitor _lateWake = new LateWakeMonitor();
+        private LoopMode _tickMode, _loggedMode = (LoopMode)(-1);
+        private double _tickInterval;
+        private bool _tickDrawSkipped;
+        private long _updateStartTs, _lastDrainTs;
+
+        private static bool EventLoopSwitch => _eventLoopEnv ?? Settings.GlobalSettings.EventLoop;
+
+        private LoopMode DecideLoopMode()
+        {
+            bool on = EventLoopSwitch;
+
+            if (on && !_waiterTried && OperatingSystem.IsWindows())
+            {
+                _waiterTried = true;
+                _waiter = new Win32LoopWaiter();
+
+                if (_waiter.Ready)
+                {
+                    Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
+                }
+            }
+
+            if (_waiter != null && _waiter.Ready && _lateWake.Sample(Environment.TickCount64))
+            {
+                Log.Warn($"event_loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
+            }
+
+            var mode = LoopTiming.Decide(on, OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+
+            if (mode != _loggedMode)
+            {
+                _loggedMode = mode;
+                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : on ? " (event_loop on, not available)" : "")}");
+                LoopStats.Mode = mode == LoopMode.Event ? "event" : "legacy";
+            }
+
+            return mode;
+        }
+
+        // ms until the earliest timer the loop knows of: a queued action or the player's next step
+        private double MsUntilNextTimer(double msSinceUpdate)
+        {
+            double ms = LoopTiming.MsUntilTick(_queuedActions.TryEarliest(out uint due), due, Time.Ticks, msSinceUpdate);
+
+            if (UO.World is { InGame: true, Player: { } player } && player.Walker.LastStepRequestTime > Time.Ticks)
+            {
+                // a step is allowed once Time.Ticks reaches LastStepRequestTime
+                ms = Math.Min(ms, LoopTiming.MsUntilTick(true, player.Walker.LastStepRequestTime - 1, Time.Ticks, msSinceUpdate));
+            }
+
+            if (Scene is GameScene gameScene && UO.World is { InGame: true })
+            {
+                ms = Math.Min(ms, LoopTiming.MsUntilPing(_presentOnChange, gameScene.PingDueTick, Time.Ticks, msSinceUpdate));
+            }
+
+            return ms;
+        }
+
+        // The wait between frames: at the end of a tick that does not draw (Update) or after the present (EndDraw).
+        private void EventLoopWait()
+        {
+            if (_presentOnChange)
+            {
+                // present_on_change: a reply that arrived during Update, Draw or Present is read now, not after the wait
+                EventDrain();
+                RefreshChange();
+            }
+
+            double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
+            double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            double wait = LoopTiming.WaitMs(
+                _presentOnChange ? MsUntilPresentOnChange()
+                : _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                MsUntilNextTimer(since),
+                maxWait
+            );
+
+            if (wait <= 0)
+            {
+                if (LoopStats.On)
+                {
+                    LoopStats.NoteWait(WakeReason.None, 0, false, false);
+                }
+
+                return;
+            }
+
+            long start = Stopwatch.GetTimestamp();
+            var reason = _waiter.Wait(wait);
+            long end = Stopwatch.GetTimestamp();
+            double waited = (end - start) * 1000.0 / Stopwatch.Frequency;
+            bool timed = reason == WakeReason.Timer;
+            bool late = timed && LateWakeMonitor.IsLate(waited - wait);
+
+            if (timed)
+            {
+                _lateWake.RecordWait(late);
+            }
+            else if (reason != WakeReason.Wake)
+            {
+                // present_on_change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
+                // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
+                // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
+                _changePending = true;
+                _changeWhy |= ChangeReason.Wake;
+            }
+
+            FrameStats.Inc(FrameCounter.LoopWaits);
+            FrameStats.NoteLoopWait(Math.Min(end - start, (long)(wait * Stopwatch.Frequency / 1000.0)));
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopWait((int)reason, (long)(wait * Stopwatch.Frequency / 1000.0), start, end, late);
+#endif
+
+            if (LoopStats.On)
+            {
+                if (reason == WakeReason.Net)
+                {
+                    LoopStats.NoteNetWake(end, waited > 0.2);
+                }
+                else if (reason == WakeReason.Input)
+                {
+                    LoopStats.NoteWake(reason, end);
+                }
+
+                LoopStats.NoteWait(reason, (long)((waited - wait) * Stopwatch.Frequency / 1000.0), timed, late);
+            }
         }
 
         protected override void Initialize()
@@ -102,7 +253,9 @@ namespace ClassicUO
             GraphicManager.ApplyChanges();
 
             SetRefreshRate(Settings.GlobalSettings.FPS);
+
             _uoSpriteBatch = new UltimaBatcher2D(GraphicsDevice);
+            GraphicsDevice.DeviceReset += (_, _) => _uiCache.Invalidate();
 
             _filter = HandleSdlEvent;
             SDL_SetEventFilter(_filter, IntPtr.Zero);
@@ -118,6 +271,12 @@ namespace ClassicUO
         {
             base.LoadContent();
 
+            _gpuDevice = GpuInterop.GetDevice(GraphicsDevice);
+            Log.Info($"SDL3 {GpuInterop.GetSdlRevision()}");
+            Log.Trace(_gpuDevice != IntPtr.Zero
+                ? $"SDL_GPU device 0x{_gpuDevice:X}: driver={GpuInterop.GetDriverName(_gpuDevice)} shaders={GpuInterop.GetShaderFormats(_gpuDevice)}"
+                : "FNA3D is not on the SDL_GPU driver; GPU interop disabled");
+
             Fonts.Initialize(GraphicsDevice);
             SolidColorTextureCache.Initialize(GraphicsDevice);
             Audio = new AudioManager();
@@ -129,20 +288,11 @@ namespace ClassicUO
             SetScene(new MainScene(this));
 #else
             UO.Load(this);
+            // the startup renderer decision: with Gpu possible, the world pass is created now, before login; if that
+            // fails, auto uses Legacy for the session and forced gpu exits (0xDEAF)
+            RendererStartup.AfterDevice(GraphicsDevice, _gpuDevice, CreateStartupGpuWorld);
             Audio.Initialize();
-            // TODO: temporary fix to avoid crash when laoding plugins
             Settings.GlobalSettings.Encryption = (byte) NetClient.Socket.Load(UO.FileManager.Version, (EncryptionType) Settings.GlobalSettings.Encryption);
-
-            Log.Trace("Loading plugins...");
-            PluginHost?.Initialize();
-
-            foreach (string p in Settings.GlobalSettings.Plugins)
-            {
-                Plugin.Create(p);
-            }
-            _pluginsInitialized = true;
-
-            Log.Trace("Done!");
 
             SetScene(new LoginScene(UO.World));
 #endif
@@ -160,32 +310,51 @@ namespace ClassicUO
 
             Audio?.StopMusic();
             Settings.GlobalSettings.Save();
-            Plugin.OnClosing();
+
+#if CUO_DEVTOOLS
+            Network.OplDebounceCheck.LogSummary(Network.OplRequestQueue.Budget, "exit");
+#endif
 
             UO.Unload();
+
+            _gpuWorld?.Dispose();
+            _gpuWorld = null;
 
             base.UnloadContent();
         }
 
         public void SetWindowTitle(string title)
         {
+            _windowTitle = title;
+            _titleShowsLegacy = !Settings.GlobalSettings.UseGpuWorldRenderer;
+
+            // dev builds say so in the title, so nobody mistakes Compatibility frames for the Gpu renderer's
+#if CUO_DEVTOOLS
+            string legacy = _titleShowsLegacy ? " [Compatibility renderer]" : "";
+#else
+            string legacy = "";
+#endif
+
             if (string.IsNullOrEmpty(title))
             {
 #if DEV_BUILD
-                Window.Title = $"ClassicUO [dev] - {CUOEnviroment.Version}";
+                Window.Title = $"ClassicUO [dev]{legacy} - {CUOEnviroment.Version}";
 #else
-                Window.Title = $"ClassicUO - {CUOEnviroment.Version}";
+                Window.Title = $"ClassicUO{legacy} - {CUOEnviroment.Version}";
 #endif
             }
             else
             {
 #if DEV_BUILD
-                Window.Title = $"{title} - ClassicUO [dev] - {CUOEnviroment.Version}";
+                Window.Title = $"{title} - ClassicUO [dev]{legacy} - {CUOEnviroment.Version}";
 #else
-                Window.Title = $"{title} - ClassicUO - {CUOEnviroment.Version}";
+                Window.Title = $"{title} - ClassicUO{legacy} - {CUOEnviroment.Version}";
 #endif
             }
         }
+
+        private string _windowTitle;
+        private bool _titleShowsLegacy;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public T GetScene<T>() where T : Scene
@@ -200,14 +369,84 @@ namespace ClassicUO
             Scene?.Load();
         }
 
-        public void SetVSync(bool value)
+        // RendererStartup's world probe: the Gpu world pass for map 0, kept for the session (a facet change recreates it)
+        private string CreateStartupGpuWorld()
         {
-            GraphicManager.SynchronizeWithVerticalRetrace = value;
+            _gpuWorld = GpuWorldRenderer.TryCreate(_gpuDevice, UO.FileManager, out string error);
+
+            if (_gpuWorld != null && !_gpuWorld.TryEnsureFacet(0, out error))
+            {
+                _gpuWorld.Dispose();
+                _gpuWorld = null;
+            }
+
+            return _gpuWorld == null ? error ?? "the GPU world pass could not be created" : null;
         }
 
+        /// <summary>The GPU world renderer; null in a Legacy session (chosen at startup: forced, or auto without a usable Gpu
+        /// world) or after a failed setup, which exits the client at the end of the frame (GpuDeviceLost.FailWorldSetup):
+        /// a session never falls back to Legacy after startup.</summary>
+        internal GpuWorldRenderer GetGpuWorld()
+        {
+            if (!Settings.GlobalSettings.UseGpuWorldRenderer || _gpuWorldFailed)
+            {
+                return null;
+            }
+
+            if (_gpuWorld == null)
+            {
+                _gpuWorld = GpuWorldRenderer.TryCreate(_gpuDevice, UO.FileManager, out string error);
+                _gpuWorldFailed = _gpuWorld == null;
+
+                if (_gpuWorldFailed)
+                {
+                    GpuDeviceLost.FailWorldSetup(error);
+                }
+            }
+
+            return _gpuWorld;
+        }
+
+        /// <summary>DevBench reinit: drops the GPU world pass (recreated on the next frame, as on a facet change) and, with
+        /// <paramref name="dropTarget"/>, the world render target (recreated, as at login).</summary>
+        internal void DebugRecreateGpuWorld(bool dropTarget)
+        {
+            _gpuWorld?.Dispose();
+
+            if (dropTarget)
+            {
+                _renderTargets.WorldRenderTarget?.Dispose();
+            }
+        }
+
+        public void SetVSync(bool value)
+        {
+            Settings.GlobalSettings.VSync = value;
+
+            if (GraphicManager.SynchronizeWithVerticalRetrace != value)
+            {
+                GraphicManager.SynchronizeWithVerticalRetrace = value;
+                GraphicManager.ApplyChanges();
+            }
+        }
+
+        // 0 = uncapped (no frame limiter)
         public void SetRefreshRate(int rate)
         {
-            if (rate < Constants.MIN_FPS)
+#if CUO_DEVTOOLS
+            // CUO_FPS=<n> caps a driver session (started with -fps 0) so the evloop-1 gates exercise the
+            // event loop's waits
+            if (_fpsEnv > 0)
+            {
+                rate = _fpsEnv;
+            }
+#endif
+
+            if (rate <= 0)
+            {
+                rate = 0;
+            }
+            else if (rate < Constants.MIN_FPS)
             {
                 rate = Constants.MIN_FPS;
             }
@@ -218,7 +457,11 @@ namespace ClassicUO
 
             float frameDelay;
 
-            if (rate == Constants.MIN_FPS)
+            if (rate == 0 || (DevBench.FrameStats && !Diagnostics.On))
+            {
+                frameDelay = 0;
+            }
+            else if (rate == Constants.MIN_FPS)
             {
                 // The "real" UO framerate is 12.5. Treat "12" as "12.5" to match.
                 frameDelay = 80;
@@ -234,7 +477,7 @@ namespace ClassicUO
             Settings.GlobalSettings.FPS = rate;
 
             _intervalFixedUpdate[0] = frameDelay;
-            _intervalFixedUpdate[1] = 217; // 5 FPS
+            _intervalFixedUpdate[1] = 100; // 10 FPS while inactive (ReduceFPSWhenInactive); was 217 ms (about 4.6 FPS)
         }
 
         private void SetWindowPosition(int x, int y)
@@ -253,6 +496,16 @@ namespace ClassicUO
                 height *= 2;
             }
             */
+
+            if (GpuDeviceLost.IsLost)
+            {
+                return; // a backbuffer reset stalls on the lost device
+            }
+
+            if (width <= 0 || height <= 0)
+            {
+                return; // FNA throws on a zero backbuffer; see WindowOnClientSizeChanged
+            }
 
             GraphicManager.PreferredBackBufferWidth = width;
             GraphicManager.PreferredBackBufferHeight = height;
@@ -378,8 +631,32 @@ namespace ClassicUO
             }
         }
 
+        // L1: the per-frame network drain. CUO_NET_CAP_BYTES / CUO_NET_CAP_PACKETS override the caps for measurements
+        // (CUO_NET_CAP_BYTES=1 reads one 4 KB slice per frame, as before the drain loop).
+        private static readonly int _netCapBytes = int.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_BYTES"), out var cb) && cb > 0 ? cb : NetClient.DefaultFrameByteCap;
+        private static readonly int _netCapPackets = int.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_PACKETS"), out var cp) && cp > 0 ? cp : NetClient.DefaultFramePacketCap;
+        private static readonly double _netCapMs = double.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_MS"), out var cm) && cm > 0 ? cm : NetClient.DefaultFrameMs;
+        private static readonly bool _netTrace = (NetClient.TrackAvailable = Environment.GetEnvironmentVariable("CUO_NET_TRACE") == "1");
+        private Func<ArraySegment<byte>, int> _parseSlice;
+
+        private int ParseSlice(ArraySegment<byte> data) => PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
+
         protected override void Update(GameTime gameTime)
         {
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.Update();
+#endif
+            FrameStats.Begin(FramePhase.Update);
+            FrameStats.Inc(FrameCounter.LoopTicks);
+            _updateStartTs = Stopwatch.GetTimestamp();
+            _tickMode = DecideLoopMode();
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteTick();
+                LoopStats.NoteUpdateStart(SDL_GetTicksNS());
+            }
+
             if (Profiler.InContext(Profiler.ProfilerContext.OUT_OF_CONTEXT))
             {
                 Profiler.ExitContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
@@ -387,47 +664,177 @@ namespace ClassicUO
 
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+            VisualDue.BeginUpdate();
+            VisualDue.Tracking = AnimDueTracking;
+            Time.Frame++;
+            _totalUpdates++;
+            // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
+            UO.Arts?.AdvanceFrame();
+            // anim_atlas_lru: the page clock, and with the switch on the budget and evictions (nothing holds atlas textures
+            // between frames except MobileFrameCache's Legacy replays, which check Animations.AtlasEpoch)
+            UO.Animations?.Tick(ClassicUO.Renderer.Animations.AtlasPageClock.MonotonicMs(), FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive));
+
+            // the renderer can be switched at runtime (-worldrenderer command, DevBench world:legacy)
+            if (_titleShowsLegacy == Settings.GlobalSettings.UseGpuWorldRenderer)
+            {
+                SetWindowTitle(_windowTitle);
+            }
 
             Mouse.Update();
 
-            var data = NetClient.Socket.CollectAvailableData();
-            var packetsCount = PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
+            FrameStats.Begin(FramePhase.Packets);
+            _parseSlice ??= ParseSlice;
+            var drainStart = _netTrace || LoopStats.On ? Stopwatch.GetTimestamp() : 0;
+            int capBytes = _netCapBytes, capPackets = _netCapPackets;
+
+            int netSignaled = -1;
+
+            if (_tickMode == LoopMode.Event)
+            {
+#if CUO_DEVTOOLS
+                if (Diagnostics.On) netSignaled = _waiter.NetSignaled; // before BindNet resets it
+#endif
+                _waiter.BindNet(NetClient.Socket);
+
+                // one drain per frame or wake instead of one per ~1 ms: the byte and packet caps scale with the time since the last
+                double sinceDrain = _lastDrainTs == 0 ? 0 : (_updateStartTs - _lastDrainTs) * 1000.0 / Stopwatch.Frequency;
+                capBytes = LoopTiming.ScaleCap(capBytes, sinceDrain);
+                capPackets = LoopTiming.ScaleCap(capPackets, sinceDrain);
+            }
+
+            _lastDrainTs = _updateStartTs;
+            int generation = NetClient.Socket.ConnectionGeneration;
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopDrainStart(1, _updateStartTs, netSignaled);
+#endif
+            var packetsCount = NetClient.Socket.Drain(_parseSlice, capBytes, capPackets, _netCapMs);
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.LoopDrainEnd(NetClient.Socket.LastDrainBytes);
+#endif
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteDrain(drainStart, Stopwatch.GetTimestamp(), NetClient.Socket.LastDrainBytes);
+            }
+
+            NoteDrainResult(_updateStartTs, NetClient.Socket.LastDrainBytes, packetsCount, generation);
+
+            if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
+            {
+                Log.Info($"[net] t={Environment.TickCount64} frame={_totalFrames} avail={NetClient.Socket.LastDrainAvailable} bytes={NetClient.Socket.LastDrainBytes} slices={NetClient.Socket.LastDrainSlices} packets={packetsCount} ms={Stopwatch.GetElapsedTime(drainStart).TotalMilliseconds:0.00}");
+            }
+
+            if (FrameStats.On)
+            {
+                FrameStats.Set(FrameCounter.NetAvail, NetClient.Socket.LastDrainAvailable);
+                FrameStats.Add(FrameCounter.NetBytes, NetClient.Socket.LastDrainBytes);
+                FrameStats.Add(FrameCounter.NetSlices, NetClient.Socket.LastDrainSlices);
+                FrameStats.Add(FrameCounter.NetPackets, packetsCount);
+            }
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packetsCount;
-            NetClient.Socket.Flush();
-
-            Plugin.Tick();
+            if (_tickMode != LoopMode.Event) NetClient.Socket.Flush();
+            FrameStats.End(FramePhase.Packets);
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
+                FrameStats.Begin(FramePhase.SceneUpdate);
                 Profiler.EnterContext(Profiler.ProfilerContext.UPDATE_WORLD);
                 Scene.Update();
                 Profiler.ExitContext(Profiler.ProfilerContext.UPDATE_WORLD);
+                FrameStats.End(FramePhase.SceneUpdate);
             }
 
+            FrameStats.Begin(FramePhase.UiUpdate);
+            // gumps decoded ahead on workers (Gump.Request): into the atlas before the UI asks for them, 1 ms at most
+            UO.Gumps?.DrainReady(System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 1000);
             UIManager.Update();
+            FrameStats.End(FramePhase.UiUpdate);
 
             _totalElapsed += gameTime.ElapsedGameTime.TotalMilliseconds;
             _currentFpsTime += gameTime.ElapsedGameTime.TotalMilliseconds;
 
             if (_currentFpsTime >= 1000)
             {
-                CUOEnviroment.CurrentRefreshRate = _totalFrames;
+                CUOEnviroment.CurrentRefreshRate = (uint)(_totalFrames * 1000.0 / _currentFpsTime);
+                CUOEnviroment.CurrentLoopRate = (uint)(_totalUpdates * 1000.0 / _currentFpsTime);
 
                 _totalFrames = 0;
+                _totalUpdates = 0;
                 _currentFpsTime = 0;
             }
 
-            double x = _intervalFixedUpdate[
-                !IsActive
+            // FocusRule: an automated session counts as focused; the simulated `inactive on` forces this path
+            bool inactive = FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive)
                 && ProfileManager.CurrentProfile != null
-                && ProfileManager.CurrentProfile.ReduceFPSWhenInactive
-                    ? 1
-                    : 0
-            ];
+                && (ProfileManager.CurrentProfile.ReduceFPSWhenInactive || FocusRule.ForceInactive);
+            double x = _intervalFixedUpdate[inactive ? 1 : 0];
             _suppressedDraw = false;
+            bool minimized = IsMinimizedForDrawSkip();
+            _tickInterval = x;
+            _tickDrawSkipped = minimized;
+            bool displayDue = DisplayDrawDue(inactive, minimized);
+            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive && PresentOnChangeSwitch;
 
-            if (_totalElapsed > x)
+            if (_presentOnChange)
+            {
+                displayDue = PresentOnChangeDue(displayDue);
+            }
+#if CUO_DEVTOOLS
+            else if (PresentChangeCheck.On)
+            {
+                PresentChangeCheck.Tick(Stopwatch.GetTimestamp(), false, displayDue, displayDue, false, _displayPeriod);
+            }
+#endif
+
+            _displayDrawDue = displayDue;
+            ServicePing(displayDue);
+
+            // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
+            // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
+            int idleSleepMs = (inactive || minimized) && Settings.GlobalSettings.ThrottleUpdateWhenInactive ? 12 : 1;
+
+            if (minimized)
+            {
+                // skip_draw_when_minimized: nothing to show, so no world prepare, draw or present; packets, update and audio above
+                // and below keep running. The first frame after a restore draws in full (the world target preserves its contents).
+                _totalElapsed = 0;
+                _suppressedDraw = true;
+                SuppressDraw();
+                (Scene as GameScene)?.OnDrawSkipped(gameTime.ElapsedGameTime.TotalMilliseconds);
+
+                if (_tickMode == LoopMode.Legacy && !gameTime.IsRunningSlowly)
+                {
+                    LegacySleep(idleSleepMs);
+                }
+            }
+            else if (_displayCapActive)
+            {
+                _totalElapsed = 0;
+                if (!displayDue)
+                {
+                    _suppressedDraw = true;
+                    SuppressDraw();
+                }
+            }
+            else if (x <= 0)
+            {
+                _totalElapsed = 0;
+            }
+            else if (_tickMode == LoopMode.Event)
+            {
+                // the wait at the end of the tick (EventLoopWait) runs until the next draw is due
+                if (LoopTiming.DrawDue(_totalElapsed, x, out double carried))
+                {
+                    _totalElapsed = carried;
+                }
+                else
+                {
+                    _suppressedDraw = true;
+                    SuppressDraw();
+                }
+            }
+            else if (_totalElapsed > x)
             {
                 _totalElapsed %= x;
             }
@@ -438,31 +845,160 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(1);
+                    LegacySleep(idleSleepMs);
                 }
             }
 
+#if CUO_DEVTOOLS
+            // Shadow the original draw decision on the same loop input, including the original cap/minimized policies.
+            if (PresentCapCheck.On) PresentCapCheck.OldDecision(!_suppressedDraw || _displayCapActive);
+#endif
             UO.GameCursor?.Update();
             Audio?.Update();
 
-
-            for (var i = _queuedActions.Count - 1; i >= 0; i--)
+            if (DevBench.Enabled)
             {
-                (var time, var fn) = _queuedActions[i];
+                DevBench.Update(this);
+            }
 
-                if (Time.Ticks > time)
+
+            // event_loop on: every due action (one Update per frame or wake); off: one per Update, as before
+            if (_queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch) > 0)
+            {
+                _changePending = true;
+                _changeWhy |= ChangeReason.Actions;
+            }
+
+            base.Update(gameTime);
+
+            // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
+            if (_tickMode == LoopMode.Event)
+            {
+                int flushGeneration = NetClient.Socket.ConnectionGeneration;
+                NetClient.Socket.Flush();
+
+                if (NetClient.Socket.ConnectionGeneration != flushGeneration)
                 {
-                    fn();
-                    _queuedActions.RemoveAt(i);
-                    break;
+                    // present_on_change: a failed send ended the connection
+                    _changePending = true;
+                    _changeWhy |= ChangeReason.Connection;
                 }
             }
 
-             base.Update(gameTime);
+            FrameStats.End(FramePhase.Update);
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.UpdateEnd();
+#endif
+
+            if (_tickMode == LoopMode.Event && _suppressedDraw)
+            {
+                EventLoopWait();
+            }
+        }
+
+        private bool _pingAfterPresent;
+
+        // present_on_change: the ping goes out from here, after the draw decision, so one due just before a present is held
+        // until right after it (LoopTiming.HoldPingForPresent). Off: GameScene.Update sends it, as before.
+        private void ServicePing(bool drawsNow)
+        {
+            _pingAfterPresent = false;
+
+            if (Scene is not GameScene gs || !gs.IsLoaded || gs.IsDestroyed)
+            {
+                return;
+            }
+
+            bool loopOwned = gs.LoopSendsPing;
+            gs.LoopSendsPing = _presentOnChange;
+
+            // a switch change: a ping the scene skipped last tick goes out now
+            if (!loopOwned || !gs.PingDue)
+            {
+                return;
+            }
+
+            double msUntilPresent = drawsNow ? 0 : MsUntilPresentOnChange();
+
+            if (LoopTiming.HoldPingForPresent(_presentOnChange, drawsNow, msUntilPresent, (double)Time.Ticks - (gs.PingDueTick + 1)))
+            {
+                _pingAfterPresent = drawsNow;
+
+                return;
+            }
+
+            gs.SendPing();
+        }
+
+        // after Present, before the wait: no network work between Draw and Present
+        private void SendHeldPing()
+        {
+            _pingAfterPresent = false;
+
+            if (Scene is not GameScene gs || !gs.PingDue)
+            {
+                return;
+            }
+
+            gs.SendPing();
+            int generation = NetClient.Socket.ConnectionGeneration;
+            NetClient.Socket.Flush();
+
+            if (NetClient.Socket.ConnectionGeneration != generation)
+            {
+                _changePending = true;
+                _changeWhy |= ChangeReason.Connection;
+            }
+        }
+
+        private static void LegacySleep(int ms)
+        {
+            FrameStats.Inc(FrameCounter.LoopWaits);
+
+            if (LoopStats.On)
+            {
+                LoopStats.NoteSleep();
+            }
+
+            Thread.Sleep(ms);
+        }
+
+#if CUO_DEVTOOLS
+        // DevBench plan entry minimized:on|off: stands in for a minimized window (no OS window state is touched)
+        internal static bool DevForceMinimized;
+#endif
+
+        private bool IsMinimizedForDrawSkip()
+        {
+            if (!Settings.GlobalSettings.SkipDrawWhenMinimized)
+            {
+                return false;
+            }
+
+            bool forced = false;
+#if CUO_DEVTOOLS
+            forced = DevForceMinimized;
+#endif
+            // polled, not event-driven: a plugin can consume the window events; Wayland sets no minimized flag (the switch does nothing there)
+            bool real = !forced && !FocusRule.Automation
+                && (((SDL_WindowFlags)SDL_GetWindowFlags(Window.Handle)) & SDL_WindowFlags.SDL_WINDOW_MINIMIZED) != 0;
+
+            return FocusRule.IsMinimized(real, FocusRule.Automation, forced);
         }
 
         protected override void Draw(GameTime gameTime)
         {
+            if (LoopStats.On) LoopStats.NoteDraw();
+            BeginPresentedChange();
+            VisualDue.BeginDraw();
+            FrameStats.Begin(FramePhase.Draw);
+            FrameStats.Begin(FramePhase.DrawSetup);
+
+            // In game the world target always keeps its contents: the GPU pass draws into it outside FNA, and a world entry or
+            // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
+            _renderTargets.PreserveWorldContents = Scene is GameScene;
+            _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
+            _renderTargets.UiCache = Settings.GlobalSettings.UiRenderCache;
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
                 new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
@@ -470,6 +1006,19 @@ namespace ClassicUO
                 DpiScale
             );
 
+            if (!_loggedWorldTexture && _gpuDevice != IntPtr.Zero && _renderTargets.WorldRenderTarget != null)
+            {
+                _loggedWorldTexture = true;
+                Log.Trace($"WorldRenderTarget SDL_GPUTexture: 0x{GpuInterop.GetTexture(_renderTargets.WorldRenderTarget):X}");
+            }
+
+#if CUO_DEVTOOLS
+            if (Diagnostics.On)
+            {
+                DiagDisplay();
+                Diagnostics.Draw();
+            }
+#endif
             Profiler.EndFrame();
             Profiler.BeginFrame();
 
@@ -480,17 +1029,22 @@ namespace ClassicUO
 
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME);
 
-            _totalFrames++;
+#if CUO_DEVTOOLS
+            if (PresentCapCheck.On) PresentCapCheck.Draw(_displayDrawDue);
+#endif
 
             GraphicsDevice.Clear(Color.Black);
+            FrameStats.End(FramePhase.DrawSetup);
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
                 Scene.Draw(_uoSpriteBatch, _renderTargets);
             }
 
-            _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
-            GraphicsDevice.Clear(Color.Transparent);
+            // A transient zero-sized window (minimised, mid-resize, or right after a device reset) leaves no UI target to
+            // draw into: skip the UI rather than draw into an empty back buffer.
+            bool drawUi = _renderTargets.UiRenderTarget != null && !_renderTargets.UiRenderTarget.IsDisposed
+                && GraphicManager.PreferredBackBufferWidth > 0 && GraphicManager.PreferredBackBufferHeight > 0;
 
             if ((UO.World?.InGame ?? false) && SelectedObject.Object is TextObject t)
             {
@@ -507,29 +1061,93 @@ namespace ClassicUO
             SelectedObject.HealthbarObject = null;
             SelectedObject.SelectedContainer = null;
 
-            _uoSpriteBatch.Begin();
-            if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
+            FrameStats.Begin(FramePhase.UiPass);
+            int uiFlushes0 = UltimaBatcher2D.FrameFlushes, uiDrawCalls0 = UltimaBatcher2D.FrameDrawCalls;
+            long uiFna0 = UltimaBatcher2D.FrameGpuTicks;
+
+            if (drawUi && _renderTargets.UiCache && _renderTargets.UiCacheRenderTarget is { IsDisposed: false })
             {
-                Scene.DrawUI(_uoSpriteBatch);
+                DrawUiCached();
             }
-            _uoSpriteBatch.End();
+            else
+            {
+                _uiCache.Invalidate();
 
-            UIManager.Draw(_uoSpriteBatch);
+                _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
+                GraphicsDevice.Clear(Color.Transparent);
 
-            _uoSpriteBatch.Begin();
-            UO.GameCursor?.Draw(_uoSpriteBatch);
-            _uoSpriteBatch.End();
+                if (drawUi)
+                {
+                    DrawSceneUiAndGumps();
+                    DrawCursor();
+                }
+            }
 
+            FrameStats.End(FramePhase.UiPass);
+
+            if (drawUi)
+            {
+                FrameStats.Set(FrameCounter.UiFlushes, UltimaBatcher2D.FrameFlushes - uiFlushes0);
+                FrameStats.Set(FrameCounter.UiDrawCalls, UltimaBatcher2D.FrameDrawCalls - uiDrawCalls0);
+                FrameStats.AddTicks(FramePhase.UiFna, UltimaBatcher2D.FrameGpuTicks - uiFna0);
+            }
+
+            FrameStats.Begin(FramePhase.Composite);
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(null);
 
             _renderTargets.Draw(_uoSpriteBatch);
+            FrameStats.End(FramePhase.Composite);
+
+            if (_worldShotPath != null)
+            {
+                SaveWorldShot(_worldShotPath);
+                _worldShotPath = null;
+            }
 
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME);
             Profiler.EnterContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
 
-            Plugin.ProcessDrawCmdList(GraphicsDevice);
-
             base.Draw(gameTime);
+            VisualDue.EndDraw();
+
+            FrameStats.End(FramePhase.Draw);
+        }
+
+        protected override void EndDraw()
+        {
+            if (DevBench.FrameStats)
+            {
+                FrameStats.BeforeEndDraw();
+                base.EndDraw();
+                FrameStats.AfterEndDraw();
+            }
+            else
+            {
+                base.EndDraw();
+            }
+
+            GpuDeviceLost.AfterPresent();
+            EndPresentedChange();
+            _totalFrames++;
+#if CUO_DEVTOOLS
+            PresentedFrameCount++;
+            if (PresentCapCheck.On) PresentCapCheck.Present(Stopwatch.GetTimestamp());
+#endif
+
+            if (LoopStats.On)
+            {
+                LoopStats.NotePresent();
+            }
+
+            if (_pingAfterPresent)
+            {
+                SendHeldPing();
+            }
+
+            if (_tickMode == LoopMode.Event)
+            {
+                EventLoopWait();
+            }
         }
 
         private float _screenScale = Settings.GlobalSettings.ScreenScale;
@@ -568,6 +1186,15 @@ namespace ClassicUO
 
         private void WindowOnClientSizeChanged(int width, int height)
         {
+            // A display being removed or turned off can report a zero client size (seen with a display-scale change
+            // while the monitor went away); FNA rejects a zero backbuffer, so keep the current one until a real size arrives.
+            if (width <= 0 || height <= 0)
+            {
+                Log.Warn($"Ignoring window client size {width}x{height}");
+
+                return;
+            }
+
             if (!IsWindowMaximized() && Window.AllowUserResizing)
             {
                 if (ProfileManager.CurrentProfile != null)
@@ -588,30 +1215,27 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
-            // Don't pass SDL events to the plugin host before the plugins are initialized
-            // or the garbage collector can get screwed up
-            if (_pluginsInitialized && Plugin.ProcessWndProc(sdlEvent) != 0)
+            // present_on_change: any window, input or device event may change the screen (not the poll sentinel or user events)
+            if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
             {
-                if ((SDL_EventType)sdlEvent->type == SDL_EventType.SDL_EVENT_MOUSE_MOTION)
-                {
-                    if (UO.GameCursor != null)
-                    {
-                        UO.GameCursor.AllowDrawSDLCursor = false;
-                    }
-                }
+                _changePending = true;
+                _changeWhy |= ChangeReason.SdlEvent;
+            }
 
-                return true;
+            if (LoopStats.On)
+            {
+                LoopStats.NoteInputEvent(sdlEvent->type, sdlEvent->common.timestamp);
             }
 
             switch ((SDL_EventType)sdlEvent->type)
             {
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_ADDED:
-                    Console.WriteLine("AUDIO ADDED: {0}", sdlEvent->adevice.which);
+                    Log.Trace($"Audio device added: {sdlEvent->adevice.which}");
 
                     break;
 
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_REMOVED:
-                    Console.WriteLine("AUDIO REMOVED: {0}", sdlEvent->adevice.which);
+                    Log.Trace($"Audio device removed: {sdlEvent->adevice.which}");
 
                     break;
 
@@ -623,39 +1247,18 @@ namespace ClassicUO
                     Mouse.MouseInWindow = false;
                     break;
 
-                case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_GAINED:
-                    Plugin.OnFocusGained();
-                    break;
-
-                case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_LOST:
-                    Plugin.OnFocusLost();
-                    break;
-
                 case SDL_EventType.SDL_EVENT_KEY_DOWN:
 
                     Keyboard.OnKeyDown(sdlEvent->key);
 
-                    if (
-                        Plugin.ProcessHotkeys(
-                            (int)sdlEvent->key.key,
-                            (int)sdlEvent->key.mod,
-                            true
-                        )
-                    )
-                    {
-                        _ignoreNextTextInput = false;
+                    _ignoreNextTextInput = false;
 
-                        UIManager.KeyboardFocusControl?.InvokeKeyDown(
-                            (SDL_Keycode)sdlEvent->key.key,
-                            sdlEvent->key.mod
-                        );
+                    UIManager.KeyboardFocusControl?.InvokeKeyDown(
+                        (SDL_Keycode)sdlEvent->key.key,
+                        sdlEvent->key.mod
+                    );
 
-                        Scene.OnKeyDown(sdlEvent->key);
-                    }
-                    else
-                    {
-                        _ignoreNextTextInput = true;
-                    }
+                    Scene.OnKeyDown(sdlEvent->key);
 
                     break;
 
@@ -667,7 +1270,6 @@ namespace ClassicUO
                         sdlEvent->key.mod
                     );
                     Scene.OnKeyUp(sdlEvent->key);
-                    Plugin.ProcessHotkeys(0, 0, false);
 
                     if ((SDL_Keycode)sdlEvent->key.key == SDL_Keycode.SDLK_PRINTSCREEN)
                     {
@@ -736,8 +1338,6 @@ namespace ClassicUO
                 case SDL_EventType.SDL_EVENT_MOUSE_WHEEL:
                     Mouse.Update();
                     bool isScrolledUp = sdlEvent->wheel.y > 0;
-
-                    Plugin.ProcessMouse(0, (int)sdlEvent->wheel.y);
 
                     if (!Scene.OnMouseWheel(isScrolledUp))
                     {
@@ -809,14 +1409,6 @@ namespace ClassicUO
                     }
                     else
                     {
-                        if (
-                            buttonType != MouseButtonType.Left
-                            && buttonType != MouseButtonType.Right
-                        )
-                        {
-                            Plugin.ProcessMouse(sdlEvent->button.button, 0);
-                        }
-
                         if (!Scene.OnMouseDown(buttonType))
                         {
                             UIManager.OnMouseButtonDown(buttonType);
@@ -928,12 +1520,94 @@ namespace ClassicUO
 
         protected override void OnExiting(object sender, EventArgs args)
         {
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.Stop();
+#endif
             Scene?.Dispose();
+
+            Volatile.Write(ref NetClient.SendQueuedWake, null); // a captured wake after this is a no-op (Wake checks disposal)
+            _waiter?.Dispose();
 
             base.OnExiting(sender, args);
         }
 
-        private void TakeScreenshot()
+        // The saves of OnExiting and UnloadContent, without the GPU teardown (see GpuDeviceLost)
+        internal void SaveOnDeviceLost()
+        {
+            try
+            {
+                Scene?.Dispose(); // GameScene: profile, macros, info bars, disconnect
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Scene dispose after the GPU device was lost failed: {ex}");
+            }
+
+            SDL_GetWindowBordersSize(Window.Handle, out int top, out int left, out _, out _);
+
+            Settings.GlobalSettings.WindowPosition = new Point(
+                Math.Max(0, Window.ClientBounds.X - left),
+                Math.Max(0, Window.ClientBounds.Y - top)
+            );
+
+            Audio?.StopMusic();
+            Settings.GlobalSettings.Save();
+        }
+
+        // DevBench: the world render target of the next drawn frame, without UI, as a PNG
+        internal void RequestWorldShot(string path) => _worldShotPath = path;
+
+        internal bool WorldShotPending => _worldShotPath != null;
+
+        private void SaveWorldShot(string path)
+        {
+            var rt = _renderTargets.WorldRenderTarget;
+
+            if (rt == null || rt.IsDisposed)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+
+            using (FileStream fileStream = File.Create(path))
+            {
+                rt.SaveAsPng(fileStream, rt.Width, rt.Height);
+            }
+
+            var lights = _renderTargets.LightRenderTarget;
+
+            if (lights != null && !lights.IsDisposed)
+            {
+                using FileStream fileStream = File.Create(Path.ChangeExtension(path, null) + "_lights.png");
+                lights.SaveAsPng(fileStream, lights.Width, lights.Height);
+            }
+
+            var ui = _renderTargets.UiRenderTarget;
+
+            if (ui != null && !ui.IsDisposed)
+            {
+                using FileStream fileStream = File.Create(Path.ChangeExtension(path, null) + "_ui.png");
+                ui.SaveAsPng(fileStream, ui.Width, ui.Height);
+            }
+
+            // the composited frame (world, overhead text, UI, cursor tooltip), before Present
+            int bw = GraphicManager.PreferredBackBufferWidth, bh = GraphicManager.PreferredBackBufferHeight;
+            var colors = new Color[bw * bh];
+            GraphicsDevice.GetBackBufferData(colors);
+
+            using (var screen = new Texture2D(GraphicsDevice, bw, bh, false, SurfaceFormat.Color))
+            using (FileStream fileStream = File.Create(Path.ChangeExtension(path, null) + "_screen.png"))
+            {
+                screen.SetData(colors);
+                ClassicUO.Renderer.TextureUploads.Changed();
+                screen.SaveAsPng(fileStream, bw, bh);
+            }
+
+            Log.Info($"World render target saved: {path}");
+        }
+
+        internal void TakeScreenshot()
         {
             string screenshotsFolder = FileSystemHelper.CreateFolderIfNotExists(
                 CUOEnviroment.ExecutablePath,
@@ -944,7 +1618,7 @@ namespace ClassicUO
 
             string path = Path.Combine(
                 screenshotsFolder,
-                $"screenshot_{DateTime.Now:yyyy-MM-dd_hh-mm-ss}.png"
+                $"screenshot_{DateTime.Now:yyyy-MM-dd_hh-mm-ss}_{Environment.ProcessId}.png"
             );
 
             Color[] colors = new Color[
@@ -965,6 +1639,7 @@ namespace ClassicUO
             using (FileStream fileStream = File.Create(path))
             {
                 texture.SetData(colors);
+                ClassicUO.Renderer.TextureUploads.Changed();
                 texture.SaveAsPng(fileStream, texture.Width, texture.Height);
                 string message = string.Format(ResGeneral.ScreenshotStoredIn0, path);
 

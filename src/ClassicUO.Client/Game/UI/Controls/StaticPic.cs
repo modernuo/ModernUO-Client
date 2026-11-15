@@ -41,17 +41,16 @@ namespace ClassicUO.Game.UI.Controls
             {
                 _graphic = value;
 
-                ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(value);
-
-                if (artInfo.Texture == null)
+                // perf-6: the size without decoding; the art decodes at first draw or hit test
+                if (!Client.Game.UO.Arts.TryGetArtSize(value, out int width, out int height))
                 {
                     Dispose();
 
                     return;
                 }
 
-                Width = artInfo.UV.Width;
-                Height = artInfo.UV.Height;
+                Width = width;
+                Height = height;
 
                 IsPartialHue = Client.Game.UO.FileManager.TileData.StaticData[value].IsPartialHue;
             }
@@ -89,6 +88,10 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool Contains(int x, int y)
         {
+            // perf-6: the size came from the table; the pixel mask exists once the art is decoded (a hit test can come
+            // before the first draw)
+            Client.Game.UO.Arts.GetArt(Graphic);
+
             return Client.Game.UO.Arts.PixelCheck(Graphic, x - Offset.X, y - Offset.Y);
         }
     }

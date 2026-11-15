@@ -90,7 +90,14 @@ namespace ClassicUO.Game.Managers
 
                             for (int i = files.Length - 1; i >= maxJournalFiles; --i)
                             {
-                                File.Delete(files[i]);
+                                try
+                                {
+                                    File.Delete(files[i]);
+                                }
+                                catch (IOException)
+                                {
+                                    // another running instance has this journal open; leave it
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -99,7 +106,7 @@ namespace ClassicUO.Game.Managers
                         }
                     }
 
-                    _fileWriter = new StreamWriter(File.Open(Path.Combine(path, $"{DateTime.Now:yyyy_MM_dd_HH_mm_ss}_journal.txt"), FileMode.Create, FileAccess.Write, FileShare.Read))
+                    _fileWriter = new StreamWriter(File.Open(Path.Combine(path, $"{DateTime.Now:yyyy_MM_dd_HH_mm_ss}_{Environment.ProcessId}_journal.txt"), FileMode.Create, FileAccess.Write, FileShare.Read))
                     {
                         AutoFlush = true
                     };

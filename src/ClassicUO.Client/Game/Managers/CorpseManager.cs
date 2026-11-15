@@ -37,18 +37,10 @@ namespace ClassicUO.Game.Managers
             {
                 ref CorpseInfo c = ref _corpses.GetAt(i);
 
+                // T9 S5: the corpse's Layer (its direction and running bit) is WorldWriter's (Item.CorpseState); the one
+                // caller (RemoveDeadMobile) passes no corpse, so the old write here never ran
                 if (c.CorpseSerial == corpse || c.ObjectSerial == obj)
                 {
-                    if (corpse != 0)
-                    {
-                        Item item = _world.Items.Get(corpse);
-
-                        if (item != null)
-                        {
-                            item.Layer = (Layer) ((c.Direction & Direction.Mask) | (c.IsRunning ? Direction.Running : 0));
-                        }
-                    }
-
                     _corpses.RemoveAt(i);
                 }
                 else
@@ -81,7 +73,7 @@ namespace ClassicUO.Game.Managers
 
                 if (c.ObjectSerial == serial)
                 {
-                    return _world.Items.Get(c.CorpseSerial);
+                    return _world.FindItem(c.CorpseSerial);
                 }
             }
 

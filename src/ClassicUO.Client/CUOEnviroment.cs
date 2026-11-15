@@ -13,12 +13,17 @@ namespace ClassicUO
         public static float DPIScaleFactor = 1.0f;
         public static bool NoSound;
         public static string[] Args;
-        public static string[] Plugins;
         public static bool Debug;
         public static bool IsHighDPI;
         public static uint CurrentRefreshRate;
+        public static uint CurrentLoopRate;
         public static bool SkipLoginScreen;
         public static bool NoServerPing;
+        public static bool NoMessageBox;
+        public static int EcsCheckFrames;
+#if CUO_DEVTOOLS
+        public static string EcsDriverScript;
+#endif
 
         public static readonly bool IsWindows = Environment.OSVersion.Platform == PlatformID.Win32NT || Environment.OSVersion.Platform == PlatformID.Win32Windows || Environment.OSVersion.Platform == PlatformID.Win32S || Environment.OSVersion.Platform == PlatformID.WinCE;
         public static readonly bool IsUnix = !IsWindows;

@@ -6,5 +6,8 @@ namespace ClassicUO
     {
         public static uint Ticks;
         public static float Delta;
+
+        /// <summary>Update calls so far: a key for values taken once per frame.</summary>
+        public static uint Frame;
     }
 }

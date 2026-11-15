@@ -7,18 +7,28 @@ using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal class TextContainer : LinkedObject
+    // Not a LinkedObject: the list links live on TextObject, so world objects carry no list fields (owner item 5, 2026-11-07).
+    internal class TextContainer
     {
         public int Size,
             MaxSize = 5;
 
+        /// <summary>W5: bumped when a text is added or the container cleared (GameObject.TextAllExpired caches on it).</summary>
+        public uint Version;
+
+        /// <summary>The oldest text; newer ones follow through <see cref="TextObject.Next"/>.</summary>
+        public TextObject Items;
+
+        public bool IsEmpty => Items == null;
+
         public void Add(TextObject obj)
         {
+            Version++;
             PushToBack(obj);
 
             if (Size >= MaxSize)
             {
-                ((TextObject)Items)?.Destroy();
+                Items?.Destroy();
                 Remove(Items);
             }
             else
@@ -27,14 +37,15 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        public new void Clear()
+        public void Clear()
         {
-            TextObject item = (TextObject)Items;
+            Version++;
+            TextObject item = Items;
             Items = null;
 
             while (item != null)
             {
-                TextObject next = (TextObject)item.Next;
+                TextObject next = item.Next;
                 item.Next = null;
                 item.Destroy();
                 Remove(item);
@@ -43,6 +54,67 @@ namespace ClassicUO.Game.GameObjects
             }
 
             Size = 0;
+        }
+
+        private void PushToBack(TextObject item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            Remove(item);
+
+            if (Items == null)
+            {
+                Items = item;
+            }
+            else
+            {
+                TextObject last = Items;
+
+                while (last.Next != null)
+                {
+                    last = last.Next;
+                }
+
+                last.Next = item;
+                item.Next = null;
+                item.Previous = last;
+            }
+        }
+
+        private void Remove(TextObject item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            if (item == Items)
+            {
+                Items = Items.Next;
+
+                if (Items != null)
+                {
+                    Items.Previous = null;
+                }
+            }
+            else
+            {
+                if (item.Previous != null)
+                {
+                    item.Previous.Next = item.Next;
+                }
+
+                if (item.Next != null)
+                {
+                    item.Next.Previous = item.Previous;
+                }
+            }
+
+            item.Next = null;
+            item.Previous = null;
         }
     }
 
@@ -56,7 +128,7 @@ namespace ClassicUO.Game.GameObjects
         public OverheadDamage(World world, GameObject parent)
         {
             _world = world;
-            Parent = parent;
+            SetParent(parent);
             _messages = new Deque<TextObject>();
         }
 
@@ -64,9 +136,16 @@ namespace ClassicUO.Game.GameObjects
         public bool IsDestroyed { get; private set; }
         public bool IsEmpty => _messages.Count == 0;
 
+        // item_pool: the parent's Incarnation when it became the parent; an entity's changes only when the pool reuses it
+        private uint _parentIncarnation;
+
+        /// <summary>item_pool: the parent object was reused for another item since (WorldTextManager then sets the live one).</summary>
+        public bool ParentReused => Parent != null && Parent.Incarnation != _parentIncarnation;
+
         public void SetParent(GameObject parent)
         {
             Parent = parent;
+            _parentIncarnation = parent?.Incarnation ?? 0;
         }
 
         public void Add(int damage)
@@ -182,8 +261,9 @@ namespace ClassicUO.Game.GameObjects
                         out int height
                     );
 
-                    p.X += (int)m.Offset.X + 22;
-                    p.Y += (int)(m.Offset.Y - m.Offset.Z - (height + centerY + 8));
+                    Vector3 offset = m.Offset;
+                    p.X += (int)offset.X + 22;
+                    p.Y += (int)(offset.Y - offset.Z - (height + centerY + 8));
                 }
                 else
                 {

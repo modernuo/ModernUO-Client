@@ -7,20 +7,52 @@ using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game.Managers
 {
-    internal sealed class EffectManager : LinkedObject
+    // Not a LinkedObject: the list links live on GameEffect, so world objects carry no list fields (owner item 5, 2026-11-07).
+    internal sealed class EffectManager
     {
         private readonly World _world;
+
+        /// <summary>The oldest effect; newer ones follow through <see cref="GameEffect.Next"/>.</summary>
+        public GameEffect Items;
+
+        // the newest effect, so an add is O(1) instead of a walk of the whole list (bursts were O(n²))
+        private GameEffect _last;
+
+        /// <summary>The newest effect; older ones precede it through <see cref="GameEffect.Previous"/>.</summary>
+        public GameEffect Last => _last;
+
+        public bool IsEmpty => Items == null;
 
         public EffectManager(World world)
         {
             _world = world;
         }
 
+        // the motion step: the player's position for this pass (MovingEffect's path is relative to it), resolved at the
+        // first moving step of the pass
+        private bool _playerResolved;
+        private int _playerX, _playerY, _playerZ;
+
+        /// <summary>The player's position from its mirror record (the object's without one), once per pass.</summary>
+        internal (int x, int y, int z) MotionPlayer()
+        {
+            if (!_playerResolved)
+            {
+                (_playerX, _playerY, _playerZ) = EffectSystem.PlayerPosition(_world);
+                _playerResolved = true;
+            }
+
+            return (_playerX, _playerY, _playerZ);
+        }
+
         public void Update()
         {
-            for (GameEffect f = (GameEffect) Items; f != null;)
+            _playerResolved = false;
+            bool track = Loop.VisualDue.Tracking;
+
+            for (GameEffect f = Items; f != null;)
             {
-                GameEffect next = (GameEffect) f.Next;
+                GameEffect next = f.Next;
 
                 f.Update();
 
@@ -28,9 +60,25 @@ namespace ClassicUO.Game.Managers
                 {
                     f.Destroy();
                 }
+                else if (track && !f.IsDestroyed)
+                {
+                    EffectSystem.NoteVisualDue(f);
+                }
 
                 f = next;
             }
+
+            if (_world.EffectsCheckOn)
+            {
+                EffectSystem.Check(_world, this);
+            }
+        }
+
+        /// <summary>Appends <paramref name="effect"/> to the list; it gets its entity first (T8).</summary>
+        public void Add(GameEffect effect)
+        {
+            EffectSystem.Register(effect);
+            PushToBack(effect);
         }
 
 
@@ -221,23 +269,85 @@ namespace ClassicUO.Game.Managers
             }
 
 
-            PushToBack(effect);
+            Add(effect);
         }
 
-        public new void Clear()
+        public void Clear()
         {
-            GameEffect first = (GameEffect) Items;
+            GameEffect first = Items;
 
             while (first != null)
             {
-                LinkedObject n = first.Next;
+                GameEffect n = first.Next;
 
                 first.Destroy();
 
-                first = (GameEffect) n;
+                first = n;
             }
 
             Items = null;
+            _last = null;
+        }
+
+        private void PushToBack(GameEffect item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            Remove(item);
+
+            if (Items == null)
+            {
+                Items = item;
+            }
+            else
+            {
+                _last.Next = item;
+                item.Previous = _last;
+            }
+
+            _last = item;
+        }
+
+        /// <summary>Unlinks <paramref name="item"/> (GameEffect.Destroy); an effect that is not linked is left as it is.</summary>
+        public void Remove(GameEffect item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            if (item == _last)
+            {
+                _last = item.Previous;
+            }
+
+            if (item == Items)
+            {
+                Items = Items.Next;
+
+                if (Items != null)
+                {
+                    Items.Previous = null;
+                }
+            }
+            else
+            {
+                if (item.Previous != null)
+                {
+                    item.Previous.Next = item.Next;
+                }
+
+                if (item.Next != null)
+                {
+                    item.Next.Previous = item.Previous;
+                }
+            }
+
+            item.Next = null;
+            item.Previous = null;
         }
     }
 }

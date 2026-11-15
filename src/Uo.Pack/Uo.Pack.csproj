@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- src/Directory.Build.props adds the FileEmbed generator; this library embeds nothing with it -->
+    <ProjectReference Remove="..\..\external\FileEmbed\FileEmbed\FileEmbed.csproj" />
+  </ItemGroup>
+
+</Project>

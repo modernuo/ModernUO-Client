@@ -10,6 +10,8 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
@@ -70,13 +72,52 @@ namespace ClassicUO.Assets
 
         private HtmlStatus _htmlStatus;
 
-        private FontCharacterData[,] _fontDataASCII;
-        private FontCharacterDataUnicode[,] _fontDataUNICODE;
-        private readonly UOFile[] _unicodeFontAddress = new UOFile[20];
-        private readonly long[] _unicodeFontSize = new long[20];
+        // ASCII fonts: one row of 224 glyphs per font, read from the pack on the font's first use.
+        private FontCharacterData[][] _asciiRows = Array.Empty<FontCharacterData[]>();
+        // Unicode fonts: font -> 256 pages -> 256 glyphs, each page read from the pack's page record on its first use,
+        // instead of a [20, 0x10000] table allocated at startup (21 MB).
+        private readonly FontCharacterDataUnicode[][][] _uniPages = new FontCharacterDataUnicode[20][][];
+        private readonly bool[] _uniExists = new bool[20];
+        // the pack's text/fonts.bin and text/unifont.bin
+        private RecordStore _asciiStore, _uniStore;
+        // records found invalid (ASCII records first, then unicode records): absent for the session
+        private int[] _badRecords = Array.Empty<int>();
+        // first use of a unicode page or an ASCII font: one thread loads it, the others wait for that load instead of
+        // decoding the same thing again. Striped by page; the loads hold no other lock
+        // while waiting, so there is no lock order to keep.
+        private readonly object[] _loadLocks = CreateLocks(64);
         private readonly VisitedUrlCache _visitedUrls = new VisitedUrlCache(1024);
         private readonly int[] _offsetCharTable = { 2, 0, 2, 2, 0, 0, 2, 2, 0, 0 };
         private readonly int[] _offsetSymbolTable = { 1, 0, 1, 1, -1, 0, 1, 1, 0, 0 };
+
+        private static readonly FontCharacterDataUnicode[] _emptyPage = new FontCharacterDataUnicode[TextConst.PageChars];
+
+        /// <summary>Unicode pages read so far (tests and measurements).</summary>
+        public int LoadedUnicodePages
+        {
+            get
+            {
+                int n = 0;
+
+                foreach (var pages in _uniPages)
+                {
+                    if (pages == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var page in pages)
+                    {
+                        if (page != null)
+                        {
+                            n++;
+                        }
+                    }
+                }
+
+                return n;
+            }
+        }
 
         public FontsLoader(UOFileManager fileManager) : base(fileManager) { }
 
@@ -112,101 +153,233 @@ namespace ClassicUO.Assets
 
         public bool IsUsingHTML { get; set; }
 
-        public override unsafe void Load()
+        // Set by a caller that reads FontInfo.Data only until its next Generate call (RenderedText: the glyph atlas
+        // draws the text, the bitmap is only measured and RLE-copied into the hit map). The bitmap then goes into one
+        // reused buffer, whose length can exceed Width * Height, instead of a new array per string; new labels and
+        // journal lines in a crowded area allocated ~0.7 MB/s here.
+        public bool ReusePixelBuffer { get; set; }
+
+        // Set by a caller that needs only the size, line count and links (RenderedText without a hit map): the layout
+        // and the link rectangles are computed as before but no bitmap is drawn and FontInfo.Data is null. Like
+        // ReusePixelBuffer it only takes effect on the creating thread, so another thread still gets its pixels.
+        public bool MeasureOnly { get; set; }
+
+        private bool MeasuringNow => MeasureOnly && Environment.CurrentManagedThreadId == _reuseThreadId;
+
+        // Bigger bitmaps (long HTML gump text) get their own array, so the kept buffer stays at most 1 MB.
+        private const int MAX_REUSED_PIXELS = 256 * 1024;
+        private uint[] _reusedPixels;
+
+        // Only the thread that created the loader (the game thread) gets the reused buffer: text is also made off it
+        // (WorldMapGump's map load prints to the journal from a task), and that thread gets its own array as before.
+        private readonly int _reuseThreadId = Environment.CurrentManagedThreadId;
+
+        private uint[] RentPixels(int count)
         {
-            UOFileMul fonts = new UOFileMul(FileManager.GetUOFilePath("fonts.mul"));
-
-            for (int i = 0; i < 20; i++)
+            if (!ReusePixelBuffer || count > MAX_REUSED_PIXELS || Environment.CurrentManagedThreadId != _reuseThreadId)
             {
-                string path = FileManager.GetUOFilePath(
-                    "unifont" + (i == 0 ? "" : i.ToString()) + ".mul"
-                );
+                return new uint[count];
+            }
 
-                if (File.Exists(path))
+            if (_reusedPixels == null || _reusedPixels.Length < count)
+            {
+                _reusedPixels = new uint[Math.Min(MAX_REUSED_PIXELS, (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(count, 4096)))];
+            }
+            else
+            {
+                Array.Clear(_reusedPixels, 0, count);
+            }
+
+            return _reusedPixels;
+        }
+
+        public override void Load()
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long a0 = GC.GetAllocatedBytesForCurrentThread();
+            LoadStores(FileManager.RequirePackFile(TextConst.AsciiFontsFile), FileManager.RequirePackFile(TextConst.UnicodeFontsFile));
+            Log.Trace($"Fonts: pack ({FontCount} ASCII fonts) loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated");
+        }
+
+        /// <summary>Reads fonts from these store files (a fonts.bin and a unifont.bin): <see cref="Load"/> passes the pack's, tests and tools their own.</summary>
+        public void LoadStores(string asciiPath, string unicodePath)
+        {
+            ClearResources();
+            var ascii = TextConst.OpenAsciiStore(asciiPath);
+
+            try
+            {
+                _uniStore = TextConst.OpenUnicodeStore(unicodePath);
+            }
+            catch
+            {
+                ascii.Dispose();
+
+                throw;
+            }
+
+            _asciiStore = ascii;
+            FontCount = _asciiStore.SlotCount;
+            _asciiRows = new FontCharacterData[FontCount][];
+            SetUnicodeExists(_uniStore.Header.Flags);
+            CheckRecords();
+        }
+
+        private void SetUnicodeExists(uint flags)
+        {
+            for (int i = 0; i < _uniExists.Length; i++)
+            {
+                _uniExists[i] = (flags & (1u << i)) != 0;
+            }
+        }
+
+        // Type checks of the pack's records (RecordStore checked extents and codecs): a size a font record can have, a
+        // Brotli payload no larger than Brotli's bound. A failing record is absent for the session.
+        private void CheckRecords()
+        {
+            int asciiRecords = _asciiStore.Records.Length;
+            _badRecords = new int[asciiRecords + _uniStore.Records.Length];
+
+            for (int i = 0; i < asciiRecords; i++)
+            {
+                ref readonly var r = ref _asciiStore.Records[i];
+
+                if (!SaneRecord(r, AsciiFontCodec.HeaderBytes, AsciiFontCodec.MaxRawBytes))
                 {
-                    _unicodeFontAddress[i] = new UOFileMul(path);
+                    MarkBad(i, $"ASCII font record {i} has an impossible size ({r.RawBytes} bytes)");
                 }
             }
 
-            int fontHeaderSize = sizeof(FontHeader);
-            FontCount = 0;
-
-            while (fonts.Position < fonts.Length)
+            for (int i = 0; i < _uniStore.Records.Length; i++)
             {
-                bool exit = false;
-                fonts.ReadUInt8();
+                ref readonly var r = ref _uniStore.Records[i];
 
-                for (int i = 0; i < 224; i++)
+                if (!SaneRecord(r, UnicodePageCodec.HeaderBytes, UnicodePageCodec.MaxRawBytes))
                 {
-                    if (fonts.Position + fontHeaderSize >= fonts.Length)
+                    MarkBad(asciiRecords + i, $"unicode font record {i} has an impossible size ({r.RawBytes} bytes)");
+                }
+            }
+        }
+
+        private static bool SaneRecord(in StoreRecord r, int min, int max)
+        {
+            if (r.RawBytes < min || r.RawBytes > max)
+            {
+                return false;
+            }
+
+            return r.Codec != StoreConst.CodecBrotli || r.StoredBytes <= System.IO.Compression.BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes);
+        }
+
+        private void MarkBad(int index, string why)
+        {
+            // the thread that flips the flag logs it: once per record, however many threads find it bad
+            if (Interlocked.Exchange(ref _badRecords[index], 1) == 0)
+            {
+                Interlocked.Increment(ref StatBadLogged);
+                Log.Error($"Fonts: {why}; it is treated as absent");
+            }
+        }
+
+        /// <summary>Tests: bad font records logged so far.</summary>
+        public static int StatBadLogged;
+
+        private static object[] CreateLocks(int n)
+        {
+            var locks = new object[n];
+
+            for (int i = 0; i < n; i++)
+            {
+                locks[i] = new object();
+            }
+
+            return locks;
+        }
+
+        public override void ClearResources()
+        {
+            _asciiStore?.Dispose();
+            _asciiStore = null;
+            _uniStore?.Dispose();
+            _uniStore = null;
+
+            for (int i = 0; i < _uniPages.Length; i++)
+            {
+                _uniPages[i] = null;
+                _uniExists[i] = false;
+            }
+
+            _asciiRows = Array.Empty<FontCharacterData[]>();
+            _badRecords = Array.Empty<int>();
+        }
+
+        /// <summary>A font's 224 ASCII glyphs; with the pack, read on the font's first use. Thread-safe.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private FontCharacterData[] AsciiRow(int font)
+        {
+            // a font index of FontCount or more throws here, as the [FontCount, 224] table did
+            return Volatile.Read(ref _asciiRows[font]) ?? LoadAsciiRow(font);
+        }
+
+        private FontCharacterData[] LoadAsciiRow(int font)
+        {
+            lock (_loadLocks[font & 63])
+            {
+                // a thread that waited here finds the row the first one loaded
+                var loaded = Volatile.Read(ref _asciiRows[font]);
+
+                if (loaded != null)
+                {
+                    return loaded;
+                }
+
+                var row = LoadAsciiRowCore(font);
+                Volatile.Write(ref _asciiRows[font], row);
+
+                return row;
+            }
+        }
+
+        private FontCharacterData[] LoadAsciiRowCore(int font)
+        {
+            // a font whose record is missing or invalid has 224 empty glyphs (width and height 0)
+            var row = new FontCharacterData[TextConst.AsciiGlyphs];
+            var store = _asciiStore;
+            Interlocked.Increment(ref StatAsciiLoads);
+
+            if (store != null && store.TryGet(font, out var slot, out var rec) && Volatile.Read(ref _badRecords[slot.Record - 1]) == 0)
+            {
+                int bad = (int)slot.Record - 1;
+                byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+
+                try
+                {
+                    store.Read(rec, buf);
+                    var glyphs = new AsciiGlyph[TextConst.AsciiGlyphs];
+
+                    if (AsciiFontCodec.TryDecode(buf.AsSpan(0, (int)rec.RawBytes), glyphs))
                     {
-                        break;
+                        for (int i = 0; i < row.Length; i++)
+                        {
+                            row[i] = new FontCharacterData(glyphs[i].Width, glyphs[i].Height, glyphs[i].Texels);
+                        }
                     }
-
-                    var fh = new FontHeader()
+                    else
                     {
-                        Width = fonts.ReadUInt8(),
-                        Height = fonts.ReadUInt8(),
-                        Unknown = fonts.ReadUInt8(),
-                    };
-
-                    int bcount = fh.Width * fh.Height * 2;
-
-                    if (fonts.Position + bcount > fonts.Length)
-                    {
-                        exit = true;
-
-                        break;
+                        MarkBad(bad, $"ASCII font {font} is malformed");
                     }
-
-                    fonts.Seek(bcount, SeekOrigin.Current);
                 }
-
-                if (exit)
+                catch (Exception e) when (e is IOException || e is InvalidDataException)
                 {
-                    break;
+                    MarkBad(bad, $"ASCII font {font} could not be read ({e.Message})");
                 }
-
-                FontCount++;
-            }
-
-            if (FontCount < 1)
-            {
-                FontCount = 0;
-
-                return;
-            }
-
-            _fontDataASCII = new FontCharacterData[FontCount, 224];
-            fonts.Seek(0, SeekOrigin.Begin);
-
-            for (int i = 0; i < FontCount; i++)
-            {
-                byte header = fonts.ReadUInt8();
-
-                for (int j = 0; j < 224; j++)
+                finally
                 {
-                    if (fonts.Position + 3 >= fonts.Length)
-                    {
-                        continue;
-                    }
-
-                    byte w = fonts.ReadUInt8();
-                    byte h = fonts.ReadUInt8();
-                    fonts.ReadUInt8();
-                    var data = new ushort[w * h];
-                    int read = fonts.Read(MemoryMarshal.AsBytes(data.AsSpan()));
-                    _fontDataASCII[i, j] = new FontCharacterData(w, h, data);
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buf);
                 }
             }
 
-            if (_unicodeFontAddress[1] == null)
-            {
-                _unicodeFontAddress[1] = _unicodeFontAddress[0];
-                _unicodeFontSize[1] = _unicodeFontSize[0];
-            }
-
-            _fontDataUNICODE = new FontCharacterDataUnicode[_unicodeFontAddress.Length, 0x10000];
+            return row;
         }
 
         private static FontCharacterDataUnicode _nullChar = new FontCharacterDataUnicode();
@@ -215,89 +388,119 @@ namespace ClassicUO.Assets
         {
             int index = (int)c; /*((int)c & 0xFFFFF) - 0x20*/;
 
-            if (index < 0)
+            // a font index of 20 or more throws here, as the [20, 0x10000] table did
+            var pages = Volatile.Read(ref _uniPages[font]);
+
+            if (pages == null)
             {
-                return ref _nullChar;
+                Interlocked.CompareExchange(ref _uniPages[font], new FontCharacterDataUnicode[TextConst.PagesPerFont][], null);
+                pages = _uniPages[font];
             }
 
-            ref var cc = ref _fontDataUNICODE[font, index];
+            var page = Volatile.Read(ref pages[index >> 8]) ?? LoadPage(font, index >> 8, pages);
+            ref var cc = ref page[index & 0xFF];
 
             if (cc.Data == null)
             {
-                LoadChar(font, index);
-
-                if (cc.Data == null)
-                {
-                    return ref _nullChar;
-                }
+                return ref _nullChar;
             }
 
             return ref cc;
         }
 
-        private void LoadChar(byte font, int index)
+        // One page (256 characters) of a unicode font, from the pack's page record. A glyph without data (none in the
+        // record) is the null glyph, as before.
+        /// <summary>Measurements: unicode pages loaded, the Stopwatch ticks spent on them, and ASCII fonts read from the pack.</summary>
+        public static long StatPageLoads, StatPageTicks, StatAsciiLoads;
+
+        private FontCharacterDataUnicode[] LoadPage(byte font, int page, FontCharacterDataUnicode[][] pages)
         {
-            var file = _unicodeFontAddress[font];
-
-            if (file == null)
+            lock (_loadLocks[(font * TextConst.PagesPerFont + page) & 63])
             {
-                return;
+                // a thread that waited here finds the page the first one loaded (no second decode)
+                var loaded = Volatile.Read(ref pages[page]);
+
+                if (loaded != null)
+                {
+                    return loaded;
+                }
+
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                var result = _uniStore != null ? ReadPackPage(font, page) : _emptyPage;
+                Interlocked.Increment(ref StatPageLoads);
+                Interlocked.Add(ref StatPageTicks, System.Diagnostics.Stopwatch.GetTimestamp() - t0);
+                Volatile.Write(ref pages[page], result);
+
+                return result;
             }
-            file.Seek(index * 4, SeekOrigin.Begin);
-            var lookup = file.ReadInt32();
+        }
 
-            if (lookup == 0)
+        private FontCharacterDataUnicode[] ReadPackPage(byte font, int page)
+        {
+            var store = _uniStore;
+
+            if (!store.TryGet(font * TextConst.PagesPerFont + page, out var slot, out var rec))
             {
-                return;
+                return _emptyPage;
             }
 
-            file.Seek(lookup, SeekOrigin.Begin);
+            int bad = _asciiStore.Records.Length + (int)slot.Record - 1;
 
-            ref var cc = ref _fontDataUNICODE[font, index];
-
-            cc.OffsetX = file.ReadInt8();
-            cc.OffsetY = file.ReadInt8();
-            cc.Width = file.ReadInt8();
-            cc.Height = file.ReadInt8();
-
-            if (cc.Width > 0 && cc.Height > 0)
+            if (Volatile.Read(ref _badRecords[bad]) != 0)
             {
-                cc.Data = new byte[(((cc.Width - 1) / 8) + 1) * cc.Height];
-                file.Read(cc.Data);
-                //Span<byte> scanline = stackalloc byte[((cc.Width - 1) / 8) + 1];
-                //file.Read(scanline);
+                return _emptyPage;
+            }
 
-                //for (int y = 0 ; y < cc.Height; ++y)
-                //{
-                //    int bitX = 7;
-                //    int byteX = 0;
+            byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
 
-                //    for (int x = 0; x < cc.Width; ++x)
-                //    {
-                //        ref var col = ref cc.Data[y * cc.Width + x];
+            try
+            {
+                store.Read(rec, buf);
+                var payload = buf.AsSpan(0, (int)rec.RawBytes);
 
-                //        col = 0;
-                //        if ((scanline[byteX] & (byte)Math.Pow(2, bitX)) != 0)
-                //        {
-                //            col = 0xFFFFFFFF;
-                //        }
+                if (UnicodePageCodec.Validate(payload) < 0)
+                {
+                    MarkBad(bad, $"unicode font {font} page {page} is malformed");
 
-                //        --bitX;
+                    return _emptyPage;
+                }
 
-                //        if (bitX < 0)
-                //        {
-                //            bitX = 7;
-                //            ++byteX;
-                //        }
-                //    }
-                //}
+                var result = new FontCharacterDataUnicode[TextConst.PageChars];
+
+                for (int i = 0; i < result.Length; i++)
+                {
+                    var h = UnicodePageCodec.Header(payload, i);
+
+                    if (h.DataOffset != UnicodePageCodec.NoGlyph)
+                    {
+                        result[i] = new FontCharacterDataUnicode(h.Width, h.Height, h.OffsetX, h.OffsetY, UnicodePageCodec.Bits(payload, h).ToArray());
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException)
+            {
+                MarkBad(bad, $"unicode font {font} page {page} could not be read ({e.Message})");
+
+                return _emptyPage;
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buf);
             }
         }
 
         public bool UnicodeFontExists(byte font)
         {
-            return font < 20 && _unicodeFontAddress[font] != null;
+            return font < 20 && _uniExists[font];
         }
+
+        /// <summary>Tests: the unicode glyph the text code draws for <paramref name="c"/> (Data null = none).</summary>
+        public FontCharacterDataUnicode GetUnicodeGlyph(byte font, char c) => GetCharUni(font, c);
+
+        /// <summary>Tests: ASCII glyph <paramref name="index"/> (0..223) of <paramref name="font"/>.</summary>
+        public FontCharacterData GetAsciiGlyph(byte font, int index) => AsciiRow(font)[index];
 
         /// <summary> Get the index in ASCII fonts of a character. </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -324,7 +527,7 @@ namespace ClassicUO.Assets
 
             foreach (char c in str)
             {
-                textLength += _fontDataASCII[font, GetASCIIIndex(c)].Width;
+                textLength += AsciiRow(font)[GetASCIIIndex(c)].Width;
             }
 
             return textLength;
@@ -339,14 +542,14 @@ namespace ClassicUO.Assets
 
             if (c < NOPRINT_CHARS)
             {
-                return _fontDataASCII[font, 0].Width;
+                return AsciiRow(font)[0].Width;
             }
 
             int index = c - NOPRINT_CHARS;
 
-            if (index < _fontDataASCII.GetLength(1))
+            if (index < TextConst.AsciiGlyphs)
             {
-                return _fontDataASCII[font, index].Width;
+                return AsciiRow(font)[index].Width;
             }
 
             return 0;
@@ -575,14 +778,14 @@ namespace ClassicUO.Assets
 
             if (isCropped)
             {
-                width -= _fontDataASCII[font, '.' - NOPRINT_CHARS].Width * 3;
+                width -= AsciiRow(font)['.' - NOPRINT_CHARS].Width * 3;
             }
 
             int textLength = 0;
 
             foreach (char c in str)
             {
-                textLength += _fontDataASCII[font, GetASCIIIndex(c)].Width;
+                textLength += AsciiRow(font)[GetASCIIIndex(c)].Width;
 
                 if (textLength > width)
                 {
@@ -662,7 +865,8 @@ namespace ClassicUO.Assets
             }
 
             int blocksize = height * width;
-            uint[] pData = new uint[blocksize]; // System.Buffers.ArrayPool<uint>.Shared.Rent(blocksize);
+            bool measure = MeasuringNow;
+            uint[] pData = measure ? null : RentPixels(blocksize);
 
             try
             {
@@ -720,16 +924,13 @@ namespace ClassicUO.Assets
 
                         int offsY = GetFontOffsetY(font, index);
 
-                        ref FontCharacterData fcd = ref _fontDataASCII[
-                            font,
-                            GetASCIIIndex(item.Item)
-                        ];
+                        ref FontCharacterData fcd = ref AsciiRow(font)[GetASCIIIndex(item.Item)];
 
                         int dw = fcd.Width;
                         int dh = fcd.Height;
                         ushort charColor = color;
 
-                        for (int y = 0; y < dh; y++)
+                        for (int y = 0; !measure && y < dh; y++)
                         {
                             int testY = y + lineOffsY + offsY;
 
@@ -877,7 +1078,7 @@ namespace ClassicUO.Assets
                     charCount = 0;
                 }
 
-                ref FontCharacterData fcd = ref _fontDataASCII[font, GetASCIIIndex(si)];
+                ref FontCharacterData fcd = ref AsciiRow(font)[GetASCIIIndex(si)];
                 int eval = ptr.CharStart;
 
                 if (si == '\n' || ptr.Width + readWidth + fcd.Width > width)
@@ -1177,7 +1378,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || str.IsEmpty)
+            if (font >= 20 || !_uniExists[font] || str.IsEmpty)
             {
                 return string.Empty;
             }
@@ -1263,7 +1464,7 @@ namespace ClassicUO.Assets
 
         public int GetWidthUnicode(byte font, string str)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(str))
+            if (font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -1273,7 +1474,7 @@ namespace ClassicUO.Assets
 
         private int GetWidthUnicode(byte font, ReadOnlySpan<char> str)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || str.IsEmpty)
+            if (font >= 20 || !_uniExists[font] || str.IsEmpty)
             {
                 return 0;
             }
@@ -1305,7 +1506,7 @@ namespace ClassicUO.Assets
 
         public int GetCharWidthUnicode(byte font, char c)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || c == 0 || c == '\r')
+            if (font >= 20 || !_uniExists[font] || c == 0 || c == '\r')
             {
                 return 0;
             }
@@ -1334,7 +1535,7 @@ namespace ClassicUO.Assets
         )
         {
             if (
-                font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(text)
+                font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(text)
             )
             {
                 return 0;
@@ -1383,7 +1584,7 @@ namespace ClassicUO.Assets
             _htmlStatus.BackgroundColor = 0;
             _htmlStatus.Margins = Margin.Empty;
 
-            if (font >= 20 || _unicodeFontAddress[font] == null)
+            if (font >= 20 || !_uniExists[font])
             {
                 return null;
             }
@@ -1673,7 +1874,7 @@ namespace ClassicUO.Assets
             bool saveHitmap
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null)
+            if (font >= 20 || !_uniExists[font])
             {
                 return FontInfo.Empty;
             }
@@ -1763,7 +1964,8 @@ namespace ClassicUO.Assets
 
             height += _htmlStatus.Margins.Y + _htmlStatus.Margins.Height + 4;
             int blocksize = height * width;
-            uint[] pData = new uint[blocksize]; // System.Buffers.ArrayPool<uint>.Shared.Rent(blocksize);
+            bool measure = MeasuringNow;
+            uint[] pData = measure ? null : RentPixels(blocksize);
 
             try
             {
@@ -1943,260 +2145,284 @@ namespace ClassicUO.Assets
                                 }
                             }
 
-                            int scanlineCount = ((dw - 1) >> 3) + 1;
-                            int scanLineOff = 0;
-
-                            for (int y = 0; y < dh; y++, scanLineOff += scanlineCount)
+                            if (!measure)
                             {
-                                int testY = offsY + lineOffsY + y;
+                                int scanlineCount = ((dw - 1) >> 3) + 1;
+                                int scanLineOff = 0;
 
-                                if (testY < 0)
+                                for (int y = 0; y < dh; y++, scanLineOff += scanlineCount)
                                 {
-                                    testY = 0;
-                                }
-
-                                if (testY >= height)
-                                {
-                                    break;
-                                }
-
-                                int italicOffset = 0;
-
-                                if (isItalic)
-                                {
-                                    italicOffset = (int)((dh - y) / ITALIC_FONT_KOEFFICIENT);
-                                }
-
-                                int testX = w + offsX + italicOffset + (isSolid ? 1 : 0);
-
-                                for (int c = 0; c < scanlineCount; c++)
-                                {
-                                    int coff = c << 3;
-
-                                    for (int j = 0; j < 8; j++)
-                                    {
-                                        int x = coff + j;
-
-                                        if (x >= dw)
-                                        {
-                                            break;
-                                        }
-
-                                        int nowX = testX + x;
-
-                                        if (nowX >= width)
-                                        {
-                                            break;
-                                        }
-
-                                        byte cl = (byte)(@char.Data[scanLineOff + c] & (1 << (7 - j)));
-                                        int block = testY * width + nowX;
-
-                                        if (cl != 0)
-                                        {
-                                            pData[block] = charcolor;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (isSolid)
-                            {
-                                uint solidColor = blackColor;
-
-                                if (solidColor == charcolor)
-                                {
-                                    solidColor++;
-                                }
-
-                                int minXOk = w + offsX > 0 ? -1 : 0;
-                                int maxXOk = w + offsX + dw < width ? 1 : 0;
-                                maxXOk += dw;
-
-                                for (int cy = 0; cy < dh; cy++)
-                                {
-                                    int testY = offsY + lineOffsY + cy;
-
-                                    if (testY >= height)
-                                    {
-                                        break;
-                                    }
+                                    int testY = offsY + lineOffsY + y;
 
                                     if (testY < 0)
                                     {
                                         testY = 0;
                                     }
 
-                                    int italicOffset = 0;
-
-                                    if (isItalic && cy < dh)
-                                    {
-                                        italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
-                                    }
-
-                                    for (int cx = minXOk; cx < maxXOk; cx++)
-                                    {
-                                        int testX = cx + w + offsX + italicOffset;
-
-                                        if (testX >= width)
-                                        {
-                                            break;
-                                        }
-
-                                        int block = testY * width + testX;
-
-                                        if (pData[block] == 0 && pData[block] != solidColor)
-                                        {
-                                            int endX = cx < dw ? 2 : 1;
-
-                                            if (endX == 2 && testX + 1 >= width)
-                                            {
-                                                endX--;
-                                            }
-
-                                            for (int x = 0; x < endX; x++)
-                                            {
-                                                int nowX = testX + x;
-                                                int testBlock = testY * width + nowX;
-
-                                                if (
-                                                    pData[testBlock] != 0
-                                                    && pData[testBlock] != solidColor
-                                                )
-                                                {
-                                                    pData[block] = solidColor;
-
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                for (int cy = 0; cy < dh; cy++)
-                                {
-                                    int testY = offsY + lineOffsY + cy;
-
                                     if (testY >= height)
                                     {
                                         break;
-                                    }
-
-                                    if (testY < 0)
-                                    {
-                                        testY = 0;
                                     }
 
                                     int italicOffset = 0;
 
                                     if (isItalic)
                                     {
-                                        italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        italicOffset = (int)((dh - y) / ITALIC_FONT_KOEFFICIENT);
                                     }
 
-                                    for (int cx = 0; cx < dw; cx++)
+                                    int testX = w + offsX + italicOffset + (isSolid ? 1 : 0);
+
+                                    for (int c = 0; c < scanlineCount; c++)
                                     {
-                                        int testX = cx + w + offsX + italicOffset;
+                                        int coff = c << 3;
 
-                                        if (testX >= width)
+                                        for (int j = 0; j < 8; j++)
                                         {
-                                            break;
-                                        }
+                                            int x = coff + j;
 
-                                        int block = testY * width + testX;
+                                            if (x >= dw)
+                                            {
+                                                break;
+                                            }
 
-                                        if (pData[block] == solidColor)
-                                        {
-                                            pData[block] = charcolor;
+                                            int nowX = testX + x;
+
+                                            if (nowX >= width)
+                                            {
+                                                break;
+                                            }
+
+                                            if (nowX < 0)
+                                            {
+                                                // clipped on the left too: a negative OffsetX (a shard's pack) must not index before the buffer
+                                                continue;
+                                            }
+
+                                            byte cl = (byte)(@char.Data[scanLineOff + c] & (1 << (7 - j)));
+                                            int block = testY * width + nowX;
+
+                                            if (cl != 0)
+                                            {
+                                                pData[block] = charcolor;
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            if (isBlackBorder && !isBlackPixel)
-                            {
-                                int minXOk = w + offsX > 0 ? -1 : 0;
-                                int minYOk = offsY + lineOffsY > 0 ? -1 : 0;
-                                int maxXOk = w + offsX + dw < width ? 1 : 0;
-                                int maxYOk = offsY + lineOffsY + dh < height ? 1 : 0;
-                                maxXOk += dw;
-                                maxYOk += dh;
-
-                                for (int cy = minYOk; cy < maxYOk; cy++)
+                                if (isSolid)
                                 {
-                                    int testY = offsY + lineOffsY + cy;
+                                    uint solidColor = blackColor;
 
-                                    if (testY < 0)
+                                    if (solidColor == charcolor)
                                     {
-                                        testY = 0;
+                                        solidColor++;
                                     }
 
-                                    if (testY >= height)
+                                    int minXOk = w + offsX > 0 ? -1 : 0;
+                                    int maxXOk = w + offsX + dw < width ? 1 : 0;
+                                    maxXOk += dw;
+
+                                    for (int cy = 0; cy < dh; cy++)
                                     {
-                                        break;
-                                    }
+                                        int testY = offsY + lineOffsY + cy;
 
-                                    int italicOffset = 0;
-
-                                    if (isItalic && cy >= 0 && cy < dh)
-                                    {
-                                        italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
-                                    }
-
-                                    for (int cx = minXOk; cx < maxXOk; cx++)
-                                    {
-                                        int testX = cx + w + offsX + italicOffset;
-
-                                        if (testX >= width)
+                                        if (testY >= height)
                                         {
                                             break;
                                         }
 
-                                        int block = testY * width + testX;
-
-                                        if (pData[block] == 0 && pData[block] != blackColor)
+                                        if (testY < 0)
                                         {
-                                            int startX = cx > 0 ? -1 : 0;
-                                            int startY = cy > 0 ? -1 : 0;
-                                            int endX = cx < dw - 1 ? 2 : 1;
-                                            int endY = cy < dh - 1 ? 2 : 1;
+                                            testY = 0;
+                                        }
 
-                                            if (endX == 2 && testX + 1 >= width)
+                                        int italicOffset = 0;
+
+                                        if (isItalic && cy < dh)
+                                        {
+                                            italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        }
+
+                                        for (int cx = minXOk; cx < maxXOk; cx++)
+                                        {
+                                            int testX = cx + w + offsX + italicOffset;
+
+                                            if (testX >= width)
                                             {
-                                                endX--;
+                                                break;
                                             }
 
-                                            bool passed = false;
-
-                                            for (int x = startX; x < endX; x++)
+                                            if (testX < 0)
                                             {
-                                                int nowX = testX + x;
+                                                continue;
+                                            }
 
-                                                for (int y = startY; y < endY; y++)
+                                            int block = testY * width + testX;
+
+                                            if (pData[block] == 0 && pData[block] != solidColor)
+                                            {
+                                                int endX = cx < dw ? 2 : 1;
+
+                                                if (endX == 2 && testX + 1 >= width)
                                                 {
-                                                    int testBlock = (testY + y) * width + nowX;
+                                                    endX--;
+                                                }
 
-                                                    if (testBlock < 0)
-                                                    {
-                                                        continue;
-                                                    }
+                                                for (int x = 0; x < endX; x++)
+                                                {
+                                                    int nowX = testX + x;
+                                                    int testBlock = testY * width + nowX;
 
                                                     if (
-                                                        testBlock < pData.Length
-                                                        && pData[testBlock] != 0
-                                                        && pData[testBlock] != blackColor
+                                                        pData[testBlock] != 0
+                                                        && pData[testBlock] != solidColor
                                                     )
                                                     {
-                                                        pData[block] = blackColor;
-                                                        passed = true;
+                                                        pData[block] = solidColor;
 
                                                         break;
                                                     }
                                                 }
+                                            }
+                                        }
+                                    }
 
-                                                if (passed)
+                                    for (int cy = 0; cy < dh; cy++)
+                                    {
+                                        int testY = offsY + lineOffsY + cy;
+
+                                        if (testY >= height)
+                                        {
+                                            break;
+                                        }
+
+                                        if (testY < 0)
+                                        {
+                                            testY = 0;
+                                        }
+
+                                        int italicOffset = 0;
+
+                                        if (isItalic)
+                                        {
+                                            italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        }
+
+                                        for (int cx = 0; cx < dw; cx++)
+                                        {
+                                            int testX = cx + w + offsX + italicOffset;
+
+                                            if (testX >= width)
+                                            {
+                                                break;
+                                            }
+
+                                            if (testX < 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            int block = testY * width + testX;
+
+                                            if (pData[block] == solidColor)
+                                            {
+                                                pData[block] = charcolor;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (isBlackBorder && !isBlackPixel)
+                                {
+                                    int minXOk = w + offsX > 0 ? -1 : 0;
+                                    int minYOk = offsY + lineOffsY > 0 ? -1 : 0;
+                                    int maxXOk = w + offsX + dw < width ? 1 : 0;
+                                    int maxYOk = offsY + lineOffsY + dh < height ? 1 : 0;
+                                    maxXOk += dw;
+                                    maxYOk += dh;
+
+                                    for (int cy = minYOk; cy < maxYOk; cy++)
+                                    {
+                                        int testY = offsY + lineOffsY + cy;
+
+                                        if (testY < 0)
+                                        {
+                                            testY = 0;
+                                        }
+
+                                        if (testY >= height)
+                                        {
+                                            break;
+                                        }
+
+                                        int italicOffset = 0;
+
+                                        if (isItalic && cy >= 0 && cy < dh)
+                                        {
+                                            italicOffset = (int)((dh - cy) / ITALIC_FONT_KOEFFICIENT);
+                                        }
+
+                                        for (int cx = minXOk; cx < maxXOk; cx++)
+                                        {
+                                            int testX = cx + w + offsX + italicOffset;
+
+                                            if (testX >= width)
+                                            {
+                                                break;
+                                            }
+
+                                            if (testX < 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            int block = testY * width + testX;
+
+                                            if (pData[block] == 0 && pData[block] != blackColor)
+                                            {
+                                                int startX = cx > 0 ? -1 : 0;
+                                                int startY = cy > 0 ? -1 : 0;
+                                                int endX = cx < dw - 1 ? 2 : 1;
+                                                int endY = cy < dh - 1 ? 2 : 1;
+
+                                                if (endX == 2 && testX + 1 >= width)
                                                 {
-                                                    break;
+                                                    endX--;
+                                                }
+
+                                                bool passed = false;
+
+                                                for (int x = startX; x < endX; x++)
+                                                {
+                                                    int nowX = testX + x;
+
+                                                    for (int y = startY; y < endY; y++)
+                                                    {
+                                                        int testBlock = (testY + y) * width + nowX;
+
+                                                        if (testBlock < 0)
+                                                        {
+                                                            continue;
+                                                        }
+
+                                                        if (
+                                                            testBlock < blocksize
+                                                            && pData[testBlock] != 0
+                                                            && pData[testBlock] != blackColor
+                                                        )
+                                                        {
+                                                            pData[block] = blackColor;
+                                                            passed = true;
+
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    if (passed)
+                                                    {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2252,8 +2478,15 @@ namespace ClassicUO.Assets
                                     break;
                                 }
 
-                                int block = testY * width + testX;
-                                pData[block] = charcolor;
+                                if (testX < 0)
+                                {
+                                    continue;
+                                }
+
+                                if (!measure)
+                                {
+                                    pData[testY * width + testX] = charcolor;
+                                }
                             }
                         }
                     }
@@ -2274,7 +2507,7 @@ namespace ClassicUO.Assets
 
                     uint hue = HuesHelper.RgbaToArgb(_htmlStatus.BackgroundColor);
 
-                    for (int y = 0; y < height; y++)
+                    for (int y = 0; !measure && y < height; y++)
                     {
                         int yPos = y * width;
 
@@ -2753,7 +2986,7 @@ namespace ClassicUO.Assets
                     case HTML_TAG_TYPE.HTT_SMALL:
 
                         if (
-                            current.Font != 0xFF && _unicodeFontAddress[current.Font] != null
+                            current.Font != 0xFF && _uniExists[current.Font]
                         )
                         {
                             info.Font = current.Font;
@@ -2764,7 +2997,7 @@ namespace ClassicUO.Assets
                     case HTML_TAG_TYPE.HTT_BASEFONT:
 
                         if (
-                            current.Font != 0xFF && _unicodeFontAddress[current.Font] != null
+                            current.Font != 0xFF && _uniExists[current.Font]
                         )
                         {
                             info.Font = current.Font;
@@ -2788,7 +3021,7 @@ namespace ClassicUO.Assets
                     case HTML_TAG_TYPE.HTT_H6:
 
                         if (
-                            current.Font != 0xFF && _unicodeFontAddress[current.Font] != null
+                            current.Font != 0xFF && _uniExists[current.Font]
                         )
                         {
                             info.Font = current.Font;
@@ -3518,7 +3751,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(str))
+            if (font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -3577,7 +3810,7 @@ namespace ClassicUO.Assets
                     break;
             }
 
-            if (font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(str))
+            if (font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(str))
             {
                 return (x, y);
             }
@@ -3744,7 +3977,7 @@ namespace ClassicUO.Assets
                 {
                     for (int i = 0; i < len; i++)
                     {
-                        x += _fontDataASCII[font, GetASCIIIndex(info.Data[i].Item)].Width;
+                        x += AsciiRow(font)[GetASCIIIndex(info.Data[i].Item)].Width;
 
                         if (info.CharStart + i + 1 == pos)
                         {
@@ -3795,7 +4028,7 @@ namespace ClassicUO.Assets
                 return SingleGlyphInfo.Empty;
 
             int index = GetASCIIIndex(c);
-            ref FontCharacterData fcd = ref _fontDataASCII[font, index];
+            ref FontCharacterData fcd = ref AsciiRow(font)[index];
 
             int dw = fcd.Width;
             int dh = fcd.Height;
@@ -3852,7 +4085,7 @@ namespace ClassicUO.Assets
         /// </summary>
         public SingleGlyphInfo RenderSingleGlyphUnicode(byte font, char c, bool hasBorder, bool isSolid, bool isItalic = false, uint charcolor = 0)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null)
+            if (font >= 20 || !_uniExists[font])
                 return SingleGlyphInfo.Empty;
 
             if (c == ' ')

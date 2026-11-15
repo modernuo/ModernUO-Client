@@ -1690,6 +1690,24 @@ namespace ClassicUO.Resources {
                 return ResourceManager.GetString("FPSInactive", resourceCulture);
             }
         }
+
+        /// <summary>
+        ///   Looks up a localized string similar to Uncapped FPS (no frame limiter).
+        /// </summary>
+        public static string UncapFPS {
+            get {
+                return ResourceManager.GetString("UncapFPS", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Looks up a localized string similar to VSync.
+        /// </summary>
+        public static string VSync {
+            get {
+                return ResourceManager.GetString("VSync", resourceCulture);
+            }
+        }
         
         /// <summary>
         ///   Looks up a localized string similar to Free view.

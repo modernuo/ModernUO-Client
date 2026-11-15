@@ -156,7 +156,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             for (int i = 0; i < 3; i++)
             {
-                Lock status = i == 0 ? World.Player.StrLock : i == 1 ? World.Player.DexLock : World.Player.IntLock;
+                Lock status = i == 0 ? World.PlayerState.StrLock : i == 1 ? World.PlayerState.DexLock : World.PlayerState.IntLock;
 
                 if (_lockers != null && _lockers[i] != null)
                 {
@@ -214,7 +214,7 @@ namespace ClassicUO.Game.UI.Gumps
                 );
             }
 
-            Lock status = World.Player.StrLock;
+            Lock status = World.PlayerState.StrLock;
             xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 28 : 40;
             ushort gumpID = GetStatLockGraphic(status);
 
@@ -222,14 +222,14 @@ namespace ClassicUO.Game.UI.Gumps
 
             _lockers[0].MouseUp += (sender, e) =>
             {
-                World.Player.StrLock = (Lock)(((byte)World.Player.StrLock + 1) % 3);
-                GameActions.ChangeStatLock(0, World.Player.StrLock);
-                ushort gumpid = GetStatLockGraphic(World.Player.StrLock);
+                World.PlayerState.StrLock = (Lock)(((byte)World.PlayerState.StrLock + 1) % 3);
+                GameActions.ChangeStatLock(0, World.PlayerState.StrLock);
+                ushort gumpid = GetStatLockGraphic(World.PlayerState.StrLock);
 
                 _lockers[0].Graphic = gumpid;
             };
 
-            text = new Label(World.Player.Strength.ToString(), false, 0x0386, font: 1)
+            text = new Label(World.PlayerState.Strength.ToString(), false, 0x0386, font: 1)
             {
                 X = 86,
                 Y = 62
@@ -238,7 +238,7 @@ namespace ClassicUO.Game.UI.Gumps
             _labels[(int) MobileStats.Strength] = text;
             Add(text);
 
-            status = World.Player.DexLock;
+            status = World.PlayerState.DexLock;
             xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 28 : 40;
             gumpID = GetStatLockGraphic(status);
 
@@ -246,14 +246,14 @@ namespace ClassicUO.Game.UI.Gumps
 
             _lockers[1].MouseUp += (sender, e) =>
             {
-                World.Player.DexLock = (Lock)(((byte)World.Player.DexLock + 1) % 3);
-                GameActions.ChangeStatLock(1, World.Player.DexLock);
-                ushort gumpid = GetStatLockGraphic(World.Player.DexLock);
+                World.PlayerState.DexLock = (Lock)(((byte)World.PlayerState.DexLock + 1) % 3);
+                GameActions.ChangeStatLock(1, World.PlayerState.DexLock);
+                ushort gumpid = GetStatLockGraphic(World.PlayerState.DexLock);
 
                 _lockers[1].Graphic = gumpid;
             };
 
-            text = new Label(World.Player.Dexterity.ToString(), false, 0x0386, font: 1)
+            text = new Label(World.PlayerState.Dexterity.ToString(), false, 0x0386, font: 1)
             {
                 X = 86,
                 Y = 74
@@ -262,7 +262,7 @@ namespace ClassicUO.Game.UI.Gumps
             _labels[(int) MobileStats.Dexterity] = text;
             Add(text);
 
-            status = World.Player.IntLock;
+            status = World.PlayerState.IntLock;
             xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 28 : 40;
             gumpID = GetStatLockGraphic(status);
 
@@ -270,14 +270,14 @@ namespace ClassicUO.Game.UI.Gumps
 
             _lockers[2].MouseUp += (sender, e) =>
             {
-                World.Player.IntLock = (Lock)(((byte)World.Player.IntLock + 1) % 3);
-                GameActions.ChangeStatLock(2, World.Player.IntLock);
-                ushort gumpid = GetStatLockGraphic(World.Player.IntLock);
+                World.PlayerState.IntLock = (Lock)(((byte)World.PlayerState.IntLock + 1) % 3);
+                GameActions.ChangeStatLock(2, World.PlayerState.IntLock);
+                ushort gumpid = GetStatLockGraphic(World.PlayerState.IntLock);
 
                 _lockers[2].Graphic = gumpid;
             };
 
-            text = new Label(World.Player.Intelligence.ToString(), false, 0x0386, font: 1)
+            text = new Label(World.PlayerState.Intelligence.ToString(), false, 0x0386, font: 1)
             {
                 X = 86,
                 Y = 86
@@ -295,7 +295,7 @@ namespace ClassicUO.Game.UI.Gumps
             _labels[(int) MobileStats.Sex] = text;
             Add(text);
 
-            text = new Label(World.Player.PhysicalResistance.ToString(), false, 0x0386, font: 1)
+            text = new Label(World.PlayerState.PhysicalResistance.ToString(), false, 0x0386, font: 1)
             {
                 X = 86,
                 Y = 110
@@ -331,7 +331,7 @@ namespace ClassicUO.Game.UI.Gumps
             _labels[(int) MobileStats.StaminaCurrent] = text;
             Add(text);
 
-            text = new Label(World.Player.Gold.ToString(), false, 0x0386, font: 1)
+            text = new Label(World.PlayerState.Gold.ToString(), false, 0x0386, font: 1)
             {
                 X = 171,
                 Y = 98
@@ -340,7 +340,7 @@ namespace ClassicUO.Game.UI.Gumps
             _labels[(int) MobileStats.Gold] = text;
             Add(text);
 
-            text = new Label($"{World.Player.Weight}/{World.Player.WeightMax}", false, 0x0386, font: 1)
+            text = new Label($"{World.PlayerState.Weight}/{World.PlayerState.WeightMax}", false, 0x0386, font: 1)
             {
                 X = 171,
                 Y = 110
@@ -496,15 +496,15 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _labels[(int) MobileStats.Name].Text = !string.IsNullOrEmpty(World.Player.Name) ? World.Player.Name : string.Empty;
 
-                _labels[(int) MobileStats.Strength].Text = World.Player.Strength.ToString();
+                _labels[(int) MobileStats.Strength].Text = World.PlayerState.Strength.ToString();
 
-                _labels[(int) MobileStats.Dexterity].Text = World.Player.Dexterity.ToString();
+                _labels[(int) MobileStats.Dexterity].Text = World.PlayerState.Dexterity.ToString();
 
-                _labels[(int) MobileStats.Intelligence].Text = World.Player.Intelligence.ToString();
+                _labels[(int) MobileStats.Intelligence].Text = World.PlayerState.Intelligence.ToString();
 
                 _labels[(int) MobileStats.Sex].Text = World.Player.IsFemale ? ResGumps.Female : ResGumps.Male;
 
-                _labels[(int) MobileStats.AR].Text = World.Player.PhysicalResistance.ToString();
+                _labels[(int) MobileStats.AR].Text = World.PlayerState.PhysicalResistance.ToString();
 
                 _labels[(int) MobileStats.HealthCurrent].Text = $"{World.Player.Hits}/{World.Player.HitsMax}";
 
@@ -512,9 +512,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _labels[(int) MobileStats.StaminaCurrent].Text = $"{World.Player.Stamina}/{World.Player.StaminaMax}";
 
-                _labels[(int) MobileStats.Gold].Text = World.Player.Gold.ToString();
+                _labels[(int) MobileStats.Gold].Text = World.PlayerState.Gold.ToString();
 
-                _labels[(int) MobileStats.WeightCurrent].Text = $"{World.Player.Weight}/{World.Player.WeightMax}";
+                _labels[(int) MobileStats.WeightCurrent].Text = $"{World.PlayerState.Weight}/{World.PlayerState.WeightMax}";
             }
 
             base.Update();
@@ -579,7 +579,7 @@ namespace ClassicUO.Game.UI.Gumps
                     );
                 }
 
-                Lock status = World.Player.StrLock;
+                Lock status = World.PlayerState.StrLock;
                 xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 28 : 40;
                 ushort gumpID = GetStatLockGraphic(status);
 
@@ -587,9 +587,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _lockers[0].MouseUp += (sender, e) =>
                 {
-                    World.Player.StrLock = (Lock) (((byte) World.Player.StrLock + 1) % 3);
-                    GameActions.ChangeStatLock(0, World.Player.StrLock);
-                    ushort gumpid = GetStatLockGraphic(World.Player.StrLock);
+                    World.PlayerState.StrLock = (Lock) (((byte) World.PlayerState.StrLock + 1) % 3);
+                    GameActions.ChangeStatLock(0, World.PlayerState.StrLock);
+                    ushort gumpid = GetStatLockGraphic(World.PlayerState.StrLock);
 
                     _lockers[0].Graphic = gumpid;
                 };
@@ -600,7 +600,7 @@ namespace ClassicUO.Game.UI.Gumps
                 //    Y = 76,
                 //    ButtonAction = ButtonAction.Activate,
                 //});
-                status = World.Player.DexLock;
+                status = World.PlayerState.DexLock;
                 xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 28 : 40;
                 gumpID = GetStatLockGraphic(status);
 
@@ -608,9 +608,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _lockers[1].MouseUp += (sender, e) =>
                 {
-                    World.Player.DexLock = (Lock) (((byte) World.Player.DexLock + 1) % 3);
-                    GameActions.ChangeStatLock(1, World.Player.DexLock);
-                    ushort gumpid = GetStatLockGraphic(World.Player.DexLock);
+                    World.PlayerState.DexLock = (Lock) (((byte) World.PlayerState.DexLock + 1) % 3);
+                    GameActions.ChangeStatLock(1, World.PlayerState.DexLock);
+                    ushort gumpid = GetStatLockGraphic(World.PlayerState.DexLock);
 
                     _lockers[1].Graphic = gumpid;
                 };
@@ -621,7 +621,7 @@ namespace ClassicUO.Game.UI.Gumps
                 //    Y = 102,
                 //    ButtonAction = ButtonAction.Activate
                 //});
-                status = World.Player.IntLock;
+                status = World.PlayerState.IntLock;
                 xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 28 : 40;
                 gumpID = GetStatLockGraphic(status);
 
@@ -629,9 +629,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _lockers[2].MouseUp += (sender, e) =>
                 {
-                    World.Player.IntLock = (Lock) (((byte) World.Player.IntLock + 1) % 3);
-                    GameActions.ChangeStatLock(2, World.Player.IntLock);
-                    ushort gumpid = GetStatLockGraphic(World.Player.IntLock);
+                    World.PlayerState.IntLock = (Lock) (((byte) World.PlayerState.IntLock + 1) % 3);
+                    GameActions.ChangeStatLock(2, World.PlayerState.IntLock);
+                    ushort gumpid = GetStatLockGraphic(World.PlayerState.IntLock);
 
                     _lockers[2].Graphic = gumpid;
                 };
@@ -645,7 +645,7 @@ namespace ClassicUO.Game.UI.Gumps
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
                     xOffset = 80;
-                    AddStatTextLabel(World.Player.HitChanceIncrease.ToString(), MobileStats.HitChanceInc, xOffset, 161);
+                    AddStatTextLabel(World.PlayerState.HitChanceIncrease.ToString(), MobileStats.HitChanceInc, xOffset, 161);
 
                     Add
                     (
@@ -666,9 +666,9 @@ namespace ClassicUO.Game.UI.Gumps
                 }
 
 
-                AddStatTextLabel(World.Player.Strength.ToString(), MobileStats.Strength, xOffset, 77);
-                AddStatTextLabel(World.Player.Dexterity.ToString(), MobileStats.Dexterity, xOffset, 105);
-                AddStatTextLabel(World.Player.Intelligence.ToString(), MobileStats.Intelligence, xOffset, 133);
+                AddStatTextLabel(World.PlayerState.Strength.ToString(), MobileStats.Strength, xOffset, 77);
+                AddStatTextLabel(World.PlayerState.Dexterity.ToString(), MobileStats.Dexterity, xOffset, 105);
+                AddStatTextLabel(World.PlayerState.Intelligence.ToString(), MobileStats.Intelligence, xOffset, 133);
 
 
                 Add
@@ -716,7 +716,7 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     xOffset = 150;
 
-                    AddStatTextLabel($"{World.Player.DefenseChanceIncrease}/{World.Player.MaxDefenseChanceIncrease}", MobileStats.DefenseChanceInc, xOffset, 161);
+                    AddStatTextLabel($"{World.PlayerState.DefenseChanceIncrease}/{World.PlayerState.MaxDefenseChanceIncrease}", MobileStats.DefenseChanceInc, xOffset, 161);
 
                     Add
                     (
@@ -880,7 +880,7 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     xOffset = 240;
 
-                    AddStatTextLabel(World.Player.LowerManaCost.ToString(), MobileStats.LowerManaCost, xOffset, 162);
+                    AddStatTextLabel(World.PlayerState.LowerManaCost.ToString(), MobileStats.LowerManaCost, xOffset, 162);
 
                     Add
                     (
@@ -900,14 +900,14 @@ namespace ClassicUO.Game.UI.Gumps
                     xOffset = 220;
                 }
 
-                AddStatTextLabel(World.Player.StatsCap.ToString(), MobileStats.StatCap, xOffset, 77);
-                AddStatTextLabel(World.Player.Luck.ToString(), MobileStats.Luck, xOffset, 105);
+                AddStatTextLabel(World.PlayerState.StatsCap.ToString(), MobileStats.StatCap, xOffset, 77);
+                AddStatTextLabel(World.PlayerState.Luck.ToString(), MobileStats.Luck, xOffset, 105);
 
                 xOffset -= 10;
 
                 AddStatTextLabel
                 (
-                    World.Player.Weight.ToString(),
+                    World.PlayerState.Weight.ToString(),
                     MobileStats.WeightCurrent,
                     xOffset,
                     126,
@@ -931,7 +931,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 AddStatTextLabel
                 (
-                    World.Player.WeightMax.ToString(),
+                    World.PlayerState.WeightMax.ToString(),
                     MobileStats.WeightMax,
                     xOffset,
                     139,
@@ -984,9 +984,9 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     xOffset = 320;
 
-                    AddStatTextLabel(World.Player.DamageIncrease.ToString(), MobileStats.DamageChanceInc, xOffset, 105);
+                    AddStatTextLabel(World.PlayerState.DamageIncrease.ToString(), MobileStats.DamageChanceInc, xOffset, 105);
 
-                    AddStatTextLabel(World.Player.SwingSpeedIncrease.ToString(), MobileStats.SwingSpeedInc, xOffset, 161);
+                    AddStatTextLabel(World.PlayerState.SwingSpeedIncrease.ToString(), MobileStats.SwingSpeedInc, xOffset, 161);
 
                     Add
                     (
@@ -1018,7 +1018,7 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     xOffset = 280;
 
-                    AddStatTextLabel(World.Player.Gold.ToString(), MobileStats.Gold, xOffset, 105);
+                    AddStatTextLabel(World.PlayerState.Gold.ToString(), MobileStats.Gold, xOffset, 105);
 
                     Add
                     (
@@ -1034,9 +1034,9 @@ namespace ClassicUO.Game.UI.Gumps
                     );
                 }
 
-                AddStatTextLabel($"{World.Player.DamageMin}-{World.Player.DamageMax}", MobileStats.Damage, xOffset, 77);
+                AddStatTextLabel($"{World.PlayerState.DamageMin}-{World.PlayerState.DamageMax}", MobileStats.Damage, xOffset, 77);
 
-                AddStatTextLabel($"{World.Player.Followers}-{World.Player.FollowersMax}", MobileStats.Followers, xOffset, 133);
+                AddStatTextLabel($"{World.PlayerState.Followers}-{World.PlayerState.FollowersMax}", MobileStats.Followers, xOffset, 133);
 
                 xOffset = Client.Game.UO.FileManager.Gumps.UseUOPGumps ? 285 : 260;
 
@@ -1070,13 +1070,13 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     xOffset = 400;
 
-                    AddStatTextLabel(World.Player.LowerReagentCost.ToString(), MobileStats.LowerReagentCost, xOffset, 77);
+                    AddStatTextLabel(World.PlayerState.LowerReagentCost.ToString(), MobileStats.LowerReagentCost, xOffset, 77);
 
-                    AddStatTextLabel(World.Player.SpellDamageIncrease.ToString(), MobileStats.SpellDamageInc, xOffset, 105);
+                    AddStatTextLabel(World.PlayerState.SpellDamageIncrease.ToString(), MobileStats.SpellDamageInc, xOffset, 105);
 
-                    AddStatTextLabel(World.Player.FasterCasting.ToString(), MobileStats.FasterCasting, xOffset, 133);
+                    AddStatTextLabel(World.PlayerState.FasterCasting.ToString(), MobileStats.FasterCasting, xOffset, 133);
 
-                    AddStatTextLabel(World.Player.FasterCastRecovery.ToString(), MobileStats.FasterCastRecovery, xOffset, 161);
+                    AddStatTextLabel(World.PlayerState.FasterCastRecovery.ToString(), MobileStats.FasterCastRecovery, xOffset, 161);
 
                     xOffset = 365;
 
@@ -1134,7 +1134,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     xOffset = 480;
 
-                    AddStatTextLabel(World.Player.Gold.ToString(), MobileStats.Gold, xOffset, 161);
+                    AddStatTextLabel(World.PlayerState.Gold.ToString(), MobileStats.Gold, xOffset, 161);
 
                     Add
                     (
@@ -1151,25 +1151,25 @@ namespace ClassicUO.Game.UI.Gumps
 
                     xOffset = 475;
 
-                    AddStatTextLabel($"{World.Player.PhysicalResistance}/{World.Player.MaxPhysicResistence}", MobileStats.AR, xOffset, 74);
+                    AddStatTextLabel($"{World.PlayerState.PhysicalResistance}/{World.PlayerState.MaxPhysicResistence}", MobileStats.AR, xOffset, 74);
 
-                    AddStatTextLabel($"{World.Player.FireResistance}/{World.Player.MaxFireResistence}", MobileStats.RF, xOffset, 92);
+                    AddStatTextLabel($"{World.PlayerState.FireResistance}/{World.PlayerState.MaxFireResistence}", MobileStats.RF, xOffset, 92);
 
-                    AddStatTextLabel($"{World.Player.ColdResistance}/{World.Player.MaxColdResistence}", MobileStats.RC, xOffset, 106);
+                    AddStatTextLabel($"{World.PlayerState.ColdResistance}/{World.PlayerState.MaxColdResistence}", MobileStats.RC, xOffset, 106);
 
-                    AddStatTextLabel($"{World.Player.PoisonResistance}/{World.Player.MaxPoisonResistence}", MobileStats.RP, xOffset, 120);
+                    AddStatTextLabel($"{World.PlayerState.PoisonResistance}/{World.PlayerState.MaxPoisonResistence}", MobileStats.RP, xOffset, 120);
 
-                    AddStatTextLabel($"{World.Player.EnergyResistance}/{World.Player.MaxEnergyResistence}", MobileStats.RE, xOffset, 134);
+                    AddStatTextLabel($"{World.PlayerState.EnergyResistance}/{World.PlayerState.MaxEnergyResistence}", MobileStats.RE, xOffset, 134);
                 }
                 else
                 {
                     xOffset = 354;
 
-                    AddStatTextLabel(World.Player.PhysicalResistance.ToString(), MobileStats.AR, xOffset, 76);
-                    AddStatTextLabel(World.Player.FireResistance.ToString(), MobileStats.RF, xOffset, 92);
-                    AddStatTextLabel(World.Player.ColdResistance.ToString(), MobileStats.RC, xOffset, 106);
-                    AddStatTextLabel(World.Player.PoisonResistance.ToString(), MobileStats.RP, xOffset, 120);
-                    AddStatTextLabel(World.Player.EnergyResistance.ToString(), MobileStats.RE, xOffset, 134);
+                    AddStatTextLabel(World.PlayerState.PhysicalResistance.ToString(), MobileStats.AR, xOffset, 76);
+                    AddStatTextLabel(World.PlayerState.FireResistance.ToString(), MobileStats.RF, xOffset, 92);
+                    AddStatTextLabel(World.PlayerState.ColdResistance.ToString(), MobileStats.RC, xOffset, 106);
+                    AddStatTextLabel(World.PlayerState.PoisonResistance.ToString(), MobileStats.RP, xOffset, 120);
+                    AddStatTextLabel(World.PlayerState.EnergyResistance.ToString(), MobileStats.RE, xOffset, 134);
                 }
 
 
@@ -1244,7 +1244,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 if (Client.Game.UO.Version == ClientVersion.CV_308D)
                 {
-                    AddStatTextLabel(World.Player.StatsCap.ToString(), MobileStats.StatCap, 171, 124);
+                    AddStatTextLabel(World.PlayerState.StatsCap.ToString(), MobileStats.StatCap, 171, 124);
 
                     Add
                     (
@@ -1261,9 +1261,9 @@ namespace ClassicUO.Game.UI.Gumps
                 }
                 else if (Client.Game.UO.Version == ClientVersion.CV_308J)
                 {
-                    AddStatTextLabel(World.Player.StatsCap.ToString(), MobileStats.StatCap, 180, 131);
+                    AddStatTextLabel(World.PlayerState.StatsCap.ToString(), MobileStats.StatCap, 180, 131);
 
-                    AddStatTextLabel($"{World.Player.Followers}/{World.Player.FollowersMax}", MobileStats.Followers, 180, 144);
+                    AddStatTextLabel($"{World.PlayerState.Followers}/{World.PlayerState.FollowersMax}", MobileStats.Followers, 180, 144);
 
                     Add
                     (
@@ -1362,18 +1362,18 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.HitChanceInc].Text = World.Player.HitChanceIncrease.ToString();
+                    _labels[(int) MobileStats.HitChanceInc].Text = World.PlayerState.HitChanceIncrease.ToString();
                 }
 
-                _labels[(int) MobileStats.Strength].Text = World.Player.Strength.ToString();
+                _labels[(int) MobileStats.Strength].Text = World.PlayerState.Strength.ToString();
 
-                _labels[(int) MobileStats.Dexterity].Text = World.Player.Dexterity.ToString();
+                _labels[(int) MobileStats.Dexterity].Text = World.PlayerState.Dexterity.ToString();
 
-                _labels[(int) MobileStats.Intelligence].Text = World.Player.Intelligence.ToString();
+                _labels[(int) MobileStats.Intelligence].Text = World.PlayerState.Intelligence.ToString();
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.DefenseChanceInc].Text = $"{World.Player.DefenseChanceIncrease}/{World.Player.MaxDefenseChanceIncrease}";
+                    _labels[(int) MobileStats.DefenseChanceInc].Text = $"{World.PlayerState.DefenseChanceIncrease}/{World.PlayerState.MaxDefenseChanceIncrease}";
                 }
 
                 _labels[(int) MobileStats.HealthCurrent].Text = World.Player.Hits.ToString();
@@ -1390,61 +1390,61 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.LowerManaCost].Text = World.Player.LowerManaCost.ToString();
+                    _labels[(int) MobileStats.LowerManaCost].Text = World.PlayerState.LowerManaCost.ToString();
                 }
 
-                _labels[(int) MobileStats.StatCap].Text = World.Player.StatsCap.ToString();
+                _labels[(int) MobileStats.StatCap].Text = World.PlayerState.StatsCap.ToString();
 
-                _labels[(int) MobileStats.Luck].Text = World.Player.Luck.ToString();
+                _labels[(int) MobileStats.Luck].Text = World.PlayerState.Luck.ToString();
 
-                _labels[(int) MobileStats.WeightCurrent].Text = World.Player.Weight.ToString();
+                _labels[(int) MobileStats.WeightCurrent].Text = World.PlayerState.Weight.ToString();
 
-                _labels[(int) MobileStats.WeightMax].Text = World.Player.WeightMax.ToString();
+                _labels[(int) MobileStats.WeightMax].Text = World.PlayerState.WeightMax.ToString();
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.DamageChanceInc].Text = World.Player.DamageIncrease.ToString();
+                    _labels[(int) MobileStats.DamageChanceInc].Text = World.PlayerState.DamageIncrease.ToString();
 
-                    _labels[(int) MobileStats.SwingSpeedInc].Text = World.Player.SwingSpeedIncrease.ToString();
+                    _labels[(int) MobileStats.SwingSpeedInc].Text = World.PlayerState.SwingSpeedIncrease.ToString();
                 }
 
-                _labels[(int) MobileStats.Gold].Text = World.Player.Gold.ToString();
+                _labels[(int) MobileStats.Gold].Text = World.PlayerState.Gold.ToString();
 
-                _labels[(int) MobileStats.Damage].Text = $"{World.Player.DamageMin}-{World.Player.DamageMax}";
+                _labels[(int) MobileStats.Damage].Text = $"{World.PlayerState.DamageMin}-{World.PlayerState.DamageMax}";
 
-                _labels[(int) MobileStats.Followers].Text = $"{World.Player.Followers}/{World.Player.FollowersMax}";
+                _labels[(int) MobileStats.Followers].Text = $"{World.PlayerState.Followers}/{World.PlayerState.FollowersMax}";
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.LowerReagentCost].Text = World.Player.LowerReagentCost.ToString();
+                    _labels[(int) MobileStats.LowerReagentCost].Text = World.PlayerState.LowerReagentCost.ToString();
 
-                    _labels[(int) MobileStats.SpellDamageInc].Text = World.Player.SpellDamageIncrease.ToString();
+                    _labels[(int) MobileStats.SpellDamageInc].Text = World.PlayerState.SpellDamageIncrease.ToString();
 
-                    _labels[(int) MobileStats.FasterCasting].Text = World.Player.FasterCasting.ToString();
+                    _labels[(int) MobileStats.FasterCasting].Text = World.PlayerState.FasterCasting.ToString();
 
-                    _labels[(int) MobileStats.FasterCastRecovery].Text = World.Player.FasterCastRecovery.ToString();
+                    _labels[(int) MobileStats.FasterCastRecovery].Text = World.PlayerState.FasterCastRecovery.ToString();
 
-                    _labels[(int) MobileStats.AR].Text = $"{World.Player.PhysicalResistance}/{World.Player.MaxPhysicResistence}";
+                    _labels[(int) MobileStats.AR].Text = $"{World.PlayerState.PhysicalResistance}/{World.PlayerState.MaxPhysicResistence}";
 
-                    _labels[(int) MobileStats.RF].Text = $"{World.Player.FireResistance}/{World.Player.MaxFireResistence}";
+                    _labels[(int) MobileStats.RF].Text = $"{World.PlayerState.FireResistance}/{World.PlayerState.MaxFireResistence}";
 
-                    _labels[(int) MobileStats.RC].Text = $"{World.Player.ColdResistance}/{World.Player.MaxColdResistence}";
+                    _labels[(int) MobileStats.RC].Text = $"{World.PlayerState.ColdResistance}/{World.PlayerState.MaxColdResistence}";
 
-                    _labels[(int) MobileStats.RP].Text = $"{World.Player.PoisonResistance}/{World.Player.MaxPoisonResistence}";
+                    _labels[(int) MobileStats.RP].Text = $"{World.PlayerState.PoisonResistance}/{World.PlayerState.MaxPoisonResistence}";
 
-                    _labels[(int) MobileStats.RE].Text = $"{World.Player.EnergyResistance}/{World.Player.MaxEnergyResistence}";
+                    _labels[(int) MobileStats.RE].Text = $"{World.PlayerState.EnergyResistance}/{World.PlayerState.MaxEnergyResistence}";
                 }
                 else
                 {
-                    _labels[(int) MobileStats.AR].Text = World.Player.PhysicalResistance.ToString();
+                    _labels[(int) MobileStats.AR].Text = World.PlayerState.PhysicalResistance.ToString();
 
-                    _labels[(int) MobileStats.RF].Text = World.Player.FireResistance.ToString();
+                    _labels[(int) MobileStats.RF].Text = World.PlayerState.FireResistance.ToString();
 
-                    _labels[(int) MobileStats.RC].Text = World.Player.ColdResistance.ToString();
+                    _labels[(int) MobileStats.RC].Text = World.PlayerState.ColdResistance.ToString();
 
-                    _labels[(int) MobileStats.RP].Text = World.Player.PoisonResistance.ToString();
+                    _labels[(int) MobileStats.RP].Text = World.PlayerState.PoisonResistance.ToString();
 
-                    _labels[(int) MobileStats.RE].Text = World.Player.EnergyResistance.ToString();
+                    _labels[(int) MobileStats.RE].Text = World.PlayerState.EnergyResistance.ToString();
                 }
             }
 

@@ -54,16 +54,16 @@ internal static partial class Sextant
         return false;
     }
 
-    private static bool ComputeMapDetails(Map.Map map, int x, int y, out int xCenter, out int yCenter, out int xWidth, out int yHeight)
+    private static bool ComputeMapDetails(int mapIndex, int x, int y, out int xCenter, out int yCenter, out int xWidth, out int yHeight)
     {
         xWidth = 5120;
         yHeight = 4096;
 
-        var mapWidth = Client.Game.UO.FileManager.Maps.MapsDefaultSize[map.Index, 0];
-        var mapHeight = Client.Game.UO.FileManager.Maps.MapsDefaultSize[map.Index, 1];
+        var mapWidth = Client.Game.UO.FileManager.Maps.MapsDefaultSize[mapIndex, 0];
+        var mapHeight = Client.Game.UO.FileManager.Maps.MapsDefaultSize[mapIndex, 1];
 
-        var isTrammel = map.Index == 0 && mapWidth == 7168 && mapHeight == 4096;
-        var isFelucca = map.Index == 1 && mapWidth == 7168 && mapHeight == 4096;
+        var isTrammel = mapIndex == 0 && mapWidth == 7168 && mapHeight == 4096;
+        var isFelucca = mapIndex == 1 && mapWidth == 7168 && mapHeight == 4096;
         
         if (isTrammel || isFelucca)
         {
@@ -111,7 +111,7 @@ internal static partial class Sextant
         if (map == null)
             return InvalidPoint;
 
-        if (!ComputeMapDetails(map, 0, 0, out int xCenter, out int yCenter, out int xWidth, out int yHeight))
+        if (!ComputeMapDetails(map.Index, 0, 0, out int xCenter, out int yCenter, out int xWidth, out int yHeight))
             return InvalidPoint;
 
         double absLong = xLong + ((double)xMins / 60);
@@ -140,11 +140,11 @@ internal static partial class Sextant
     }
 
     public static bool Format(Point p, Map.Map map, ref int xLong, ref int yLat, ref int xMins, ref int yMins, ref bool xEast, ref bool ySouth)
-    {
-        if (map == null)
-            return false;
+        => map != null && Format(p, map.Index, ref xLong, ref yLat, ref xMins, ref yMins, ref xEast, ref ySouth);
 
-        if (!ComputeMapDetails(map, p.X, p.Y, out int xCenter, out int yCenter, out int xWidth, out int yHeight))
+    public static bool Format(Point p, int mapIndex, ref int xLong, ref int yLat, ref int xMins, ref int yMins, ref bool xEast, ref bool ySouth)
+    {
+        if (!ComputeMapDetails(mapIndex, p.X, p.Y, out int xCenter, out int yCenter, out int xWidth, out int yHeight))
             return false;
 
         double absLong = (double)((p.X - xCenter) * 360) / xWidth;
@@ -178,10 +178,21 @@ internal static partial class Sextant
 
     public static bool FormatString(Point p, Map.Map map, out string text)
     {
+        if (map == null)
+        {
+            text = string.Empty;
+            return false;
+        }
+
+        return FormatString(p, map.Index, out text);
+    }
+
+    public static bool FormatString(Point p, int mapIndex, out string text)
+    {
         int xLong = 0, yLat = 0, xMins = 0, yMins = 0;
         bool xEast = false, ySouth = false;
 
-        if (!Format(p, map, ref xLong, ref yLat, ref xMins, ref yMins, ref xEast, ref ySouth))
+        if (!Format(p, mapIndex, ref xLong, ref yLat, ref xMins, ref yMins, ref xEast, ref ySouth))
         {
             text = string.Empty;
             return false;

@@ -30,15 +30,6 @@ namespace ClassicUO.Game.Scenes
                 _controller.UO.Load(_controller);
                 Settings.GlobalSettings.Encryption = (byte)NetClient.Socket.Load(_controller.UO.FileManager.Version, (EncryptionType)Settings.GlobalSettings.Encryption);
 
-                Log.Trace("Loading plugins...");
-                _controller.PluginHost?.Initialize();
-
-                foreach (string p in Settings.GlobalSettings.Plugins)
-                {
-                    Plugin.Create(p);
-                }
-
-                Log.Trace("Done!");
 
                 _controller.SetScene(new LoginScene(_controller.UO.World));
             }
@@ -56,13 +47,11 @@ namespace ClassicUO.Game.Scenes
 
         public override void Load()
         {
-            Console.WriteLine("MainScene loaded");
             base.Load();
         }
 
         public override void Unload()
         {
-            Console.WriteLine("MainScene unloaded");
             base.Unload();
         }
     }

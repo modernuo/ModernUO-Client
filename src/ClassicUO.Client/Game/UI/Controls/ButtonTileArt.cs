@@ -28,9 +28,8 @@ namespace ClassicUO.Game.UI.Controls
             ContainsByBounds = true;
             IsFromServer = true;
 
-            ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(_graphic);
-
-            if (artInfo.Texture == null)
+            // perf-6: only whether there is art to draw; it decodes at first draw
+            if (!Client.Game.UO.Arts.TryGetArtSize(_graphic, out _, out _))
             {
                 Dispose();
 

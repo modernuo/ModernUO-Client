@@ -4,6 +4,7 @@ using ClassicUO.Game.UI.Controls;
 using ClassicUO.Renderer;
 using ClassicUO.Resources;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -297,14 +298,23 @@ namespace ClassicUO.Game.UI.Gumps
         {
             if (_isMarkerListModified)
             {
-                using (StreamWriter writer = new StreamWriter(_userMarkersFilePath, false))
+                try
                 {
-                    foreach (var marker in _markers)
+                    using (StreamWriter writer = AtomicFile.CreateText(_userMarkersFilePath, out var atomic))
                     {
-                        var newLine = $"{marker.X},{marker.Y},{marker.MapId},{marker.Name},{marker.MarkerIconName},{marker.ColorName},4";
+                        foreach (var marker in _markers)
+                        {
+                            var newLine = $"{marker.X},{marker.Y},{marker.MapId},{marker.Name},{marker.MarkerIconName},{marker.ColorName},4";
 
-                        writer.WriteLine(newLine);
+                            writer.WriteLine(newLine);
+                        }
+                        writer.Flush();
+                        atomic.Commit();
                     }
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    Log.Error($"could not save the user markers: {e.Message}");
                 }
                 _isMarkerListModified = false;
                 ReloadUserMarkers();

@@ -110,11 +110,13 @@ namespace ClassicUO.Game.Managers
         public void Remove(uint serial)
         {
             _itemsProperties.Remove(serial);
+            PacketHandlers.OnOplRemoved(serial);
         }
 
         public void Clear()
         {
             _itemsProperties.Clear();
+            PacketHandlers.OnOplCleared();
         }
     }
 

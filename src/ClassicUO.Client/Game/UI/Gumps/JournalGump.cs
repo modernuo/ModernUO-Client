@@ -6,6 +6,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Controls;
 using ClassicUO.Input;
+using ClassicUO.Renderer;
 using ClassicUO.Resources;
 using ClassicUO.Utility.Collections;
 using System;
@@ -331,11 +332,59 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
 
-        private class RenderedTextList : Control
+        private class RenderedTextList : Control, IGumpDeferredDraw
         {
-            private readonly Deque<RenderedText> _entries, _hours;
+            // A line whose type the filters hide is not rendered until a filter shows it (no RenderedText, no
+            // measuring); the wrap width is the one at the time it was added, as before.
+            private sealed class Line
+            {
+                public RenderedText Text, Hour;
+                public TextType Type;
+                public string Content;
+                public int Font;
+                public ushort Hue;
+                public bool IsUnicode;
+                public DateTime Time;
+                public int Width;
+
+                public void Ensure()
+                {
+                    if (Text != null)
+                    {
+                        return;
+                    }
+
+                    Hour = RenderedText.Create
+                    (
+                        $"{Time:t} ",
+                        1150,
+                        1,
+                        true,
+                        FontStyle.BlackBorder
+                    );
+
+                    Text = RenderedText.Create
+                    (
+                        Content,
+                        Hue,
+                        (byte) Font,
+                        IsUnicode,
+                        FontStyle.Indention | FontStyle.BlackBorder,
+                        maxWidth: Width - (18 + Hour.Width)
+                    );
+
+                    Content = null;
+                }
+
+                public void Destroy()
+                {
+                    Text?.Destroy();
+                    Hour?.Destroy();
+                }
+            }
+
+            private readonly Deque<Line> _lines;
             private readonly ScrollBarBase _scrollBar;
-            private readonly Deque<TextType> _text_types;
 
             public RenderedTextList(int x, int y, int width, int height, ScrollBarBase scrollBarControl)
             {
@@ -348,133 +397,127 @@ namespace ClassicUO.Game.UI.Gumps
                 Width = width;
                 Height = height;
 
-                _entries = new Deque<RenderedText>();
-                _hours = new Deque<RenderedText>();
-                _text_types = new Deque<TextType>();
+                _lines = new Deque<Line>();
 
                 WantUpdateSize = false;
             }
 
-            public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
             {
-                base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
-                float layerDepth = layerDepthRef;
-
                 int mx = x;
                 int my = y;
 
                 int height = 0;
                 int maxheight = _scrollBar.Value + _scrollBar.Height;
 
+                for (int i = 0; i < _lines.Count; i++)
+                {
+                    Line line = _lines[i];
 
-                renderLists.AddGumpNoAtlas
-                (
-                    batcher =>
+                    if (!CanBeDrawn(line.Type))
                     {
-                        for (int i = 0; i < _entries.Count; i++)
-                        {
-                            RenderedText t = _entries[i];
-                            RenderedText hour = _hours[i];
-                            TextType type = _text_types[i];
-
-
-                            if (!CanBeDrawn(type))
-                            {
-                                continue;
-                            }
-
-
-                            if (height + t.Height <= _scrollBar.Value)
-                            {
-                                // this entry is above the renderable area.
-                                height += t.Height;
-                            }
-                            else if (height + t.Height <= maxheight)
-                            {
-                                int yy = height - _scrollBar.Value;
-
-                                if (yy < 0)
-                                {
-                                    // this entry starts above the renderable area, but exists partially within it.
-                                    hour.Draw
-                                    (
-                                        batcher,
-                                        hour.Width,
-                                        hour.Height,
-                                        mx,
-                                        y,
-                                        t.Width,
-                                        t.Height + yy,
-                                        0,
-                                        -yy,
-                                        layerDepth
-                                    );
-
-                                    t.Draw
-                                    (
-                                        batcher,
-                                        t.Width,
-                                        t.Height,
-                                        mx + hour.Width,
-                                        y,
-                                        t.Width,
-                                        t.Height + yy,
-                                        0,
-                                        -yy,
-                                        layerDepth
-                                    );
-
-                                    my += t.Height + yy;
-                                }
-                                else
-                                {
-                                    // this entry is completely within the renderable area.
-                                    hour.Draw(batcher, mx, my, layerDepth);
-                                    t.Draw(batcher, mx + hour.Width, my, layerDepth);
-                                    my += t.Height;
-                                }
-
-                                height += t.Height;
-                            }
-                            else
-                            {
-                                int yyy = maxheight - height;
-
-                                hour.Draw
-                                (
-                                    batcher,
-                                    hour.Width,
-                                    hour.Height,
-                                    mx,
-                                    y + _scrollBar.Height - yyy,
-                                    t.Width,
-                                    yyy,
-                                    0,
-                                    0,
-                                    layerDepth
-                                );
-
-                                t.Draw
-                                (
-                                    batcher,
-                                    t.Width,
-                                    t.Height,
-                                    mx + hour.Width,
-                                    y + _scrollBar.Height - yyy,
-                                    t.Width,
-                                    yyy,
-                                    0,
-                                    0,
-                                    layerDepth
-                                );
-
-                                // can't fit any more entries - so we break!
-                                break;
-                            }
-                        }
-                        return true;
+                        continue;
                     }
-                );
+
+                    line.Ensure();
+                    RenderedText t = line.Text;
+                    RenderedText hour = line.Hour;
+
+                    if (height + t.Height <= _scrollBar.Value)
+                    {
+                        // this entry is above the renderable area.
+                        height += t.Height;
+                    }
+                    else if (height + t.Height <= maxheight)
+                    {
+                        int yy = height - _scrollBar.Value;
+
+                        if (yy < 0)
+                        {
+                            // this entry starts above the renderable area, but exists partially within it.
+                            hour.Draw
+                            (
+                                batcher,
+                                hour.Width,
+                                hour.Height,
+                                mx,
+                                y,
+                                t.Width,
+                                t.Height + yy,
+                                0,
+                                -yy,
+                                layerDepth
+                            );
+
+                            t.Draw
+                            (
+                                batcher,
+                                t.Width,
+                                t.Height,
+                                mx + hour.Width,
+                                y,
+                                t.Width,
+                                t.Height + yy,
+                                0,
+                                -yy,
+                                layerDepth
+                            );
+
+                            my += t.Height + yy;
+                        }
+                        else
+                        {
+                            // this entry is completely within the renderable area.
+                            hour.Draw(batcher, mx, my, layerDepth);
+                            t.Draw(batcher, mx + hour.Width, my, layerDepth);
+                            my += t.Height;
+                        }
+
+                        height += t.Height;
+                    }
+                    else
+                    {
+                        int yyy = maxheight - height;
+
+                        hour.Draw
+                        (
+                            batcher,
+                            hour.Width,
+                            hour.Height,
+                            mx,
+                            y + _scrollBar.Height - yyy,
+                            t.Width,
+                            yyy,
+                            0,
+                            0,
+                            layerDepth
+                        );
+
+                        t.Draw
+                        (
+                            batcher,
+                            t.Width,
+                            t.Height,
+                            mx + hour.Width,
+                            y + _scrollBar.Height - yyy,
+                            t.Width,
+                            yyy,
+                            0,
+                            0,
+                            layerDepth
+                        );
+
+                        // can't fit any more entries - so we break!
+                        break;
+                    }
+                }
+                return true;
+            }
+
+            public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
+            {
+                base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
+                renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
                 return true;
             }
@@ -499,11 +542,14 @@ namespace ClassicUO.Game.UI.Gumps
                 bool maxValue = _scrollBar.Value == _scrollBar.MaxValue;
                 int height = 0;
 
-                for (int i = 0; i < _entries.Count; i++)
+                for (int i = 0; i < _lines.Count; i++)
                 {
-                    if (i < _text_types.Count && CanBeDrawn(_text_types[i]))
+                    Line line = _lines[i];
+
+                    if (CanBeDrawn(line.Type))
                     {
-                        height += _entries[i].Height;
+                        line.Ensure();
+                        height += line.Text.Height;
                     }
                 }
 
@@ -537,41 +583,29 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 bool maxScroll = _scrollBar.Value == _scrollBar.MaxValue;
 
-                while (_entries.Count > 199)
+                while (_lines.Count > 199)
                 {
-                    _entries.RemoveFromFront().Destroy();
-
-                    _hours.RemoveFromFront().Destroy();
-
-                    _text_types.RemoveFromFront();
+                    _lines.RemoveFromFront().Destroy();
                 }
 
-                RenderedText h = RenderedText.Create
-                (
-                    $"{time:t} ",
-                    1150,
-                    1,
-                    true,
-                    FontStyle.BlackBorder
-                );
+                var line = new Line
+                {
+                    Type = text_type,
+                    Content = text,
+                    Font = font,
+                    Hue = hue,
+                    IsUnicode = isUnicode,
+                    Time = time,
+                    Width = Width
+                };
 
-                _hours.AddToBack(h);
+                _lines.AddToBack(line);
 
-                RenderedText rtext = RenderedText.Create
-                (
-                    text,
-                    hue,
-                    (byte) font,
-                    isUnicode,
-                    FontStyle.Indention | FontStyle.BlackBorder,
-                    maxWidth: Width - (18 + h.Width)
-                );
-
-                _entries.AddToBack(rtext);
-
-                _text_types.AddToBack(text_type);
-
-                _scrollBar.MaxValue += rtext.Height;
+                if (CanBeDrawn(text_type))
+                {
+                    line.Ensure();
+                    _scrollBar.MaxValue += line.Text.Height;
+                }
 
                 if (maxScroll)
                 {
@@ -606,16 +640,12 @@ namespace ClassicUO.Game.UI.Gumps
 
             public override void Dispose()
             {
-                for (int i = 0; i < _entries.Count; i++)
+                for (int i = 0; i < _lines.Count; i++)
                 {
-                    _entries[i].Destroy();
-
-                    _hours[i].Destroy();
+                    _lines[i].Destroy();
                 }
 
-                _entries.Clear();
-                _hours.Clear();
-                _text_types.Clear();
+                _lines.Clear();
 
                 base.Dispose();
             }

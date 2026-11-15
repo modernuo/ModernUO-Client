@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause
+﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
 using System.Linq;
@@ -182,8 +182,9 @@ namespace ClassicUO.Game.Scenes
 
                 Point p = mobile.RealScreenPosition;
 
-                p.X += (int)mobile.Offset.X + 22 + 5;
-                p.Y += (int)(mobile.Offset.Y - mobile.Offset.Z) + 12 * AnchorOffset;
+                Vector3 offset = mobile.Offset;
+                p.X += (int)offset.X + 22 + 5;
+                p.Y += (int)(offset.Y - offset.Z) + 12 * AnchorOffset;
                 p.X -= mobile.FrameInfo.X;
                 p.Y -= mobile.FrameInfo.Y;
 
@@ -592,9 +593,9 @@ namespace ClassicUO.Game.Scenes
                             {
                                 obj = ov.Owner;
                             }
-                            else if (obj is GameEffect eff && eff.Source != null)
+                            else if (obj is GameEffect eff && eff.SourceObject != null)
                             {
-                                obj = eff.Source;
+                                obj = eff.SourceObject;
                             }
 
                             switch (obj)
@@ -789,7 +790,7 @@ namespace ClassicUO.Game.Scenes
 
                     break;
 
-                case TextObject msg when msg.Owner is Entity entity:
+                case TextObject msg when msg.LiveOwnerEntity is Entity entity:
                     result = true;
                     GameActions.DoubleClick(_world, entity);
 

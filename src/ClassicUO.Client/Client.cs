@@ -30,6 +30,12 @@ namespace ClassicUO
         public GameCursor GameCursor { get; private set; }
 
         public ClientVersion Version { get; private set; }
+
+        /// <summary>
+        /// The version text the client runs as and sends to the server: settings clientversion (sanitized) when valid,
+        /// else the pack manifest's. Not written back to settings.json, so a different pack changes it.
+        /// </summary>
+        public string VersionText { get; private set; }
         public ClientFlags Protocol { get; set; }
         public string ClientPath { get; private set; }
         public UOFileManager FileManager { get; private set; }
@@ -68,6 +74,7 @@ namespace ClassicUO
                     (IntPtr)ptr,
                     TEXTURE_WIDTH * TEXTURE_HEIGHT * sizeof(uint)
                 );
+                ClassicUO.Renderer.TextureUploads.Changed();
 
                 LightColors.CreateLightTextures(buffer, LIGHTS_TEXTURE_HEIGHT);
                 hueSamplers[1].SetDataPointerEXT(
@@ -76,12 +83,14 @@ namespace ClassicUO
                     (IntPtr)ptr,
                     LIGHTS_TEXTURE_WIDTH * LIGHTS_TEXTURE_HEIGHT * sizeof(uint)
                 );
+                ClassicUO.Renderer.TextureUploads.Changed();
             }
 
             game.GraphicsDevice.Textures[1] = hueSamplers[0];
             game.GraphicsDevice.Textures[2] = hueSamplers[1];
 
             Animations = new Renderer.Animations.Animations(FileManager.Animations, game.GraphicsDevice);
+            ClassicUO.Game.AnimAtlasLruSetup.Enable(Animations);
             Arts = new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, game.GraphicsDevice);
             Gumps = new Renderer.Gumps.Gump(FileManager.Gumps, game.GraphicsDevice);
             Texmaps = new Renderer.Texmaps.Texmap(FileManager.Texmaps, game.GraphicsDevice);
@@ -100,54 +109,38 @@ namespace ClassicUO
         {
             FileManager.Dispose();
             World?.Map?.Destroy();
+            World?.ReleasePools();
         }
 
 
         private void LoadUOFiles()
         {
-            string clientPath = Settings.GlobalSettings.UltimaOnlineDirectory;
-            Log.Trace($"Ultima Online installation folder: {clientPath}");
+            // The pack is required; the UO directory is optional and only serves loose-file reads (AssetSource).
+            string clientPath = AssetSource.LooseFileDirectory(Settings.GlobalSettings);
+            Log.Trace($"Loose-file folder: {clientPath}");
 
             Log.Trace("Loading files...");
 
-            if (!string.IsNullOrWhiteSpace(Settings.GlobalSettings.ClientVersion))
+            string packPath = AssetSource.PackPath(Settings.GlobalSettings);
+
+            if (!AssetSource.TryReadManifest(packPath, out var packManifest, out string packError))
             {
-                // sanitize client version
-                Settings.GlobalSettings.ClientVersion = Settings.GlobalSettings.ClientVersion.Replace(",", ".").Replace(" ", "").ToLower();
+                Log.Error(packError);
+                Client.ShowErrorMessage(packError);
+
+                throw new FileNotFoundException(packError);
             }
 
-            string clientVersionText = Settings.GlobalSettings.ClientVersion;
-
-            // check if directory is good
-            if (!Directory.Exists(clientPath))
+            if (!AssetSource.TryResolveVersion(Settings.GlobalSettings, packManifest, out ClientVersion clientVersion, out string clientVersionText))
             {
-                Log.Error("Invalid client directory: " + clientPath);
-                Client.ShowErrorMessage(string.Format(ResErrorMessages.ClientPathIsNotAValidUODirectory, clientPath));
+                Log.Error("Invalid client version: " + clientVersionText);
+                Client.ShowErrorMessage(string.Format(ResGumps.ImpossibleToDefineTheClientVersion0, clientVersionText));
 
-                throw new InvalidClientDirectory($"'{clientPath}' is not a valid directory");
-            }
-
-            // try to load the client version
-            if (!ClientVersionHelper.IsClientVersionValid(clientVersionText, out ClientVersion clientVersion))
-            {
-                Log.Warn($"Client version [{clientVersionText}] is invalid, let's try to read the client.exe");
-
-                // mmm something bad happened, try to load from client.exe
-                if (!ClientVersionHelper.TryParseFromFile(Path.Combine(clientPath, "client.exe"), out clientVersionText) || !ClientVersionHelper.IsClientVersionValid(clientVersionText, out clientVersion))
-                {
-                    Log.Error("Invalid client version: " + clientVersionText);
-                    Client.ShowErrorMessage(string.Format(ResGumps.ImpossibleToDefineTheClientVersion0, clientVersionText));
-
-                    throw new InvalidClientVersion($"Invalid client version: '{clientVersionText}'");
-                }
-
-                Log.Trace($"Found a valid client.exe [{clientVersionText} - {clientVersion}]");
-
-                // update the wrong/missing client version in settings.json
-                Settings.GlobalSettings.ClientVersion = clientVersionText;
+                throw new InvalidClientVersion($"Invalid client version: '{clientVersionText}'");
             }
 
             Version = clientVersion;
+            VersionText = clientVersionText;
             ClientPath = clientPath;
 
             Protocol = ClientFlags.CF_T2A;
@@ -188,15 +181,32 @@ namespace ClassicUO
 
             var filesOverride = new UOFilesOverrideMap(Settings.GlobalSettings.OverrideFile);
             filesOverride.Load();
-            FileManager = new UOFileManager(clientVersion, clientPath, filesOverride);
-            FileManager.Load(Settings.GlobalSettings.UseVerdata, Settings.GlobalSettings.Language, Settings.GlobalSettings.MapsLayouts);
+            PackAssets pack;
+
+            try
+            {
+                pack = PackAssets.Open(packPath);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException)
+            {
+                Log.Error(ex.Message);
+                Client.ShowErrorMessage(ex.Message);
+
+                throw;
+            }
+
+            FileManager = new UOFileManager(clientVersion, clientPath, filesOverride, pack);
+
+            // The language, from the profile if it is available, else the OS's: the pack (or folder) is open, no text is
+            // loaded yet, and SDL is up (SDL_GetPreferredLocales also works before init).
+            // The configured preference is kept apart for saving (Settings.ConfiguredLanguage).
+            Settings.ApplyLanguage(Settings.GlobalSettings, FileManager.Clilocs.AvailableLanguages(), OsLanguage.Select);
+            FileManager.Load(Settings.GlobalSettings.Language);
+            ClassicUO.Game.Map.Chunk.StaticTileData = FileManager.TileData.StaticData;
 
             StaticFilters.Load(FileManager.TileData);
             BuffTable.Load();
             ChairTable.Load();
-
-            //ATTENTION: you will need to enable ALSO ultimalive server-side, or this code will have absolutely no effect!
-            UltimaLive.Enable();
         }
     }
 
@@ -206,13 +216,15 @@ namespace ClassicUO
         public static GameController Game { get; private set; }
 
 
-        public static void Run(IPluginHost pluginHost)
+        public static void Run()
         {
             Debug.Assert(Game == null);
 
             Log.Trace("Running game...");
 
-            using (Game = new GameController(pluginHost))
+            Microsoft.Xna.Framework.FNALoggerEXT.LogError = GpuDeviceLost.OnFnaError;
+
+            using (Game = new GameController())
             {
                 // https://github.com/FNA-XNA/FNA/wiki/7:-FNA-Environment-Variables#fna_graphics_enable_highdpi
                 CUOEnviroment.IsHighDPI = Environment.GetEnvironmentVariable("FNA_GRAPHICS_ENABLE_HIGHDPI") == "1";

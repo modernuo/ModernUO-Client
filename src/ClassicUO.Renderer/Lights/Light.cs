@@ -1,4 +1,4 @@
-using ClassicUO.Assets;
+﻿using ClassicUO.Assets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -14,7 +14,7 @@ namespace ClassicUO.Renderer.Lights
         {
             _lightsLoader = lightsLoader;
             _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[lightsLoader.File.Entries.Length];
+            _spriteInfos = new SpriteInfo[lightsLoader.Count];
         }
 
         public ref readonly SpriteInfo GetLight(uint idx)

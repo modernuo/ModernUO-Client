@@ -176,15 +176,8 @@ namespace ClassicUO.Game.Scenes
 
         private Gump GetGumpForStep()
         {
-            foreach (Item item in _world.Items.Values)
-            {
-                _world.RemoveItem(item);
-            }
-
-            foreach (Mobile mobile in _world.Mobiles.Values)
-            {
-                _world.RemoveMobile(mobile);
-            }
+            // T1 (funnel part 9): the removals as a funnel operation
+            _world.Writer.ClearForLogin();
 
             _world.Mobiles.Clear();
             _world.Items.Clear();
@@ -401,7 +394,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        public void CreateCharacter(PlayerMobile character, int cityIndex, byte profession)
+        public void CreateCharacter(PlayerMobile character, string name, PlayerState stats, int cityIndex, byte profession)
         {
             int i = 0;
 
@@ -413,9 +406,11 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
-            LastCharacterManager.Save(Account, _world.ServerName, character.Name);
+            LastCharacterManager.Save(Account, _world.ServerName, name);
 
             NetClient.Socket.Send_CreateCharacter(character,
+                                                  name,
+                                                  stats,
                                                   cityIndex,
                                                   NetClient.Socket.LocalIP,
                                                   ServerIndex,
@@ -494,27 +489,41 @@ namespace ClassicUO.Game.Scenes
 
             uint address = NetClient.Socket.LocalIP;
 
-            NetClient.Socket.Encryption?.Initialize(true, address);
+            // cipher initialisation, the seed and the first login packet are queued in order; other threads (plugins) are
+            // not admitted until EndHandshake
+            var handshake = NetClient.Socket.BeginLoginHandshake(address);
 
-            if (Client.Game.UO.Version >= ClientVersion.CV_6040)
+            try
             {
-                uint clientVersion = (uint) Client.Game.UO.Version;
+                if (Client.Game.UO.Version >= ClientVersion.CV_6040)
+                {
+                    uint clientVersion = (uint) Client.Game.UO.Version;
 
-                byte major = (byte) (clientVersion >> 24);
-                byte minor = (byte) (clientVersion >> 16);
-                byte build = (byte) (clientVersion >> 8);
-                byte extra = (byte) clientVersion;
+                    byte major = (byte) (clientVersion >> 24);
+                    byte minor = (byte) (clientVersion >> 16);
+                    byte build = (byte) (clientVersion >> 8);
+                    byte extra = (byte) clientVersion;
 
 
-                NetClient.Socket.Send_Seed(address, major, minor, build, extra);
+                    NetClient.Socket.Send_Seed(address, major, minor, build, extra);
+                }
+                else
+                {
+                    NetClient.Socket.Send_Seed_Old(address);
+                }
+
+                NetClient.Socket.Send_FirstLogin(Account, Password);
             }
-            else
+            finally
             {
-                NetClient.Socket.Send_Seed_Old(address);
+                NetClient.Socket.EndHandshake(handshake);
             }
-
-            NetClient.Socket.Send_FirstLogin(Account, Password);
         }
+
+        /// <summary>Steps in which a clean close by the server means the connection was lost (not a login denial's follow-up).</summary>
+        internal static bool IsLostOnCleanClose(LoginSteps step) =>
+            step is LoginSteps.Connecting or LoginSteps.VerifyingAccount or LoginSteps.ServerSelection or LoginSteps.LoginInToServer
+                or LoginSteps.CharacterSelection or LoginSteps.EnteringBritania or LoginSteps.CharacterCreationDone;
 
         private void OnNetClientDisconnected(object sender, SocketError e)
         {
@@ -523,6 +532,14 @@ namespace ClassicUO.Game.Scenes
             if (CurrentLoginStep == LoginSteps.CharacterCreation)
             {
                 return;
+            }
+
+            // A clean close by the server (Success) while we are still waiting on it is a lost connection too: before the
+            // network drain loop the client never noticed an idle close and sat on "Verifying Account". Once a step has
+            // ended in a popup (a login denial the server follows with a close) the message is kept.
+            if (e == 0 && IsLostOnCleanClose(CurrentLoginStep))
+            {
+                e = SocketError.ConnectionReset;
             }
 
             if (e != 0)
@@ -661,6 +678,11 @@ namespace ClassicUO.Game.Scenes
             ushort port = p.ReadUInt16BE();
             uint seed = p.ReadUInt32BE();
 
+            // The seed is the server's auth id (a credential), so only its first byte is logged: a
+            // ModernUO server before the auth-id fix can issue 0xEF.., which it then parses as the 0xEF
+            // seed packet and drops after its 5 s idle limit (the bench login-disconnect flake).
+            Log.Trace($"Relay to game server: seed first byte 0x{seed >> 24:X2}");
+
             NetClient.Socket.Disconnect();
             NetClient.Socket.Connected -= OnNetClientConnected;
 
@@ -677,15 +699,22 @@ namespace ClassicUO.Game.Scenes
 
                 if (NetClient.Socket.IsConnected)
                 {
-                    NetClient.Socket.Encryption?.Initialize(false, seed);
-                    NetClient.Socket.EnableCompression();
-                    unsafe
-                    {
-                        Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
-                        NetClient.Socket.Send(b, true, true);
-                    }
+                    var handshake = NetClient.Socket.BeginGameHandshake(seed);
 
-                    NetClient.Socket.Send_SecondLogin(Account, Password, seed);
+                    try
+                    {
+                        unsafe
+                        {
+                            Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
+                            NetClient.Socket.Send(b, skipEncryption: true);
+                        }
+
+                        NetClient.Socket.Send_SecondLogin(Account, Password, seed);
+                    }
+                    finally
+                    {
+                        NetClient.Socket.EndHandshake(handshake);
+                    }
                 }
             }
             finally
@@ -784,7 +813,7 @@ namespace ClassicUO.Game.Scenes
 
         private string[] ReadCityTextFile(int count)
         {
-            string path = Client.Game.UO.FileManager.GetUOFilePath("citytext.enu");
+            string path = Client.Game.UO.FileManager.GetLooseFilePath("citytext.enu");
 
             if (!File.Exists(path))
             {

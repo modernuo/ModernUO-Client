@@ -3,6 +3,7 @@
 using ClassicUO.Assets;
 using System;
 using System.IO;
+using ClassicUO.Utility;
 
 namespace ClassicUO.Game.Managers
 {
@@ -44,10 +45,10 @@ namespace ClassicUO.Game.Managers
 
             if (!File.Exists(_seasonsFile))
             {
-                CreateDefaultSeasonsFile();
+                CreateDefaultSeasonsFile(_seasonsFile);
             }
 
-            using (StreamReader reader = new StreamReader(_seasonsFile))
+            using (StreamReader reader = new StreamReader(AtomicFile.OpenRead(_seasonsFile)))
             {
                 while (!reader.EndOfStream)
                 {
@@ -175,14 +176,17 @@ namespace ClassicUO.Game.Managers
 
         #region CreateDefaultFile
 
-        private static void CreateDefaultSeasonsFile()
+        internal static void CreateDefaultSeasonsFile(string file)
         {
-            if (File.Exists(_seasonsFile))
+            if (File.Exists(file))
             {
                 return;
             }
 
-            using (StreamWriter writer = new StreamWriter(_seasonsFile))
+            // A fresh install has no Data/Client yet; the writer does not create it.
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+
+            using (StreamWriter writer = AtomicFile.CreateText(file, out var atomic))
             {
                 writer.WriteLine("spring,static,0x0CA7,0x0C84");
                 writer.WriteLine("spring,static,0x0CAC,0x0C46");
@@ -682,6 +686,8 @@ namespace ClassicUO.Game.Managers
                 writer.WriteLine("desolation,static,0x0D19,0x1BAE");
                 writer.WriteLine("desolation,static,0x0D2D,0x1BAE");
                 writer.WriteLine("desolation,static,0x0D2F,0x1BAE");
+                writer.Flush();
+                atomic.Commit();
             }
         }
 

@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -22,9 +23,27 @@ namespace ClassicUO.Configuration
             });
     }
 
-    internal sealed class Settings
+    internal sealed class Settings : IJsonOnDeserializing
     {
         public const string SETTINGS_FILENAME = "settings.json";
+        public const int CurrentSettingsVersion = 1;
+
+        [JsonPropertyName("settings_version")] public int SettingsVersion { get; set; } = CurrentSettingsVersion;
+
+        // New objects carry the current version; files without a version predate all migrations.
+        void IJsonOnDeserializing.OnDeserializing() => SettingsVersion = 0;
+
+        internal bool Migrate()
+        {
+            if (SettingsVersion >= CurrentSettingsVersion)
+                return false;
+
+            // Before version 1 this hidden switch was saved as false by default. Apply the owner's new default once.
+            PresentAtDisplayRate = true;
+            SettingsVersion = CurrentSettingsVersion;
+            return true;
+        }
+
         public static Settings GlobalSettings = new Settings();
         public static string CustomSettingsFilepath = null;
 
@@ -54,7 +73,10 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("last_server_name")] public string LastServerName { get; set; } = string.Empty;
 
-        [JsonPropertyName("fps")] public int FPS { get; set; } = 60;
+        // 0 = uncapped
+        [JsonPropertyName("fps")] public int FPS { get; set; } = 0;
+
+        [JsonPropertyName("vsync")] public bool VSync { get; set; }
 
         [JsonPropertyName("screen_scale")] public float ScreenScale { get; set; } = 1f;
 
@@ -82,14 +104,195 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("force_driver")] public byte ForceDriver { get; set; }
 
-        [JsonPropertyName("use_verdata")] public bool UseVerdata { get; set; }
+        // Folder of the converted asset pack; empty = "pack" next to the client, else in the UO directory.
+        [JsonPropertyName("pack")] public string PackDirectory { get; set; }
 
-        [JsonPropertyName("maps_layouts")] public string MapsLayouts { get; set; }
+        // The world renderer setting: "auto" (default: Gpu when the machine supports it, else Legacy), "gpu" (forced: no
+        // Gpu world = error and exit) or "compatibility" ("legacy" also accepted; forced). Saved; the Options menu writes it. -worldrenderer overrides it for one run without saving
+        // (WorldRendererOverride). RendererSelection decides at startup; WorldRenderer below is the result.
+        [JsonPropertyName("world_renderer")] public string WorldRendererSetting { get; set; } = "auto";
+
+        /// <summary>-worldrenderer auto|gpu|legacy: this run only, never saved.</summary>
+        [JsonIgnore] public static string WorldRendererOverride { get; set; }
+
+        // The world renderer this session uses: "gpu" (Uo.Render on FNA3D's SDL_GPU device) or "legacy" (the FNA batcher).
+        // Set once at startup by RendererSelection (never mid-session for players); dev builds (CUO_DEVTOOLS) can switch it at
+        // runtime (-worldrenderer command, DevBench world:/flip:/pick). Not saved.
+        [JsonIgnore] public string WorldRenderer { get; set; } = "gpu";
+
+        [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
+
+        [JsonPropertyName("render_view_reuse")] public bool RenderViewReuse { get; set; }
+        [JsonPropertyName("upload_skip_unchanged")] public bool UploadSkipUnchanged { get; set; }
+
+        // pa-gpusig, the Gpu prepare's ground-item cache: a served tile's cached items are trusted while their chunk's render generation
+        // (GpuItemGen.Touch: the WorldWriter commits, text, boat offsets, object handles) is unchanged and the tile was served in
+        // every pass since it was checked; otherwise their signatures are compared as before. Off = every served item's
+        // signature is rebuilt and compared every frame. CUO_GPU_SIG_CHECK=1 compares both decisions at every use.
+        [JsonPropertyName("gpu_prepare_item_cache_gen")] public bool GpuPrepareItemCacheGen { get; set; }
+
+        // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
+        // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
+        [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
+        [JsonPropertyName("text_quad_cache")] public bool TextQuadCache { get; set; }
+        [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
+
+        // A minimized window skips world prepare, draw and present (GameController.Update); packets, update and audio keep running.
+        // Not an ECS path, so there is no CUO_*_CHECK checker: nothing old to compare against, the draw is simply not run.
+        // Default on (owner decision): a minimized window shows nothing, and several clients run at once.
+        [JsonPropertyName("skip_draw_when_minimized")] public bool SkipDrawWhenMinimized { get; set; } = true;
+
+        // An inactive (ReduceFPSWhenInactive) or minimized client sleeps 12 ms instead of 1 ms on frames that skip draw, so its
+        // Update, input poll and packet drain run about 80 times a second instead of up to 1,000. A packet waits at most one
+        // sleep. Not measured yet, so default off.
+        [JsonPropertyName("throttle_update_when_inactive")] public bool ThrottleUpdateWhenInactive { get; set; }
+
+        // evloop-1 arm A (Windows): between frames the main loop waits once, with MsgWaitForMultipleObjectsEx, for the socket
+        // (WSAEventSelect), window messages, a wake, or a high-resolution timer at the next deadline (draw, queued action,
+        // player step, or event_loop_max_wait_ms), instead of skipping the draw and sleeping 1 ms. Falls back to the legacy loop
+        // off Windows, when the wait probe fails, and while late wakes back it off. Not an ECS path: no CUO_*_CHECK checker;
+        // CUO_LOOP_STATS=1 measures both loops. Read every frame (CUO_EVENT_LOOP=1|0 overrides it in developer builds).
+        // Default off.
+        [JsonPropertyName("event_loop")] public bool EventLoop { get; set; }
+
+        // M1: uncapped, vsync off, without inactive FPS reduction: skip Draw and Present until the display's next deadline.
+        // Explicit FPS caps and inactive/minimized policies keep precedence. Unknown refresh uses the original path.
+        [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; } = true;
+
+        // event_loop: the longest wait without an Update, for timers the loop does not track (plugin ticks, macros, audio
+        // streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients
+        // (CUO_EVENT_LOOP_MAX_WAIT_MS overrides it in developer builds).
+        [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
+
+        // evloop-2: with event_loop and the display-rate cap active, present when something may have changed instead of on a
+        // fixed display grid, rate-limited from the last present: a net, input or wake, a due timer, mobile/boat motion or
+        // effects present one display interval after the last present, or at once when the screen has been idle that long.
+        // With no change the screen is redrawn every event_loop_idle_redraw_ms for the discrete animations the loop does not
+        // track. The socket is also drained and dispatched (and sends flushed) right after Present, before the wait, so a reply
+        // that arrives during Draw is handled without a wake and a new Update (never between Draw and Present, where a handler
+        // could change the scene). CUO_PRESENT_CHANGE_CHECK=1 shadows the grid.
+        // Default off.
+        [JsonPropertyName("present_on_change")] public bool PresentOnChange { get; set; }
+
+        // present_on_change: the redraw period (ms) when nothing tracked changed. 0 (default) = the display interval: idle frames
+        // at display rate as with the grid, so no visual change; a packet then waits for the next interval from the last draw.
+        // A longer period (opt-in, e.g. 50 ms, the shortest discrete animation cadence, ITEM_EFFECT_ANIMATION_DELAY) leaves
+        // room to present an idle-time packet at once, at the cost of idle animations at that rate. Never shorter than the
+        // display interval.
+        [JsonPropertyName("event_loop_idle_redraw_ms")] public int EventLoopIdleRedrawMs { get; set; }
+
+        // evloop-4: with present_on_change, an idle frame is drawn when the next visual change is due (an animation frame, an
+        // idle animation, a text expiry, collected during Update; sources that change every frame present at display rate
+        // while active) instead of every event_loop_idle_redraw_ms, which is then unused. With nothing animating no idle frame
+        // is drawn; packets and input still present at once (rate-limited from the last present). Only meaningful with
+        // present_on_change. CUO_ANIM_DUE_CHECK=1 keeps drawing at display rate and compares every frame the signal would have
+        // skipped with the last frame it would have presented. Default off.
+        [JsonPropertyName("present_on_change_anim_due")] public bool PresentOnChangeAnimDue { get; set; }
+
+        // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
+        // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
+        // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.
+        // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
+        [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
+
+        // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
+        // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
+        // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.
+        // Default off.
+        [JsonPropertyName("pick_skip_off_world")] public bool PickSkipOffWorld { get; set; }
+
+        // perf-16: the world list fill walks only the tiles of its square range that can reach the screen (a diamond in tile
+        // space, FillDiamond) instead of every tile of the square. Same objects drawn, hidden and picked; drops the pre-cull
+        // work on objects far above or below the view. CUO_FILL_DIAMOND=1|0 overrides it in developer builds,
+        // CUO_FILL_DIAMOND_CHECK=1|N checks it. Default off.
+        [JsonPropertyName("world_fill_diamond")] public bool WorldFillDiamond { get; set; }
+
+        // pa-itemprep: the world fill's item branch reads the graphic and the flags from the item's packed ItemDrawRow (one
+        // record lookup) instead of the Graphic and Flags getters (ItemPrep). CUO_ITEM_PREP_ROWS=1|0 overrides it in developer
+        // builds, CUO_ITEM_PREP_CHECK=1 checks it. Default off.
+        [JsonPropertyName("item_prep_rows")] public bool ItemPrepRows { get; set; }
+
+        // pa-itemprep: an art item's pick test rejects a mouse outside every box its pack sprite can be tested in before it
+        // looks up the stored draw offset (ItemPick). CUO_ITEM_PICK_EARLY_REJECT=1|0 overrides it in developer builds,
+        // CUO_ITEM_PICK_CHECK=1 checks it. Default off.
+        [JsonPropertyName("item_pick_early_reject")] public bool ItemPickEarlyReject { get; set; }
+
+        // perf-17: an item's boat offset read (ItemOffsets) tests a flag on the item, set by the boat operations' write,
+        // instead of the world's offset count, so while a boat moves only the items with an offset look up their record.
+        // CUO_ITEM_OFFSET_FLAG=1|0 overrides it in developer builds, CUO_ITEM_OFFSET_FLAG_CHECK=1 checks it. Default off.
+        [JsonPropertyName("item_offset_flag")] public bool ItemOffsetFlag { get; set; }
+
+        // perf-17, perf-19: the pick test of a static, a multi component and an art item rejects a mouse outside the box the
+        // largest static art can reach from the object's anchor before it reads the graphic and the art entry (PickBox).
+        // Replaces perf-17's static_pick_early_reject (statics only, never on by default). CUO_PICK_EARLY_REJECT=1|0
+        // overrides it in developer builds, CUO_PICK_EARLY_REJECT_CHECK=1 checks it. Default off.
+        [JsonPropertyName("pick_early_reject")] public bool PickEarlyReject { get; set; }
+
+
+        // item-pool: the items World drops (out of range, deleted, swept) wait 2 s in a bounded pool (8,192 items, ~2.3 MB)
+        // and are reset and reused for the items that enter range next (ItemPool), instead of a new Item each. Read once at
+        // startup (CUO_ITEM_POOL=1|0 overrides it in developer builds; CUO_ITEM_POOL_CHECK=1 compares every reused item with a
+        // new one). Default on since 2026-11-11 (owner; gates with the checker: 0 mismatches over ~15k reuses, ls_walk
+        // B/frame -24..34 %); off = a new Item for every item entering range.
+        [JsonPropertyName("item_pool")] public bool ItemPool { get; set; } = true;
+
+        // anim-count: while the Gpu world renderer draws, the animation advance reads a mobile's frame count from the pack's
+        // animation tables (AnimFrameCount) instead of the Legacy frame cache, which decodes and uploads the direction into the
+        // RGBA8 anim atlas that the Gpu world never samples (Legacy keeps the cache read). Read once at startup
+        // (CUO_ANIM_FRAME_COUNT_TABLES=1|0 overrides it in developer builds; CUO_ANIM_FRAME_COUNT_CHECK=1 compares both counts
+        // at every call). Default off.
+        [JsonPropertyName("anim_frame_count_tables")] public bool AnimFrameCountTables { get; set; }
+
+        // cache-lru: the Legacy animation atlas (RGBA8 pages, 64 MiB each) frees its least recently used pages above a byte
+        // budget that grows a page on thrash while memory allows and shrinks after minutes without (sooner when unfocused);
+        // evicted directions load again on use (AnimAtlasLru). Read once at startup (CUO_ANIM_LRU=1|0 and the
+        // CUO_ANIM_LRU_* sizes override it in developer builds; CUO_ANIM_LRU_CHECK=1 checks reloads and freed pages).
+        // Default off: the atlas only grows.
+        [JsonPropertyName("anim_atlas_lru")] public bool AnimAtlasLru { get; set; }
+
+        // perf-audit #2: the world text list keeps its tail (where the draw pass starts) while its links change, validated by a
+        // link-version counter, instead of walking every DRight link in each of the three passes per frame. Read at every use
+        // (CUO_TEXT_TAIL=1|0 overrides it and CUO_TEXT_ORDER_CHECK=1 compares the kept tail and the link order with the full
+        // walk, in developer builds). Default off; off = the walk in every pass.
+        [JsonPropertyName("text_tail_cache")] public bool TextTailCache { get; set; }
+
+        // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
+        // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
+        // every frame it is visible (GameScene.ApplyMeshHue, MeshHueEpoch). Read once per frame (CUO_MESH_HUE=1|0 overrides
+        // it in developer builds; CUO_MESH_HUE_CHECK=1 compares every kept hue with the per-frame one). Default off.
+        [JsonPropertyName("mesh_hue_on_change")] public bool MeshHueOnChange { get; set; }
+
+        // pa-meshhue: Legacy chunk-mesh layers keep the frame's sprite visibility as bits (MeshLayer.ResetVisibility clears a
+        // word per 64 sprites instead of a byte each; BuildVisibleIndices compares words and walks set bits). Read once per
+        // frame (CUO_MESH_VIS=1|0 overrides it in developer builds; CUO_MESH_VIS_CHECK=1 compares every layer's indices and
+        // runs with the bool path's). Default off.
+        [JsonPropertyName("mesh_vis_bits")] public bool MeshVisBits { get; set; }
+
+        // opl-spread: property-list requests (0xD6) leave at this many serials per second from a queue ordered hovered/gump
+        // first, then by distance from the player (OplRequestQueue), and requests for removed objects are dropped. 0 = off:
+        // one list, 15 per frame. Read once at startup (CUO_OPL_REQUEST_BUDGET=<n> overrides it in developer builds;
+        // CUO_OPL_SPREAD_CHECK=1 checks every send against the requests). Default off.
+        [JsonPropertyName("opl_request_budget")] public int OplRequestBudget { get; set; }
+
+        // clip-1: the world walk skips only an object over its max Z instead of ending the tile's walk there (the tile list is
+        // in PriorityZ order, not PriorityZ + height, so the old rule dropped lower objects after a tall one). Read at every
+        // cut (CUO_WALK_MAXZ=1|0 overrides it and CUO_WALK_MAXZ_CHECK=1 compares the drawn set with the old walk's, in
+        // developer builds; WalkMaxZ). Default off.
+        [JsonPropertyName("walk_maxz_continue")] public bool WalkMaxZContinue { get; set; }
+
+        // clip-2: per-pixel geometric depth by shape class instead of one depth key per sprite (feet and large bodies
+        // through walls; Game/Scenes/DepthModel). Both renderers (Legacy since clip-4). CUO_DEPTH_MODEL=1|0 overrides it in developer
+        // builds. Default off.
+        [JsonPropertyName("depth_model")] public bool DepthModel { get; set; }
+
+        // step_drain: a non-local mobile's step lasts its learned server pace (never longer than the table time; faster
+        // only when the pace is clearly faster), with a bounded drain of a real backlog, instead of the table time and the
+        // "mounted when steps are queued" guess (Game/Ecs/StepDrain). CUO_STEP_DRAIN=1|0 overrides it and
+        // CUO_STEP_DRAIN_CHECK=1 compares the old timing with the new, in developer builds. Default off.
+        [JsonPropertyName("step_drain")] public bool StepDrain { get; set; }
 
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
-        [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };
-        
         [JsonPropertyName("files_override")] public string OverrideFile { get; set; }
 
         public static string GetSettingsFilepath()
@@ -108,6 +311,24 @@ namespace ClassicUO.Configuration
         }
 
 
+        /// <summary>
+        /// The language preference as configured (settings.json or -language; "" when unset), or null before the language
+        /// is chosen. <see cref="Language"/> then holds the effective language of this run (the preference when it is
+        /// available, else the OS's choice); <see cref="Save"/> writes this preference unchanged, so a language chosen
+        /// from the OS is never saved and a preference that is unavailable this run is kept for the next.
+        /// </summary>
+        internal static string ConfiguredLanguage;
+
+        /// <summary>
+        /// Startup: chooses the effective language from <paramref name="configured"/> and the available cliloc languages
+        /// (<paramref name="choose"/> is <see cref="OsLanguage.Select"/>), keeping the preference for <see cref="Save"/>.
+        /// </summary>
+        internal static void ApplyLanguage(Settings settings, IReadOnlyCollection<string> available, Func<string, IReadOnlyCollection<string>, string> choose)
+        {
+            ConfiguredLanguage = settings.Language ?? string.Empty;
+            settings.Language = choose(ConfiguredLanguage, available);
+        }
+
         public void Save()
         {
             // Make a copy of the settings object that we will use in the saving process
@@ -123,6 +344,13 @@ namespace ClassicUO.Configuration
             }
 
             settingsToSave.ProfilesPath = string.Empty;
+
+            // The configured language, not this run's effective one: a language chosen from the OS stays unset (the next
+            // run follows the OS again), and a preference that is unavailable now is kept
+            if (ConfiguredLanguage != null)
+            {
+                settingsToSave.Language = ConfiguredLanguage;
+            }
 
             // NOTE: We can do any other settings clean-ups here before we save them
 

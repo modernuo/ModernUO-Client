@@ -1,9 +1,11 @@
 [submodule "external/FNA"]
 	path = external/FNA
-	url = https://github.com/FNA-XNA/FNA.git
-[submodule "external/MP3Sharp"]
-	path = external/MP3Sharp
-	url = https://github.com/andreakarasho/MP3Sharp.git
+	url = https://github.com/modernuo/FNA.git
+	branch = modernuo/26.10-patched
 [submodule "external/FileEmbed"]
 	path = external/FileEmbed
 	url = https://github.com/SirCxyrtyx/FileEmbed.git
+[submodule "external/SDL"]
+	path = external/SDL
+	url = https://github.com/modernuo/SDL.git
+	branch = modernuo/3.4.18-patched

@@ -1,13 +1,11 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
-using ClassicUO.IO;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using System;
-using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
-using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
@@ -19,42 +17,40 @@ namespace ClassicUO.Assets
         {
         }
 
+        /// <summary>The keyword entries, in file order (tests).</summary>
+        public SpeechEntry[] Entries => _speech;
 
-        public override unsafe void Load()
+        /// <summary>
+        /// The keyword table, from the pack's text/speech.bin. A pack without it throws; an invalid one is logged and
+        /// leaves the table empty (speech is then sent without keywords).
+        /// </summary>
+        public override void Load()
         {
-            string path = FileManager.GetUOFilePath("speech.mul");
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            string path = FileManager.RequirePackFile(TextConst.SpeechFile);
+            (ushort Id, string Text)[] texts;
 
-            if (!File.Exists(path))
+            try
             {
+                texts = SpeechFile.Read(path);
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"Speech: '{path}' is invalid ({e.Message})");
                 _speech = Array.Empty<SpeechEntry>();
 
                 return;
             }
 
-            var file = new UOFileMul(path);
-            var entries = new List<SpeechEntry>();
+            var entries = new SpeechEntry[texts.Length];
 
-            var buf = new byte[256];
-            while (file.Position < file.Length)
+            for (int i = 0; i < texts.Length; i++)
             {
-                file.Read(buf.AsSpan(0, sizeof(ushort) * 2));
-                var id = BinaryPrimitives.ReadUInt16BigEndian(buf);
-                var length = BinaryPrimitives.ReadUInt16BigEndian(buf.AsSpan(sizeof(ushort)));
-
-                if (length > 0)
-                {
-                    if (length > buf.Length)
-                        buf = new byte[length];
-
-                    file.Read(buf.AsSpan(0, length));
-                    var text = string.Intern(Encoding.UTF8.GetString(buf.AsSpan(0, length)));
-
-                    entries.Add(new SpeechEntry(id, text));
-                }
+                entries[i] = new SpeechEntry(texts[i].Id, texts[i].Text);
             }
 
-            _speech = entries.ToArray();
-            file.Dispose();
+            _speech = entries;
+            Log.Trace($"Speech: pack, {entries.Length} entries in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms");
         }
 
         public bool IsMatch(string input, in SpeechEntry entry)

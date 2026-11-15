@@ -23,6 +23,7 @@ namespace Microsoft.Xna.Framework.Graphics
         {
             pixel = new Texture2D(spriteBatch.GraphicsDevice, 1, 1, false, SurfaceFormat.Color);
             pixel.SetData(new[] { Color.White });
+            ClassicUO.Renderer.TextureUploads.Changed();
         }
 
 

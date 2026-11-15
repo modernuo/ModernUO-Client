@@ -32,6 +32,11 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
+            if (Map.MapObjectRecycler.Check && InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.StaticDraw);
+            }
+
             if (!AllowedToDraw || IsDestroyed)
             {
                 return false;
@@ -94,6 +99,41 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool CheckMouseSelection()
         {
+            if (Map.MapObjectRecycler.Check && InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.StaticPick);
+            }
+
+            // pick_early_reject (PickBox): a mouse far from the anchor misses whatever the art; no graphic, tree filter or art
+            // entry read for it
+            if (PickBox.Active)
+            {
+                Point anchor = RealScreenPosition;
+                Point mouse = SelectedObject.TranslatedMousePositionByViewport;
+                bool reject = PickBox.Rejects(mouse.X - anchor.X, mouse.Y - anchor.Y);
+
+#if CUO_DEVTOOLS
+                if (PickBox.Checking)
+                {
+                    bool hit = FullPick();
+                    PickBox.Judge(PickBox.Kind.Static, this, Graphic, reject, hit);
+
+                    return hit && !(reject && PickBox.RejectOn);
+                }
+#endif
+
+                if (reject)
+                {
+                    return false;
+                }
+            }
+
+            return FullPick();
+        }
+
+        // the pick test before pick_early_reject
+        private bool FullPick()
+        {
             if (
                 !(
                     SelectedObject.Object == this
@@ -111,20 +151,45 @@ namespace ClassicUO.Game.GameObjects
                     graphic = Constants.TREE_REPLACE_GRAPHIC;
                 }
 
-                ref var index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
 
                 Point position = RealScreenPosition;
                 position.X -= index.Width;
                 position.Y -= index.Height;
+                int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - position.X;
+                int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - position.Y;
 
-                return Client.Game.UO.Arts.PixelCheck(
-                    graphic,
-                    SelectedObject.TranslatedMousePositionByViewport.X - position.X,
-                    SelectedObject.TranslatedMousePositionByViewport.Y - position.Y
-                );
+                // most drawn statics are not under the mouse: an entry with a stored draw offset bounds the picker's mask,
+                // so reject outside it without the picker. An unset entry (0, 0: not drawn yet, or 44 x 44 art) keeps the
+                // picker test. CUO_PREP_CHECK=1 counts rejects the picker would have hit
+                if ((index.Width | index.Height) != 0 && OutsidePickBounds(index.Width, index.Height, mouseX, mouseY))
+                {
+                    if (PrepCheck.On)
+                    {
+                        PrepCheck.StaticPicksRejected++;
+
+                        if (Client.Game.UO.Arts.PixelCheck(graphic, mouseX, mouseY))
+                        {
+                            PrepCheck.StaticPicksWrong++;
+                            PrepCheck.Sample ??= $"static graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {index.Width},{index.Height}";
+                        }
+                    }
+
+                    return false;
+                }
+
+                return Client.Game.UO.Arts.PixelCheck(graphic, mouseX, mouseY);
             }
 
             return false;
         }
+
+        /// <summary>
+        /// The static pick test's reject. Every writer of an art entry stores ((OrigW &gt;&gt; 1) - 22, OrigH - 44) from the
+        /// sprite's untrimmed size, and the picker's mask is OrigW x OrigH, so the mask fits in (Width + 23) * 2 by
+        /// Height + 44 pixels from the art's top left: a mouse outside that misses.
+        /// </summary>
+        internal static bool OutsidePickBounds(int entryWidth, int entryHeight, int mouseX, int mouseY)
+            => (uint)mouseX >= (uint)((entryWidth + 23) * 2) || (uint)mouseY >= (uint)(entryHeight + 44);
     }
 }

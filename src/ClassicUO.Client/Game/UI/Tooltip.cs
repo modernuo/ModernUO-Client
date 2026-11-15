@@ -42,6 +42,9 @@ namespace ClassicUO.Game.UI
 
             if (_lastHoverTime > Time.Ticks)
             {
+                // present_on_change_anim_due: the tooltip appears after the hover delay with no further input
+                ClassicUO.Loop.VisualDue.At(_lastHoverTime, ClassicUO.Loop.VisualSource.Tooltip);
+
                 return false;
             }
 
@@ -233,7 +236,7 @@ namespace ClassicUO.Game.UI
                             }
                             else
                             {
-                                Mobile mob = _world.Mobiles.Get(serial);
+                                Mobile mob = _world.FindMobile(serial);
 
                                 if (mob != null)
                                 {

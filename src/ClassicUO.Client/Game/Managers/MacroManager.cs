@@ -74,11 +74,13 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(path);
+                AtomicFile.LoadXml(doc, path);
             }
             catch (Exception ex)
             {
+                // keep the file: the next Save() backs it up before replacing it
                 Log.Error(ex.ToString());
+                _loadFailed = true;
 
                 return;
             }
@@ -99,13 +101,27 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        private bool _loadFailed;
+
         public void Save()
         {
             List<Macro> list = GetAllMacros();
 
             string path = Path.Combine(ProfileManager.ProfilePath, "macros.xml");
 
-            using (XmlTextWriter xml = new XmlTextWriter(path, Encoding.UTF8)
+            if (_loadFailed)
+            {
+                if (!AtomicFile.KeepBackup(path))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(path);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -122,6 +138,8 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
 
@@ -359,6 +377,12 @@ namespace ClassicUO.Game.Managers
 
         public void Update()
         {
+            if (_lastMacro != null)
+            {
+                // present_on_change_anim_due: a running macro acts on its own (delays, waits); its next step time is not tracked
+                ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Other);
+            }
+
             while (_lastMacro != null)
             {
                 switch (Process())
@@ -1765,6 +1789,8 @@ namespace ClassicUO.Game.Managers
 
                 case MacroType.ToggleDrawRoofs:
                     ProfileManager.CurrentProfile.DrawRoofs = !ProfileManager.CurrentProfile.DrawRoofs;
+                    // as the Options dialog does (DrawRoofs is also part of the decision's validity, MaxDrawZState)
+                    Client.Game.GetScene<GameScene>()?.UpdateMaxDrawZ(true);
 
                     break;
 

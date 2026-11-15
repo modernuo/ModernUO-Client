@@ -3,6 +3,7 @@
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Map;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Input;
 using ClassicUO.Assets;
@@ -282,6 +283,13 @@ namespace ClassicUO.Game.Managers
 
                                 if (showCriminalQuery && UIManager.GetGump<QuestionGump>() == null)
                                 {
+                                    // gump-handles: the question can stay open for a while, so the closure keeps the serial
+                                    // and the mobile's values now, and sends the live mobile's values if World still has it
+                                    // (it held the Mobile itself, which kept its last values once destroyed)
+                                    ushort graphic = mobile.Graphic;
+                                    ushort x = mobile.X, y = mobile.Y;
+                                    sbyte z = mobile.Z;
+
                                     QuestionGump messageBox = new QuestionGump
                                     (
                                         _world,
@@ -290,11 +298,19 @@ namespace ClassicUO.Game.Managers
                                         {
                                             if (s)
                                             {
-                                                NetClient.Socket.Send_TargetObject(entity,
-                                                                                   entity.Graphic,
-                                                                                   entity.X,
-                                                                                   entity.Y,
-                                                                                   entity.Z,
+                                                if (_world.GetMobile(serial) is { } live)
+                                                {
+                                                    graphic = live.Graphic;
+                                                    x = live.X;
+                                                    y = live.Y;
+                                                    z = live.Z;
+                                                }
+
+                                                NetClient.Socket.Send_TargetObject(serial,
+                                                                                   graphic,
+                                                                                   x,
+                                                                                   y,
+                                                                                   z,
                                                                                    _targetCursorId,
                                                                                    (byte)TargetingType);
 
@@ -404,6 +420,21 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        private GameObject FindTarget(int x, int y, ushort graphic, short z)
+        {
+            GameObject candidate = _world.Map.OpenTile(x, y, true, out TileReader reader);
+
+            for (; candidate != null; candidate = reader.Next())
+            {
+                if (candidate.Graphic == graphic && candidate.Z == z)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
         public void Target(ushort graphic, ushort x, ushort y, short z, bool wet = false)
         {
             if (!IsTargeting)
@@ -414,16 +445,11 @@ namespace ClassicUO.Game.Managers
             switch (TargetingState)
             {
                 case CursorTarget.CallbackTarget:
-                    GameObject candidate = _world.Map.GetTile(x, y);
+                    GameObject found = FindTarget(x, y, graphic, z);
 
-                    while (candidate != null)
+                    if (found != null)
                     {
-                        if (candidate.Graphic == graphic && candidate.Z == z)
-                        {
-                            _targetCallback?.Invoke(candidate);
-                            break;
-                        }
-                        candidate = candidate.TNext;
+                        _targetCallback?.Invoke(found);
                     }
 
                     ClearTargetingWithoutTargetCancelPacket();

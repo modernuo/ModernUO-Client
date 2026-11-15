@@ -4,53 +4,35 @@ using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
+using ClassicUO.Game.Map;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Network;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace ClassicUO.Game.GameObjects
 {
     internal class PlayerMobile : Mobile
     {
-        private readonly Dictionary<BuffIconType, BuffIcon> _buffIcons = new Dictionary<BuffIconType, BuffIcon>();
-
         public PlayerMobile(World world, uint serial) : base(world, serial)
         {
-            Skills = new Skill[Client.Game.UO.FileManager.Skills.SkillsCount];
-
-            for (int i = 0; i < Skills.Length; i++)
-            {
-                SkillEntry skill = Client.Game.UO.FileManager.Skills.Skills[i];
-                Skills[i] = new Skill(skill.Name, skill.Index, skill.HasAction);
-            }
-
             Walker = new WalkerManager(this);
             Pathfinder = new Pathfinder(world);
         }
 
-        public Skill[] Skills { get; }
-        public override bool InWarMode { get; set; }
-        public IReadOnlyDictionary<BuffIconType, BuffIcon> BuffIcons => _buffIcons;
+        // T9 S5: the record's MobileTraits WarMode bit (0x72; WorldWriter.SetWarMode commits it)
+        public override bool InWarMode => TryRecord(out Friflo.Engine.ECS.Entity e) && EcsScalars.MobileBit(e, ClassicUO.Ecs.MobileTraitBits.WarMode);
 
-        public ref Ability PrimaryAbility => ref Abilities[0];
-        public ref Ability SecondaryAbility => ref Abilities[1];
         protected override bool IsWalking => LastStepTime > Time.Ticks - Constants.PLAYER_WALKING_DELAY;
 
         internal WalkerManager Walker { get; }
         public Pathfinder Pathfinder { get; }
 
 
-        public readonly Ability[] Abilities = [Ability.Invalid, Ability.Invalid];
-
         //private bool _lastRun, _lastMount;
         //private int _lastDir = -1, _lastDelta, _lastStepTime;
 
-
-        public readonly HashSet<uint> AutoOpenedCorpses = new HashSet<uint>();
-        public readonly HashSet<uint> ManualOpenedCorpses = new HashSet<uint>();
 
         // Tracks the last direction actually sent to the server via a walk packet.
         private Direction _serverDirection;
@@ -65,57 +47,6 @@ namespace ClassicUO.Game.GameObjects
             _serverDirection = Direction;
         }
 
-        public short ColdResistance;
-        public short DamageIncrease;
-        public short DamageMax;
-        public short DamageMin;
-        public long DeathScreenTimer;
-        public short DefenseChanceIncrease;
-        public Lock DexLock;
-        public ushort Dexterity;
-        public short DexterityIncrease;
-        public short EnergyResistance;
-        public short EnhancePotions;
-        public short FasterCasting;
-        public short FasterCastRecovery;
-        public short FireResistance;
-        public byte Followers;
-        public byte FollowersMax;
-        public uint Gold;
-        public short HitChanceIncrease;
-        public short HitPointsIncrease;
-        public short HitPointsRegeneration;
-        public ushort Intelligence;
-        public short IntelligenceIncrease;
-        public Lock IntLock;
-        public short LowerManaCost;
-        public short LowerReagentCost;
-        public ushort Luck;
-        public short ManaIncrease;
-        public short ManaRegeneration;
-        public short MaxColdResistence;
-        public short MaxDefenseChanceIncrease;
-        public short MaxEnergyResistence;
-        public short MaxFireResistence;
-        public short MaxHitPointsIncrease;
-        public short MaxManaIncrease;
-        public short MaxPhysicResistence;
-        public short MaxPoisonResistence;
-        public short MaxStaminaIncrease;
-        public short PhysicalResistance;
-        public short PoisonResistance;
-        public short ReflectPhysicalDamage;
-        public short SpellDamageIncrease;
-        public short StaminaIncrease;
-        public short StaminaRegeneration;
-        public short StatsCap;
-        public ushort Strength;
-        public short StrengthIncrease;
-        public Lock StrLock;
-        public short SwingSpeedIncrease;
-        public uint TithingPoints;
-        public ushort Weight;
-        public ushort WeightMax;
 
         public Item FindBandage()
         {
@@ -136,7 +67,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (backpack != null)
             {
-                return FindItemInContainerRecursive(backpack, graphic);
+                return FindItemInContainerRecursive(backpack, graphic, backpack.Serial, 0);
             }
 
             return null;
@@ -148,30 +79,30 @@ namespace ClassicUO.Game.GameObjects
 
             if (backpack != null)
             {
-                return FindItemByClilocInContainerRecursive(backpack, cliloc);
+                return FindItemByClilocInContainerRecursive(backpack, cliloc, backpack.Serial, 0);
             }
 
             return null;
         }
 
-        private Item FindItemInContainerRecursive(Item container, ushort graphic)
+        private Item FindItemInContainerRecursive(Item container, ushort graphic, uint root, int depth)
         {
             Item found = null;
 
             if (container != null)
             {
-                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                // T2: the children from the ECS (WorldState.Children)
+                foreach (Item item in World.State.Children(container))
                 {
-                    Item item = (Item) i;
 
                     if (item.Graphic == graphic)
                     {
                         return item;
                     }
 
-                    if (!item.IsEmpty)
+                    if (depth < WorldState.MaxNestingDepth && item.Serial != root && World.State.HasChildren(item))
                     {
-                        found = FindItemInContainerRecursive(item, graphic);
+                        found = FindItemInContainerRecursive(item, graphic, root, depth + 1);
 
                         if (found != null && found.Graphic == graphic)
                         {
@@ -184,15 +115,15 @@ namespace ClassicUO.Game.GameObjects
             return found;
         }
 
-        private Item FindItemByClilocInContainerRecursive(Item container, int cliloc)
+        private Item FindItemByClilocInContainerRecursive(Item container, int cliloc, uint root, int depth)
         {
             Item found = null;
 
             if (container != null)
             {
-                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                // T2: the children from the ECS (WorldState.Children)
+                foreach (Item item in World.State.Children(container))
                 {
-                    Item item = (Item) i;
 
 
                     if (cliloc == World.OPL.GetNameCliloc(item.Serial))
@@ -200,9 +131,9 @@ namespace ClassicUO.Game.GameObjects
                         return item;
                     }
 
-                    if (!item.IsEmpty)
+                    if (depth < WorldState.MaxNestingDepth && item.Serial != root && World.State.HasChildren(item))
                     {
-                        found = FindItemByClilocInContainerRecursive(item, cliloc);
+                        found = FindItemByClilocInContainerRecursive(item, cliloc, root, depth + 1);
 
                         if (found != null && cliloc == World.OPL.GetNameCliloc(found.Serial))
                         {
@@ -236,17 +167,14 @@ namespace ClassicUO.Game.GameObjects
         {
             int _amount = 0;
 
-            for (
-                Item item = (Item)World.Player.Items;
-                item != null;
-                item = (Item)item.Next
-            )
+            // T2: the children from the ECS (WorldState.Children)
+            foreach (Item item in World.State.Children(World.Player))
             {
                 if (item.Layer < Layer.OneHanded || item.Layer > Layer.Legs)
                 {
                     continue;
                 }
-                if (item.ItemData.IsContainer && !item.IsEmpty)
+                if (item.ItemData.IsContainer && World.State.HasChildren(item))
                 {
                     item.GetTotalAmount(graphic, hue, ref _amount);
                 }
@@ -260,43 +188,42 @@ namespace ClassicUO.Game.GameObjects
             return _amount;
         }
 
-        public void AddBuff(BuffIconType type, ushort graphic, uint time, string text)
+        /// <summary>
+        /// The neighbouring graphic (previous first, then next) that shares <paramref name="animId"/>, or 0 when
+        /// neither does. Both lookups are bounds-checked: graphic 0xFFFF has no next entry in a 0x10000-entry table,
+        /// and a graphic of 0 has no previous one.
+        /// </summary>
+        internal static ushort FindAnimNeighbour(StaticTiles[] statics, ushort graphic, ushort animId)
         {
-            _buffIcons[type] = new BuffIcon(type, graphic, time, text);
-        }
+            if (graphic > 0 && graphic - 1 < statics.Length && statics[graphic - 1].AnimID == animId)
+            {
+                return (ushort)(graphic - 1);
+            }
 
+            if (graphic + 1 < statics.Length && statics[graphic + 1].AnimID == animId)
+            {
+                return (ushort)(graphic + 1);
+            }
 
-        public bool IsBuffIconExists(BuffIconType graphic)
-        {
-            return _buffIcons.ContainsKey(graphic);
-        }
-
-        public void RemoveBuff(BuffIconType graphic)
-        {
-            _buffIcons.Remove(graphic);
+            return 0;
         }
 
         public void UpdateAbilities()
         {
-            AbilityData.DefaultItemAbilities.Set(Abilities);
+            Ability[] abilities = World.PlayerState.Abilities;
+            AbilityData.DefaultItemAbilities.Set(abilities);
             
             if ((FindItemByLayer(Layer.OneHanded) ?? FindItemByLayer(Layer.TwoHanded)) is { Graphic: > 0 } weapon)
             {
-                ushort animId = weapon.ItemData.AnimID;
-                ushort animGraphic = 0;
+                ushort animGraphic = FindAnimNeighbour(
+                    Client.Game.UO.FileManager.TileData.StaticData,
+                    weapon.Graphic,
+                    weapon.ItemData.AnimID
+                );
 
-                if (Client.Game.UO.FileManager.TileData.StaticData[weapon.Graphic - 1].AnimID == animId)
+                if (AbilityData.GraphicToAbilitiesMap.TryGetValue(weapon.Graphic, out var weaponAbilities) || AbilityData.GraphicToAbilitiesMap.TryGetValue(animGraphic, out weaponAbilities))
                 {
-                    animGraphic = (ushort)(weapon.Graphic - 1);
-                }
-                else if (Client.Game.UO.FileManager.TileData.StaticData[weapon.Graphic + 1].AnimID == animId)
-                {
-                    animGraphic = (ushort)(weapon.Graphic + 1);
-                }
-
-                if (AbilityData.GraphicToAbilitiesMap.TryGetValue(weapon.Graphic, out var abilities) || AbilityData.GraphicToAbilitiesMap.TryGetValue(animGraphic, out abilities))
-                {
-                    abilities.Set(Abilities);
+                    weaponAbilities.Set(abilities);
                 }
                 else
                 {
@@ -314,8 +241,6 @@ namespace ClassicUO.Game.GameObjects
         protected override void OnPositionChanged()
         {
             base.OnPositionChanged();
-
-            Plugin.UpdatePlayerPosition(X, Y, Z);
 
             TryOpenDoors();
             TryOpenCorpses();
@@ -335,14 +260,80 @@ namespace ClassicUO.Game.GameObjects
                     return;
                 }
 
-                foreach (Item item in World.Items.Values)
+                OpenCorpsesInRange(ProfileManager.CurrentProfile.AutoOpenCorpseRange);
+            }
+        }
+
+        /// <summary>Tests: receives the serials <see cref="OpenCorpsesInRange"/> opens instead of the queued double clicks.</summary>
+        internal List<uint> CorpseOpenSink;
+
+        /// <summary>
+        /// perf-13: opens every corpse within <paramref name="range"/> not opened yet, in <c>World.Items</c> order, as the
+        /// every-item loop did. Every live corpse is in the active item list (<see cref="Item.NeedsFrameUpdate"/>; the mirror
+        /// hooks queue it, World.Update's first pass and sweep catch any other), so the candidates are counted there: none
+        /// (every step but the first near new corpses) costs O(corpses); one is opened directly; two or more take the
+        /// every-item loop, which alone knows the dictionary's order (which gump opens first). Before the list's first build
+        /// after World.Clear the loop runs.
+        /// </summary>
+        internal void OpenCorpsesInRange(int range)
+        {
+            int found = 0;
+            Item single = null;
+
+            if (World.ActiveItemsListed)
+            {
+                int count = World.ActiveItemCount;
+
+                for (int i = 0; i < count; i++)
                 {
-                    if (!item.IsDestroyed && item.IsCorpse && item.Distance <= ProfileManager.CurrentProfile.AutoOpenCorpseRange && !AutoOpenedCorpses.Contains(item.Serial))
+                    Item item = World.ActiveItemAt(i);
+
+                    if (ShouldAutoOpen(item, range) && World.Holds(item))
                     {
-                        AutoOpenedCorpses.Add(item.Serial);
-                        GameActions.DoubleClickQueued(item.Serial);
+                        single = item;
+
+                        if (++found > 1)
+                        {
+                            break;
+                        }
                     }
                 }
+            }
+            else
+            {
+                found = 2;
+            }
+
+            if (found == 1)
+            {
+                AutoOpenCorpse(single);
+            }
+            else if (found > 1)
+            {
+                foreach (Item item in World.Items.Values)
+                {
+                    if (ShouldAutoOpen(item, range))
+                    {
+                        AutoOpenCorpse(item);
+                    }
+                }
+            }
+        }
+
+        internal bool ShouldAutoOpen(Item item, int range) =>
+            !item.IsDestroyed && item.IsCorpse && item.Distance <= range && !World.PlayerState.AutoOpenedCorpses.Contains(item.Serial);
+
+        private void AutoOpenCorpse(Item item)
+        {
+            World.PlayerState.AutoOpenedCorpses.Add(item.Serial);
+
+            if (CorpseOpenSink != null)
+            {
+                CorpseOpenSink.Add(item.Serial);
+            }
+            else
+            {
+                GameActions.DoubleClickQueued(item.Serial);
             }
         }
 
@@ -360,12 +351,60 @@ namespace ClassicUO.Game.GameObjects
                 int x = X, y = Y, z = Z;
                 Pathfinder.GetNewXY((byte) Direction, ref x, ref y);
 
-                if (World.Items.Values.Any(s => s.ItemData.IsDoor && s.X == x && s.Y == y && s.Z - 15 <= z && s.Z + 15 >= z))
+                bool door = DoorAhead(World, x, y, z, Client.Game.UO.FileManager.TileData.StaticData);
+
+                if (door)
                 {
                     GameActions.OpenDoor();
                 }
             }
         }
+
+        /// <summary>
+        /// perf-13: whether an item with the door flag stands on tile (<paramref name="x"/>, <paramref name="y"/>) within 15
+        /// of <paramref name="z"/>: the rule the every-item LINQ scan applied, read from that tile's objects (the tile list or
+        /// the dynamic tile index, <see cref="TileReader"/>). A world item's place is its tile; the scan also matched items in
+        /// containers or worn whose container X/Y equalled the tile, which are not doors in front of the player. When the
+        /// tile's chunk is not loaded (its items parked) the scan runs. <paramref name="data"/> is the tile data (Item.ItemData's).
+        /// </summary>
+        internal static bool DoorAhead(World world, int x, int y, int z, StaticTiles[] data)
+        {
+            Chunk chunk = world.Map?.PeekChunk(x, y);
+
+            if (chunk == null || chunk.IsDestroyed)
+            {
+                return DoorScan(world, x, y, z, data);
+            }
+
+            for (GameObject obj = TileReader.Open(chunk, (x & 7) << 3 | (y & 7), null, out TileReader reader);
+                 obj != null;
+                 obj = reader.Next())
+            {
+                if (obj is Item item && IsDoorAt(item, x, y, z, data) && world.Holds(item))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>The every-item scan <see cref="DoorAhead"/> replaced (its fallback and the checker's reference).</summary>
+        internal static bool DoorScan(World world, int x, int y, int z, StaticTiles[] data)
+        {
+            foreach (Item item in world.Items.Values)
+            {
+                if (IsDoorAt(item, x, y, z, data))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsDoorAt(Item item, int x, int y, int z, StaticTiles[] data) =>
+            data[item.IsMulti ? item.MultiGraphic : item.Graphic].IsDoor && item.X == x && item.Y == y && item.Z - 15 <= z && item.Z + 15 >= z;
 
         public override void Destroy()
         {
@@ -373,8 +412,6 @@ namespace ClassicUO.Game.GameObjects
             {
                 return;
             }
-
-            DeathScreenTimer = 0;
 
             Log.Warn("PlayerMobile disposed!");
             base.Destroy();
@@ -386,20 +423,14 @@ namespace ClassicUO.Game.GameObjects
 
             if (bank != null && bank.Opened)
             {
-                if (!bank.IsEmpty)
+                // T9 child-list slice A: the ECS's contents
+                if (World.State.HasChildren(bank))
                 {
-                    Item first = (Item) bank.Items;
-
-                    while (first != null)
+                    // T1 (funnel part 9): the removals; a rejected call removes nothing and leaves the bank open
+                    if (!World.Writer.RemoveBankContents(this, bank))
                     {
-                        Item next = (Item) first.Next;
-
-                        World.RemoveItem(first, true);
-
-                        first = next;
+                        return;
                     }
-
-                    bank.Items = null;
                 }
 
                 UIManager.GetGump<ContainerGump>(bank.Serial)?.Dispose();
@@ -520,6 +551,48 @@ namespace ClassicUO.Game.GameObjects
         //}
         // #############################################
 
+        /// <summary>
+        /// T1 (funnel part 8): the walk queue's part of <see cref="Walk"/>, computed without a write: one step to
+        /// (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) facing <paramref name="direction"/>; when the queue
+        /// is empty the walk starts now (<c>LastStepTime</c>), with <c>SetAnimation(0xFF)</c> if the player is not walking.
+        /// </summary>
+        internal void PlanWalkStep(int x, int y, sbyte z, Direction direction, bool run, out StepPlan plan)
+        {
+            bool emptyStack = Steps.Count == 0;
+            plan = default;
+            plan.Accepted = true;
+            plan.Changes = true;
+            plan.StartsWalk = emptyStack;
+            plan.SetsAnimation = emptyStack && !IsWalking;
+            plan.StepTime = Time.Ticks;
+            plan.Count = 1;
+            plan.S0 = new Step
+            {
+                X = x,
+                Y = y,
+                Z = z,
+                Direction = (byte) direction,
+                Run = run
+            };
+        }
+
+        /// <summary>
+        /// T1 (funnel part 8): <see cref="Walk"/>'s coalesced turn (three unconfirmed requests: the direction alone, no packet)
+        /// through the funnel (<c>TurnPlayer</c>: SetMobileDirection's writes, unfolded for the door check; started inside an
+        /// open operation it is a rejected nesting), then the turn's cooldown. Rejected: nothing changed, no cooldown, false.
+        /// </summary>
+        internal bool CoalescedTurn(Direction direction, ushort walkTime)
+        {
+            if (!World.Writer.TurnPlayer(this, direction))
+            {
+                return false;
+            }
+
+            Walker.LastStepRequestTime = Time.Ticks + walkTime;
+
+            return true;
+        }
+
         public bool Walk(Direction direction, bool run)
         {
             if (Walker.WalkingFailed || Walker.LastStepRequestTime > Time.Ticks || Walker.StepsCount >= Constants.MAX_STEP_COUNT || Client.Game.UO.Version >= ClientVersion.CV_60142 && IsParalyzed)
@@ -552,7 +625,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (!emptyStack)
             {
-                ref Step walkStep = ref Steps.Back();
+                Step walkStep = Steps.Back();
                 x = walkStep.X;
                 y = walkStep.Y;
                 z = walkStep.Z;
@@ -620,22 +693,17 @@ namespace ClassicUO.Game.GameObjects
             // when the connection is healthy and automatically backs off under congestion.
             if (walkTime == (ushort)MovementSpeed.TurnDelay && Walker.UnacceptedPacketsCount >= 3)
             {
-                Direction = direction;
-                Walker.LastStepRequestTime = Time.Ticks + walkTime;
-
-                return true;
+                return CoalescedTurn(direction, walkTime);
             }
 
-            CloseBank();
-
-            if (emptyStack)
+            // T1 (funnel part 8): admission first, then CloseBank, then the walk queue's writes through the funnel
+            // (QueuePlayerStep: PlanWalkStep, then SetAnimation(0xFF) when the walk starts while not walking, LastStepTime,
+            // the step, the inputs), written before the walker's step record; the walker is not world state and neither side
+            // reads the other. A walk started inside an open operation is a nesting. Rejected: nothing changed, the bank
+            // stays open
+            if (!World.Writer.QueuePlayerStep(this, x, y, z, direction, run))
             {
-                if (!IsWalking)
-                {
-                    SetAnimation(0xFF);
-                }
-
-                LastStepTime = Time.Ticks;
+                return false;
             }
 
             ref StepInfo step = ref Walker.StepInfos[Walker.StepsCount];
@@ -651,18 +719,6 @@ namespace ClassicUO.Game.GameObjects
             step.NoRotation = step.OldDirection == (byte) direction && oldZ - z >= 11;
 
             Walker.StepsCount++;
-
-            Steps.AddToBack
-            (
-                new Step
-                {
-                    X = x,
-                    Y = y,
-                    Z = z,
-                    Direction = (byte) direction,
-                    Run = run
-                }
-            );
 
 
             NetClient.Socket.Send_WalkRequest(direction, Walker.WalkSequence, run, Walker.FastWalkStack.GetValue());

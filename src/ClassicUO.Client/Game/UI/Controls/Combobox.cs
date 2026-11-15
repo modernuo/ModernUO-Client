@@ -50,9 +50,7 @@ namespace ClassicUO.Game.UI.Controls
 
             string initialText = selected > -1 ? items[selected] : emptyString;
 
-            bool isAsianLang = string.Compare(Settings.GlobalSettings.Language, "CHT", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                string.Compare(Settings.GlobalSettings.Language, "KOR", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                string.Compare(Settings.GlobalSettings.Language, "JPN", StringComparison.InvariantCultureIgnoreCase) == 0;
+            bool isAsianLang = OsLanguage.NeedsUnicodeFonts(Settings.GlobalSettings.Language);
 
             bool unicode = isAsianLang;
             byte font1 = (byte)(isAsianLang ? 1 : _font);
@@ -191,9 +189,7 @@ namespace ClassicUO.Game.UI.Controls
 
                 HoveredLabel[] labels = new HoveredLabel[items.Length];
 
-                bool isAsianLang = string.Compare(Settings.GlobalSettings.Language, "CHT", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                    string.Compare(Settings.GlobalSettings.Language, "KOR", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                    string.Compare(Settings.GlobalSettings.Language, "JPN", StringComparison.InvariantCultureIgnoreCase) == 0;
+                bool isAsianLang = OsLanguage.NeedsUnicodeFonts(Settings.GlobalSettings.Language);
 
                 bool unicode = isAsianLang;
                 byte font1 = (byte)(isAsianLang ? 1 : font);

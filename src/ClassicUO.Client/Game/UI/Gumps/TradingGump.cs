@@ -160,9 +160,9 @@ namespace ClassicUO.Game.UI.Gumps
 
             ArtLoader loader = Client.Game.UO.FileManager.Arts;
 
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            // T2: the children from the ECS (WorldState.Children)
+            foreach (Item it in World.State.Children(container))
             {
-                Item it = (Item)i;
 
                 ItemGump g = new ItemGump(this, it.Serial, it.DisplayedGraphic, it.Hue, it.X, it.Y)
                 {
@@ -172,18 +172,17 @@ namespace ClassicUO.Game.UI.Gumps
                 int x = g.X;
                 int y = g.Y;
 
-                ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(it.DisplayedGraphic);
-
-                if (artInfo.Texture != null)
+                // perf-6: the size without decoding the art
+                if (Client.Game.UO.Arts.TryGetArtSize(it.DisplayedGraphic, out int artWidth, out int artHeight))
                 {
-                    if (x + artInfo.UV.Width > _myBox.Width)
+                    if (x + artWidth > _myBox.Width)
                     {
-                        x = _myBox.Width - artInfo.UV.Width;
+                        x = _myBox.Width - artWidth;
                     }
 
-                    if (y + artInfo.UV.Height > _myBox.Height)
+                    if (y + artHeight > _myBox.Height)
                     {
-                        y = _myBox.Height - artInfo.UV.Height;
+                        y = _myBox.Height - artHeight;
                     }
                 }
 
@@ -215,9 +214,9 @@ namespace ClassicUO.Game.UI.Gumps
                 v.Dispose();
             }
 
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            // T2: the children from the ECS (WorldState.Children)
+            foreach (Item it in World.State.Children(container))
             {
-                Item it = (Item)i;
 
                 ItemGump g = new ItemGump(this, it.Serial, it.DisplayedGraphic, it.Hue, it.X, it.Y)
                 {
@@ -227,18 +226,17 @@ namespace ClassicUO.Game.UI.Gumps
                 int x = g.X;
                 int y = g.Y;
 
-                ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(it.DisplayedGraphic);
-
-                if (artInfo.Texture != null)
+                // perf-6: the size without decoding the art
+                if (Client.Game.UO.Arts.TryGetArtSize(it.DisplayedGraphic, out int artWidth, out int artHeight))
                 {
-                    if (x + artInfo.UV.Width > _myBox.Width)
+                    if (x + artWidth > _myBox.Width)
                     {
-                        x = _myBox.Width - artInfo.UV.Width;
+                        x = _myBox.Width - artWidth;
                     }
 
-                    if (y + artInfo.UV.Height > _myBox.Height)
+                    if (y + artHeight > _myBox.Height)
                     {
-                        y = _myBox.Height - artInfo.UV.Height;
+                        y = _myBox.Height - artHeight;
                     }
                 }
 

@@ -217,14 +217,14 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            Item item = world.Items.Get(serial);
+            Item item = world.GetItem(serial);
 
             if (item == null || !item.IsCorpse || item.IsDestroyed)
             {
                 return false;
             }
 
-            world.Player.ManualOpenedCorpses.Add(serial);
+            world.PlayerState.ManualOpenedCorpses.Add(serial);
             DoubleClick(world, serial);
 
             return true;
@@ -263,7 +263,7 @@ namespace ClassicUO.Game
         {
             if (ProfileManager.CurrentProfile.EnabledCriminalActionQuery)
             {
-                Mobile m = world.Mobiles.Get(serial);
+                Mobile m = world.FindMobile(serial);
 
                 if (m != null && (world.Player.NotorietyFlag == NotorietyFlag.Innocent || world.Player.NotorietyFlag == NotorietyFlag.Ally) && m.NotorietyFlag == NotorietyFlag.Innocent && m != world.Player)
                 {
@@ -308,7 +308,7 @@ namespace ClassicUO.Game
                 Socket.Send_DoubleClick(serial);
             }
 
-            if (SerialHelper.IsItem(serial) || (SerialHelper.IsMobile(serial) && (world.Mobiles.Get(serial)?.IsHuman ?? false)))
+            if (SerialHelper.IsItem(serial) || (SerialHelper.IsMobile(serial) && (world.FindMobile(serial)?.IsHuman ?? false)))
             {
                 if (SerialHelper.IsMobile(serial))
                 {
@@ -452,7 +452,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            Item item = world.Items.Get(serial);
+            Item item = world.GetItem(serial);
 
             if (item == null || item.IsDestroyed || item.IsMulti || item.OnGround && (item.IsLocked || item.Distance > Constants.DRAG_ITEMS_DISTANCE))
             {
@@ -611,7 +611,8 @@ namespace ClassicUO.Game
 
         public static void SendCloseStatus(World world, uint serial, bool force = false)
         {
-            if (Client.Game.UO.Version >= ClientVersion.CV_200 && world.InGame)
+            // world.InGame first: both are plain reads, and a World outside a running client (the unit tests) has no Client.Game
+            if (world.InGame && Client.Game.UO.Version >= ClientVersion.CV_200)
             {
                 Entity ent = world.Get(serial);
 
@@ -763,13 +764,13 @@ namespace ClassicUO.Game
 
         public static void UsePrimaryAbility(World world)
         {
-            ref var ability = ref world.Player.Abilities[0];
+            ref var ability = ref world.PlayerState.Abilities[0];
 
             if (((byte) ability & 0x80) == 0)
             {
                 for (int i = 0; i < 2; i++)
                 {
-                    world.Player.Abilities[i] &= (Ability) 0x7F;
+                    world.PlayerState.Abilities[i] &= (Ability) 0x7F;
                 }
 
                 SendAbility(world, (byte)ability, true);
@@ -784,13 +785,13 @@ namespace ClassicUO.Game
 
         public static void UseSecondaryAbility(World world)
         {
-            ref Ability ability = ref world.Player.Abilities[1];
+            ref Ability ability = ref world.PlayerState.Abilities[1];
 
             if (((byte) ability & 0x80) == 0)
             {
                 for (int i = 0; i < 2; i++)
                 {
-                    world.Player.Abilities[i] &= (Ability) 0x7F;
+                    world.PlayerState.Abilities[i] &= (Ability) 0x7F;
                 }
 
                 SendAbility(world, (byte)ability, false);
@@ -832,7 +833,7 @@ namespace ClassicUO.Game
                 bag = ProfileManager.CurrentProfile.GrabBagSerial == 0 ? backpack.Serial : ProfileManager.CurrentProfile.GrabBagSerial;
             }
 
-            if (!world.Items.Contains(bag))
+            if (world.FindItem(bag) == null)
             {
                 Print(world, ResGeneral.GrabBagNotFound);
                 ProfileManager.CurrentProfile.GrabBagSerial = 0;

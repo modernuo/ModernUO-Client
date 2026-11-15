@@ -19,11 +19,27 @@ namespace ClassicUO.Game.UI.Controls
         private readonly bool _is_gump;
         private readonly Gump _gump;
 
+        // perf-9: the stack check in AddToRenderLists/Contains runs per frame per item shown; EntityRef repeats the lookup only
+        // when the item may have changed
+        private EntityRef _item;
+
+        /// <summary>What <c>World.FindItem(LocalSerial)</c> returns.</summary>
+        internal Item ShownItem() => _item.Item(_gump.World, LocalSerial);
+
         public ItemGump(Gump gump, uint serial, ushort graphic, ushort hue, int x, int y, bool is_gump = false)
         {
             _gump = gump;
             _is_gump = is_gump;
 
+            Reset(serial, graphic, hue, x, y);
+        }
+
+        /// <summary>
+        /// What the constructor sets; perf-8: also how a container window reuses the control of an item it shows again
+        /// (ContainerItemControls), so a reused control holds what a new one would.
+        /// </summary>
+        internal void Reset(uint serial, ushort graphic, ushort hue, int x, int y)
+        {
             AcceptMouseInput = true;
             X = (short)x;
             Y = (short)y;
@@ -36,8 +52,17 @@ namespace ClassicUO.Game.UI.Controls
             Graphic = graphic;
             Hue = hue;
 
-            SetTooltip(serial);
+            // the boxed serial is kept when it is the same (a reused control's)
+            if (!(Tooltip is uint shown && shown == serial))
+            {
+                SetTooltip(serial);
+            }
         }
+
+        /// <summary>Tests only: the sprite size and partial-hue flag without a game (false: no texture).</summary>
+        internal delegate bool SpriteLookup(ushort graphic, bool isGump, out int width, out int height, out bool partialHue);
+
+        internal static SpriteLookup SpriteForTests;
 
         public ushort Graphic
         {
@@ -46,22 +71,58 @@ namespace ClassicUO.Game.UI.Controls
             {
                 _graphic = value;
 
-                ref readonly var spriteInfo = ref _is_gump
-                    ? ref Client.Game.UO.Gumps.GetGump(value)
-                    : ref Client.Game.UO.Arts.GetArt(value);
+                if (SpriteForTests != null)
+                {
+                    if (!SpriteForTests(value, _is_gump, out int w, out int h, out bool partial))
+                    {
+                        Dispose();
 
-                if (spriteInfo.Texture == null)
+                        return;
+                    }
+
+                    Width = w;
+                    Height = h;
+                    IsPartialHue = partial;
+
+                    return;
+                }
+
+                // perf-6: the size without decoding; the art decodes at first draw or hit test (a worker started on it here)
+                if (!TryGetSpriteSize(value, _is_gump, out int width, out int height))
                 {
                     Dispose();
 
                     return;
                 }
 
-                Width = spriteInfo.UV.Width;
-                Height = spriteInfo.UV.Height;
+                // only while something drains finished art (Map.UpdateLoading): otherwise a control disposed before its first
+                // draw would leave its worker result holding a pooled buffer and decode budget until teardown
+                if (!_is_gump && global::ClassicUO.Game.Map.FirstSightArt.On)
+                {
+                    Client.Game.UO.Arts.RequestArt(value);
+                }
+
+                Width = width;
+                Height = height;
 
                 IsPartialHue = !_is_gump && Client.Game.UO.FileManager.TileData.StaticData[value].IsPartialHue;
             }
+        }
+
+        /// <summary>
+        /// The UV size of the sprite <see cref="AddToRenderLists"/> draws for <paramref name="graphic"/> (static art, or a gump
+        /// for chess and backgammon pieces), read from the size tables where possible. False where the lookup would return
+        /// no texture.
+        /// </summary>
+        internal static bool TryGetSpriteSize(ushort graphic, bool isGump, out int width, out int height)
+        {
+            if (!isGump)
+            {
+                return Client.Game.UO.Arts.TryGetArtSize(graphic, out width, out height);
+            }
+
+            // every pack gump has a size (GumpsLoader.CheckRecord refuses a record without one): no decode needed
+            return Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height);
         }
 
         public ushort Hue { get; set; }
@@ -135,32 +196,23 @@ namespace ClassicUO.Game.UI.Controls
 
 
                 var sourceRectangle = spriteInfo.UV;
-                renderLists.AddGumpWithAtlas
-                (
-                    batcher =>
-                    {
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, rect, sourceRectangle, hueVector, layerDepth));
 
-                        batcher.Draw(texture, rect, sourceRectangle, hueVector, layerDepth);
+                Item item = ShownItem();
 
-                        Item item = _gump.World.Items.Get(LocalSerial);
+                if (
+                    item != null
+                    && !item.IsMulti
+                    && !item.IsCoin
+                    && item.Amount > 1
+                    && item.ItemData.IsStackable
+                )
+                {
+                    rect.X += 5;
+                    rect.Y += 5;
 
-                        if (
-                            item != null
-                            && !item.IsMulti
-                            && !item.IsCoin
-                            && item.Amount > 1
-                            && item.ItemData.IsStackable
-                        )
-                        {
-                            rect.X += 5;
-                            rect.Y += 5;
-
-                            batcher.Draw(texture, rect, sourceRectangle, hueVector, layerDepth);
-                        }
-
-                        return true;
-                    }
-                );
+                    renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, rect, sourceRectangle, hueVector, layerDepth));
+                }
             }
 
             return true;
@@ -198,7 +250,7 @@ namespace ClassicUO.Game.UI.Controls
                     return true;
                 }
 
-                Item item = _gump.World.Items.Get(LocalSerial);
+                Item item = ShownItem();
 
                 if (item != null && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
                 {
@@ -215,7 +267,7 @@ namespace ClassicUO.Game.UI.Controls
                     return true;
                 }
 
-                Item item = _gump.World.Items.Get(LocalSerial);
+                Item item = ShownItem();
 
                 if (item != null && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
                 {
@@ -274,7 +326,7 @@ namespace ClassicUO.Game.UI.Controls
                 return false;
             }
 
-            Item item = _gump.World.Items.Get(LocalSerial);
+            Item item = _gump.World.GetItem(LocalSerial);
             Item container;
 
             if (
@@ -283,8 +335,8 @@ namespace ClassicUO.Game.UI.Controls
                 && item != null
                 && !item.IsDestroyed
                 && !item.ItemData.IsContainer
-                && item.IsEmpty
-                && (container = _gump.World.Items.Get(item.RootContainer)) != null
+                && !_gump.World.State.HasChildren(item)
+                && (container = _gump.World.FindItem(item.RootContainer)) != null
                 && container != _gump.World.Player.FindItemByLayer(Layer.Backpack)
             )
             {

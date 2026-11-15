@@ -63,6 +63,36 @@ namespace ClassicUO.Game.Managers
             );
 
 
+#if CUO_DEVTOOLS
+            // -worldrenderer [gpu|legacy] switches the world renderer mid-session (no argument toggles), for
+            // parity shots, picking and A/B FPS. Not saved; players get the startup choice (world_renderer, RendererStartup).
+            Register
+            (
+                "worldrenderer",
+                s =>
+                {
+                    var settings = Configuration.Settings.GlobalSettings;
+                    string target = s.Length > 1 ? s[1] : settings.UseGpuWorldRenderer ? "legacy" : "gpu";
+
+                    GameActions.Print(_world, RendererStartup.TrySwitch(target, out string message)
+                        ? $"World renderer: {settings.WorldRenderer} (developer switch, this session only)"
+                        : $"World renderer not switched: {message}");
+                }
+            );
+#endif
+
+            // -uicache [on|off]: the UI render cache (B8). No argument toggles.
+            Register
+            (
+                "uicache",
+                s =>
+                {
+                    var settings = Configuration.Settings.GlobalSettings;
+                    settings.UiRenderCache = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.UiRenderCache;
+                    GameActions.Print(_world, $"UI render cache: {(settings.UiRenderCache ? "on" : "off")}");
+                }
+            );
+
             Register
             (
                 "debug",

@@ -201,3 +201,82 @@ technique HueTechnique
 	}
 }
 
+// clip-4 depth model (switch depth_model; GeoDepth.cs and sprite.hlsl GeoDepth are the same maths): HueGeoTechnique writes
+// the geometric per-pixel depth, so it loses early depth rejection; HueTechnique above is unchanged and drawn when the switch
+// is off. The shape class rides in TexCoord.z (0: the depth key; else class * 64 + 32 + base - key, LegacyGeo.Encode) and
+// the class's reference column/row in Normal.xy, in the vertex's own coordinates (LegacyGeo.Apply).
+float GeoCam; // the integer tile sum the frame's depths are relative to (LegacyGeo.CamSum)
+
+static const float GEO_SCALE = 1.0 / 2500.0; // WorldRenderer.GeoScale: tile sums -> depth, +-1250 around GeoCam
+static const float GEO_KEY = -0.77;          // the key's tile sum: Gpu's (D - Dcam) / 100 + 0.5 for D = 100 key
+
+struct PS_GEO_INPUT
+{
+	float4 Position : POSITION0;
+	float3 TexCoord : TEXCOORD0;
+	float3 Normal	: TEXCOORD1;
+	float3 Hue		: TEXCOORD2;
+	float3 PixelPos : TEXCOORD3;
+	float4 Geo		: TEXCOORD4; // x, y: pixel - reference column/row; z: key - GeoCam; w: TexCoord.z
+};
+
+PS_GEO_INPUT VertexShaderGeo(VS_INPUT IN)
+{
+	PS_INPUT v = VertexShaderFunction(IN);
+	PS_GEO_INPUT OUT;
+
+	OUT.Position = v.Position;
+	OUT.TexCoord = v.TexCoord;
+	OUT.Normal = v.Normal;
+	OUT.Hue = v.Hue;
+	OUT.PixelPos = v.PixelPos;
+	OUT.Geo = float4(IN.Position.x - IN.Normal.x, IN.Position.y - IN.Normal.y, IN.Position.z - GeoCam, IN.TexCoord.z);
+
+	return OUT;
+}
+
+// the tile sum of the visible surface, relative to GeoCam (LegacyGeo.PixelSum is the same)
+float GeoSum(float4 g)
+{
+	if (g.w < 32.0)
+		return g.z + GEO_KEY;
+
+	float cls = floor(g.w / 64.0);
+	float b = g.z + (g.w - cls * 64.0 - 32.0);
+	float s = abs(g.x) / 22.0;
+	float v = g.y / 22.0;
+
+	if (cls == 2.0) // box: max(back edges, min(top plane, tile centre))
+		return b + max(s, min(v, 1.0));
+	if (cls == 3.0) // wall: the back edges
+		return b + s;
+	if (cls == 4.0) // flat: its plane
+		return b + v;
+	if (cls == 5.0) // mobile composite: billboard, ground plane below the centre row, own tile's front faces
+		return b + max(0.0, min(v, 1.0 - s));
+
+	return b; // 1: linear (land corners)
+}
+
+float4 PixelShader_HueGeo(PS_GEO_INPUT IN, out float depth : DEPTH0) : COLOR0
+{
+	depth = saturate(0.5 - GeoSum(IN.Geo) * GEO_SCALE);
+
+	PS_INPUT p;
+	p.Position = IN.Position;
+	p.TexCoord = IN.TexCoord;
+	p.Normal = IN.Normal;
+	p.Hue = IN.Hue;
+	p.PixelPos = IN.PixelPos;
+
+	return PixelShader_Hue(p);
+}
+
+technique HueGeoTechnique
+{
+	pass p0
+	{
+		VertexShader = compile vs_3_0 VertexShaderGeo();
+		PixelShader = compile ps_3_0 PixelShader_HueGeo();
+	}
+}

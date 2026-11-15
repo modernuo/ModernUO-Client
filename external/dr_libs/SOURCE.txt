@@ -1,0 +1,6 @@
+dr_mp3.h v0.7.4 from github.com/mackron/dr_libs
+commit aec2dd20667f54acfdb66031217df6d240f56c52 (tag mp3-0.7.4, 2026-10-30)
+sha256 f5c8020eeebb79877184432efdd2651f24869f5bb8f379d45450fd0aed1ee915
+licence: public domain (Unlicense) or MIT-0, see end of file
+fetched by the coordinator with gh api (raw contents at that commit), 2026-10-31
+dr_mp3.h vendored unchanged into external/dr_libs/ (2026-10-31, poc/dr-mp3).

@@ -101,7 +101,49 @@ namespace ClassicUO.Game.GameObjects
             return true;
         }
 
+        /// <summary>
+        /// Where View.DrawStaticAnimated puts the top left of a <paramref name="width"/> x <paramref name="height"/> art
+        /// sprite drawn at (<paramref name="x"/>, <paramref name="y"/>): the anchor it stores on the art entry, from the
+        /// atlas UV (the pack's untrimmed size).
+        /// </summary>
+        internal static void SpriteTopLeft(int x, int y, int width, int height, out int left, out int top)
+        {
+            Item.PickEntryFromSize(width, height, out int entryWidth, out int entryHeight);
+            left = x - entryWidth;
+            top = y - entryHeight;
+        }
+
         public override bool CheckMouseSelection()
+        {
+            // pick_early_reject (PickBox): a mouse far from the anchor (moved by the boat's Offset) misses whatever the art;
+            // no state, graphic, art entry or sprite read for it
+            if (Scenes.PickBox.Active)
+            {
+                Point anchor = RealScreenPosition;
+                Point mouse = SelectedObject.TranslatedMousePositionByViewport;
+                bool reject = Scenes.PickBox.Rejects(mouse.X - (anchor.X + (int)Offset.X), mouse.Y - (anchor.Y + (int)(Offset.Y + Offset.Z)));
+
+#if CUO_DEVTOOLS
+                if (Scenes.PickBox.Checking)
+                {
+                    bool hit = FullPick();
+                    Scenes.PickBox.Judge(Scenes.PickBox.Kind.Multi, this, Graphic, reject, hit);
+
+                    return hit && !(reject && Scenes.PickBox.RejectOn);
+                }
+#endif
+
+                if (reject)
+                {
+                    return false;
+                }
+            }
+
+            return FullPick();
+        }
+
+        // the pick test before pick_early_reject
+        private bool FullPick()
         {
             if (
                 !(
@@ -128,20 +170,52 @@ namespace ClassicUO.Game.GameObjects
                     }
                 }
 
-                ref UOFileIndex index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(Graphic + 0x4000);
+                // the sprite Draw draws (DrawStaticAnimated: the current animation frame, the boat's Offset), anchored from
+                // the pack's sprite size: the art can be in the atlas (first-sight prefetch) before the first draw stores
+                // the anchor on the art entry
+                var arts = Client.Game.UO.FileManager.Arts;
+                ushort drawn = (ushort)(Graphic + arts.GetEntry(Graphic + 0x4000).AnimOffset);
+                var sprites = arts.PackSpriteEntries;
+                uint idx = drawn + 0x4000u;
+
+                if (idx >= (uint)sprites.Length || sprites[idx].OrigW == 0 || sprites[idx].OrigH == 0)
+                {
+                    return false;
+                }
 
                 Point position = RealScreenPosition;
-                position.X -= index.Width;
-                position.Y -= index.Height;
+                position.X += (int)Offset.X;
+                position.Y += (int)(Offset.Y + Offset.Z);
+                SpriteTopLeft(position.X, position.Y, sprites[idx].OrigW, sprites[idx].OrigH, out int left, out int top);
+                int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - left;
+                int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - top;
 
-                return Client.Game.UO.Arts.PixelCheck(
-                    Graphic,
-                    SelectedObject.TranslatedMousePositionByViewport.X - position.X,
-                    SelectedObject.TranslatedMousePositionByViewport.Y - position.Y
-                );
+                // the picker's mask is the sprite's untrimmed size: a mouse outside it misses without the picker.
+                // CUO_PREP_CHECK=1 counts rejects the picker would have hit
+                if (OutsideSprite(sprites[idx].OrigW, sprites[idx].OrigH, mouseX, mouseY))
+                {
+                    if (Scenes.PrepCheck.On)
+                    {
+                        Scenes.PrepCheck.StaticPicksRejected++;
+
+                        if (Client.Game.UO.Arts.PixelCheck(drawn, mouseX, mouseY))
+                        {
+                            Scenes.PrepCheck.StaticPicksWrong++;
+                            Scenes.PrepCheck.Sample ??= $"multi at {X},{Y},{Z} graphic 0x{drawn:X4} mouse {mouseX},{mouseY} sprite {sprites[idx].OrigW}x{sprites[idx].OrigH}";
+                        }
+                    }
+
+                    return false;
+                }
+
+                return Client.Game.UO.Arts.PixelCheck(drawn, mouseX, mouseY);
             }
 
             return false;
         }
+
+        /// <summary>Outside a <paramref name="width"/> x <paramref name="height"/> mask: the pixel picker's size test.</summary>
+        internal static bool OutsideSprite(int width, int height, int mouseX, int mouseY)
+            => (uint)mouseX >= (uint)width || (uint)mouseY >= (uint)height;
     }
 }

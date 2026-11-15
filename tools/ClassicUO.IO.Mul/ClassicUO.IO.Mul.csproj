@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The MUL/UOP file readers (UOFile, UOFileMul, UOFileUop, UOFileIndex, the memory-mapped FileReader, BwtDecompress), moved
+       out of src/ClassicUO.IO and src/ClassicUO.Utility: only the pack converter and the frozen loaders read these formats.
+       Namespaces are unchanged. Do not reference this from src/. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>Preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>ClassicUO.IO</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ClassicUO.IO\ClassicUO.IO.csproj" />
+    <ProjectReference Include="..\..\src\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+  </ItemGroup>
+
+</Project>

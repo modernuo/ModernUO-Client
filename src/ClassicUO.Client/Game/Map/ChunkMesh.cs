@@ -107,6 +107,12 @@ namespace ClassicUO.Game.Map
 
         public bool IsDirty = true;
 
+        /// <summary>clip-4: built with depth_model on (the vertices carry the geometric shapes, LegacyGeo); a flip rebuilds.</summary>
+        public bool BuiltGeo;
+
+        // depth_model at this Build
+        private bool _geo;
+
         private bool _animatedWaterEffect;
         private TextureBucketTracker _landBuckets = new(16);
         private TextureBucketTracker _staticsBuckets = new(32);
@@ -123,6 +129,7 @@ namespace ClassicUO.Game.Map
             Land.Reset();
             Statics.Reset();
             IsDirty = false;
+            BuiltGeo = _geo = Scenes.DepthModel.On;
 
             var profile = ProfileManager.CurrentProfile;
             if (profile == null)
@@ -346,6 +353,8 @@ namespace ClassicUO.Game.Map
                         hueVec,
                         depth
                     );
+
+                    Scenes.LegacyGeoDepth.ApplyLand(ref Land.Vertices[idx], _geo, land.X, land.Y, land.Z, true);
                     land.InChunkMesh = true;
                 }
                 else
@@ -357,6 +366,7 @@ namespace ClassicUO.Game.Map
                         land.MeshSpriteIndex = idx;
                         Land.WriteQuadAt(idx, artInfo.Texture, artInfo.UV,
                             baseX, baseY + (land.Z << 2), hueVec, depth);
+                        GeoLand(idx, land);
                         land.InChunkMesh = true;
                     }
                 }
@@ -369,6 +379,7 @@ namespace ClassicUO.Game.Map
                     int idx = _landBuckets.GetNextIndex(artInfo.Texture);
                     land.MeshSpriteIndex = idx;
                     Land.WriteQuadAt(idx, artInfo.Texture, artInfo.UV, baseX, baseY, hueVec, depth);
+                    GeoLand(idx, land);
                     land.InChunkMesh = true;
                 }
             }
@@ -431,7 +442,7 @@ namespace ClassicUO.Game.Map
             if (artInfo.Texture == null)
                 return;
 
-            ref var artIndex = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+            ref ArtEntry artIndex = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
             artIndex.Width = (short)((artInfo.UV.Width >> 1) - 22);
             artIndex.Height = (short)(artInfo.UV.Height - 44);
 
@@ -441,8 +452,23 @@ namespace ClassicUO.Game.Map
             int idx = _staticsBuckets.GetNextIndex(artInfo.Texture);
             obj.MeshSpriteIndex = idx;
             Statics.WriteQuadAt(idx, artInfo.Texture, artInfo.UV, posX, posY, hueVec, depth);
+
+            if (_geo)
+            {
+                // clip-4: the static's shape in world pixels (the mesh draws through the world offset); map statics under
+                // their tile's land are buried, as the Gpu baker marks them; multi pieces are not
+                uint bits = Scenes.LegacyGeoDepth.Bits(ref itemData);
+                bool buried = obj is Static st && Scenes.LegacyGeoDepth.TileLandZ(st, out int landZ) &&
+                              Scenes.LegacyGeoDepth.Buried(obj.Z, itemData.Height, bits, landZ, true);
+                Scenes.LegacyGeoDepth.ApplyTile(ref Statics.Vertices[idx], true, obj.X, obj.Y, obj.Z, itemData.Height, bits, buried);
+            }
+
             obj.InChunkMesh = true;
         }
+
+        // clip-4: a land quad as a flat at its z (world pixels)
+        private void GeoLand(int idx, GameObjects.Land land) =>
+            Scenes.LegacyGeoDepth.ApplyLand(ref Land.Vertices[idx], _geo, land.X, land.Y, land.Z, false);
 
         private void WriteStretchedLand(
             int index,

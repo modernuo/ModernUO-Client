@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
+using Uo.Pack;
 using System;
 using System.Collections.Generic;
 using ClassicUO.Configuration;
@@ -33,6 +34,12 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool HasFakeItem { get; private set; }
 
+        /// <summary>
+        /// T1 (funnel part 8, Codex audit P2 #2): a detached preview mobile (character creation's) drawn instead of the mobile
+        /// World holds for <see cref="Control.LocalSerial"/>. Null: the lookup, as before.
+        /// </summary>
+        internal Mobile Preview { get; init; }
+
         public override void Update()
         {
             base.Update();
@@ -58,7 +65,7 @@ namespace ClassicUO.Game.UI.Controls
                 return;
             }
 
-            Mobile mobile = _paperDollGump.World.Mobiles.Get(LocalSerial);
+            Mobile mobile = Preview ?? _paperDollGump.World.GetMobile(LocalSerial);
 
             if (mobile == null || mobile.IsDestroyed)
             {
@@ -111,24 +118,7 @@ namespace ClassicUO.Game.UI.Controls
                 body = 0x000C;
             }
 
-            // body
-            Add(new GumpPic(0, 0, body, hue) { IsPartialHue = true });
-
-            if (mobile.Graphic == 0x03DB)
-            {
-                Add(
-                    new GumpPic(0, 0, 0xC72B, mobile.Hue)
-                    {
-                        AcceptMouseInput = true,
-                        IsPartialHue = true
-                    }
-                );
-            }
-
-            // equipment — draw order built from the paperdoll layer algorithm
-            // (PaperdollOrder), keyed on the equipped item graphics. This subsumes the
-            // old _layerOrder / quiver-fix tables and the hardcoded arms<->torso swap.
-            // Stack-allocated, no GC churn.
+            // equipment: the draw order from the layering rules, keyed on the equipped items' AnimIDs
             Span<ushort> layerGraphics = stackalloc ushort[PaperdollOrder.N];
             PaperdollOrder.GraphicsFromEntity(mobile, layerGraphics);
 
@@ -149,13 +139,47 @@ namespace ClassicUO.Game.UI.Controls
                 }
             }
 
-            bool altTorso = mobile.IsFemale || IsGargoyleBody(mobile.Graphic);
-
-            Span<Layer> order = stackalloc Layer[PaperdollOrder.N];
-            PaperdollOrder.Build(layerGraphics, altTorso, order);
-
+            // T3b: the order and the covering from the layering rules data (paperdoll set)
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-            int layerCount = PaperdollOrder.Filter(order, includeBackpack: false, layers);
+            LayerTables layerTables = default;
+            layerTables.Gather(mobile);
+            LayerSubject layerSubject = LayerRuleEval.Subject(mobile.Graphic, mobile.IsFemale, IsGargoyleBody(mobile.Graphic));
+            int layerCount = LayerRuleEval.BuildPaperdoll(layerGraphics, layerSubject, layers);
+
+            // the body and every visible equipment gump, decoded on workers in one batch (pack only; Gump.Prefetch does
+            // nothing when fewer than two are missing, as on most re-layouts after an equip change)
+            if (Renderer.Gumps.Gump.AsyncRequests && Client.Game.UO.FileManager.Gumps.CanDecodeOnWorker)
+            {
+                Span<uint> prefetch = stackalloc uint[PaperdollOrder.N + 2];
+                int prefetchCount = 0;
+                prefetch[prefetchCount++] = body;
+
+                for (int i = 0; i < layerCount; i++)
+                {
+                    Item item = mobile.FindItemByLayer(layers[i]);
+
+                    if (item != null && !LayerRuleEval.IsCovered(LayerRuleSet.Paperdoll, layers[i], ref layerTables, layerSubject))
+                    {
+                        prefetch[prefetchCount++] = GetAnimID(mobile.Graphic, item.Graphic, item.ItemData.AnimID, mobile.IsFemale);
+                    }
+                }
+
+                Client.Game.UO.Gumps.Prefetch(prefetch.Slice(0, prefetchCount));
+            }
+
+            // body
+            Add(new GumpPic(0, 0, body, hue) { IsPartialHue = true });
+
+            if (mobile.Graphic == 0x03DB)
+            {
+                Add(
+                    new GumpPic(0, 0, 0xC72B, mobile.Hue)
+                    {
+                        AcceptMouseInput = true,
+                        IsPartialHue = true
+                    }
+                );
+            }
 
             Item equipItem;
 
@@ -167,7 +191,7 @@ namespace ClassicUO.Game.UI.Controls
 
                 if (equipItem != null)
                 {
-                    if (Mobile.IsCovered(mobile, layer))
+                    if (LayerRuleEval.IsCovered(LayerRuleSet.Paperdoll, layer, ref layerTables, layerSubject))
                     {
                         continue;
                     }
@@ -320,14 +344,9 @@ namespace ClassicUO.Game.UI.Controls
         {
             int offset = isfemale ? Constants.FEMALE_GUMP_OFFSET : Constants.MALE_GUMP_OFFSET;
 
-            if (
-                    Client.Game.UO.Version >= ClientVersion.CV_7000
-                    && animID == 0x03CA // graphic for dead shroud
-                    && (mobileGraphic == 0x02B7 || mobileGraphic == 0x02B6)
-                ) // dead gargoyle graphics
-                {
-                    animID = 0x0223;
-                }
+            // T3b: the paperdoll set's remap rules (default: the gargoyle ghost's shroud on 7.0.0.0+), before the equip
+            // conversion below
+            animID = LayerRuleEval.RemapPaperdoll(animID, mobileGraphic, isfemale);
 
             Client.Game.UO.Animations.ConvertBodyIfNeeded(ref mobileGraphic);
 
@@ -355,12 +374,11 @@ namespace ClassicUO.Game.UI.Controls
                 }
             }
 
-            if (Client.Game.UO.FileManager.TileArt.TryGetTileArtInfo(itemGraphic, out var tileArtInfo))
             {
-                if (tileArtInfo.TryGetAppearance(mobileGraphic, out var appareanceId))
+                if (Client.Game.UO.FileManager.TileArt.TryGetAppearance(itemGraphic, mobileGraphic, out var appareanceId))
                 {
                     var gumpId = (ushort)(Constants.MALE_GUMP_OFFSET + appareanceId);
-                    if (Client.Game.UO.Gumps.GetGump(gumpId).Texture != null)
+                    if (Client.Game.UO.Gumps.Exists(gumpId))
                     {
                         Log.Info($"Equip conversion through tileart.uop done: old {animID} -> new {appareanceId}");
                         return gumpId;
@@ -377,14 +395,14 @@ namespace ClassicUO.Game.UI.Controls
         {
             if (
                     animID + offset > GumpsLoader.MAX_GUMP_DATA_INDEX_COUNT
-                    || Client.Game.UO.Gumps.GetGump((ushort)(animID + offset)).Texture == null
+                    || !Client.Game.UO.Gumps.Exists((ushort)(animID + offset))
                 )
             {
                 // inverse
                 offset = isFemale ? Constants.MALE_GUMP_OFFSET : Constants.FEMALE_GUMP_OFFSET;
             }
 
-            if (Client.Game.UO.Gumps.GetGump((ushort)(animID + offset)).Texture == null)
+            if (!Client.Game.UO.Gumps.Exists((ushort)(animID + offset)))
             {
                 Log.Error(
                     $"Texture not found in paperdoll: gump_graphic: {(ushort)(animID + offset)}"

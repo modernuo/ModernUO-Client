@@ -9,6 +9,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Map;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using System;
 using System.Runtime.CompilerServices;
@@ -41,174 +42,56 @@ namespace ClassicUO.Game.Scenes
             _maxTile,
             _minTile,
             _last_scaled_offset;
-        private int _oldPlayerX,
-            _oldPlayerY,
-            _oldPlayerZ;
+        private readonly MaxDrawZState _maxDrawZ = new MaxDrawZState();
+        private uint _maxDrawZIncompleteSince;
         private int _foliageCount;
         private float _cotRadiusSq;
         private Vector2 _cotPlayerScreenPos;
         private bool _cotGradientMode;
 
         private readonly RenderLists _renderLists = new();
+        // bumped on every camera move (UpdateDrawPosition); a walked object whose GameObject.ScreenPositionGen equals it
+        // was positioned with the current offset
+        private int _screenPositionGen = 1;
         private readonly List<Map.Chunk> _visibleChunks = new();
 
         public sbyte FoliageIndex { get; private set; }
 
         public void UpdateMaxDrawZ(bool force = false)
         {
-            int playerX = _world.Player.X;
-            int playerY = _world.Player.Y;
-            int playerZ = _world.Player.Z;
+            Map.Map map = _world.Map;
 
-            if (
-                playerX == _oldPlayerX && playerY == _oldPlayerY && playerZ == _oldPlayerZ && !force
-            )
+            if (map == null)
             {
                 return;
             }
 
-            _oldPlayerX = playerX;
-            _oldPlayerY = playerY;
-            _oldPlayerZ = playerZ;
+            // kept while the player's x/y/z, DrawRoofs, the map and the chunks the decision read are unchanged
+            // (MaxDrawZState): a teleport's first frame can come before the player's chunk loads, and that answer must not
+            // be kept; a change in the decision's reach is recomputed once, here, before the draw
+            bool wasIncomplete = _maxDrawZ.Missing > 0;
+            int oldMaxZ = _maxDrawZ.MaxZ;
 
-            sbyte maxGroundZ = 127;
-            _maxGroundZ = 127;
-            _maxZ = 127;
-            _noDrawRoofs = !ProfileManager.CurrentProfile.DrawRoofs;
-            int bx = playerX;
-            int by = playerY;
-            Chunk chunk = _world.Map.GetChunk(bx, by, false);
-
-            if (chunk != null)
+            if (!_maxDrawZ.Update(map, Client.Game.UO.FileManager.TileData.StaticData, _world.Player.X, _world.Player.Y,
+                    _world.Player.Z, ProfileManager.CurrentProfile.DrawRoofs, force, Client.Game.UO.FileManager.Arts))
             {
-                int x = playerX % 8;
-                int y = playerY % 8;
+                return;
+            }
 
-                int pz14 = playerZ + 14;
-                int pz16 = playerZ + 16;
+            _maxZ = _maxDrawZ.MaxZ;
+            _maxGroundZ = _maxDrawZ.MaxGroundZ;
+            _noDrawRoofs = _maxDrawZ.NoDrawRoofs;
 
-                for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+            if (wasIncomplete)
+            {
+                if (_maxDrawZ.Missing == 0)
                 {
-                    sbyte tileZ = obj.Z;
-
-                    if (obj is Land l)
-                    {
-                        if (l.IsStretched)
-                        {
-                            tileZ = l.AverageZ;
-                        }
-
-                        if (pz16 <= tileZ)
-                        {
-                            maxGroundZ = (sbyte)pz16;
-                            _maxGroundZ = (sbyte)pz16;
-                            _maxZ = _maxGroundZ;
-
-                            break;
-                        }
-
-                        continue;
-                    }
-
-                    if (obj is Mobile)
-                    {
-                        continue;
-                    }
-
-                    //if (obj is Item it && !it.ItemData.IsRoof || !(obj is Static) && !(obj is Multi))
-                    //    continue;
-
-                    if (tileZ > pz14 && _maxZ > tileZ)
-                    {
-                        ref StaticTiles itemdata = ref Client.Game.UO.FileManager.TileData.StaticData[
-                            obj.Graphic
-                        ];
-
-                        //if (GameObjectHelper.TryGetStaticData(obj, out var itemdata) && ((ulong) itemdata.Flags & 0x20004) == 0 && (!itemdata.IsRoof || itemdata.IsSurface))
-                        if (
-                            ((ulong)itemdata.Flags & 0x20004) == 0
-                            && (!itemdata.IsRoof || itemdata.IsSurface)
-                        )
-                        {
-                            _maxZ = tileZ;
-                            _noDrawRoofs = true;
-                        }
-                    }
+                    Log.Trace($"[maxz] the chunks the decision reads loaded {Time.Ticks - _maxDrawZIncompleteSince} ms after it first ran without them: max Z {oldMaxZ} -> {_maxZ}, roofs {(_noDrawRoofs ? "hidden" : "drawn")}");
                 }
-
-                int tempZ = _maxZ;
-                _maxGroundZ = (sbyte)_maxZ;
-                playerX++;
-                playerY++;
-                bx = playerX;
-                by = playerY;
-                chunk = _world.Map.GetChunk(bx, by, false);
-
-                if (chunk != null)
-                {
-                    x = playerX % 8;
-                    y = playerY % 8;
-
-                    for (
-                        GameObject obj2 = chunk.GetHeadObject(x, y);
-                        obj2 != null;
-                        obj2 = obj2.TNext
-                    )
-                    {
-                        //if (obj is Item it && !it.ItemData.IsRoof || !(obj is Static) && !(obj is Multi))
-                        //    continue;
-
-                        if (obj2 is Mobile)
-                        {
-                            continue;
-                        }
-
-                        sbyte tileZ = obj2.Z;
-
-                        if (tileZ > pz14 && _maxZ > tileZ)
-                        {
-                            if (!(obj2 is Land))
-                            {
-                                ref StaticTiles itemdata = ref Client.Game.UO.FileManager.TileData.StaticData[
-                                    obj2.Graphic
-                                ];
-
-                                if (((ulong)itemdata.Flags & 0x204) == 0 && itemdata.IsRoof)
-                                {
-                                    _maxZ = tileZ;
-                                    _world.Map.ClearBockAccess();
-                                    _maxGroundZ = _world.Map.CalculateNearZ(
-                                        tileZ,
-                                        playerX,
-                                        playerY,
-                                        tileZ
-                                    );
-                                    _noDrawRoofs = true;
-                                }
-                            }
-
-                            //if (GameObjectHelper.TryGetStaticData(obj2, out var itemdata) && ((ulong) itemdata.Flags & 0x204) == 0 && itemdata.IsRoof)
-                            //{
-                            //    _maxZ = tileZ;
-                            //    World.Map.ClearBockAccess();
-                            //    _maxGroundZ = World.Map.CalculateNearZ(tileZ, playerX, playerY, tileZ);
-                            //    _noDrawRoofs = true;
-                            //}
-                        }
-                    }
-
-                    tempZ = _maxGroundZ;
-                }
-
-                _maxZ = _maxGroundZ;
-
-                if (tempZ < pz16)
-                {
-                    _maxZ = pz16;
-                    _maxGroundZ = (sbyte)pz16;
-                }
-
-                _maxGroundZ = maxGroundZ;
+            }
+            else if (_maxDrawZ.Missing > 0)
+            {
+                _maxDrawZIncompleteSince = Time.Ticks;
             }
         }
 
@@ -239,31 +122,44 @@ namespace ClassicUO.Game.Scenes
 
         private void ApplyFoliageTransparency(ushort graphic, int x, int y, int z)
         {
-            GameObject tile = _world.Map.GetTile(x, y);
+            GameObject obj = _world.Map.OpenTile(x, y, true, out TileReader reader);
 
-            if (tile != null)
+            for (; obj != null; obj = reader.Next())
             {
-                for (GameObject obj = tile; obj != null; obj = obj.TNext)
-                {
-                    ushort testGraphic = obj.Graphic;
+                ushort testGraphic = obj.Graphic;
 
-                    if (testGraphic == graphic && obj.Z == z)
+                if (testGraphic == graphic && obj.Z == z)
+                {
+                    if (_gpuItemCheckSame && _gpuItemPass == 1)
                     {
-                        obj.FoliageIndex = FoliageIndex;
+                        GpuProbeFoliageStamp(obj);
                     }
+
+                    obj.FoliageIndex = FoliageIndex;
                 }
             }
         }
 
         private void UpdateObjectHandles(Entity obj, bool useObjectHandles)
         {
-            if (useObjectHandles && _world.NameOverHeadManager.IsAllowed(obj))
+            if (useObjectHandles && NameOverHeadManager.IsAllowed(obj, _handlesTypeAllowed, _handlesPlayerIsGargoyle))
             {
                 if (obj.ObjectHandlesStatus != ObjectHandlesStatus.CLOSED)
                 {
                     if (obj.ObjectHandlesStatus == ObjectHandlesStatus.NONE)
                     {
                         obj.ObjectHandlesStatus = ObjectHandlesStatus.OPEN;
+
+                        // W5: World.Update turns OPEN into the name gump; items are only updated when listed
+                        if (obj is Item handleItem)
+                        {
+                            _world.QueueItemUpdate(handleItem);
+                        }
+                        else if (obj is Mobile handleMobile)
+                        {
+                            // E4: the mobile's clock must report the pending Update
+                            _world.Ecs.PushClock(handleMobile);
+                        }
                     }
 
                     obj.UpdateTextCoordsV();
@@ -283,6 +179,9 @@ namespace ClassicUO.Game.Scenes
         {
             if (obj.Z < _maxZ && itemData.IsFoliage)
             {
+                FrameStats.Inc(FrameCounter.Foliage);
+                FramePhase bucket = FrameStats.Enter(FramePhase.WalkFoliage);
+
                 if (obj.FoliageIndex != FoliageIndex)
                 {
                     sbyte index = 0;
@@ -315,6 +214,11 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
 
+                    if (_gpuItemCheckSame && _gpuItemPass == 1)
+                    {
+                        GpuProbeFoliageStamp(obj);
+                    }
+
                     obj.FoliageIndex = index;
                 }
 
@@ -325,6 +229,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 _foliages[_foliageCount++] = obj;
+                FrameStats.Enter(bucket);
             }
         }
 
@@ -395,13 +300,34 @@ namespace ClassicUO.Game.Scenes
             return (byte)(ratio * ratio * ratio * 255f);
         }
 
+        // set by FillGameObjectList while the world settle gate holds: fades complete at once
+        private static bool _snapAlphas;
+        private static int _alphaStepSize = 25;
+        // present_on_change_anim_due: the last fade step moved an alpha, so the next step (at _alphaTimer) is a visual change
+        private static bool _alphaMoved;
+
+        internal static int FadeSteps(long now, ref long next, bool displayPaced)
+        {
+            if (now <= next) return 0;
+            long steps = displayPaced && next != 0 ? (now - next) / Constants.ALPHA_TIME + 1 : 1;
+            next = displayPaced && next != 0 ? next + steps * Constants.ALPHA_TIME : now + Constants.ALPHA_TIME;
+            // Eleven steps already traverse the full byte range. Bound work after stalls or a long pause.
+            return (int)Math.Min(11, steps);
+        }
+
         private static bool CalculateAlpha(ref byte alphaHue, int maxAlpha)
         {
             if (
-                ProfileManager.CurrentProfile != null
+                _snapAlphas
+                || ProfileManager.CurrentProfile != null
                 && !ProfileManager.CurrentProfile.UseObjectsFading
             )
             {
+                if (_gpuItemCheckSame && alphaHue != maxAlpha)
+                {
+                    _gpuAlphaSteps++;
+                }
+
                 alphaHue = (byte)maxAlpha;
 
                 return maxAlpha != 0;
@@ -413,7 +339,7 @@ namespace ClassicUO.Game.Scenes
 
             if (alpha > maxAlpha)
             {
-                alpha -= 25;
+                alpha -= _alphaStepSize;
 
                 if (alpha < maxAlpha)
                 {
@@ -424,7 +350,7 @@ namespace ClassicUO.Game.Scenes
             }
             else if (alpha < maxAlpha)
             {
-                alpha += 25;
+                alpha += _alphaStepSize;
 
                 if (alpha > maxAlpha)
                 {
@@ -435,11 +361,32 @@ namespace ClassicUO.Game.Scenes
             }
 
             alphaHue = (byte)alpha;
+            _alphaMoved |= result;
+
+            if (_gpuItemCheckSame && result)
+            {
+                _gpuAlphaSteps++;
+            }
 
             return result;
         }
 
-        private static byte CalculateObjectHeight(ref int maxObjectZ, ref StaticTiles itemData)
+        // clip-1 (walk_maxz_continue, WalkMaxZ): an unmeshed object over the walk's max Z. True: it ends the tile's walk (the
+        // old rule, which also dropped the lower objects after it in PriorityZ order); false: only it is skipped.
+        // CUO_WALK_MAXZ_CHECK notes the objects behind the cut. Out of line: rare.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool MaxZCut(GameObject obj, int topZ, TileListObject list, bool merged, in TileWalk walk, int maxZ)
+        {
+#if CUO_DEVTOOLS
+            if (WalkMaxZ.Check)
+            {
+                WalkMaxZ.NoteCut(obj, topZ, list?.TNext, merged, walk, maxZ);
+            }
+#endif
+            return WalkMaxZ.EndsWalk();
+        }
+
+        internal static byte CalculateObjectHeight(ref int maxObjectZ, ref StaticTiles itemData)
         {
             if (
                 itemData.Height != 0xFF /*&& itemData.Flags != 0*/
@@ -494,7 +441,7 @@ namespace ClassicUO.Game.Scenes
             {
                 for (int x = -1; x <= 2; ++x)
                 {
-                    GameObject tile = _world.Map.GetTile(mob.X + x, mob.Y + y);
+                    TileListObject tile = _world.Map.GetTile(mob.X + x, mob.Y + y);
 
                     found = false;
 
@@ -590,15 +537,26 @@ namespace ClassicUO.Game.Scenes
                     return 0;
                 }
 
-                mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
-                ApplyMeshHue(obj, mesh.Statics);
+                obj.DrawnFrame = _drawFrame;
+
+                if (_gpuWorld != null)
+                {
+                    GpuOnDrawn(obj);
+                }
+                else
+                {
+                    FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
+                    mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
+                    ApplyMeshHue(obj, mesh.Statics);
+                    FrameStats.Enter(bucket);
+                }
 
                 if (itemData.IsLight)
                 {
-                    AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                    AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                 }
 
-                if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && obj.CheckMouseSelection())
+                if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
                 {
                     if (SelectedObject.Object is GameObject prev)
                     {
@@ -643,8 +601,43 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ApplyMeshHue(GameObject obj, MeshLayer layer)
         {
+            ushort objHue = obj.Hue;
+            var source = new SceneMeshHue(this, obj, objHue);
+
+            // mesh_hue_on_change: the sprite keeps its vertex hue while the frame-wide inputs (epoch) and the object's graphic
+            // (partial-hue flag; a season swap changes it in place) and hue are those it was computed from
+            if (MeshHueEpoch.Apply(layer, obj.MeshSpriteIndex, _meshHueOnChange, _meshHueEpoch.Epoch, obj.Graphic, objHue, ref source))
+            {
+#if CUO_DEVTOOLS
+                if (_meshHueCheck)
+                {
+                    CheckMeshHue(obj, layer, objHue);
+                }
+#endif
+            }
+        }
+
+        private readonly struct SceneMeshHue : IMeshHueSource
+        {
+            private readonly GameScene _scene;
+            private readonly GameObject _obj;
+            private readonly ushort _hue;
+
+            public SceneMeshHue(GameScene scene, GameObject obj, ushort hue)
+            {
+                _scene = scene;
+                _obj = obj;
+                _hue = hue;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public void HueOf(out float hueX, out float hueY) => _scene.MeshHueOf(_obj, _hue, out hueX, out hueY);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void MeshHueOf(GameObject obj, int hue, out float hueX, out float hueY)
+        {
             var profile = ProfileManager.CurrentProfile;
-            int hue = obj.Hue;
             bool partial = false;
 
             if (profile.NoColorObjectsOutOfRange && obj.Distance > _world.ClientViewRange)
@@ -664,7 +657,6 @@ namespace ClassicUO.Game.Scenes
                 partial = m.ItemData.IsPartialHue;
             }
 
-            float hueX, hueY;
             if (hue != 0)
             {
                 hueX = hue - 1;
@@ -681,8 +673,6 @@ namespace ClassicUO.Game.Scenes
                 else
                     hueY = ShaderHueTranslator.SHADER_NONE;
             }
-
-            layer.SetHue(obj.MeshSpriteIndex, hueX, hueY);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -695,10 +685,118 @@ namespace ClassicUO.Game.Scenes
             return (dx * dx + dy * dy) < _cotRadiusSq;
         }
 
+        // CheckMouseSelection with FrameStats' pick counter (a plain static, added once per frame by FlushWalkCounters) and
+        // detail bucket (out of line: the walk runs this ~40,000 times a frame at the 4K zoom-out)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool CheckMouseSelectionTimed(GameObject obj)
+        {
+            // pick_skip_off_world: the mouse is not over the world this frame (PickSkip)
+            if (PickSkip.Off)
+            {
+                return false;
+            }
+
+            if (FrameStats.Detail)
+            {
+                return CheckMouseSelectionDetail(obj);
+            }
+
+            _walkPickTests++;
+
+            return obj.CheckMouseSelection();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CheckMouseSelectionDetail(GameObject obj)
+        {
+            _walkPickTests++;
+            FramePhase bucket = FrameStats.Enter(FramePhase.WalkPick);
+            bool hit = obj.CheckMouseSelection();
+            FrameStats.Enter(bucket);
+
+            return hit;
+        }
+
+        private void AddLightTimed(GameObject obj, int x, int y)
+        {
+            FrameStats.Inc(FrameCounter.Lights);
+            FramePhase bucket = FrameStats.Enter(FramePhase.WalkLight);
+            AddLight(obj, obj, x, y);
+            FrameStats.Enter(bucket);
+        }
+
+        // The walk's counters, added to FrameStats once per frame (FlushWalkCounters at the end of FillGameObjectList)
+        // instead of a FrameStats.Inc per object: objects walked (this scene's) and pick tests (static: TrySelectObject is)
+        private int _walkObjects;
+        private static int _walkPickTests;
+
+        private void FlushWalkCounters()
+        {
+            if (FrameStats.On)
+            {
+                FrameStats.Add(FrameCounter.Objects, _walkObjects);
+                FrameStats.Add(FrameCounter.PickTests, _walkPickTests);
+            }
+
+            _walkObjects = 0;
+            _walkPickTests = 0;
+#if CUO_DEVTOOLS
+            WalkMaxZ.FrameEnd(_drawFrame);
+#endif
+        }
+
+        // CUO_PREP_CHECK: a kept RealScreenPosition must equal a fresh one. Out of line: with this string formatting in
+        // AddTileToRenderList's body NativeAOT zeroed 432 bytes of stack and spilled the walk's locals on each of its
+        // ~92,000 calls a frame at the 4K zoom-out, 0.4 ms of Legacy world prepare (poc-log 2026-10-26)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void PrepCheckKeptPosition(GameObject obj)
+        {
+            PrepCheck.PositionsKept++;
+
+            if (obj.RealScreenPosition.X != ((obj.X - obj.Y) * 22) - _offset.X - 22 || obj.RealScreenPosition.Y != ((obj.X + obj.Y) * 22 - (obj.Z << 2)) - _offset.Y - 22)
+            {
+                PrepCheck.PositionsWrong++;
+                PrepCheck.Sample ??= $"{obj.GetType().Name} {obj.X},{obj.Y},{obj.Z} at {obj.RealScreenPosition}";
+            }
+        }
+
+        // FrameStats detail mode, per walked object: its category counter and walk bucket (out of line; detail mode only)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void DetailObject(GameObject obj)
+        {
+            FramePhase bucket = WalkBucket(obj);
+            FrameStats.Inc(bucket switch
+            {
+                FramePhase.WalkLand => FrameCounter.BakedLand,
+                FramePhase.WalkStatic => FrameCounter.BakedStatics,
+                FramePhase.WalkUnmeshed => FrameCounter.Unmeshed,
+                _ => FrameCounter.Dynamic
+            });
+            FrameStats.Enter(bucket);
+        }
+
+        // FrameStats detail mode: switches the walk bucket (out of line: AddTileToRenderList calls it only in detail mode)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static FramePhase DetailEnter(FramePhase bucket)
+        {
+            return FrameStats.Enter(bucket);
+        }
+
+        // FrameStats detail: which walk bucket an object's own work is charged to
+        private static FramePhase WalkBucket(GameObject obj)
+        {
+            if (obj.InChunkMesh)
+            {
+                return obj is Land ? FramePhase.WalkLand : FramePhase.WalkStatic;
+            }
+
+            return obj is Land || obj is Static || obj is Multi ? FramePhase.WalkUnmeshed : FramePhase.WalkDynamic;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void TrySelectObject(GameObject obj, bool allowSelection)
         {
-            if (allowSelection && obj.AllowedToDraw && obj.CheckMouseSelection())
+            if (allowSelection && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
             {
                 if (SelectedObject.Object is GameObject prev)
                 {
@@ -716,6 +814,12 @@ namespace ClassicUO.Game.Scenes
             bool allowSelection
         )
         {
+#if CUO_DEVTOOLS
+            if (GoldenCapture.HideMobiles && obj is Mobile)
+            {
+                return;
+            }
+#endif
             if (obj.AlphaHue == 0)
             {
                 return;
@@ -728,7 +832,7 @@ namespace ClassicUO.Game.Scenes
                 && !(ProfileManager.CurrentProfile.UseCircleOfTransparency
                     && obj.TransparentTest(_world.Player.Z + 5)
                     && IsMouseInsideCotCircle())
-                && obj.CheckMouseSelection()
+                && CheckMouseSelectionTimed(obj)
             )
             {
                 if (SelectedObject.Object is GameObject prev)
@@ -744,6 +848,13 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            obj.DrawnFrame = _drawFrame;
+
+            if (_gpuWorld != null)
+            {
+                GpuOnDrawn(obj);
+            }
+
             _renderLists.Add(obj, isTransparent || obj.AlphaHue != byte.MaxValue);
         }
 
@@ -751,17 +862,69 @@ namespace ClassicUO.Game.Scenes
             GameObject obj,
             bool useObjectHandles,
             int maxZ,
-            Chunk chunk
+            Chunk chunk,
+            bool skipBaked = false,
+            bool forcePosition = false,
+            bool single = false,
+            bool mergeTile = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
             var mesh = chunk.Mesh;
 
-            for (; obj != null; obj = obj.TNext)
+            // FrameStats: this walk runs per object (140,000 objects in 92,000 calls a frame at the 4K zoom-out), so it makes no
+            // FrameStats call per object: the objects counter is a field, the baked/unmeshed/dynamic split and the walk buckets
+            // are detail mode only (out of line), and the flags are read once per call (under NativeAOT, and in JIT code
+            // compiled before FrameStats was initialised, a static readonly flag is a load at every use, not a constant).
+            // W0's per-object Inc/Enter calls cost Legacy 0.3-0.55 ms of world prepare there (poc-log 2026-10-25).
+            bool detail = FrameStats.Detail;
+            bool prepCheck = PrepCheck.On;
+
+            // T6b: a whole tile's walk with dynamics on the tile (mergeTile: the caller's bit of TileWalk.MergeCells) reads the
+            // list's land, statics and multis merged by key with the tile's DynamicTileIndex array; every other whole-tile walk
+            // reads the list from its head. A single-object walk (single: the Gpu prepare's item cache serves a tile's items
+            // and walks its mobiles, effects and walked-alone items one by one, GameSceneGpuItemCache) never merges and ends
+            // after obj.
+            bool merged = mergeTile;
+            obj = TileWalk.StartTile(obj, chunk, merged, single, out TileWalk tileWalk, out TileListObject list);
+
+            for (; obj != null; obj = merged ? tileWalk.Next() : list = list?.TNext)
             {
-                if (UpdateDrawPosition || obj.IsPositionChanged)
+                // CUO_TILE_ORDER_CHECK: an object already drawn this frame (the Gpu item cache stamps the ones it serves) walked again
+                if (TileOrder.Check && obj.DrawnFrame == _drawFrame && !(skipBaked && IsGpuBaked(obj)))
                 {
+                    TileOrder.NoteDoubleSubmission(obj);
+                }
+
+                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
+                if (skipBaked && IsGpuBaked(obj))
+                {
+                    continue;
+                }
+
+                _walkObjects++;
+
+                if (detail)
+                {
+                    DetailObject(obj);
+                }
+
+                // forcePosition: objects the Gpu prepare skipped may have missed camera moves; the generation says whether
+                // this one did (recomputing every walked object each frame cost 8 ns per object)
+                if (UpdateDrawPosition || obj.IsPositionChanged || forcePosition && obj.ScreenPositionGen != _screenPositionGen)
+                {
+                    FramePhase bucket = detail ? DetailEnter(FramePhase.WalkPosition) : default;
                     obj.UpdateRealScreenPosition(_offset.X, _offset.Y);
+                    obj.ScreenPositionGen = _screenPositionGen;
+
+                    if (detail)
+                    {
+                        DetailEnter(bucket);
+                    }
+                }
+                else if (prepCheck)
+                {
+                    PrepCheckKeptPosition(obj);
                 }
 
                 int screenX = obj.RealScreenPosition.X;
@@ -812,8 +975,24 @@ namespace ClassicUO.Game.Scenes
 
                         if (obj.AlphaHue != 0)
                         {
-                            mesh.Land.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue);
-                            ApplyMeshHue(obj, mesh.Land);
+                            obj.DrawnFrame = _drawFrame;
+
+                            if (_gpuWorld != null)
+                            {
+                                GpuOnDrawn(obj);
+                            }
+                            else
+                            {
+                                FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
+                                mesh.Land.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue);
+                                ApplyMeshHue(obj, mesh.Land);
+
+                                if (detail)
+                                {
+                                    DetailEnter(bucket);
+                                }
+                            }
+
                             TrySelectObject(obj, true);
                         }
                         continue;
@@ -894,12 +1073,27 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
-                    ApplyMeshHue(obj, mesh.Statics);
+                    obj.DrawnFrame = _drawFrame;
+
+                    if (_gpuWorld != null)
+                    {
+                        GpuOnDrawn(obj);
+                    }
+                    else
+                    {
+                        FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
+                        mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
+                        ApplyMeshHue(obj, mesh.Statics);
+
+                        if (detail)
+                        {
+                            DetailEnter(bucket);
+                        }
+                    }
 
                     if (meshItemData.IsLight)
                     {
-                        AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                        AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                     }
 
                     TrySelectObject(obj, meshAllowSelection && !(meshCot && IsMouseInsideCotCircle()));
@@ -945,6 +1139,9 @@ namespace ClassicUO.Game.Scenes
                                 continue;
                             }
 
+                            // present_on_change_anim_due: an animated static in the walk keeps the static animation clock due
+                            _animatedArtInView |= itemData.IsAnimated;
+
                             if (!IsFoliageVisibleAtSeason(ref itemData, _world.Season))
                             {
                                 continue;
@@ -977,7 +1174,11 @@ namespace ClassicUO.Game.Scenes
 
                             int cf = ProcessStaticLikeTail(obj, ref itemData, allowSelection, screenY, ref maxObjectZ, maxZ, out bool retVal, mesh);
                             if (cf == 1) continue;
-                            if (cf == 2) return retVal;
+                            if (cf == 2)
+                            {
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return retVal;
+                                continue;
+                            }
                             break;
                         }
 
@@ -1016,7 +1217,11 @@ namespace ClassicUO.Game.Scenes
 
                             int cf = ProcessStaticLikeTail(obj, ref itemData, allowSelection, screenY, ref maxObjectZ, maxZ, out bool retVal, mesh);
                             if (cf == 1) continue;
-                            if (cf == 2) return retVal;
+                            if (cf == 2)
+                            {
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return retVal;
+                                continue;
+                            }
                             break;
                         }
 
@@ -1028,7 +1233,8 @@ namespace ClassicUO.Game.Scenes
 
                             if (maxObjectZ > maxZ)
                             {
-                                return false;
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return false;
+                                continue;
                             }
 
                             StaticTiles empty = default;
@@ -1061,29 +1267,39 @@ namespace ClassicUO.Game.Scenes
 
                     case Item item:
                         {
-                            ref StaticTiles itemData = ref (
-                                item.IsMulti
-                                    ? ref Client.Game.UO.FileManager.TileData.StaticData[item.MultiGraphic]
-                                    : ref item.ItemData
-                            );
+                            // pa-itemprep: the graphic and the locked test read once (item_prep_rows: from the ItemDrawRow),
+                            // the tiledata row selected once; CUO_ITEM_PREP_CHECK compares them with the old getters
+                            StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
+                            ushort itemGraphic = ItemPrep.Read(item, staticData, ItemPrep.Enabled, out bool itemLocked);
+                            bool isCorpse = itemGraphic == Item.CORPSE_GRAPHIC;
+                            bool isMulti = item.IsMulti;
+#if CUO_DEVTOOLS
+                            if (ItemPrep.Check)
+                            {
+                                ItemPrep.Compare(item, staticData, itemGraphic, itemLocked);
+                            }
+#endif
+                            ref StaticTiles itemData = ref staticData[isMulti ? item.MultiGraphic : itemGraphic];
 
-                            if (!item.IsCorpse && itemData.IsInternal)
+                            if (!isCorpse && itemData.IsInternal)
                             {
                                 continue;
                             }
 
+                            _animatedArtInView |= itemData.IsAnimated;
+
                             if (
-                                item.IsCorpse
+                                isCorpse
                                 || (
-                                    !item.IsMulti
-                                    && (!item.IsLocked || item.IsLocked && itemData.IsContainer)
+                                    !isMulti
+                                    && (!itemLocked || itemData.IsContainer)
                                 )
                             )
                             {
                                 UpdateObjectHandles(item, useObjectHandles);
                             }
 
-                            if (!item.IsMulti && !IsFoliageVisibleAtSeason(ref itemData, _world.Season))
+                            if (!isMulti && !IsFoliageVisibleAtSeason(ref itemData, _world.Season))
                             {
                                 continue;
                             }
@@ -1117,7 +1333,8 @@ namespace ClassicUO.Game.Scenes
 
                             if (maxObjectZ > maxZ)
                             {
-                                return itemData.Height != 0 && maxObjectZ - maxZ < height;
+                                if (MaxZCut(obj, maxObjectZ, list, merged, in tileWalk, maxZ)) return itemData.Height != 0 && maxObjectZ - maxZ < height;
+                                continue;
                             }
 
                             if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
@@ -1125,12 +1342,12 @@ namespace ClassicUO.Game.Scenes
                                 continue;
                             }
 
-                            if (!item.IsCorpse)
+                            if (!isCorpse)
                             {
                                 CheckIfBehindATree(obj, ref itemData);
                             }
 
-                            if (item.IsCorpse)
+                            if (isCorpse)
                             {
                                 PushToRenderQueue(
                                     obj,
@@ -1197,8 +1414,9 @@ namespace ClassicUO.Game.Scenes
             int winGameHeight = Camera.Bounds.Height;
             int winGameCenterX = winGamePosX + (winGameWidth >> 1);
             int winGameCenterY = winGamePosY + (winGameHeight >> 1) + (_world.Player.Z << 2);
-            winGameCenterX -= (int)_world.Player.Offset.X;
-            winGameCenterY -= (int)(_world.Player.Offset.Y - _world.Player.Offset.Z);
+            Vector3 playerOffset = _world.Player.Offset;
+            winGameCenterX -= (int)playerOffset.X;
+            winGameCenterY -= (int)(playerOffset.Y - playerOffset.Z);
 
             int tileOffX = _world.Player.X;
             int tileOffY = _world.Player.Y;

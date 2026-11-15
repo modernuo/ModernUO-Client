@@ -134,7 +134,7 @@ namespace ClassicUO.Game.UI.Gumps.Login
 
                 Add
                 (
-                    new Label($"UO Version {Settings.GlobalSettings.ClientVersion}.", false, 0x034E, font: 9)
+                    new Label($"UO Version {Client.Game.UO.VersionText}.", false, 0x034E, font: 9)
                     {
                         X = 286,
                         Y = 453
@@ -235,7 +235,7 @@ namespace ClassicUO.Game.UI.Gumps.Login
 
                 Add
                 (
-                    new Label($"UO Version {Settings.GlobalSettings.ClientVersion}.", false, 0x0481, font: 9)
+                    new Label($"UO Version {Client.Game.UO.VersionText}.", false, 0x0481, font: 9)
                     {
                         X = 286,
                         Y = 453
@@ -517,6 +517,9 @@ namespace ClassicUO.Game.UI.Gumps.Login
 
                 _nextArrow0.ButtonGraphicNormal = _nextArrow0.ButtonGraphicNormal == _buttonNormal ? _buttonOver : _buttonNormal;
             }
+
+            // present_on_change_anim_due: the next timed change
+            ClassicUO.Loop.VisualDue.At((long)_time, ClassicUO.Loop.VisualSource.Gump);
 
             if (_passwordFake.HasKeyboardFocus)
             {

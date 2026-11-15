@@ -229,72 +229,59 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
         {
             if (_character == null)
             {
+                // T1 (funnel part 8, Codex audit P2 #2): the preview mobile and its clothes are detached (no World table
+                // holds them, so they are not world state and never reach the ECS); the paperdoll draws this instance
+                // (PaperDollInteractable.Preview) instead of looking serial 1 up in World.Mobiles
                 _character = new PlayerMobile(World, 1);
-                World.Mobiles.Add(_character);
+                _character.Preview = new PreviewEquipment();
             }
 
-            LinkedObject first = _character.Items;
+            _character.Preview.Clear();
 
-            while (first != null)
+            ushort body = race switch
             {
-                LinkedObject next = first.Next;
+                RaceType.GARGOYLE => isFemale ? (ushort) 0x029B : (ushort) 0x029A,
+                RaceType.ELF => isFemale ? (ushort) 0x025E : (ushort) 0x025D,
+                _ => isFemale ? (ushort) 0x0191 : (ushort) 0x0190
+            };
 
-                World.RemoveItem((Item) first, true);
-
-                first = next;
-            }
-
-            _character.Clear();
-            _character.Race = race;
-            _character.IsFemale = isFemale;
-
-            if (isFemale)
-            {
-                _character.Flags |= Flags.Female;
-            }
-            else
-            {
-                _character.Flags &= ~Flags.Female;
-            }
+            // T9 S4: the preview's record (WorldEcs.Previews) and its cache, through the funnel
+            World.Writer.SetPreviewBody(this, _character, body, race, isFemale);
 
             switch (race)
             {
                 case RaceType.GARGOYLE:
-                    _character.Graphic = isFemale ? (ushort) 0x029B : (ushort) 0x029A;
-
                     Item it = CreateItem(0x4001, CurrentColorOption[Layer.Shirt].Item2, Layer.Robe);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     break;
 
                 case RaceType.ELF when isFemale:
-                    _character.Graphic = 0x025E;
                     it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x1531, CurrentColorOption[Layer.Pants].Item2, Layer.Skirt);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     break;
 
                 case RaceType.ELF:
-                    _character.Graphic = 0x025D;
                     it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x152F, CurrentColorOption[Layer.Pants].Item2, Layer.Pants);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     break;
 
@@ -303,31 +290,29 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                 {
                     if (isFemale)
                     {
-                        _character.Graphic = 0x0191;
                         it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x1531, CurrentColorOption[Layer.Pants].Item2, Layer.Pants);
 
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                        _character.PushToBack(it);
+                        Wear(it);
                     }
                     else
                     {
-                        _character.Graphic = 0x0190;
                         it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x152F, CurrentColorOption[Layer.Pants].Item2, Layer.Pants);
 
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                        _character.PushToBack(it);
+                        Wear(it);
                     }
 
                     break;
@@ -341,7 +326,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             Layer layer;
             CharacterCreationValues.ComboContent content;
 
-            _character.Hue = CurrentColorOption[Layer.Invalid].Item2;
+            World.Writer.SetPreviewHue(this, _character, CurrentColorOption[Layer.Invalid].Item2);
 
             if (!_characterInfo.IsFemale && race != RaceType.ELF)
             {
@@ -350,7 +335,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
                 Item iti = CreateItem(content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, layer);
 
-                _character.PushToBack(iti);
+                Wear(iti);
             }
 
             layer = Layer.Hair;
@@ -358,7 +343,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
             Item it = CreateItem(content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, layer);
 
-            _character.PushToBack(it);
+            Wear(it);
         }
 
         private void HandleRaceChanged()
@@ -421,9 +406,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             // Hair
             CharacterCreationValues.ComboContent content = CharacterCreationValues.GetHairComboContent(_characterInfo.IsFemale, race);
 
-            bool isAsianLang = string.Compare(Settings.GlobalSettings.Language, "CHT", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                string.Compare(Settings.GlobalSettings.Language, "KOR", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                string.Compare(Settings.GlobalSettings.Language, "JPN", StringComparison.InvariantCultureIgnoreCase) == 0;
+            bool isAsianLang = OsLanguage.NeedsUnicodeFonts(Settings.GlobalSettings.Language);
 
             bool unicode = isAsianLang;
             byte font = (byte)(isAsianLang ? 3 : 9);
@@ -568,7 +551,8 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             (
                 _paperDoll = new PaperDollInteractable(262, 135, _character, new PaperDollGump(World))
                 {
-                    AcceptMouseInput = false
+                    AcceptMouseInput = false,
+                    Preview = _character
                 },
                 1
             );
@@ -642,12 +626,12 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
                 if (item != null)
                 {
-                    item.Hue = e.SelectedHue;
+                    World.Writer.SetPreviewHue(this, item, e.SelectedHue);
                 }
             }
             else
             {
-                _character.Hue = e.SelectedHue;
+                World.Writer.SetPreviewHue(this, _character, e.SelectedHue);
             }
 
             _paperDoll.RequestUpdate();
@@ -749,11 +733,11 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                     break;
 
                 case Buttons.Next:
-                    _character.Name = _nameTextBox.Text;
+                    string name = _nameTextBox.Text;
 
-                    if (ValidateCharacter(_character))
+                    if (ValidateCharacter(name))
                     {
-                        charCreationGump.SetCharacter(_character);
+                        charCreationGump.SetCharacter(_character, name);
                     }
 
                     break;
@@ -767,9 +751,9 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             base.OnButtonClick(buttonID);
         }
 
-        private bool ValidateCharacter(PlayerMobile character)
+        private bool ValidateCharacter(string name)
         {
-            int invalid = Validate(character.Name);
+            int invalid = Validate(name);
             if (invalid > 0)
             {
                 UIManager.GetGump<CharCreationGump>()?.ShowMessage(Client.Game.UO.FileManager.Clilocs.GetString(invalid));
@@ -777,7 +761,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                 return false;
             }
             
-            Log.Trace($"Creating character '{character.Name}'");
+            Log.Trace($"Creating character '{name}'");
 
             return true;
         }
@@ -961,14 +945,29 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             "origin"
         };
 
+        public override void Dispose()
+        {
+            bool first = !IsDisposed;
+            base.Dispose();
+
+            // T9 S4: this gump's preview records go with the creation flow (this gump is a page of CharCreationGump, disposed
+            // with it); once, after the base disposal, and only this gump's (another preview gump's records stay)
+            if (first)
+            {
+                World?.Ecs.ReleasePreviews(this);
+            }
+        }
+
+        // T9 child-list slice A: the preview's clothes are its table (Mobile.Preview)
+        private void Wear(Item item) => _character.Preview.Wear(item);
+
         private Item CreateItem(int id, ushort hue, Layer layer)
         {
             Item existsItem = _character.FindItemByLayer(layer);
 
             if (existsItem != null)
             {
-                World.RemoveItem(existsItem, true);
-                _character.Remove(existsItem);
+                _character.Preview.TakeOff(existsItem);
             }
 
             if (id == 0)
@@ -977,14 +976,10 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             }
 
             // This is a workaround to avoid to see naked guy
-            // We are simulating server objects into World.Items map.
-            Item item = World.GetOrCreateItem(0x4000_0000 + (uint) layer); // use layer as unique Serial
-            _character.Remove(item);
-            item.Graphic = (ushort) id;
-            item.Hue = hue;
-            item.Layer = layer;
-            item.Container = _character;
-            //
+            // T1 (funnel part 8, Codex audit P2 #2): a detached item (Item.Create, not in World.Items), linked to the
+            // detached preview mobile below; the paperdoll finds it through the mobile's item list
+            Item item = Item.Create(World, 0x4000_0000 + (uint) layer); // use layer as unique Serial
+            World.Writer.SetPreviewItem(this, item, (ushort) id, hue, layer, _character);
 
             return item;
         }
@@ -1043,9 +1038,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                 _layer = layer;
                 _pallet = pallet;
 
-                bool isAsianLang = string.Compare(Settings.GlobalSettings.Language, "CHT", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                    string.Compare(Settings.GlobalSettings.Language, "KOR", StringComparison.InvariantCultureIgnoreCase) == 0 ||
-                    string.Compare(Settings.GlobalSettings.Language, "JPN", StringComparison.InvariantCultureIgnoreCase) == 0;
+                bool isAsianLang = OsLanguage.NeedsUnicodeFonts(Settings.GlobalSettings.Language);
 
                 bool unicode = isAsianLang;
                 byte font = (byte)(isAsianLang ? 3 : 9);

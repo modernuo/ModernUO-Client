@@ -1,0 +1,445 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+using System;
+using System.Runtime.CompilerServices;
+using ClassicUO.Ecs;
+using ClassicUO.Game.Data;
+using ClassicUO.Game.GameObjects;
+using Uo.Pack;
+using EcsEntity = Friflo.Engine.ECS.Entity;
+
+namespace ClassicUO.Game
+{
+    // T3a (ecs-transition-plan.md, T3): a mobile's worn equipment by layer, owned by the ECS (WornLayers on the mobile's mirror
+    // record: the first attached item per layer by child-order stamp). Entity.FindItemByLayer reads it for a mobile.
+    /// <summary>T3a: whether World holds a mobile instance for its serial, as its <see cref="WornCache"/> last verified.</summary>
+    internal enum WornHeld : byte
+    {
+        Unknown,
+        /// <summary>World does not hold this instance for its serial: nothing worn (the preview's table for its preview).</summary>
+        NotHeld,
+        /// <summary>World holds it but the mirror has no record for the serial: nothing worn.</summary>
+        NoRecord,
+        /// <summary>World holds it; <see cref="WornCache.Entity"/> is its record.</summary>
+        Record
+    }
+
+    /// <summary>
+    /// T3a: a mobile's equipment read cache (<c>Mobile.EquipCache</c>, made at its first read): the
+    /// verified record, and the Item objects of its WornLayers serials (null when nothing is worn), valid for the mirror
+    /// epoch, slot-write count and WornLayers version it was filled at.
+    /// </summary>
+    internal sealed class WornCache
+    {
+        public EcsEntity Entity;
+        public uint Serial, Epoch;
+        public ulong Version;
+        public long Writes;
+        public WornHeld Held;
+        public Item[] Items;
+
+        /// <summary>T3b: the cached world layering answer (null until first used).</summary>
+        public LayerDecision Layers;
+    }
+
+    /// <summary>
+    /// perf-10: a mobile's worn items for one draw or hit-test loop (<see cref="WorldState.WornView"/>), its
+    /// <see cref="WornCache"/> validated once instead of at every <c>FindItemByLayer</c>. The same answers as
+    /// <c>FindItemByLayer</c> and <see cref="WorldState.HasWornItems"/> while nothing writes the world between the reads (a
+    /// draw does not): both of those go through the same two methods.
+    /// </summary>
+    internal readonly ref struct WornItems
+    {
+        private readonly WorldState _state;
+        private readonly Mobile _mobile;
+        private readonly WornCache _cache;
+
+        internal WornItems(WorldState state, Mobile mobile, WornCache cache)
+        {
+            _state = state;
+            _mobile = mobile;
+            _cache = cache;
+        }
+
+        /// <summary><see cref="WorldState.HasWornItems"/>.</summary>
+        public bool Any => _state.WornGuard(_mobile, _cache);
+
+        /// <summary><c>FindItemByLayer</c> on the mobile.</summary>
+        public Item this[Layer layer] => _state.WornItem(_mobile, _cache, layer);
+
+        /// <summary><see cref="WorldState.WorldLayers"/>.</summary>
+        public LayerDecision Layers(bool gargoyleDraw) => _state.WorldLayers(_mobile, _cache, gargoyleDraw);
+    }
+
+    internal sealed partial class WorldState
+    {
+        /// <summary>perf-10: the mobile's worn items for a loop of layer reads, validated once (<see cref="WornItems"/>).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public WornItems WornView(Mobile mobile) => new WornItems(this, mobile, Worn(mobile));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal Item WornItem(Mobile mobile, WornCache c, Layer layer)
+        {
+            uint index = (uint)layer - 1;
+
+            if (index >= WornLayers.COUNT || c.Held == WornHeld.NotHeld)
+            {
+                return NotWorn(mobile, layer, c.Held);
+            }
+
+            return c.Items?[index];
+        }
+
+        internal bool WornGuard(Mobile mobile, WornCache c) =>
+            c.Held != WornHeld.NotHeld ? c.Items != null : mobile.Preview != null && mobile.Preview.Any;
+
+        /// <summary>
+        /// The ECS's worn item of <paramref name="mobile"/> on <paramref name="layer"/>: the item World holds under the serial
+        /// WornLayers records (null when none). An instance World does not hold for its serial (the appearance gumps'
+        /// detached preview mobile, serial 1; a replaced or destroyed mobile) never reads that serial's record: the preview
+        /// reads its <see cref="PreviewEquipment"/> table, any other wears nothing. Layers WornLayers does not track (0: the
+        /// trade boxes; above 0x1D) are the first child on the layer in the ECS's child order. Served from the mobile's
+        /// <see cref="WornCache"/>: a hit is three compares and an array load.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Item WornItem(Mobile mobile, Layer layer) => WornItem(mobile, Worn(mobile), layer);
+
+        // T9 child-list slices A and B: the reads WornLayers does not answer. The character creation's preview: its table.
+        // Another instance World does not hold (a replaced or destroyed mobile): nothing. A held mobile's untracked layer: its
+        // first child on the layer in the ECS's child order.
+        private Item NotWorn(Mobile mobile, Layer layer, WornHeld held)
+        {
+            if (held == WornHeld.NotHeld)
+            {
+                return mobile.Preview?.Get(layer);
+            }
+
+            return ChildByLayer(mobile, layer);
+        }
+
+        /// <summary>
+        /// T9 child-list slice A: <c>Entity.FindItemByLayer</c> for an item (a corpse's equipment, CorpseOrder, ItemView):
+        /// its first non-destroyed child on <paramref name="layer"/> in the ECS's child order (the spell entries first, as
+        /// <see cref="Children"/>). An instance World does not hold for its serial has none (no record of its own).
+        /// </summary>
+        public Item FindChild(Entity parent, Layer layer) => IsCurrent(parent) ? ChildByLayer(parent, layer) : null;
+
+        private Item ChildByLayer(Entity parent, Layer layer)
+        {
+            foreach (Item entry in SpellEntries(parent.Serial))
+            {
+                if (!entry.IsDestroyed && entry.Layer == layer)
+                {
+                    return entry;
+                }
+            }
+
+            // perf-11: CorpseOrder reads ~24 layers of one corpse and the draw then its drawn layers: a scan each made one
+            // Items.Get per child per layer. Inside an operation the GameObject fields can be ahead of or behind the mirror's
+            // count, so the scan answers there.
+            if (_world.Writer.InScope)
+            {
+                return ScanByLayer(parent, layer);
+            }
+
+            LayerTable t = LayerTableOf(parent);
+            Item it = t.First[(byte)layer];
+
+            // a funnel write that missed the count (the checker reports it) still never serves a destroyed or moved item
+            if (it != null && (it.IsDestroyed || it.Layer != layer))
+            {
+                t.Valid = false;
+
+                return ScanByLayer(parent, layer);
+            }
+
+#if CUO_DEVTOOLS
+            if (LayerCacheCheck.Enabled)
+            {
+                LayerCacheCheck.OnChildHit(this, parent, layer, it);
+            }
+#endif
+
+            return it;
+        }
+
+        // the first child on the layer in the ECS's child order (the answer before perf-11's tables; the checker's reference)
+        internal Item ScanByLayer(Entity parent, Layer layer)
+        {
+#if CUO_DEVTOOLS
+            FrameStats.Inc(FrameCounter.ChildLayerScans);
+#endif
+
+            foreach (uint serial in _world.Ecs.Mirror.Contents(parent.Serial))
+            {
+#if CUO_DEVTOOLS
+                FrameStats.Inc(FrameCounter.ChildLayerGets);
+#endif
+                Item it = _world.GetItem(serial);
+
+                // never the parent itself (an item under a mobile's serial, worn by it: see Children)
+                if (it != null && !it.IsDestroyed && it.Layer == layer && !ReferenceEquals(it, parent))
+                {
+                    return it;
+                }
+            }
+
+            return null;
+        }
+
+        // ---- perf-11: child-by-layer tables. Each holds one parent's first child per layer (the scan's answer for all 256
+        // layers at once), valid while the mirror's epoch and item-write count are what it was built at: every change of a
+        // child's record, parent, order or layer and of the Item object under a serial goes with one of them. A few parents
+        // are kept (the corpses drawn in a frame; replaced round robin), so a quiet scene builds each once.
+
+        // layout-based: 48 B with its Item[256] 24 + 2,048 B; 8 tables about 17 KB per client once built
+        private sealed class LayerTable
+        {
+            public Entity Parent;
+            public uint Serial, Epoch;
+            public ulong Writes;
+            public bool Valid;
+            public readonly Item[] First = new Item[256];
+        }
+
+        internal const int LayerTableCount = 8;
+
+        private readonly LayerTable[] _layerTables = new LayerTable[LayerTableCount];
+        private int _layerTableNext;
+
+        /// <summary>Tests and stats: table builds (a read after a change, or of a parent not held).</summary>
+        public long LayerTableBuilds;
+
+        private LayerTable LayerTableOf(Entity parent)
+        {
+            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+            LayerTable t = null;
+
+            for (int i = 0; i < _layerTables.Length; i++)
+            {
+                LayerTable c = _layerTables[i];
+
+                if (c != null && ReferenceEquals(c.Parent, parent))
+                {
+                    t = c;
+
+                    break;
+                }
+            }
+
+            if (t != null && t.Valid && t.Serial == parent.Serial && t.Epoch == mirror.Epoch && t.Writes == mirror.ItemWrites)
+            {
+                return t;
+            }
+
+            if (t == null)
+            {
+                t = _layerTables[_layerTableNext] ??= new LayerTable();
+                _layerTableNext = (_layerTableNext + 1) % _layerTables.Length;
+            }
+
+            BuildLayerTable(t, parent, mirror);
+
+            return t;
+        }
+
+        private void BuildLayerTable(LayerTable t, Entity parent, ClassicUO.Ecs.WorldMirror mirror)
+        {
+            LayerTableBuilds++;
+#if CUO_DEVTOOLS
+            FrameStats.Inc(FrameCounter.ChildLayerScans);
+#endif
+            Array.Clear(t.First);
+            t.Parent = parent;
+            t.Serial = parent.Serial;
+            t.Epoch = mirror.Epoch;
+            t.Writes = mirror.ItemWrites;
+            t.Valid = true;
+
+            foreach (uint serial in mirror.Contents(parent.Serial))
+            {
+#if CUO_DEVTOOLS
+                FrameStats.Inc(FrameCounter.ChildLayerGets);
+#endif
+                Item it = _world.GetItem(serial);
+
+                if (it != null && !it.IsDestroyed && !ReferenceEquals(it, parent))
+                {
+                    t.First[(byte)it.Layer] ??= it;
+                }
+            }
+        }
+
+        // World.Clear: no parent is left (and the tables keep no Item alive)
+        private void ClearLayerTables()
+        {
+            foreach (LayerTable t in _layerTables)
+            {
+                if (t != null)
+                {
+                    t.Valid = false;
+                    t.Parent = null;
+                    Array.Clear(t.First);
+                }
+            }
+        }
+
+        /// <summary>
+        /// MobileView's <c>!IsEmpty</c> guard before its equipment reads: whether the ECS records any worn item on a tracked
+        /// layer (the layers the view reads). A mobile World does not hold: the preview's table, any other none.
+        /// </summary>
+        public bool HasWornItems(Mobile mobile) => WornGuard(mobile, Worn(mobile));
+
+        // the mobile's cache, current: valid while the mirror's epoch (no record removed: every change of the table's instance
+        // for a serial, and of the Item object for a serial, goes with a removal) and the mirror's count of slot writes are
+        // what it saw; when only the writes moved, the mobile's own WornLayers version decides whether its items are re-read
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private WornCache Worn(Mobile mobile)
+        {
+            WorldMirror mirror = _world.Ecs.Mirror;
+            WornCache c = mobile.EquipCache;
+#if CUO_DEVTOOLS
+            FrameStats.Inc(FrameCounter.WornChecks);
+#endif
+
+            if (c != null && c.Epoch == mirror.Epoch && c.Writes == mirror.WornWrites && c.Serial == mobile.Serial)
+            {
+                return c;
+            }
+
+            return Refresh(mobile, mirror);
+        }
+
+        private WornCache Refresh(Mobile mobile, WorldMirror mirror)
+        {
+            WornCache c = mobile.EquipCache ??= new WornCache();
+            CacheRefreshes++;
+
+            // Codex audit P3 (#4): a cached NoRecord is looked up again at every refresh (a record can be created for the serial,
+            // also over attached children, without an epoch change: only removals move the epoch)
+            if (c.Epoch != mirror.Epoch || c.Serial != mobile.Serial || c.Held == WornHeld.Unknown || c.Held == WornHeld.NoRecord)
+            {
+                c.Serial = mobile.Serial;
+                c.Epoch = mirror.Epoch;
+                c.Version = 0;
+                c.Entity = default;
+
+                if (!_world.Holds(mobile))
+                {
+                    c.Held = WornHeld.NotHeld;
+                    c.Items = null;
+                }
+                else if (mirror.TryGetEntity(mobile.Serial, out EcsEntity e) && e.HasComponent<EquipmentSlots>())
+                {
+                    c.Held = WornHeld.Record;
+                    c.Entity = e;
+                }
+                else
+                {
+                    c.Held = WornHeld.NoRecord;
+                    c.Items = null;
+                }
+            }
+
+            if (c.Held == WornHeld.Record)
+            {
+                ref WornLayers w = ref c.Entity.GetComponent<EquipmentSlots>().Worn;
+
+                if (w.Version != c.Version || c.Version == 0)
+                {
+                    CacheFills++;
+                    c.Version = w.Version;
+                    ReadOnlySpan<uint> serials = w.Serials;
+
+                    if (serials.IndexOfAnyExcept(0u) < 0)
+                    {
+                        c.Items = null;
+                    }
+                    else
+                    {
+                        Item[] items = c.Items ??= new Item[WornLayers.COUNT];
+
+                        for (int i = 0; i < serials.Length; i++)
+                        {
+                            items[i] = serials[i] == 0 ? null : _world.FindItem(serials[i]);
+                        }
+                    }
+                }
+            }
+
+            c.Writes = mirror.WornWrites;
+
+            return c;
+        }
+
+        /// <summary>
+        /// T3b: the mobile's cached world layering answer (<see cref="LayerDecision"/>), refilled when its
+        /// key moved (the record's WornLayers Version or Look, the subject: body and flags, the rules). Null for an instance
+        /// World does not hold for its serial or one without a record (the caller evaluates the rules directly).
+        /// </summary>
+        public LayerDecision WorldLayers(Mobile mobile, bool gargoyleDraw) => WorldLayers(mobile, Worn(mobile), gargoyleDraw);
+
+        internal LayerDecision WorldLayers(Mobile mobile, WornCache c, bool gargoyleDraw)
+        {
+            if (c.Held != WornHeld.Record)
+            {
+                return null;
+            }
+
+            LayerRules rules = LayerRuleEval.Rules;
+            LayerSubject subject = LayerRuleEval.Subject(mobile.Graphic, mobile.IsFemale, gargoyleDraw);
+            LayerDecision d = c.Layers ??= new LayerDecision();
+
+            if (d.Lookup(rules, subject, c.Version, _world.Ecs.Mirror, c.Entity))
+            {
+#if CUO_DEVTOOLS
+                if (LayerCacheCheck.Enabled)
+                {
+                    LayerCacheCheck.OnHit(mobile, d, rules, subject);
+                }
+#endif
+
+                return d;
+            }
+
+            LayerTables t = default;
+            t.Gather(mobile);
+            d.Fill(ref t);
+
+            return d;
+        }
+
+        /// <summary>Cache refreshes (a mirror change since the mobile's last read) and fills (its items re-read).</summary>
+        public long CacheRefreshes, CacheFills;
+
+        /// <summary>The read caches of the mobiles World holds (layout-based: <see cref="WornCache"/> 80 B, its items array
+        /// 24 + 8 B per tracked layer = 256 B).</summary>
+        public (int Caches, int WithItems, long Bytes) ReadCacheMemory()
+        {
+            int caches = 0, withItems = 0, withLayers = 0;
+
+            foreach (Mobile m in _world.Mobiles.Values)
+            {
+                if (m.EquipCache != null)
+                {
+                    caches++;
+
+                    if (m.EquipCache.Items != null)
+                    {
+                        withItems++;
+                    }
+
+                    if (m.EquipCache.Layers != null)
+                    {
+                        withLayers++;
+                    }
+                }
+            }
+
+            return (caches, withItems, caches * 80L + withItems * (24L + 8 * WornLayers.COUNT) + withLayers * (long)LayerDecision.Bytes);
+        }
+
+        /// <summary>Memory of WornLayers (layout-based: the component per mobile record; see <see cref="WorldMirror.WornLayersBytes"/>).</summary>
+        public long WornLayersBytes => _world.Ecs.Mirror.WornLayersBytes;
+    }
+}

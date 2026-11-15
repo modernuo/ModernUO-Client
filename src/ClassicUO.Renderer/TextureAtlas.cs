@@ -27,6 +27,31 @@ namespace ClassicUO.Renderer
 
         public int TexturesCount => _textureList.Count;
 
+        /// <summary>anim_atlas_lru: new pages get an <see cref="Animations.AtlasPage"/> as their Tag.</summary>
+        public bool TrackPages { get; set; }
+
+        public long PageBytes => (long)_width * _height * 4;
+
+        public Texture2D GetPage(int index) => _textureList[index];
+
+        private int _pageSerial;
+
+        /// <summary>
+        /// anim_atlas_lru: frees a page that is not the open one (only the open page has a packer, so a freed page's space
+        /// is never handed out again). Callers drop every reference to the texture first.
+        /// </summary>
+        public void RemovePage(int index)
+        {
+            if (index < 0 || index >= _textureList.Count - 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index), $"page {index} of {_textureList.Count} can't be removed (the last page is open)");
+            }
+
+            Texture2D texture = _textureList[index];
+            _textureList.RemoveAt(index);
+            texture.Dispose();
+        }
+
         public unsafe Texture2D AddSprite(
             ReadOnlySpan<uint> pixels,
             int width,
@@ -34,6 +59,12 @@ namespace ClassicUO.Renderer
             out Rectangle pr
         )
         {
+            // a rect that can't fit an empty page would otherwise make a new page forever
+            if (width <= 0 || height <= 0 || width > _width || height > _height || (long)width * height > pixels.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(width), $"sprite {width}x{height} ({pixels.Length} texels) can't go into a {_width}x{_height} atlas");
+            }
+
             var index = _textureList.Count - 1;
 
             if (index < 0)
@@ -42,10 +73,15 @@ namespace ClassicUO.Renderer
                 CreateNewTexture2D();
             }
 
-            while (!_packer.PackRect(width, height, out pr))
+            if (!_packer.PackRect(width, height, out pr))
             {
                 CreateNewTexture2D();
                 index = _textureList.Count - 1;
+
+                if (!_packer.PackRect(width, height, out pr))
+                {
+                    throw new InvalidOperationException($"sprite {width}x{height} doesn't fit an empty {_width}x{_height} atlas page");
+                }
             }
 
             Texture2D texture = _textureList[index];
@@ -53,6 +89,7 @@ namespace ClassicUO.Renderer
             fixed (uint* src = pixels)
             {
                 texture.SetDataPointerEXT(0, pr, (IntPtr)src, sizeof(uint) * width * height);
+                TextureUploads.Changed();
             }
 
             return texture;
@@ -62,6 +99,12 @@ namespace ClassicUO.Renderer
         {
             Utility.Logging.Log.Trace($"creating texture: {_width}x{_height} {_format}");
             Texture2D texture = new Texture2D(_device, _width, _height, false, _format);
+
+            if (TrackPages)
+            {
+                texture.Tag = new Animations.AtlasPage(_pageSerial++, Animations.AtlasPageClock.NowMs);
+            }
+
             _textureList.Add(texture);
 
             _packer?.Dispose();

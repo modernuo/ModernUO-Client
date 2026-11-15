@@ -66,6 +66,9 @@ namespace ClassicUO.Network
         public void PingReceived(byte idx)
         {
             _pings[idx % _pings.Length] = Time.Ticks - _startTickValue;
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.PingHandled(this, idx, _pings[idx % _pings.Length], Ping);
+#endif
         }
 
         public void SendPing()
@@ -75,6 +78,9 @@ namespace ClassicUO.Network
                 return;
             }
 
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.PingCreated(this, _socket.ConnectionGeneration, _pingIdx);
+#endif
             _startTickValue = Time.Ticks;
             _socket.Send_Ping(_pingIdx);
             _pingIdx = (byte)((_pingIdx + 1) % _pings.Length);
@@ -82,6 +88,9 @@ namespace ClassicUO.Network
 
         public void Reset()
         {
+#if CUO_DEVTOOLS
+            if (Diagnostics.On) Diagnostics.PingReset(this);
+#endif
             _startTickValue = 0;
             ConnectedFrom = DateTime.MinValue;
             _lastTotalBytesReceived = _lastTotalBytesSent = _lastTotalPacketsReceived = _lastTotalPacketsSent = 0;

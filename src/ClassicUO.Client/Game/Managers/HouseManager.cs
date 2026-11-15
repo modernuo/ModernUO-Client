@@ -16,7 +16,9 @@ namespace ClassicUO.Game.Managers
             _world = world;
         }
 
-        public IReadOnlyCollection<House> Houses => _houses.Values;
+        // The concrete collection, so foreach uses its struct enumerator: through IReadOnlyCollection it boxed one per
+        // walk, and the world map walks the houses every frame.
+        public Dictionary<uint, House>.ValueCollection Houses => _houses.Values;
 
         public void Add(uint serial, House revision)
         {
@@ -28,9 +30,11 @@ namespace ClassicUO.Game.Managers
             return _houses.TryGetValue(serial, out house);
         }
 
-        public bool TryToRemove(uint serial, int distance)
+        public bool TryToRemove(Item multi, int distance)
         {
-            if (!IsHouseInRange(serial, distance))
+            uint serial = multi.Serial;
+
+            if (!IsHouseInRange(multi, distance))
             {
                 if (_houses.TryGetValue(serial, out House house))
                 {
@@ -45,9 +49,9 @@ namespace ClassicUO.Game.Managers
             return false;
         }
 
-        public bool IsHouseInRange(uint serial, int distance)
+        public bool IsHouseInRange(Item multi, int distance)
         {
-            if (TryGetHouse(serial, out _))
+            if (TryGetHouse(multi.Serial, out _))
             {
                 int currX = _world.RangeSize.X;
                 int currY = _world.RangeSize.Y;
@@ -65,16 +69,12 @@ namespace ClassicUO.Game.Managers
                 //    currY = World.Player.Y;
                 //}
 
-                Item found = _world.Items.Get(serial);
+                // T9 slice 3: the range sweep asks this for a destroyed multi the table still holds
+                // (World.DestroyedHeldMultiBeyond), and a live lookup would answer "in range" and keep its house: the caller's
+                // multi decides, destroyed or not
+                distance += multi.MultiDistanceBonus;
 
-                if (found == null)
-                {
-                    return true;
-                }
-
-                distance += found.MultiDistanceBonus;
-
-                return Math.Abs(found.X - currX) <= distance && Math.Abs(found.Y - currY) <= distance;
+                return Math.Abs(multi.X - currX) <= distance && Math.Abs(multi.Y - currY) <= distance;
             }
 
             return false;
@@ -84,7 +84,7 @@ namespace ClassicUO.Game.Managers
         {
             if (obj != null && TryGetHouse(house, out _))
             {
-                Item found = _world.Items.Get(house);
+                Item found = _world.FindItem(house);
 
                 if (found == null || !found.MultiInfo.HasValue)
                 {
@@ -111,14 +111,22 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        /// <summary>
+        /// T9 S9 (Codex audit P2 #1): the house placement preview's serial (GameScene.CreatePlacementPreview), keying its house
+        /// here and its preview record in WorldEcs.Previews. Not a world serial, and not a preview gump's (0, 1,
+        /// 0x4000_0000 + layer): with 0 it took the race-change gump's mobile record when both were open.
+        /// </summary>
+        public const uint PLACEMENT_PREVIEW_SERIAL = 0xFFFF_FFFE;
+
         public void RemoveMultiTargetHouse()
         {
-            if (_houses.TryGetValue(0, out House house))
+            if (_houses.TryGetValue(PLACEMENT_PREVIEW_SERIAL, out House house))
             {
                 house.ClearComponents();
-                _houses.Remove(0);
+                _houses.Remove(PLACEMENT_PREVIEW_SERIAL);
             }
         }
+
 
         public bool Exists(uint serial)
         {

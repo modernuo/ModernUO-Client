@@ -1,4 +1,4 @@
-using ClassicUO.Assets;
+﻿using ClassicUO.Assets;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
@@ -6,6 +6,7 @@ using Microsoft.Xna.Framework.Graphics;
 using SDL3;
 using System;
 using System.Buffers;
+using System.Diagnostics;
 
 namespace ClassicUO.Renderer.Arts
 {
@@ -13,7 +14,7 @@ namespace ClassicUO.Renderer.Arts
     {
         private readonly SpriteInfo[] _spriteInfos;
         private readonly TextureAtlas _atlas;
-        private readonly PixelPicker _picker = new PixelPicker();
+        private readonly PixelPicker _picker;
         private readonly Rectangle[] _realArtBounds;
         private readonly ArtLoader _artLoader;
         private readonly HuesLoader _huesLoader;
@@ -23,16 +24,337 @@ namespace ClassicUO.Renderer.Arts
             _artLoader = artLoader;
             _huesLoader = huesLoader;
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[_artLoader.File.Entries.Length];
+            _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
+            _picker = new PixelPicker(_spriteInfos.Length);
+            _missing = new ulong[(_spriteInfos.Length + 63) >> 6];
+            _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
+                idx => DecodeBudget.PooledBytes(_artLoader.PixelCount(idx)));
+        }
+
+        /// <summary>
+        /// First-sight art requested ahead of use (<see cref="RequestLand"/>, <see cref="RequestArt"/>, by the chunk loader)
+        /// decodes on a worker; its atlas upload waits for <see cref="DrainReady"/>. CUO_ART_SYNC=1 turns requests off:
+        /// every first lookup decodes on the spot, as before.
+        /// </summary>
+        public static readonly bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ART_SYNC") != "1";
+
+        private readonly FirstSightDecoder _decoder;
+        private static readonly bool DiagSyncLog = Environment.GetEnvironmentVariable("CUO_ART_SYNC_LOG") == "1";
+
+        /// <summary>Main-thread first-sight decodes (a lookup that had to decode) and their time; FrameStats resets them.</summary>
+        public static int FrameSyncLoads;
+        public static long FrameSyncTicks;
+        /// <summary>Worker decodes uploaded by <see cref="DrainReady"/> and the time spent there; FrameStats resets them.</summary>
+        public static int FrameAsyncUploads;
+        public static long FrameUploadTicks;
+        /// <summary>Main-thread decodes and their time since start (never reset; for scripted measurements).</summary>
+        public static int TotalSyncLoads;
+        public static long TotalSyncTicks;
+        /// <summary>Sprites found missing from the pack and logged (once per id until <see cref="Reload"/>; never reset).</summary>
+        public static int TotalMissingLogs;
+#if CUO_DEVTOOLS
+        /// <summary>Lookups that took a finished worker decode instead of decoding again (FrameStats resets the frame count).</summary>
+        public static int FrameReadyTakes;
+        public static int TotalReadyTakes;
+#endif
+
+        // sprites the pack has no image for: their lookups return the placeholder without decoding or logging again
+        private readonly ulong[] _missing;
+
+        /// <summary>Worker decodes requested and not uploaded yet.</summary>
+        public int PendingDecodes => _decoder.Pending;
+
+        /// <summary>Worker decodes uploaded so far: a caller waiting on requests only needs to look again when it changed.</summary>
+        public int CompletedDecodes => _decoder.Completed;
+
+        /// <summary>
+        /// True when land tile <paramref name="idx"/> is in the atlas, or has no image (a lookup would not decode it);
+        /// otherwise queues its worker decode, once, and returns false. Main thread.
+        /// </summary>
+        public bool RequestLand(uint idx) => Request(idx & ~0x4000u);
+
+        /// <summary>As <see cref="RequestLand"/>, for static art <paramref name="idx"/>.</summary>
+        public bool RequestArt(uint idx) => Request(idx + 0x4000);
+
+        private bool Request(uint idx)
+        {
+            // a sprite the worker could not decode counts as ready: the request was speculative, and a real lookup decodes
+            // (or fails) on the spot exactly as before
+            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !AsyncFirstSight || !_artLoader.Exists((int)idx)
+                || _decoder.IsFailed(idx))
+            {
+                return true;
+            }
+
+            _decoder.Request(idx);
+
+            return false;
+        }
+
+        /// <summary>Static art awaited by <see cref="Prefetch"/> batches, and their wall time (never reset; for scripted measurements).</summary>
+        public static int TotalPrefetched;
+        public static long TotalPrefetchTicks;
+        /// <summary>Prefetch batches that did not wait: the frame allowance was spent or the decode budget was blocked.</summary>
+        public static int TotalPrefetchSkipped;
+
+        /// <summary>Most distinct missing sprites one <see cref="Prefetch"/> batch waits for.</summary>
+        public const int PrefetchMaxBatch = 128;
+
+        /// <summary>A wait slice: nothing finishing within it ends the wait (the workers are busy elsewhere).</summary>
+        public const int PrefetchStallMs = 2;
+
+        // the frame's main-thread time for prefetch waits and art uploads (Map.UpdateLoading's drain and the prefetches share
+        // it); none until BeginFrame, so nothing waits unless a frame granted it
+        private readonly FrameAllowance _frameAllowance = new FrameAllowance();
+
+        /// <summary>
+        /// Once per frame, before the chunk loader's drain (Map.UpdateLoading; only with art_container_prefetch on): the
+        /// main-thread time this frame's art uploads and <see cref="Prefetch"/> waits may take together. It ends at the next
+        /// <see cref="AdvanceFrame"/> or <see cref="EndAllowance"/>; while it lasts it also bounds <see cref="DrainReady"/>.
+        /// </summary>
+        public void BeginFrame(long allowanceTicks) => _frameAllowance.Begin(allowanceTicks);
+
+        /// <summary>The game loop's frame boundary (GameController.Update): last frame's allowance is gone.</summary>
+        public void AdvanceFrame() => _frameAllowance.AdvanceFrame();
+
+        /// <summary>art_container_prefetch off, or scene teardown: no allowance until the next <see cref="BeginFrame"/>.</summary>
+        public void EndAllowance() => _frameAllowance.Clear();
+
+        /// <summary>True when static art <paramref name="artId"/> is not in the atlas and a worker could decode it.</summary>
+        public bool NeedsDecode(uint artId)
+        {
+            uint idx = artId + 0x4000;
+
+            return idx < _spriteInfos.Length && _spriteInfos[idx].Texture == null && !_decoder.IsFailed(idx) && _artLoader.Exists((int)idx);
+        }
+
+        /// <summary>
+        /// A window about to build controls for many static art sprites (a container's contents, the paperdoll's slots):
+        /// queues worker decodes of the ones not in the atlas and waits for them, together with the ones already requested,
+        /// so the controls' synchronous <see cref="GetArt"/> calls find them uploaded. The main thread then waits for the
+        /// slowest decode instead of doing every decode in turn (Gump.Prefetch's pattern). Main thread.
+        /// <list type="bullet">
+        /// <item>At most <see cref="PrefetchMaxBatch"/> distinct missing sprites; fewer than two: nothing is queued or awaited.
+        /// The decodes go through the shared decode budget like every first-sight request.</item>
+        /// <item>The wait is soft and bounded by <paramref name="timeoutMs"/> and by what is left of the frame allowance
+        /// (<see cref="BeginFrame"/>, shared with the chunk loader's uploads and every other prefetch this frame): no upload
+        /// starts after it. It ends early when nothing finishes for <see cref="PrefetchStallMs"/>, and does not start when
+        /// the budget can't admit the batch now (FirstSightDecoder.RequestAndWait); the requests stay queued then.</item>
+        /// <item>A sprite still in flight decodes on the spot when a control asks, and the worker's result is dropped, as for
+        /// any first-sight request; one whose decode has finished is uploaded from the worker's result
+        /// (FirstSightDecoder.TryTakeReady).</item>
+        /// </list>
+        /// Returns the number of sprites waited for (0: none, or no wait).
+        /// </summary>
+        public int Prefetch(ReadOnlySpan<uint> artIds, int timeoutMs)
+        {
+            if (!AsyncFirstSight)
+            {
+                return 0;
+            }
+
+            long t0 = Stopwatch.GetTimestamp();
+            Span<uint> batch = stackalloc uint[PrefetchMaxBatch];
+            int n = 0;
+
+            foreach (uint id in artIds)
+            {
+                if (n == batch.Length)
+                {
+                    break;
+                }
+
+                uint idx = id + 0x4000;
+
+                if (NeedsDecode(id) && !batch.Slice(0, n).Contains(idx))
+                {
+                    batch[n++] = idx;
+                }
+            }
+
+            if (n < 2)
+            {
+                return 0;
+            }
+
+            long wait = Math.Min(_frameAllowance.Remaining, Stopwatch.Frequency * timeoutMs / 1000);
+
+            if (wait <= 0)
+            {
+                // the frame's allowance is spent: queue only (the decodes still run ahead of the controls)
+                for (int i = 0; i < n; i++)
+                {
+                    _decoder.Request(batch[i]);
+                }
+
+                TotalPrefetchSkipped++;
+
+                return 0;
+            }
+
+            long drained = _decoder.DrainTicks;
+            int pending = _decoder.RequestAndWait(batch.Slice(0, n), t0 + wait, PrefetchStallMs);
+            long spent = Stopwatch.GetTimestamp() - t0;
+            _frameAllowance.Spend(spent);
+            FrameUploadTicks += _decoder.DrainTicks - drained;
+
+            if (pending == n)
+            {
+                TotalPrefetchSkipped++;
+            }
+
+            TotalPrefetched += n - pending;
+            TotalPrefetchTicks += spent;
+
+            return n - pending;
+        }
+
+        /// <summary>
+        /// Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. While a
+        /// <see cref="BeginFrame"/> allowance is active the deadline is also bounded by what is left of it, and nothing is
+        /// uploaded once it is spent. Main thread.
+        /// </summary>
+        public void DrainReady(long deadline)
+        {
+            if (_decoder.HasReady)
+            {
+                long t0 = Stopwatch.GetTimestamp();
+
+                if (!_frameAllowance.TryClampDrain(deadline, t0, out deadline))
+                {
+                    return;
+                }
+
+                _decoder.Drain(deadline);
+                long spent = Stopwatch.GetTimestamp() - t0;
+                FrameUploadTicks += spent;
+                _frameAllowance.Spend(spent);
+            }
+        }
+
+        // Worker thread. Touches only the loader's sprite table (immutable after Load), the pack pages (thread-safe) and
+        // ArrayPool, plus the job; the atlas, the picker, the bounds and the sprite infos stay on the main thread.
+        private bool DecodeOnWorker(FirstSightDecoder.Job job)
+        {
+            int count = _artLoader.PixelCount(job.Index);
+
+            if (count == 0)
+            {
+                return false;
+            }
+
+            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            var artInfo = _artLoader.GetArt(job.Index, job.Pixels);
+
+            if (artInfo.Pixels.IsEmpty)
+            {
+                return false;
+            }
+
+            job.Width = artInfo.Width;
+            job.Height = artInfo.Height;
+            job.TrimX = artInfo.TrimX;
+            job.TrimY = artInfo.TrimY;
+            job.TrimW = artInfo.TrimW;
+            job.TrimH = artInfo.TrimH;
+
+            if (job.Index > 0x4000)
+            {
+                PixelPicker.VisibleBounds(artInfo.Pixels, artInfo.Width, artInfo.Height, artInfo.TrimX, artInfo.TrimY, artInfo.TrimW, artInfo.TrimH,
+                    out int minX, out int minY, out int maxX, out int maxY);
+                job.Bounds = new Rectangle(minX, minY, maxX - minX, maxY - minY);
+            }
+
+            return true;
+        }
+
+        // main thread: what Get does after its decode
+        private void UploadDecoded(FirstSightDecoder.Job job)
+        {
+            uint idx = job.Index;
+            ref var spriteInfo = ref _spriteInfos[idx];
+
+            if (spriteInfo.Texture != null)
+            {
+                return; // a lookup needed it first and decoded it itself
+            }
+
+            var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
+            spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
+            PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+
+            if (idx > 0x4000)
+            {
+                _picker.SetTrimmed(idx - 0x4000, job.Width, job.Height, job.TrimX, job.TrimY, job.TrimW, job.TrimH, pixels);
+                _realArtBounds[idx - 0x4000] = job.Bounds;
+            }
+
+            FrameAsyncUploads++;
         }
 
         public void Reload()
         {
-            _artLoader.LoadOurs();
             Array.Clear(_spriteInfos);
             Array.Clear(_realArtBounds);
+            Array.Clear(_missing);
             _picker.Clear();
+            Generation++;
+        }
+
+        /// <summary>
+        /// Bumped whenever sprites that were in the atlas may be gone again (<see cref="Reload"/>): a caller that remembered
+        /// "these sprites are ready" must look again.
+        /// </summary>
+        public int Generation { get; private set; }
+
+        /// <summary>Scene teardown: drops finished worker decodes and returns their buffers (see FirstSightDecoder.Cancel).</summary>
+        public void CancelPending()
+        {
+            _decoder.Cancel();
+            _frameAllowance.Clear();
+        }
+
+        /// <summary>
+        /// The UV size <see cref="GetArt"/> would return for static art <paramref name="graphic"/>, without decoding it:
+        /// the atlas rect once uploaded, else the pack sprite table's size, else (art missing from the pack) the
+        /// placeholder's. False where GetArt would return no texture. perf-6: controls size themselves from this and
+        /// leave the decode to their first draw or hit test.
+        /// </summary>
+        public bool TryGetArtSize(uint graphic, out int width, out int height) => TryGetSize(graphic + 0x4000, out width, out height);
+
+        private bool TryGetSize(uint idx, out int width, out int height)
+        {
+            if (idx < _spriteInfos.Length)
+            {
+                ref readonly var spriteInfo = ref _spriteInfos[idx];
+
+                if (spriteInfo.Texture != null)
+                {
+                    width = spriteInfo.UV.Width;
+                    height = spriteInfo.UV.Height;
+
+                    return true;
+                }
+
+                if (_artLoader.Exists((int)idx))
+                {
+                    ref readonly var sprite = ref _artLoader.PackSpriteEntries[idx];
+                    width = sprite.OrigW;
+                    height = sprite.OrigH;
+
+                    return true;
+                }
+
+                if (idx > 0)
+                {
+                    return TryGetSize(0, out width, out height); // Get's placeholder for art missing from the pack
+                }
+            }
+
+            width = height = 0;
+
+            return false;
         }
 
         public ref readonly SpriteInfo GetLand(uint idx)
@@ -48,55 +370,86 @@ namespace ClassicUO.Renderer.Arts
 
             ref var spriteInfo = ref _spriteInfos[idx];
 
+            if (spriteInfo.Texture == null && (_missing[idx >> 6] & (1UL << (int)(idx & 63))) != 0)
+            {
+                return ref Get(0);
+            }
+
+            if (spriteInfo.Texture == null && _decoder.IsRequested(idx))
+            {
+                // a worker decoded it already (not drained yet): upload that result instead of decoding it again
+                long drained = _decoder.DrainTicks;
+
+                if (_decoder.TryTakeReady(idx, _frameAllowance))
+                {
+                    FrameUploadTicks += _decoder.DrainTicks - drained;
+#if CUO_DEVTOOLS
+                    FrameReadyTakes++;
+                    TotalReadyTakes++;
+#endif
+                }
+            }
+
             if (spriteInfo.Texture == null)
             {
-                var artInfo = _artLoader.GetArt(idx);
-
-                if (artInfo.Pixels.IsEmpty && idx > 0)
+                long syncStart = Stopwatch.GetTimestamp();
+                FrameSyncLoads++;
+                if (DiagSyncLog)
                 {
-                    // Trying to load a texture that does not exist in the client MULs
-                    // Degrading gracefully and only crash if not even the fallback ItemID exists
-                    Log.Error(
-                        $"Texture not found for sprite: idx: {idx}; itemid: {(idx > 0x4000 ? idx - 0x4000 : '-')}"
-                    );
-                    return ref Get(0); // ItemID of "UNUSED" placeholder
+                    var st = new StackTrace(1, false);
+                    var sb = new System.Text.StringBuilder();
+                    for (int i = 0; i < Math.Min(6, st.FrameCount); i++) { var m = st.GetFrame(i)?.GetMethod(); sb.Append(m?.DeclaringType?.Name).Append('.').Append(m?.Name).Append(" < "); }
+                    Log.Info($"[artsync] idx 0x{idx:X} {(idx >= 0x4000 ? "art 0x" + (idx - 0x4000).ToString("X") : "land")} {sb}");
                 }
 
-                spriteInfo.Texture = _atlas.AddSprite(
-                    artInfo.Pixels,
-                    artInfo.Width,
-                    artInfo.Height,
-                    out spriteInfo.UV
-                );
+                // the untrimmed image only lives until the atlas upload: decode into a pooled buffer
+                var buffer = ArrayPool<uint>.Shared.Rent(Math.Max(1, _artLoader.PixelCount(idx)));
 
-                if (idx > 0x4000)
+                try
                 {
-                    idx -= 0x4000;
-                    _picker.Set(idx, artInfo.Width, artInfo.Height, artInfo.Pixels);
+                    var artInfo = _artLoader.GetArt(idx, buffer);
 
-                    var pos1 = 0;
-                    int minX = artInfo.Width,
-                        minY = artInfo.Height,
-                        maxX = 0,
-                        maxY = 0;
-
-                    for (int y = 0; y < artInfo.Height; ++y)
+                    if (artInfo.Pixels.IsEmpty && idx > 0)
                     {
-                        for (int x = 0; x < artInfo.Width; ++x)
-                        {
-                            if (artInfo.Pixels[pos1++] != 0)
-                            {
-                                minX = Math.Min(minX, x);
-                                maxX = Math.Max(maxX, x);
-                                minY = Math.Min(minY, y);
-                                maxY = Math.Max(maxY, y);
-                            }
-                        }
+                        // Trying to load a texture that does not exist in the client MULs
+                        // Degrading gracefully and only crash if not even the fallback ItemID exists. Remembered per
+                        // id: later lookups (every frame for a drawn item) go straight to the placeholder.
+                        _missing[idx >> 6] |= 1UL << (int)(idx & 63);
+                        TotalMissingLogs++;
+                        Log.Error(
+                            $"Texture not found for sprite: idx: {idx}; itemid: {(idx > 0x4000 ? idx - 0x4000 : '-')}"
+                        );
+                        return ref Get(0); // ItemID of "UNUSED" placeholder
                     }
 
-                    _realArtBounds[idx] = new Rectangle(minX, minY, maxX - minX, maxY - minY);
+                    spriteInfo.Texture = _atlas.AddSprite(
+                        artInfo.Pixels,
+                        artInfo.Width,
+                        artInfo.Height,
+                        out spriteInfo.UV
+                    );
+
+                    PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+
+                    if (idx > 0x4000)
+                    {
+                        idx -= 0x4000;
+
+                        // texels outside the pack trim rect are 0: the picker mask and the visible bounds only scan inside it
+                        _picker.SetTrimmed(idx, artInfo.Width, artInfo.Height, artInfo.TrimX, artInfo.TrimY, artInfo.TrimW, artInfo.TrimH, artInfo.Pixels);
+                        PixelPicker.VisibleBounds(artInfo.Pixels, artInfo.Width, artInfo.Height, artInfo.TrimX, artInfo.TrimY, artInfo.TrimW, artInfo.TrimH,
+                            out int minX, out int minY, out int maxX, out int maxY);
+                        _realArtBounds[idx] = new Rectangle(minX, minY, maxX - minX, maxY - minY);
+                    }
                 }
-                
+                finally
+                {
+                    ArrayPool<uint>.Shared.Return(buffer);
+                    long syncTicks = Stopwatch.GetTimestamp() - syncStart;
+                    FrameSyncTicks += syncTicks;
+                    TotalSyncLoads++;
+                    TotalSyncTicks += syncTicks;
+                }
             }
 
             return ref spriteInfo;

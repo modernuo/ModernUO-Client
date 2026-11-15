@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Xml;
+using Uo.Pack;
+using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.IO;
@@ -95,23 +97,43 @@ namespace ClassicUO.Game.Managers
             return false;
         }
 
-        public unsafe void Sort()
+        // the catalog is looked up only when there is one (tests and an empty catalog have no Client.Game)
+        public void Sort() => SortBy(SkillsGroupManager.SkillsCount, i => Client.Game.UO.FileManager.Skills.GetSortedIndex(i));
+
+        /// <summary>
+        /// Orders the group's skills by the catalog's sorted order. Skills the catalog does not list (it is shorter, or
+        /// empty before a pack or server provides it) keep their ids, after the sorted ones in their old order, so a
+        /// profile saved afterwards never loses or invents a skill id.
+        /// </summary>
+        internal unsafe void SortBy(int skillsCount, Func<int, int> sortedIndex)
         {
             byte* table = stackalloc byte[60];
+            // SkipLocalsInit may leave stackalloc uninitialized
+            Span<bool> used = stackalloc bool[60];
+            used.Clear();
             int index = 0;
 
-            int count = Client.Game.UO.FileManager.Skills.SkillsCount;
-
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < skillsCount && index < Count; i++)
             {
+                int skill = sortedIndex(i);
+
                 for (int j = 0; j < Count; j++)
                 {
-                    if (Client.Game.UO.FileManager.Skills.GetSortedIndex(i) == _list[j])
+                    if (!used[j] && skill == _list[j])
                     {
                         table[index++] = _list[j];
+                        used[j] = true;
 
                         break;
                     }
+                }
+            }
+
+            for (int j = 0; j < Count; j++)
+            {
+                if (!used[j])
+                {
+                    table[index++] = _list[j];
                 }
             }
 
@@ -160,6 +182,9 @@ namespace ClassicUO.Game.Managers
 
         public SkillsGroupManager(World world) => _world = world;
 
+        // zero without a running client (unit tests build the defaults headless)
+        internal static int SkillsCount => Client.Game?.UO?.FileManager?.Skills?.SkillsCount ?? 0;
+
 
         public readonly List<SkillsGroup> Groups = new List<SkillsGroup>();
 
@@ -192,17 +217,17 @@ namespace ClassicUO.Game.Managers
             return true;
         }
 
-        public void Load()
+        public void Load() => Load(Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml"));
+
+        internal void Load(string path)
         {
             Groups.Clear();
-
-            string path = Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml");
 
             if (!File.Exists(path))
             {
                 Log.Trace("No skillsgroups.xml file. Creating a default file.");
 
-                MakeDefault();
+                MakeDefault(true, path);
 
                 return;
             }
@@ -211,48 +236,62 @@ namespace ClassicUO.Game.Managers
 
             try
             {
-                doc.Load(path);
+                AtomicFile.LoadXml(doc, path);
+
+                XmlElement root = doc["skillsgroups"];
+
+                if (root != null)
+                {
+                    foreach (XmlElement xml in root.GetElementsByTagName("group"))
+                    {
+                        SkillsGroup g = new SkillsGroup();
+                        g.Name = xml.GetAttribute("name");
+
+                        XmlElement xmlIdsRoot = xml["skillids"];
+
+                        if (xmlIdsRoot != null)
+                        {
+                            foreach (XmlElement xmlIds in xmlIdsRoot.GetElementsByTagName("skill"))
+                            {
+                                g.Add(byte.Parse(xmlIds.GetAttribute("id")));
+                            }
+                        }
+
+                        g.Sort();
+                        Add(g);
+                    }
+                }
             }
             catch (Exception ex)
             {
-                MakeDefault();
-
+                // the user's file stays as it is: defaults live in memory only, and the next Save() keeps a .bak of the file first
                 Log.Error(ex.ToString());
 
-                return;
-            }
-
-            XmlElement root = doc["skillsgroups"];
-
-            if (root != null)
-            {
-                foreach (XmlElement xml in root.GetElementsByTagName("group"))
-                {
-                    SkillsGroup g = new SkillsGroup();
-                    g.Name = xml.GetAttribute("name");
-
-                    XmlElement xmlIdsRoot = xml["skillids"];
-
-                    if (xmlIdsRoot != null)
-                    {
-                        foreach (XmlElement xmlIds in xmlIdsRoot.GetElementsByTagName("skill"))
-                        {
-                            g.Add(byte.Parse(xmlIds.GetAttribute("id")));
-                        }
-                    }
-
-                    g.Sort();
-                    Add(g);
-                }
+                _loadFailed = true;
+                MakeDefault(false, path);
             }
         }
 
 
-        public void Save()
-        {
-            string path = Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml");
+        private bool _loadFailed;
 
-            using (XmlTextWriter xml = new XmlTextWriter(path, Encoding.UTF8)
+        public void Save() => Save(Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml"));
+
+        internal void Save(string path)
+        {
+            if (_loadFailed)
+            {
+                if (!AtomicFile.KeepBackup(path))
+                {
+                    // the unreadable file is the user's only copy: keep it, try the backup again on the next save
+                    return;
+                }
+
+                                _loadFailed = false;
+            }
+
+            using var atomic = AtomicFile.OpenWrite(path);
+            using (XmlTextWriter xml = new XmlTextWriter(atomic, Encoding.UTF8)
             {
                 Formatting = Formatting.Indented,
                 IndentChar = '\t',
@@ -269,15 +308,21 @@ namespace ClassicUO.Game.Managers
 
                 xml.WriteEndElement();
                 xml.WriteEndDocument();
+                xml.Flush();
+                atomic.Commit();
             }
         }
 
 
-        public void MakeDefault()
+        public void MakeDefault() => MakeDefault(true, Path.Combine(ProfileManager.ProfilePath, "skillsgroups.xml"));
+
+        internal void MakeDefault(bool save, string path)
         {
             Groups.Clear();
 
-            if (!LoadMULFile(Client.Game.UO.FileManager.GetUOFilePath("skillgrp.mul")))
+            string table = Client.Game?.UO?.FileManager?.Pack?.PathOf(MiscConst.SkillGroupsFile);
+
+            if (table == null || !LoadPackTable(table))
             {
                 MakeDefaultMiscellaneous();
                 MakeDefaultCombat();
@@ -293,7 +338,10 @@ namespace ClassicUO.Game.Managers
                 g.Sort();
             }
 
-            Save();
+            if (save)
+            {
+                Save(path);
+            }
         }
 
         private void MakeDefaultMiscellaneous()
@@ -313,7 +361,7 @@ namespace ClassicUO.Game.Managers
 
         private void MakeDefaultCombat()
         {
-            int count = Client.Game.UO.FileManager.Skills.SkillsCount;
+            int count = SkillsCount;
 
             SkillsGroup g = new SkillsGroup();
             g.Name = ResGeneral.Combat;
@@ -376,7 +424,7 @@ namespace ClassicUO.Game.Managers
 
         private void MakeDefaultMagic()
         {
-            int count = Client.Game.UO.FileManager.Skills.SkillsCount;
+            int count = SkillsCount;
 
             SkillsGroup g = new SkillsGroup();
             g.Name = ResGeneral.Magic;
@@ -454,92 +502,62 @@ namespace ClassicUO.Game.Managers
             Add(g);
         }
 
-        private bool LoadMULFile(string path)
+        /// <summary>
+        /// The groups skillgrp.mul describes, built as LoadMULFile built them: group 0 is Miscellaneous, then one group per
+        /// name; each number gives the next skill's group, a number past the last group skips the entry, and a negative
+        /// one throws (the caller then uses the built-in groups).
+        /// </summary>
+        internal static SkillsGroup[] GroupsFromTable(string[] names, int[] assignments, int skillsCount)
         {
-            FileInfo info = new FileInfo(path);
+            byte skillidx = 0;
 
-            if (!info.Exists)
+            SkillsGroup g = new SkillsGroup();
+            g.Name = ResGeneral.Miscellaneous;
+
+            SkillsGroup[] groups = new SkillsGroup[names.Length + 1];
+            groups[0] = g;
+
+            for (int i = 0; i < names.Length; ++i)
+            {
+                groups[i + 1] = new SkillsGroup
+                {
+                    Name = names[i]
+                };
+            }
+
+            foreach (int grp in assignments)
+            {
+                if (grp < groups.Length && skillidx < skillsCount)
+                {
+                    groups[grp].Add(skillidx++);
+                }
+            }
+
+            return groups;
+        }
+
+        // skillgrp.bin: skillgrp.mul's group names and per-skill group numbers as the converter read them
+        private bool LoadPackTable(string path)
+        {
+            if (!File.Exists(path))
             {
                 return false;
             }
 
             try
             {
-                byte skillidx = 0;
-                bool unicode = false;
+                var (names, assignments) = SkillGroupsFile.Read(path);
 
-                using (BinaryReader bin = new BinaryReader(File.OpenRead(info.FullName)))
+                foreach (SkillsGroup group in GroupsFromTable(names, assignments, Client.Game.UO.FileManager.Skills.SkillsCount))
                 {
-                    int start = 4;
-                    int strlen = 17;
-                    int count = bin.ReadInt32();
-
-                    if (count == -1)
-                    {
-                        unicode = true;
-                        count = bin.ReadInt32();
-                        start *= 2;
-                        strlen *= 2;
-                    }
-
-
-                    StringBuilder sb = new StringBuilder(17);
-
-                    SkillsGroup g = new SkillsGroup();
-                    g.Name = ResGeneral.Miscellaneous;
-
-                    SkillsGroup[] groups = new SkillsGroup[count];
-                    groups[0] = g;
-
-                    for (int i = 0; i < count - 1; ++i)
-                    {
-                        short strbuild;
-                        bin.BaseStream.Seek(start + i * strlen, SeekOrigin.Begin);
-
-                        if (unicode)
-                        {
-                            while ((strbuild = bin.ReadInt16()) != 0)
-                            {
-                                sb.Append((char) strbuild);
-                            }
-                        }
-                        else
-                        {
-                            while ((strbuild = bin.ReadByte()) != 0)
-                            {
-                                sb.Append((char) strbuild);
-                            }
-                        }
-
-                        groups[i + 1] = new SkillsGroup
-                        {
-                            Name = sb.ToString()
-                        };
-
-                        sb.Clear();
-                    }
-
-                    bin.BaseStream.Seek(start + (count - 1) * strlen, SeekOrigin.Begin);
-
-                    while (bin.BaseStream.Length != bin.BaseStream.Position)
-                    {
-                        int grp = bin.ReadInt32();
-
-                        if (grp < groups.Length && skillidx < Client.Game.UO.FileManager.Skills.SkillsCount)
-                        {
-                            groups[grp].Add(skillidx++);
-                        }
-                    }
-
-                    for (int i = 0; i < groups.Length; i++)
-                    {
-                        Add(groups[i]);
-                    }
+                    Add(group);
                 }
+
+                Log.Trace($"Skill groups: {names.Length + 1} from {path}");
             }
             catch (Exception e)
             {
-                Log.Error($"Error while reading skillgrp.mul, using CUO defaults! exception given is: {e}");
+                Log.Error($"Error while reading {path}, using CUO defaults! exception given is: {e}");
 
                 return false;
             }

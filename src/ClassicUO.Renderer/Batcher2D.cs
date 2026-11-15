@@ -11,12 +11,12 @@ using System.Runtime.InteropServices;
 
 namespace ClassicUO.Renderer
 {
-    public sealed unsafe class UltimaBatcher2D : IDisposable
+    public sealed unsafe partial class UltimaBatcher2D : IDisposable
     {
         private static readonly float[] _cornerOffsetX = new float[] { 0.0f, 1.0f, 0.0f, 1.0f };
         private static readonly float[] _cornerOffsetY = new float[] { 0.0f, 0.0f, 1.0f, 1.0f };
 
-        private const int MAX_SPRITES = 0x800;
+        internal const int MAX_SPRITES = 0x800;
         private const int MAX_VERTICES = MAX_SPRITES * 4;
         private const int MAX_INDICES = MAX_SPRITES * 6;
         private BlendState _blendState;
@@ -26,25 +26,6 @@ namespace ClassicUO.Renderer
 
         private readonly IndexBuffer _indexBuffer;
         private int _numSprites;
-        private Matrix _projectionMatrix = new Matrix
-        (
-            0f, //(float)( 2.0 / (double)viewport.Width ) is the actual value we will use
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0f, //(float)( -2.0 / (double)viewport.Height ) is the actual value we will use
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            -1.0f,
-            1.0f,
-            0.0f,
-            1.0f
-        );
         private readonly RasterizerState _rasterizerState;
         private SamplerState _sampler;
         private bool _started;
@@ -63,7 +44,7 @@ namespace ClassicUO.Renderer
 
             _textureInfo = new Texture2D[MAX_SPRITES];
             _vertexInfo = new PositionNormalTextureColor4[MAX_SPRITES];
-            _vertexBuffer = new DynamicVertexBuffer(GraphicsDevice, typeof(PositionNormalTextureColor4), MAX_VERTICES, BufferUsage.WriteOnly);
+            _vertexBuffer = new DynamicVertexBuffer(GraphicsDevice, PositionNormalTextureColor4.VertexDeclaration, MAX_VERTICES, BufferUsage.WriteOnly);
             _indexBuffer = new IndexBuffer(GraphicsDevice, IndexElementSize.SixteenBits, MAX_INDICES, BufferUsage.WriteOnly);
             _indexBuffer.SetData(GenerateIndexArray());
 
@@ -102,7 +83,127 @@ namespace ClassicUO.Renderer
 
         public GraphicsDevice GraphicsDevice { get; }
 
+        /// <summary>While set, sprite draws go to the capture first; the batcher draws only what it declines.</summary>
+        public ISpriteCapture Capture;
+
+        // E12 (CUO_GPU_ITEM_CHECK's probe pass): between BeginSuppress and EndSuppress nothing reaches the device. Sprites
+        // queued in that time (anything a capture declined or that bypasses it, e.g. an aura) are dropped when a flush would
+        // draw them or at EndSuppress, and the blend, stencil and sampler states set in that time are put back.
+        private bool _suppress;
+        private int _suppressMark;
+        private BlendState _suppressBlend;
+        private DepthStencilState _suppressStencil;
+        private SamplerState _suppressSampler;
+        private int _suppressedSprites;
+
+        /// <summary>Sprites queued and not yet drawn.</summary>
+        public long GeneratedSprites { get; private set; }
+
+        public int PendingSprites => _numSprites;
+
+#if CUO_DEVTOOLS
+        // CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
+        /// <summary>When set, every draw folds its vertices, textures, transform and effect into <see cref="FrameSignature"/>.</summary>
+        public static bool SignatureOn;
+
+        /// <summary>A hash of everything drawn since the caller last reset it (CUO_ANIM_DUE_CHECK), and the sprites it covers.</summary>
+        public ulong FrameSignature;
+        public long SignatureSprites;
+
+        private void Sign(PositionNormalTextureColor4[] vertices, Texture2D[] textures, int start, int count)
+        {
+            ulong h = FrameSignature == 0 ? 14695981039346656037UL : FrameSignature;
+            ReadOnlySpan<ulong> words = MemoryMarshal.Cast<PositionNormalTextureColor4, ulong>(vertices.AsSpan(start, count));
+
+            for (int i = 0; i < words.Length; i++)
+            {
+                h = (h ^ words[i]) * 1099511628211UL;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                h = (h ^ (ulong)RuntimeHelpers.GetHashCode(textures[start + i])) * 1099511628211UL;
+            }
+
+            h = SignState(h);
+            FrameSignature = h;
+            SignatureSprites += count;
+        }
+
+        /// <summary>Folds a signature taken on its own (a recorded pass) into <see cref="FrameSignature"/>.</summary>
+        internal void FoldSignature(ulong signature, long sprites)
+        {
+            ulong h = FrameSignature == 0 ? 14695981039346656037UL : FrameSignature;
+            FrameSignature = (h ^ signature) * 1099511628211UL;
+            SignatureSprites += sprites;
+        }
+
+        private ulong SignState(ulong h)
+        {
+            ReadOnlySpan<ulong> m = MemoryMarshal.Cast<Matrix, ulong>(new ReadOnlySpan<Matrix>(in _transformMatrix));
+
+            for (int i = 0; i < m.Length; i++)
+            {
+                h = (h ^ m[i]) * 1099511628211UL;
+            }
+
+            return (h ^ (ulong)RuntimeHelpers.GetHashCode(_customEffect ?? (object)this)) * 1099511628211UL;
+        }
+#endif
+
+        public void BeginSuppress()
+        {
+            _suppress = true;
+            _suppressMark = _numSprites;
+            _suppressedSprites = 0;
+            _suppressBlend = _blendState;
+            _suppressStencil = _stencil;
+            _suppressSampler = _sampler;
+        }
+
+        /// <summary>Ends <see cref="BeginSuppress"/>; returns how many sprites were dropped.</summary>
+        public int EndSuppress()
+        {
+            DropSuppressed();
+            _suppress = false;
+            _blendState = _suppressBlend;
+            _stencil = _suppressStencil;
+            _sampler = _suppressSampler;
+            _suppressBlend = null;
+            _suppressStencil = null;
+            _suppressSampler = null;
+
+            return _suppressedSprites;
+        }
+
+        private void DropSuppressed()
+        {
+            if (_numSprites > _suppressMark)
+            {
+                Array.Clear(_textureInfo, _suppressMark, _numSprites - _suppressMark);
+                _suppressedSprites += _numSprites - _suppressMark;
+                _numSprites = _suppressMark;
+            }
+        }
+
         public int TextureSwitches, FlushesDone;
+
+        public static readonly bool CollectFrameStats =
+#if CUO_DEVTOOLS
+            Environment.GetEnvironmentVariable("CUO_DIAG") == "1" ||
+#endif
+            Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
+               && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
+        public static int FrameFlushes, FrameDrawCalls;
+        public static int FrameUploadCalls, FrameUploadBytes;
+        public static long FrameGpuTicks;
+
+        public static void ResetFrameCounters()
+        {
+            FrameFlushes = FrameDrawCalls = 0;
+            FrameUploadCalls = FrameUploadBytes = 0;
+            FrameGpuTicks = 0;
+        }
         private bool _worldOffsetActive;
 
 
@@ -118,13 +219,49 @@ namespace ClassicUO.Renderer
 
         public void SetBrightlight(float f)
         {
-            _basicUOEffect.Brighlight.SetValue(f);
+            if (f != _brightlight)
+            {
+                _brightlight = f;
+                _basicUOEffect.Brighlight.SetValue(f);
+                _effectDirty = true;
+            }
         }
 
         public void SetCircleOfTransparencyRadius(float radius)
         {
-            _basicUOEffect.CircleOfTransparencyRadius.SetValue(radius);
+            if (radius != _circleRadius)
+            {
+                _circleRadius = radius;
+                _basicUOEffect.CircleOfTransparencyRadius.SetValue(radius);
+                _effectDirty = true;
+            }
         }
+
+        // The basic effect's parameters as last committed with Pass.Apply(). FNA3D keeps the committed values in
+        // MojoShader's register file and pushes them again whenever it rebinds the pipeline (new render pass or
+        // command buffer), so Apply() is only needed when a parameter changed or another effect was applied since.
+        // Other effects are applied outside Begin/End (SpriteBatch, plugins) or by a custom effect pass, so Begin()
+        // and custom-effect draws invalidate.
+        private bool _effectDirty = true;
+        private int _appliedViewportW = -1, _appliedViewportH = -1;
+        private Matrix _appliedTransform;
+        private bool _appliedWorldIdentity;
+        private float _brightlight = float.NaN, _circleRadius = float.NaN;
+
+        private void ApplyEffect()
+        {
+            if (!_effectDirty)
+            {
+                return;
+            }
+
+            _basicUOEffect.Pass.Apply();
+            _effectDirty = false;
+            EffectApplies++;
+        }
+
+        /// <summary>Basic effect Pass.Apply() calls since start (DevBench reports them per plan entry).</summary>
+        public static long EffectApplies;
 
         public void DrawString(SpriteFont spriteFont, ReadOnlySpan<char> text, int x, int y, Vector3 color, float layerDepth)
             => DrawString(spriteFont, text, new Vector2(x, y), color, layerDepth);
@@ -307,6 +444,11 @@ namespace ClassicUO.Renderer
 
         public void DrawShadow(Texture2D texture, Vector2 position, Rectangle sourceRect, bool flip, float depth)
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRect, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), flip, false, depth, SpriteCaptureMode.Shadow))
+            {
+                return;
+            }
+
             float width = sourceRect.Width;
             float height = sourceRect.Height * 0.5f;
             float translatedY = position.Y + height - 10;
@@ -372,6 +514,11 @@ namespace ClassicUO.Renderer
             float depth
         )
         {
+            if (Capture != null && Capture.DrawSitted(texture, position, sourceRect, mod, hue, flip, depth))
+            {
+                return;
+            }
+
             EnsureSize();
 
             float h03 = sourceRect.Height * mod.X;
@@ -603,6 +750,11 @@ namespace ClassicUO.Renderer
             float depth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRectangle ?? texture.Bounds, color, false, false, depth, SpriteCaptureMode.Normal))
+            {
+                return;
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             float destW, destH;
 
@@ -639,6 +791,12 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRectangle ?? texture.Bounds, color, (effects & SpriteEffects.FlipHorizontally) != 0,
+                    scale != 1f || rotation != 0f, layerDepth, SpriteCaptureMode.Normal))
+            {
+                return;
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             float destW = scale;
             float destH = scale;
@@ -694,6 +852,12 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRectangle ?? texture.Bounds, color, (effects & SpriteEffects.FlipHorizontally) != 0,
+                    scale != Vector2.One || rotation != 0f, layerDepth, SpriteCaptureMode.Normal))
+            {
+                return;
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             if (sourceRectangle.HasValue)
             {
@@ -817,6 +981,17 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && origin == Vector2.Zero && effects == SpriteEffects.None)
+            {
+                Rectangle source = sourceRectangle ?? texture.Bounds;
+
+                if (destinationRectangle.Width == source.Width && destinationRectangle.Height == source.Height
+                    && Capture.DrawRotated(texture, new Vector2(destinationRectangle.X, destinationRectangle.Y), source, color, rotation, layerDepth))
+                {
+                    return;
+                }
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             if (sourceRectangle.HasValue)
             {
@@ -887,6 +1062,9 @@ namespace ClassicUO.Renderer
 
             _textureInfo[_numSprites] = texture;
             ++_numSprites;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
         }
 
 
@@ -903,6 +1081,19 @@ namespace ClassicUO.Renderer
         public void Begin(Effect customEffect, Matrix transform_matrix)
         {
             EnsureNotStarted();
+
+            if (_recordPass != null)
+            {
+                if (customEffect != null)
+                {
+                    AbortRecording();
+                }
+                else
+                {
+                    _recBegun = true;
+                }
+            }
+
             _started = true;
             _worldOffsetActive = false;
             TextureSwitches = 0;
@@ -910,12 +1101,19 @@ namespace ClassicUO.Renderer
 
             _customEffect = customEffect;
             _transformMatrix = transform_matrix;
+            _effectDirty = true;
         }
 
         public void End()
         {
             EnsureStarted();
             Flush();
+
+            if (_geoOn)
+            {
+                SetGeoDepth(false, 0);
+            }
+
             _started = false;
             _customEffect = null;
         }
@@ -1089,6 +1287,9 @@ namespace ClassicUO.Renderer
 
             EnsureSize();
             _textureInfo[_numSprites++] = texture;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
 
             return true;
         }
@@ -1160,10 +1361,14 @@ namespace ClassicUO.Renderer
 
             _textureInfo[_numSprites] = tex;
             _numSprites++;
+#if CUO_DEVTOOLS
+            GeneratedSprites++;
+#endif
         }
 
         public void DirectDraw(Texture2D texture, int spriteStart, int spriteCount)
         {
+            AbortRecordingIfActive();
             InternalDraw(texture, spriteStart, spriteCount);
         }
 
@@ -1184,8 +1389,21 @@ namespace ClassicUO.Renderer
 
         public void DrawDirectIndexed(Texture2D texture, int startIndex, int primitiveCount, int numVertices)
         {
+            AbortRecordingIfActive();
+#if CUO_DEVTOOLS
+            if (SignatureOn)
+            {
+                ulong h = FrameSignature == 0 ? 14695981039346656037UL : FrameSignature;
+                h = (h ^ (ulong)RuntimeHelpers.GetHashCode(texture)) * 1099511628211UL;
+                h = (h ^ ((ulong)(uint)startIndex << 32 | (uint)primitiveCount)) * 1099511628211UL;
+                FrameSignature = SignState(h);
+            }
+#endif
+
+            long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
+
             GraphicsDevice.Textures[0] = texture;
-            _basicUOEffect.Pass.Apply();
+            ApplyEffect();
 
             if (_customEffect != null)
             {
@@ -1201,6 +1419,8 @@ namespace ClassicUO.Renderer
                         primitiveCount
                     );
                 }
+
+                _effectDirty = true;
             }
             else
             {
@@ -1213,23 +1433,40 @@ namespace ClassicUO.Renderer
                     primitiveCount
                 );
             }
+
+            if (CollectFrameStats)
+            {
+                FrameDrawCalls++;
+                FrameGpuTicks += Stopwatch.GetTimestamp() - t0;
+            }
         }
 
         public void SetWorldOffset(int offsetX, int offsetY)
         {
+            AbortRecordingIfActive();
             Flush();
             ApplyStates();
             _worldOffsetActive = true;
             _basicUOEffect.WorldMatrix.SetValue(Matrix.CreateTranslation(-offsetX, -offsetY, 0));
-            _basicUOEffect.Pass.Apply();
+            _appliedWorldIdentity = false;
+            _effectDirty = true;
+            ApplyEffect();
         }
 
         public void ResetWorldOffset()
         {
+            AbortRecordingIfActive();
             Flush();
             _worldOffsetActive = false;
-            _basicUOEffect.WorldMatrix.SetValue(Matrix.Identity);
-            _basicUOEffect.Pass.Apply();
+
+            if (!_appliedWorldIdentity)
+            {
+                _basicUOEffect.WorldMatrix.SetValue(Matrix.Identity);
+                _appliedWorldIdentity = true;
+                _effectDirty = true;
+            }
+
+            ApplyEffect();
             GraphicsDevice.SetVertexBuffer(_vertexBuffer);
             GraphicsDevice.Indices = _indexBuffer;
         }
@@ -1247,82 +1484,156 @@ namespace ClassicUO.Renderer
             GraphicsDevice.Indices = _indexBuffer;
             GraphicsDevice.SetVertexBuffer(_vertexBuffer);
 
+            Viewport viewport = GraphicsDevice.Viewport;
 
+            if (viewport.Width != _appliedViewportW || viewport.Height != _appliedViewportH || _transformMatrix != _appliedTransform)
+            {
+                _appliedViewportW = viewport.Width;
+                _appliedViewportH = viewport.Height;
+                _appliedTransform = _transformMatrix;
 
-            _projectionMatrix.M11 = (float)(2.0 / GraphicsDevice.Viewport.Width);
-            _projectionMatrix.M22 = (float)(-2.0 / GraphicsDevice.Viewport.Height);
+                Matrix.CreateOrthographicOffCenter
+                (
+                    0f,
+                    viewport.Width,
+                    viewport.Height,
+                    0,
+                    short.MinValue,
+                    short.MaxValue,
+                    out Matrix matrix
+                );
+                Matrix.Multiply(ref _transformMatrix, ref matrix, out matrix);
 
-            Matrix matrix = _projectionMatrix;
-            Matrix.CreateOrthographicOffCenter
-            (
-                0f,
-                GraphicsDevice.Viewport.Width,
-                GraphicsDevice.Viewport.Height,
-                0,
-                short.MinValue,
-                short.MaxValue,
-                out matrix
-            );
-            Matrix.Multiply(ref _transformMatrix, ref matrix, out matrix);
+                //Matrix halfPixelOffset = Matrix.CreateTranslation(-0.5f, -0.5f, 0);
+                //Matrix.Multiply(ref halfPixelOffset, ref matrix, out matrix);
 
+                _basicUOEffect.Viewport.SetValue(new Vector2(viewport.Width, viewport.Height));
+                _basicUOEffect.MatrixTransform.SetValue(matrix);
+                _effectDirty = true;
+            }
 
-            //Matrix halfPixelOffset = Matrix.CreateTranslation(-0.5f, -0.5f, 0);
-            //Matrix.Multiply(ref halfPixelOffset, ref matrix, out matrix);
-
-            if (!_worldOffsetActive)
+            if (!_worldOffsetActive && !_appliedWorldIdentity)
+            {
                 _basicUOEffect.WorldMatrix.SetValue(Matrix.Identity);
-            _basicUOEffect.Viewport.SetValue(new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height));
-            _basicUOEffect.MatrixTransform.SetValue(matrix);
-            _basicUOEffect.Pass.Apply();
+                _appliedWorldIdentity = true;
+                _effectDirty = true;
+            }
+
+            ApplyEffect();
         }
 
         private void Flush()
         {
+            if (_geoMark >= 0)
+            {
+                // clip-4: the open shape's sprites get their class before they are drawn; the shape goes on with the next
+                if (_geoMark > _numSprites)
+                {
+                    _geoMark = _numSprites;
+                }
+
+                PatchGeo();
+                FlushQueue();
+
+                if (_geoMark > _numSprites)
+                {
+                    _geoMark = _numSprites;
+                }
+
+                return;
+            }
+
+            FlushQueue();
+        }
+
+        private void FlushQueue()
+        {
+            if (_suppress)
+            {
+                DropSuppressed();
+
+                return;
+            }
+
+            if (_recordPass != null)
+            {
+                RecordSegment();
+
+                return;
+            }
+
             if (_numSprites == 0)
             {
                 return;
             }
 
+            DrawRange(_vertexInfo, _textureInfo, 0, _numSprites);
+            _numSprites = 0;
+        }
+
+        // Applies the states and draws sprites [start, start + count) of the arrays: one vertex upload per MAX_SPRITES,
+        // one draw call per run of equal textures. Flush() draws the queue with it; a recorded pass (B8) draws its segments.
+        private void DrawRange(PositionNormalTextureColor4[] vertices, Texture2D[] textures, int start, int count)
+        {
+            long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
+#if CUO_DEVTOOLS
+            if (SignatureOn) Sign(vertices, textures, start, count);
+#endif
+
             ApplyStates();
 
-            int arrayOffset = 0;
-        nextbatch:
-            ++FlushesDone;
+            int arrayOffset = start;
+            int remaining = count;
 
-            int batchSize = Math.Min(_numSprites, MAX_SPRITES);
-            int baseOff = UpdateVertexBuffer(arrayOffset, batchSize);
-            int offset = 0;
-
-            Texture2D curTexture = _textureInfo[arrayOffset];
-
-            for (int i = 1; i < batchSize; ++i)
+            while (remaining > 0)
             {
-                Texture2D tex = _textureInfo[arrayOffset + i];
+                ++FlushesDone;
 
-                if (tex != curTexture)
+                if (CollectFrameStats)
                 {
-                    ++TextureSwitches;
-                    InternalDraw(curTexture, baseOff + offset, i - offset);
-                    curTexture = tex;
-                    offset = i;
+                    FrameFlushes++;
                 }
+
+                int batchSize = Math.Min(remaining, MAX_SPRITES);
+
+                int baseOff = UpdateVertexBuffer(vertices, arrayOffset, batchSize);
+                int offset = 0;
+
+                Texture2D curTexture = textures[arrayOffset];
+
+                for (int i = 1; i < batchSize; ++i)
+                {
+                    Texture2D tex = textures[arrayOffset + i];
+
+                    if (tex != curTexture)
+                    {
+                        ++TextureSwitches;
+                        InternalDraw(curTexture, baseOff + offset, i - offset);
+                        curTexture = tex;
+                        offset = i;
+                    }
+                }
+
+                InternalDraw(curTexture, baseOff + offset, batchSize - offset);
+
+                remaining -= batchSize;
+                arrayOffset += batchSize;
             }
 
-            InternalDraw(curTexture, baseOff + offset, batchSize - offset);
-
-            if (_numSprites > MAX_SPRITES)
+            if (CollectFrameStats)
             {
-                _numSprites -= MAX_SPRITES;
-                arrayOffset += MAX_SPRITES;
-                goto nextbatch;
+                FrameGpuTicks += Stopwatch.GetTimestamp() - t0;
             }
-
-            _numSprites = 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void InternalDraw(Texture texture, int baseSprite, int batchSize)
         {
+            if (CollectFrameStats)
+            {
+                FrameDrawCalls++;
+            }
+
             GraphicsDevice.Textures[0] = texture;
 
             if (_customEffect != null)
@@ -1340,6 +1651,8 @@ namespace ClassicUO.Renderer
                         batchSize << 1
                     );
                 }
+
+                _effectDirty = true;
             }
             else
             {
@@ -1431,7 +1744,7 @@ namespace ClassicUO.Renderer
             _sampler = sampler ?? SamplerState.PointClamp;
         }
 
-        private unsafe int UpdateVertexBuffer(int start, int count)
+        private unsafe int UpdateVertexBuffer(PositionNormalTextureColor4[] vertices, int start, int count)
         {
             int offset;
             SetDataOptions hint;
@@ -1447,7 +1760,7 @@ namespace ClassicUO.Renderer
                 hint = SetDataOptions.NoOverwrite;
             }
 
-            fixed (PositionNormalTextureColor4* p = &_vertexInfo[start])
+            fixed (PositionNormalTextureColor4* p = &vertices[start])
             {
                 _vertexBuffer.SetDataPointerEXT
                 (
@@ -1459,6 +1772,11 @@ namespace ClassicUO.Renderer
             }
 
             _currentBufferPosition = offset + count;
+            if (CollectFrameStats)
+            {
+                FrameUploadCalls++;
+                FrameUploadBytes += count * PositionNormalTextureColor4.SIZE_IN_BYTES;
+            }
 
             return offset;
         }
@@ -1483,7 +1801,7 @@ namespace ClassicUO.Renderer
         [Conditional("DEBUG")]
         private void EnsureStarted()
         {
-            if (!_started)
+            if (!_started && !_suppress)
             {
                 throw new InvalidOperationException();
             }
@@ -1524,7 +1842,10 @@ namespace ClassicUO.Renderer
 
             VertexDeclaration IVertexType.VertexDeclaration => VertexDeclaration;
 
-            private static readonly VertexDeclaration VertexDeclaration = new VertexDeclaration
+            // Declares a single vertex; the struct packs a whole quad (4 vertices), so pass this
+            // declaration directly to vertex buffers instead of typeof(PositionNormalTextureColor4)
+            // (FNA validates Marshal.SizeOf(type) == VertexStride).
+            public static readonly VertexDeclaration VertexDeclaration = new VertexDeclaration
             (
                 new VertexElement(0, VertexElementFormat.Vector3, VertexElementUsage.Position, 0),                          // position
                 new VertexElement(sizeof(float) * 3, VertexElementFormat.Vector3, VertexElementUsage.Normal, 0),            // normal

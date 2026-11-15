@@ -68,6 +68,11 @@ namespace ClassicUO.Game.Managers
                         continue;
                     }
                 }
+                else if (overheadDamage.Value.ParentReused)
+                {
+                    // item_pool: the parent object was reused for another item; follow the one under the key
+                    overheadDamage.Value.SetParent(mob);
+                }
 
                 overheadDamage.Value.Draw(batcher, layerDepth);
             }
@@ -89,6 +94,12 @@ namespace ClassicUO.Game.Managers
                 _subst.Clear();
             }
 
+            if (_damages.Count != 0)
+            {
+                // present_on_change_anim_due: damage numbers float up every 25 ms until they expire
+                ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.WorldText);
+            }
+
             foreach (KeyValuePair<uint, OverheadDamage> overheadDamage in _damages)
             {
                 overheadDamage.Value.Update();
@@ -107,6 +118,10 @@ namespace ClassicUO.Game.Managers
             {
                 dm = new OverheadDamage(World, World.Get(obj));
                 _damages[obj] = dm;
+            }
+            else if (dm.ParentReused)
+            {
+                dm.SetParent(World.Get(obj));
             }
 
             dm.Add(dmg);

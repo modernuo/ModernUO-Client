@@ -25,6 +25,7 @@ namespace ClassicUO.Game.UI.Controls
             get => _graphic;
             set
             {
+                if (_graphic != value) InvalidateDraw();
                 _graphic = value;
 
                 ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(_graphic);
@@ -41,8 +42,32 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        public ushort Hue { get; set; }
-        public bool IsPartialHue { get; set; }
+        private ushort _hue;
+        public ushort Hue
+        {
+            get => _hue;
+            set
+            {
+                if (_hue != value)
+                {
+                    _hue = value;
+                    InvalidateDraw();
+                }
+            }
+        }
+        private bool _isPartialHue;
+        public bool IsPartialHue
+        {
+            get => _isPartialHue;
+            set
+            {
+                if (_isPartialHue != value)
+                {
+                    _isPartialHue = value;
+                    InvalidateDraw();
+                }
+            }
+        }
 
 
         public override bool Contains(int x, int y)
@@ -136,20 +161,7 @@ namespace ClassicUO.Game.UI.Controls
 
             if (gumpInfo.Texture != null)
             {
-                var texture = gumpInfo.Texture;
-                var sourceRectangle = gumpInfo.UV;
-                renderLists.AddGumpWithAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw(
-                            texture,
-                            new Rectangle(x, y, Width, Height),
-                            sourceRectangle,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    });
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(gumpInfo.Texture, new Rectangle(x, y, Width, Height), gumpInfo.UV, hueVector, layerDepth));
             }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
@@ -235,19 +247,7 @@ namespace ClassicUO.Game.UI.Controls
             var texture = gumpInfo.Texture;
             if (texture != null)
             {
-                renderLists.AddGumpWithAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw(
-                            texture,
-                            new Rectangle(x, y, Width, Height),
-                            sourceBounds,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, new Rectangle(x, y, Width, Height), sourceBounds, hueVector, layerDepth));
             }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);

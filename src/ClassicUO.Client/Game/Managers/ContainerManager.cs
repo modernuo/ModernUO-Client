@@ -170,7 +170,7 @@ namespace ClassicUO.Game.Managers
 
         private void SetPositionNearGameObject(ushort g, uint serial, int width, int height)
         {
-            Item item = _world.Items.Get(serial);
+            Item item = _world.FindItem(serial);
 
             if (item == null)
             {
@@ -188,14 +188,15 @@ namespace ClassicUO.Game.Managers
             }
             else if (item.OnGround)
             {
-                // item is in world
+                // item is in world; the Gpu prepare may have served it from the item cache while the camera moved
+                (Client.Game.Scene as Scenes.GameScene)?.RefreshScreenPosition(item);
                 X = item.RealScreenPosition.X + camera.Bounds.X + 40;
                 Y = item.RealScreenPosition.Y + camera.Bounds.Y - (height >> 1);
             }
             else if (SerialHelper.IsMobile(item.Container))
             {
                 // pack animal, snooped player, npc vendor
-                Mobile mobile = _world.Mobiles.Get(item.Container);
+                Mobile mobile = _world.FindMobile(item.Container);
 
                 if (mobile != null)
                 {
@@ -231,7 +232,7 @@ namespace ClassicUO.Game.Managers
             {
                 MakeDefault();
 
-                using var stream2 = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+                using var stream2 = AtomicFile.OpenWrite(path);
                 using var writer = new StreamWriter(stream2);
                 writer.BaseStream.Seek(0, SeekOrigin.Begin);
 
@@ -254,12 +255,14 @@ namespace ClassicUO.Game.Managers
                     );
                 }
 
+                writer.Flush();
+                stream2.Commit();
                 writer.Close();
             }
 
             _data.Clear();
 
-            using var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            using var stream = AtomicFile.OpenRead(path);
             using var reader = new StreamReader(stream);
             reader.BaseStream.Seek(0, SeekOrigin.Begin);
             var containersParser = new TextFileParser(
