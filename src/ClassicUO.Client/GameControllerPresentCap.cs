@@ -184,7 +184,9 @@ namespace ClassicUO
                 _changeWhy |= ChangeReason.Motion;
             }
 
-            if (UO.World is { InGame: true } world && !world.Effects.IsEmpty)
+            // present_on_change_anim_due: effects report their next change into VisualDue (EffectSystem.NoteVisualDue); without
+            // it every live effect counts as motion
+            if (!AnimDueTracking && UO.World is { InGame: true } world && !world.Effects.IsEmpty)
             {
                 _changePending = _continuous = true;
                 _changeWhy |= ChangeReason.Effects;

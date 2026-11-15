@@ -48,6 +48,7 @@ namespace ClassicUO.Game.Managers
         public void Update()
         {
             _playerResolved = false;
+            bool track = Loop.VisualDue.Tracking;
 
             for (GameEffect f = Items; f != null;)
             {
@@ -58,6 +59,10 @@ namespace ClassicUO.Game.Managers
                 if (!f.IsDestroyed && f.Distance > _world.ClientViewRange)
                 {
                     f.Destroy();
+                }
+                else if (track && !f.IsDestroyed)
+                {
+                    EffectSystem.NoteVisualDue(f);
                 }
 
                 f = next;

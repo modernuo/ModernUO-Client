@@ -154,6 +154,53 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// present_on_change_anim_due (evloop-5): an effect's next visual change after its update. A moving effect moves every
+        /// frame; a drag effect steps every 20 ms (at <c>MoveTime</c>); a fixed or lightning effect changes at its next frame
+        /// (<c>NextChange</c>, only when it has more than one frame) and disappears after its duration; lightning shows a step
+        /// one update after it advanced it. A fixed effect that
+        /// follows a mobile moves with the mobile's step, which the step counters already report.
+        /// </summary>
+        public static void NoteVisualDue(GameEffect e)
+        {
+            if (e is MovingEffect)
+            {
+                Loop.VisualDue.Now(Loop.VisualSource.Effects);
+
+                return;
+            }
+
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+
+            if (e is DragEffect)
+            {
+                // StepDrag steps once Time.Ticks reaches MoveTime; VisualDue counts ticks past the due tick
+                Loop.VisualDue.At((long)s.MoveTime - 1, Loop.VisualSource.Effects);
+
+                return;
+            }
+
+            if (s.Duration >= 0)
+            {
+                Loop.VisualDue.At(s.Duration, Loop.VisualSource.Effects);
+            }
+
+            if (e is LightningEffect)
+            {
+                // AnimateLightning shows the step's index one update after it advanced it (and ends after index 9)
+                if (s.AnimGraphic != (ushort)(s.Graphic + s.AnimIndex))
+                {
+                    Loop.VisualDue.Now(Loop.VisualSource.Effects);
+                }
+
+                Loop.VisualDue.At(s.NextChange, Loop.VisualSource.Effects);
+            }
+            else if ((s.Flags & EffectState.FLAG_ENABLED) != 0 && e.AnimDataFrame.FrameCount > 1)
+            {
+                Loop.VisualDue.At(s.NextChange, Loop.VisualSource.Effects);
+            }
+        }
+
         /// <summary>LightningEffect's frame step on the state. False when the effect was destroyed.</summary>
         public static bool AnimateLightning(GameEffect e)
         {
