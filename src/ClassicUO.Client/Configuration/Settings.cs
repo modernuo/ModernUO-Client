@@ -112,6 +112,10 @@ namespace ClassicUO.Configuration
         // (WorldRendererOverride). RendererSelection decides at startup; WorldRenderer below is the result.
         [JsonPropertyName("world_renderer")] public string WorldRendererSetting { get; set; } = "auto";
 
+        // gpu_force_point: the Gpu world samples with the point sampler at every scale instead of sharp-bilinear (a diagnostic
+        // for tile grid lines; logged in [render-info], GameControllerRenderInfo). Default off.
+        [JsonPropertyName("gpu_force_point")] public bool GpuForcePoint { get; set; }
+
         /// <summary>-worldrenderer auto|gpu|legacy: this run only, never saved.</summary>
         [JsonIgnore] public static string WorldRendererOverride { get; set; }
 
