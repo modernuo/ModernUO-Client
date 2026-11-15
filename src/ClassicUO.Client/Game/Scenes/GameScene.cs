@@ -797,6 +797,11 @@ namespace ClassicUO.Game.Scenes
 #if CUO_DEVTOOLS
                     ulong probeTiles = diamondCheck ? ~inDiamond : 0;
 
+                    if (diamondCheck)
+                    {
+                        FillDiamond.CountTiles(64, System.Numerics.BitOperations.PopCount(probeTiles));
+                    }
+
                     if (probeTiles != 0)
                     {
                         DiamondCheckBefore(chunk, probeTiles, mergeCells);

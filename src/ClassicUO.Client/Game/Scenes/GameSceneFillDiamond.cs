@@ -71,8 +71,6 @@ namespace ClassicUO.Game.Scenes
         // (fades, handles) is counted as dropped.
         private void DiamondCheckAfterWalk(Chunk chunk, ulong outside, ulong mergeCells, in FillDiamond.Bounds bounds)
         {
-            FillDiamond.CountTiles(64, System.Numerics.BitOperations.PopCount(outside));
-
             for (int b = 0; b < 64; b++)
             {
                 if ((outside >> b & 1) == 0)
