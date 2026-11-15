@@ -39,6 +39,9 @@
     <!-- The converter's frozen pre-pack loaders, under an extern alias (their types share the client's names): the audio
          tests run verify's model of the client's sound resolution on the real frozen SoundsLoader. -->
     <ProjectReference Include="..\..\tools\ClassicUO.Assets.Mul\ClassicUO.Assets.Mul.csproj" Aliases="frozen" />
+    <!-- The MUL readers (UOFile and friends) that the linked tools/Uo.Converter/AudioImport.cs uses; the client has none,
+         so no alias is needed. -->
+    <ProjectReference Include="..\..\tools\ClassicUO.IO.Mul\ClassicUO.IO.Mul.csproj" />
   </ItemGroup>
 
 </Project>
