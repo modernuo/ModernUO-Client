@@ -53,8 +53,7 @@ namespace ClassicUO.Renderer.Gumps
         public int PendingDecodes => _decoder.Pending;
 
         /// <summary>
-        /// Same answer as <c>GetGump(idx).Texture != null</c>. With a pack it comes from the size table without decoding;
-        /// on the MUL/UOP path it is that lookup (an index entry alone doesn't say whether it decodes).
+        /// Same answer as <c>GetGump(idx).Texture != null</c>, from the pack's size table without decoding.
         /// </summary>
         public bool Exists(uint idx)
         {
@@ -68,7 +67,7 @@ namespace ClassicUO.Renderer.Gumps
                 return true;
             }
 
-            return _gumpsLoader.FromPack ? _gumpsLoader.PixelCount(idx) > 0 : GetGump(idx).Texture != null;
+            return _gumpsLoader.PixelCount(idx) > 0;
         }
 
         /// <summary>Width and height of gump <paramref name="idx"/> without decoding it. False = no such gump.</summary>
@@ -339,39 +338,26 @@ namespace ClassicUO.Renderer.Gumps
             {
                 long t0 = Stopwatch.GetTimestamp();
 
-                if (_gumpsLoader.FromPack)
+                int count = _gumpsLoader.PixelCount(idx);
+
+                if (count > 0)
                 {
-                    int count = _gumpsLoader.PixelCount(idx);
+                    FrameSyncLoads++;
+                    // the image only lives until the atlas upload: decode into a pooled buffer
+                    var buffer = ArrayPool<uint>.Shared.Rent(count);
 
-                    if (count > 0)
+                    try
                     {
-                        FrameSyncLoads++;
-                        // the image only lives until the atlas upload: decode into a pooled buffer
-                        var buffer = ArrayPool<uint>.Shared.Rent(count);
+                        var gumpInfo = _gumpsLoader.GetGump(idx, buffer);
 
-                        try
+                        if (!gumpInfo.Pixels.IsEmpty)
                         {
-                            var gumpInfo = _gumpsLoader.GetGump(idx, buffer);
-
-                            if (!gumpInfo.Pixels.IsEmpty)
-                            {
-                                Upload(idx, ref spriteInfo, gumpInfo.Pixels, gumpInfo.Width, gumpInfo.Height);
-                            }
-                        }
-                        finally
-                        {
-                            ArrayPool<uint>.Shared.Return(buffer);
+                            Upload(idx, ref spriteInfo, gumpInfo.Pixels, gumpInfo.Width, gumpInfo.Height);
                         }
                     }
-                }
-                else
-                {
-                    var gumpInfo = _gumpsLoader.GetGump(idx);
-
-                    if (!gumpInfo.Pixels.IsEmpty)
+                    finally
                     {
-                        FrameSyncLoads++;
-                        Upload(idx, ref spriteInfo, gumpInfo.Pixels, gumpInfo.Width, gumpInfo.Height);
+                        ArrayPool<uint>.Shared.Return(buffer);
                     }
                 }
 
