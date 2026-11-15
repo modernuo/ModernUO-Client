@@ -219,6 +219,12 @@ namespace ClassicUO.Configuration
         // Default off.
         [JsonPropertyName("pick_skip_off_world")] public bool PickSkipOffWorld { get; set; }
 
+        // perf-16: the world list fill walks only the tiles of its square range that can reach the screen (a diamond in tile
+        // space, FillDiamond) instead of every tile of the square. Same objects drawn, hidden and picked; drops the pre-cull
+        // work on objects far above or below the view. CUO_FILL_DIAMOND=1|0 overrides it in developer builds,
+        // CUO_FILL_DIAMOND_CHECK=1|N checks it. Default off.
+        [JsonPropertyName("world_fill_diamond")] public bool WorldFillDiamond { get; set; }
+
         // pa-itemprep: the world fill's item branch reads the graphic and the flags from the item's packed ItemDrawRow (one
         // record lookup) instead of the Graphic and Flags getters (ItemPrep). CUO_ITEM_PREP_ROWS=1|0 overrides it in developer
         // builds, CUO_ITEM_PREP_CHECK=1 checks it. Default off.
