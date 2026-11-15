@@ -420,7 +420,7 @@ namespace ClassicUO.UnitTests.Loop
 
                 // the socket is non-blocking now; sends go through the wrapper's non-blocking path
                 var token = client.BeginLoginHandshake(0); // sends open once the handshake is queued
-                client.Send(new byte[] { 0x73, 9, 9 }, ignorePlugin: true);
+                client.Send(new byte[] { 0x73, 9, 9 });
                 client.EndHandshake(token);
                 client.Flush();
                 var buf = new byte[16];

@@ -309,8 +309,6 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
-        [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };
-        
         [JsonPropertyName("files_override")] public string OverrideFile { get; set; }
 
         public static string GetSettingsFilepath()

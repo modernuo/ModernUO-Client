@@ -14,7 +14,6 @@ namespace ClassicUO
     {
         Pump,
         Packets,
-        PluginTick,
         SceneUpdate,
         WorldMobiles,
         WorldItems,
@@ -56,7 +55,6 @@ namespace ClassicUO
         UiDraw,
         Cursor,
         Composite,
-        PluginDraw,
         DrawOther,
         Draw,
         BatcherGpuCalls,
@@ -226,14 +224,14 @@ namespace ClassicUO
 
         private static readonly string[] _phaseNames =
         {
-            "event pump", "ParsePackets", "Plugin.Tick", "GameScene.Update", "  world: mobiles", "  world: items",
+            "event pump", "ParsePackets", "GameScene.Update", "  world: mobiles", "  world: items",
             "  world: effects+text", "  world: Ecs.Update", "  scene update rest", "UIManager.Update", "update other", "Update total",
             "draw setup", "lights", "world prepare", "  prep: setup", "  prep: tile walk", "  prep: gpu skip masks", "  prep: gpu hidden collect",
             "  prep: foliage+finish", "  prep: text entities", "  prep: capture multis", "  prep: capture statics",
             "  prep: capture items", "  prep: capture mobiles", "  prep: capture other", "  prep: item cache", "  prep: capture cached", "  prep: rest", "    walk: baked land",
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
             "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
-            "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame",
+            "draw other", "Draw total", "  batcher FNA calls", "Present", "frame",
             "  UI tree walk", "  UI batcher FNA", "UI pass total", "  world draw: effects", "UI cache record", "UI cache compare"
         };
 
@@ -572,13 +570,12 @@ namespace ClassicUO
                                                     _acc[(int)FramePhase.WorldItems] - _acc[(int)FramePhase.WorldEffectsText] -
                                                     _acc[(int)FramePhase.WorldEcs];
             _acc[(int)FramePhase.UpdateOther] = _acc[(int)FramePhase.Update] - _acc[(int)FramePhase.Packets] -
-                                                _acc[(int)FramePhase.PluginTick] - _acc[(int)FramePhase.SceneUpdate] -
+                                                _acc[(int)FramePhase.SceneUpdate] -
                                                 _acc[(int)FramePhase.UiUpdate];
             _acc[(int)FramePhase.DrawOther] = _acc[(int)FramePhase.Draw] - _acc[(int)FramePhase.DrawSetup] - _acc[(int)FramePhase.Lights] -
                                               _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.WorldDraw] -
                                               _acc[(int)FramePhase.SceneDrawUi] - _acc[(int)FramePhase.UiDraw] -
-                                              _acc[(int)FramePhase.Cursor] - _acc[(int)FramePhase.Composite] -
-                                              _acc[(int)FramePhase.PluginDraw];
+                                              _acc[(int)FramePhase.Cursor] - _acc[(int)FramePhase.Composite];
             _acc[(int)FramePhase.BatcherGpuCalls] = UltimaBatcher2D.FrameGpuTicks;
             _acc[(int)FramePhase.PrepRest] = _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.PrepSetup] - _acc[(int)FramePhase.PrepWalk] - _acc[(int)FramePhase.PrepGpuMasks] -
                                              _acc[(int)FramePhase.PrepHidden] - _acc[(int)FramePhase.PrepFoliageFinish] -

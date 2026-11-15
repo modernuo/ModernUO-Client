@@ -29,11 +29,11 @@ namespace ClassicUO.Network
         // (Encryption.Encrypt and Initialize), the send admission state below, and the send statistics: a packet is
         // encrypted and queued in one critical section, so the order the stream cipher consumed keystream is the order
         // bytes reach the socket. ProcessSend holds it while it drains the queue to the socket, and every clear or mode
-        // switch of the queue takes it. Nothing that calls out (plugin hooks, events, the Disconnected handlers) ever runs
+        // switch of the queue takes it. Nothing that calls out (events, the Disconnected handlers) ever runs
         // while it is held.
         //
         // Send admission (all under _sendLock): a send is queued only if it started in the current send epoch (the epoch
-        // is bumped by every ResetProtocolState, i.e. when a connection starts, ends or is replaced, so a send a plugin
+        // is bumped by every ResetProtocolState, i.e. when a connection starts, ends or is replaced, so a send another thread
         // began on the old connection cannot land in the new one's queue) and sends are open. They are closed from a reset
         // until the connection's handshake (cipher initialisation, seed, first login packet) has been queued in order by
         // the thread running it (BeginLoginHandshake / BeginGameHandshake ... EndHandshake); only that thread may send in
@@ -47,10 +47,6 @@ namespace ClassicUO.Network
         /// <summary>Test seam, null in production: called by <see cref="Send"/> after the outgoing hooks, before the send lock.</summary>
         internal Action BeforeSendLock;
 
-        internal delegate bool OutgoingHook(ref Span<byte> message);
-
-        /// <summary>Test seam, null in production: stands in for the plugins' outgoing hooks (<see cref="Plugin.ProcessSendPacket"/>).</summary>
-        internal OutgoingHook TestOutgoingHook;
         private SocketWrapper _socket = null;
 
 
@@ -322,7 +318,7 @@ namespace ClassicUO.Network
         }
 
         /// <summary>
-        /// The handshake packets are queued in order: ordinary sends (other threads, plugins) are admitted again. Does nothing
+        /// The handshake packets are queued in order: ordinary sends (other threads) are admitted again. Does nothing
         /// if the connection was reset or replaced since <see cref="BeginLoginHandshake"/> / <see cref="BeginGameHandshake"/>.
         /// </summary>
         public void EndHandshake(int token)
@@ -341,7 +337,7 @@ namespace ClassicUO.Network
                     _handshakeThread = 0;
                 }
 
-                // sends other threads (or a plugin's outgoing hook, re-entrantly) made during the handshake follow it, in order
+                // sends other threads made during the handshake follow it, in order
                 foreach (var (data, skipEncryption) in _deferred)
                 {
                     EnqueueLocked(data, skipEncryption);
@@ -353,9 +349,6 @@ namespace ClassicUO.Network
 
         private const int MaxDeferredSends = 256;
         private readonly List<(byte[] Data, bool SkipEncryption)> _deferred = new List<(byte[], bool)>();
-
-        // True while this thread is inside the outgoing plugin hooks of a Send: a Send made then is a re-entrant injection.
-        [ThreadStatic] private static int t_inSendHook;
 
         /// <summary>Sends dropped because their connection had ended or been replaced (a stale epoch).</summary>
         public int DroppedStaleSends => Volatile.Read(ref _droppedStale);
@@ -536,8 +529,8 @@ namespace ClassicUO.Network
 
             if (!sinkCalled)
             {
-                // The parser also owns the plugin queue (packets plugins inject), which has to be worked every frame whether
-                // or not the socket had anything: pump it with an empty slice. This is inside the frame's time budget too.
+                // Pumped with an empty slice even when the socket had nothing, so the parser drops a stale stream as soon as
+                // the connection changes. This is inside the frame's time budget too.
                 packets += sink(ArraySegment<byte>.Empty);
             }
 
@@ -630,10 +623,10 @@ namespace ClassicUO.Network
             }
         }
 
-        public void Send(Span<byte> message, bool ignorePlugin = false, bool skipEncryption = false)
+        public void Send(Span<byte> message, bool skipEncryption = false)
         {
-            // The connection this send belongs to, taken first: before the connection check and before any plugin callback
-            // runs (see _sendLock), so a sender paused anywhere up to the lock cannot adopt a replacement connection.
+            // The connection this send belongs to, taken first, before the connection check (see _sendLock), so a sender
+            // paused anywhere up to the lock cannot adopt a replacement connection.
             var epoch = Volatile.Read(ref _sendEpoch);
 
             if (!IsConnected || message.IsEmpty)
@@ -641,36 +634,12 @@ namespace ClassicUO.Network
                 return;
             }
 
-            if (!ignorePlugin)
-            {
-                bool allowed;
-                t_inSendHook++;
-
-                try
-                {
-                    allowed = TestOutgoingHook != null ? TestOutgoingHook(ref message) : Plugin.ProcessSendPacket(ref message);
-                }
-                finally
-                {
-                    t_inSendHook--;
-                }
-
-                if (!allowed)
-                {
-                    return;
-                }
-            }
-
-            if (message.IsEmpty)
-                return;
-
-            BeforeSendLock?.Invoke(); // test seam: where a plugin thread can be paused between its hooks and the lock
+            BeforeSendLock?.Invoke(); // test seam: where a sender can be paused between its epoch read and the lock
 
             var id = message[0];
-            var reentrant = t_inSendHook > 0; // made from inside an outgoing hook of another Send on this thread
             var dropped = false;
 
-            // Encrypt and enqueue as one step (see _sendLock): with two senders (main thread and a plugin thread) the cipher
+            // Encrypt and enqueue as one step (see _sendLock): with two senders (the main thread and another thread) the cipher
             // would otherwise advance in one order and the bytes be queued in another, and the server could not decrypt.
             lock (_sendLock)
             {
@@ -679,14 +648,14 @@ namespace ClassicUO.Network
                     _droppedStale++; // its connection ended or was replaced
                     dropped = true;
                 }
-                else if (_sendOpen || (_handshakeThread == Environment.CurrentManagedThreadId && !reentrant))
+                else if (_sendOpen || (_handshakeThread == Environment.CurrentManagedThreadId))
                 {
                     EnqueueLocked(message, skipEncryption);
                 }
                 else if (_deferred.Count < MaxDeferredSends)
                 {
-                    // Ahead of the handshake's own packets (another thread, or a plugin hook injecting while the handshake
-                    // thread sends the login packet): held back and queued in order when the handshake ends.
+                    // Ahead of the handshake's own packets (another thread, while the handshake thread sends the login
+                    // packet): held back and queued in order when the handshake ends.
                     _deferred.Add((message.ToArray(), skipEncryption));
                     _deferredTotal++;
                 }

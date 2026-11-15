@@ -177,8 +177,6 @@ namespace ClassicUO.Game.Scenes
 
                 Client.Game.SetWindowSize(w, h);
             }
-
-            Plugin.OnConnected();
         }
 
         private void ChatOnMessageReceived(object sender, MessageEventArgs e)
@@ -350,12 +348,6 @@ namespace ClassicUO.Game.Scenes
             Client.Game.UO.Arts?.CancelPending();
             Client.Game.UO.Texmaps?.CancelPending();
             Client.Game.UO.Animations?.CancelPending();
-
-            try
-            {
-                Plugin.OnDisconnected();
-            }
-            catch { }
 
             _world.TargetManager.Reset();
 

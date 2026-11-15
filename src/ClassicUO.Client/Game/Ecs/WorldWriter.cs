@@ -3409,8 +3409,8 @@ namespace ClassicUO.Game
         /// "operations do not nest": the player's position and direction callbacks run inside the unfolded operations on the
         /// player (<see cref="PlaceMobile"/>, <see cref="MoveMobile"/>, <see cref="CompleteStep"/>,
         /// <see cref="MoveBoatPassenger"/>, <see cref="SetMobileDirection"/>, <see cref="TurnPlayer"/>), and a plugin's
-        /// <c>RequestMove</c> there runs <c>Player.Walk</c> synchronously (<c>PlayerMobile.OnPositionChanged</c> →
-        /// <c>Plugin.UpdatePlayerPosition</c>; the door check's packet → the plugins' send hooks). Before T1 that walk wrote at
+        /// <c>RequestMove</c> there ran <c>Player.Walk</c> synchronously. The plugin host was the only such caller and has
+        /// been removed, so this exception has no caller left; removing it is a separate change. Before T1 that walk wrote at
         /// that point; it still does: the walk joins the open operation (no scope of its own, so the outer scope, its
         /// ownership and its deferred work stay as they are) when that operation's subject is this exact instance (and the
         /// caller then checks it is <c>World.Player</c> of this World) and nothing is folded (the operations that fold the player run no callback).

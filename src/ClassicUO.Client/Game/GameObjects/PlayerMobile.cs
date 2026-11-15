@@ -242,8 +242,6 @@ namespace ClassicUO.Game.GameObjects
         {
             base.OnPositionChanged();
 
-            Plugin.UpdatePlayerPosition(X, Y, Z);
-
             TryOpenDoors();
             TryOpenCorpses();
         }
