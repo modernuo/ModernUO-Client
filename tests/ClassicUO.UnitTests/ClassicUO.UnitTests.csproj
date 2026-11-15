@@ -29,6 +29,13 @@
     <None Include="IO/Fixtures/seam-noise.mp3;IO/Fixtures/mp3-regressions/*.bin" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- FNA3D (and the SDL3 it links) for the world map PNG decode tests, which call FNA3D's stb_image reader. -->
+  <ItemGroup>
+    <None Include="..\..\external\x64\FNA3D.dll;..\..\external\x64\SDL3.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\external\lib64\libFNA3D.so.0;..\..\external\lib64\libSDL3.so.0" Condition="$([MSBuild]::IsOSPlatform('Linux'))" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\external\osx\libFNA3D.0.dylib;..\..\external\osx\libSDL3.0.dylib" Condition="$([MSBuild]::IsOSPlatform('OSX'))" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The converter's audio importer (it depends only on ClassicUO.IO and Uo.Pack), run on synthetic MUL files. -->
   <ItemGroup>
     <Compile Include="..\..\tools\Uo.Converter\AudioImport.cs" Link="Assets\AudioImport.cs" />

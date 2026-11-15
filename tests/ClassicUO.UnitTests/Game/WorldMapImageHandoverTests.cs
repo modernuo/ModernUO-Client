@@ -1,12 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using ClassicUO.Game.UI.Gumps;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using Xunit;
 
 namespace ClassicUO.UnitTests.Game
@@ -193,37 +192,170 @@ namespace ClassicUO.UnitTests.Game
             image2.DisposeCount.Should().Be(1);
         }
 
-        [Fact]
-        public void DecodeMapImage_Reads_A_Cached_Png_As_Rgba_And_Returns_Null_For_A_Bad_File()
+        /// <summary>The decoder is FNA3D's stb_image; skipped where the native library can't be loaded.</summary>
+        private sealed class Fna3dFactAttribute : FactAttribute
+        {
+            public Fna3dFactAttribute()
+            {
+                if (!NativeLibrary.TryLoad("FNA3D", typeof(Microsoft.Xna.Framework.Graphics.Texture2D).Assembly, null, out _))
+                {
+                    Skip = "the FNA3D native library is not next to the tests";
+                }
+            }
+        }
+
+        private static string NewTempDir()
         {
             string dir = Path.Combine(Path.GetTempPath(), "cuo-wm-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
 
+            return dir;
+        }
+
+        private static byte[] MapLikePixels(int width, int height)
+        {
+            // a transparent one-pixel border (OFFSET_PIX_HALF) around opaque, varied colours, R in the first byte
+            var rgba = new byte[width * height * 4];
+            uint seed = 12345;
+
+            for (int y = 1; y < height - 1; y++)
+            {
+                for (int x = 1; x < width - 1; x++)
+                {
+                    seed = seed * 1664525 + 1013904223;
+                    int i = (y * width + x) * 4;
+                    rgba[i] = (byte)(seed >> 24);
+                    rgba[i + 1] = (byte)(seed >> 16);
+                    rgba[i + 2] = (byte)(x * 7 + y);
+                    rgba[i + 3] = 0xFF;
+                }
+            }
+
+            return rgba;
+        }
+
+        [Fna3dFact]
+        public void DecodeMapImage_Round_Trips_A_Png_Written_By_Png_Write()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                // 300x200 of noise compresses to well over one 64 KB IDAT chunk
+                const int W = 300, H = 200;
+                byte[] rgba = MapLikePixels(W, H);
+                string png = Path.Combine(dir, "map.png");
+
+                using (var stream = ClassicUO.Utility.AtomicFile.OpenWrite(png))
+                {
+                    Uo.Render.Png.Write(stream, W, H, rgba);
+                    stream.Commit();
+                }
+
+                using WorldMapImage decoded = WorldMapGump.DecodeMapImage(png);
+
+                decoded.Should().NotBeNull();
+                decoded.Width.Should().Be(W);
+                decoded.Height.Should().Be(H);
+                decoded.ByteLength.Should().Be(rgba.Length);
+                decoded.Span.SequenceEqual(rgba).Should().BeTrue("the cache PNG is lossless RGBA8");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        // a cache file written by the old ImageSharp encoder (palette PNG with tRNS, no filter, the gump's settings), 6x4:
+        // a transparent border around four opaque colours
+        private const string OldImageSharpCachePng =
+            "iVBORw0KGgoAAAANSUhEUgAAAAYAAAAECAMAAACa2r5xAAAAD1BMVEUAAAAIQMD/////AAAggBDgeqOjAAAABXRSTlMA/////xzQJlIAAAAUSURBVHicY4ABZiYWRiAFJJlhQgABNgAVCnz75gAAAABJRU5ErkJggg==";
+
+        [Fna3dFact]
+        public void DecodeMapImage_Reads_A_Cache_Png_Written_By_ImageSharp()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string png = Path.Combine(dir, "old.png");
+                File.WriteAllBytes(png, Convert.FromBase64String(OldImageSharpCachePng));
+
+                // as ImageSharp decoded it (Rgba32 packed values, R in the low byte)
+                uint[] expected =
+                {
+                    0, 0, 0, 0, 0, 0,
+                    0, 0xFF0000FF, 0xFFFFFFFF, 0xFF108020, 0xFFC04008, 0,
+                    0, 0xFFFFFFFF, 0xFF108020, 0xFFC04008, 0xFF0000FF, 0,
+                    0, 0, 0, 0, 0, 0,
+                };
+
+                using WorldMapImage decoded = WorldMapGump.DecodeMapImage(png);
+
+                decoded.Should().NotBeNull();
+                decoded.Width.Should().Be(6);
+                decoded.Height.Should().Be(4);
+                MemoryMarshal.Cast<byte, uint>(decoded.Span).ToArray().Should().Equal(expected);
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Fna3dFact]
+        public void DecodeMapImage_Returns_Null_For_A_Bad_Truncated_Or_Missing_File()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string good = Path.Combine(dir, "good.png");
+                Uo.Render.Png.Write(good, 64, 64, MapLikePixels(64, 64));
+                byte[] bytes = File.ReadAllBytes(good);
+
+                string garbage = Path.Combine(dir, "garbage.png");
+                File.WriteAllBytes(garbage, new byte[] { 1, 2, 3 });
+                WorldMapGump.DecodeMapImage(garbage).Should().BeNull();
+
+                // a TGA-looking header: stb_image is never asked to try other formats
+                string tga = Path.Combine(dir, "tga.png");
+                File.WriteAllBytes(tga, new byte[] { 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0x7F, 32, 0 });
+                WorldMapGump.DecodeMapImage(tga).Should().BeNull();
+
+                foreach (int keep in new[] { 8, 20, 33, bytes.Length / 2, bytes.Length - 13 })
+                {
+                    string truncated = Path.Combine(dir, $"truncated{keep}.png");
+                    File.WriteAllBytes(truncated, bytes.AsSpan(0, keep).ToArray());
+                    WorldMapGump.DecodeMapImage(truncated).Should().BeNull($"{keep} of {bytes.Length} bytes");
+                }
+
+                WorldMapGump.DecodeMapImage(Path.Combine(dir, "missing.png")).Should().BeNull();
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Fna3dFact]
+        public void A_Disposed_Image_Frees_Its_Pixels_Once()
+        {
+            string dir = NewTempDir();
+
             try
             {
                 string png = Path.Combine(dir, "map.png");
+                Uo.Render.Png.Write(png, 4, 4, MapLikePixels(4, 4));
 
-                using (var src = new Image<Rgba32>(5, 3))
-                {
-                    src[0, 0] = new Rgba32(10, 20, 30, 255);
-                    src[4, 2] = new Rgba32(200, 100, 50, 255);
-                    src.SaveAsPng(png);
-                }
+                WorldMapImage image = WorldMapGump.DecodeMapImage(png);
+                image.Pixels.Should().NotBe(IntPtr.Zero);
 
-                using (Image<Rgba32> decoded = WorldMapGump.DecodeMapImage(png))
-                {
-                    decoded.Should().NotBeNull();
-                    decoded.Width.Should().Be(5);
-                    decoded.Height.Should().Be(3);
-                    decoded.DangerousTryGetSinglePixelMemory(out Memory<Rgba32> pixels).Should().BeTrue("the upload needs one span");
-                    pixels.Span[0].Should().Be(new Rgba32(10, 20, 30, 255));
-                    pixels.Span[2 * 5 + 4].Should().Be(new Rgba32(200, 100, 50, 255));
-                }
+                image.Dispose();
+                image.Dispose();
 
-                string bad = Path.Combine(dir, "bad.png");
-                File.WriteAllBytes(bad, new byte[] { 1, 2, 3 });
-                WorldMapGump.DecodeMapImage(bad).Should().BeNull();
-                WorldMapGump.DecodeMapImage(Path.Combine(dir, "missing.png")).Should().BeNull();
+                image.Pixels.Should().Be(IntPtr.Zero);
+                image.Span.IsEmpty.Should().BeTrue();
             }
             finally
             {
