@@ -68,21 +68,19 @@ namespace ClassicUO.UnitTests.Ecs
         public void EnterWorld_On_The_Player_Publishes_Its_Callbacks_As_Before_T1()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
-            // the position callback walks (RequestMove), the door check's packet turns (a plugin send hook)
             foreach (TestPlayer p in new[] { a, b })
             {
-                p.OnMoved = StandInWalk(Direction.North); // facing North already: queues a step, no turn
-                p.OnTurned = StandInWalk(Direction.South);
+                p.OnMoved = _ => { };
+                p.OnTurned = _ => { };
             }
 
             Pair(() => OldEnterWorld(a, 0x191, 1005, 1006, 3, Direction.West), () => NewEnterWorld(newWorld, b, 0x191, 1005, 1006, 3, Direction.West));
 
             b.OnMoved.Should().BeNull("the position callback ran");
             b.OnTurned.Should().BeNull("the direction callback ran");
-            b.Direction.Should().Be(Direction.South);
+            b.Direction.Should().Be(Direction.West);
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
@@ -179,16 +177,15 @@ namespace ClassicUO.UnitTests.Ecs
         public void WalkerManager_DenyWalk_Goes_Through_The_Funnel_As_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             GiveWalker(b);
             Pair(() => OldEnqueueStep(a, 1001, 1000, 0, Direction.East, true), () => OldEnqueueStep(b, 1001, 1000, 0, Direction.East, true));
             a.SetOffset(5, a.OffsetY, a.OffsetZ);
             b.SetOffset(5, b.OffsetY, b.OffsetZ);
 
-            // the position callback walks again (RequestMove): the move is not folded
-            a.OnMoved = StandInWalk(Direction.West);
-            b.OnMoved = StandInWalk(Direction.West);
+            // the move runs the position callback: it is not folded
+            a.OnMoved = _ => { };
+            b.OnMoved = _ => { };
 
             Pair(() => { a.ClearSteps(); a.SetInWorldTile(990, 991, 1); }, () => b.Walker.DenyWalk(3, 990, 991, 1));
             b.OnMoved.Should().BeNull();
@@ -313,25 +310,19 @@ namespace ClassicUO.UnitTests.Ecs
         public void CompleteStep_Of_The_Player_Publishes_Its_Callbacks_As_Before_T1()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
             // a turn step, then the move
             Pair(() => OldEnqueueStep(a, 1001, 1000, 0, Direction.East, false), () => OldEnqueueStep(b, 1001, 1000, 0, Direction.East, false));
 
-            // what the ECS holds when the position callback runs (a plugin sees the GameObject, but the callback's own walk
-            // reads and pushes from there): the inputs as the old code had pushed them before UpdateScreenPosition
+            // what the ECS holds when the position callback runs: the inputs as the old code had pushed them before
+            // UpdateScreenPosition
             var seenAtCallback = new Dictionary<World, MobileInputs>();
 
             foreach ((World w, TestPlayer p) in new[] { (oldWorld, a), (newWorld, b) })
             {
-                // the turn's door check turns again; the move's position callback walks on (RequestMove)
-                p.OnTurned = StandInWalk(Direction.South);
-                p.OnMoved = q =>
-                {
-                    seenAtCallback[w] = Inputs(w, MOB);
-                    StandInWalk(Direction.West)(q);
-                };
+                p.OnTurned = _ => { };
+                p.OnMoved = _ => seenAtCallback[w] = Inputs(w, MOB);
             }
 
             int completions = 0;
@@ -610,7 +601,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Walker_And_EnterWorld_Operations_Write_The_Detached_Player_As_Before_T1(bool throws)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = throws;
 
             foreach (World w in new[] { oldWorld, newWorld })

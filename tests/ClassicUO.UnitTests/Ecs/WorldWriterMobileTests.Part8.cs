@@ -520,7 +520,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Players_Walk_Steps_And_Turn_Equal_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             Pair(() => OldAnimate(a, AnimPacket.NewCharacterAnimation), () => OldAnimate(b, AnimPacket.NewCharacterAnimation));
 
@@ -563,7 +562,7 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Ecs.IsFolding.Should().BeFalse();
         }
 
-        // ---- Codex audit of part 8, P2 #1: a walk from the player's position callback, inside the operation that runs it
+        // ---- the player's walk, turn or bank removal from its position callback, inside the operation that runs it
 
         public enum CallbackOperation { MoveMobile, PlaceMobile, CompleteStep, MoveBoatPassenger }
 
@@ -593,6 +592,8 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // A walk, a turn or a bank removal started from the player's position callback is a nesting like any other: rejected
+        // with nothing changed, while the operation that runs the callback completes as it does with an idle callback
         [Theory]
         [InlineData(CallbackOperation.MoveMobile, true)]
         [InlineData(CallbackOperation.MoveMobile, false)]
@@ -602,65 +603,102 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(CallbackOperation.CompleteStep, false)]
         [InlineData(CallbackOperation.MoveBoatPassenger, true)]
         [InlineData(CallbackOperation.MoveBoatPassenger, false)]
-        public void A_Walk_From_A_Position_Callback_Joins_The_Operation_And_Equals_The_Old_Path(CallbackOperation op, bool throws)
+        public void A_Walk_Turn_Or_CloseBank_From_A_Position_Callback_Is_A_Rejected_Nesting(CallbackOperation op, bool throws)
         {
-            World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true;
-            newWorld.Writer.ThrowOnViolation = throws;
+            World reference = BuildPlayer(out TestPlayer r), world = BuildPlayer(out TestPlayer p);
+            reference.Writer.ThrowOnViolation = true;
+            world.Writer.ThrowOnViolation = throws;
 
             if (op == CallbackOperation.CompleteStep)
             {
-                // a step under way, so ProcessSteps completes it
+                // a step under way, so the completion moves the player; queued before the banks open, since the step closes them
                 Time.Ticks = NOW + 1_000;
-                Pair(() => OldWalkStep(a, 1001, 1000, 0, Direction.North, false), () => NewWalkStep(newWorld, b, 1001, 1000, 0, Direction.North, false));
+                NewWalkStep(reference, r, 1001, 1000, 0, Direction.North, false);
+                NewWalkStep(world, p, 1001, 1000, 0, Direction.North, false);
             }
 
-            int stepsBefore = b.Steps.Count;
-            bool? ownedAfterWalk = null;
-            a.OnMoved = StandInWalk(Direction.West);
-            b.OnMoved = q =>
+            OpenBank(reference, r);
+            Item bank = OpenBank(world, p);
+            bool step = true, turn = true, closed = true, ownedAfter = false;
+            int thrown = 0;
+            (int Hash, int Steps, Direction Dir)? atCallback = null, afterAttempts = null;
+
+            bool Attempt(Func<bool> act)
             {
-                StandInWalk(Direction.West)(q);
-                ownedAfterWalk = newWorld.Writer.InScope && newWorld.Writer.Owns(q);
+                try
+                {
+                    return act();
+                }
+                catch (InvalidOperationException)
+                {
+                    thrown++;
+
+                    return false;
+                }
+            }
+
+            r.OnMoved = _ => { };
+            p.OnMoved = q =>
+            {
+                atCallback = (q.UpdateStateHash(), q.Steps.Count, q.Direction);
+                step = Attempt(() => world.Writer.QueuePlayerStep(q, 990, 991, 0, Direction.West, true));
+                turn = Attempt(() => world.Writer.TurnPlayer(q, Direction.South));
+                closed = Attempt(() =>
+                {
+                    q.CloseBank();
+
+                    return !bank.Opened;
+                });
+                afterAttempts = (q.UpdateStateHash(), q.Steps.Count, q.Direction);
+                ownedAfter = world.Writer.InScope && world.Writer.Owns(q);
             };
             Time.Ticks = NOW + 2_000;
 
-            switch (op)
+            void Run(World w, TestPlayer m)
             {
-                case CallbackOperation.MoveMobile:
-                    Pair(() => a.SetInWorldTile(1005, 1006, 3), () => newWorld.Writer.MoveMobile(b, 1005, 1006, 3));
+                switch (op)
+                {
+                    case CallbackOperation.MoveMobile:
+                        w.Writer.MoveMobile(m, 1005, 1006, 3);
 
-                    break;
+                        break;
 
-                case CallbackOperation.PlaceMobile:
-                    MobPacket packet = Packets[1];
-                    Pair(() => OldUpsertMobile(oldWorld, packet), () => NewUpsertMobile(newWorld, packet));
+                    case CallbackOperation.PlaceMobile:
+                        NewUpsertMobile(w, Packets[1]);
 
-                    break;
+                        break;
 
-                case CallbackOperation.CompleteStep:
-                    bool dc = DirectionChange(a);
-                    dc.Should().BeFalse("a move, so the screen position (the position callback) refreshes");
-                    Pair(() => OldCompleteStep(a, dc), () => NewCompleteStep(newWorld, b, dc));
+                    case CallbackOperation.CompleteStep:
+                        Mobile.Step s = m.Steps.Front();
+                        DirectionChange(m).Should().BeFalse("a move, so the screen position (the position callback) refreshes");
+                        w.Writer.CompleteStep(m, in s, false);
 
-                    break;
+                        break;
 
-                default:
-                    Pair(() => OldBoatPassenger(a, 1003, 1002, 1), () => newWorld.Writer.MoveBoatPassenger(b, 1003, 1002, 1));
+                    default:
+                        w.Writer.MoveBoatPassenger(m, 1003, 1002, 1);
 
-                    break;
+                        break;
+                }
             }
 
+            Pair(() => Run(reference, r), () => Run(world, p));
             Time.Ticks = NOW;
-            (a.OnMoved, b.OnMoved).Should().Be((null, null), "the position callback ran");
-            b.Direction.Should().Be(Direction.West, "the callback's turn was written");
-            b.Steps.Count.Should().BeGreaterThan(op == CallbackOperation.CompleteStep ? stepsBefore - 1 : 0, "the callback's step was queued");
-            PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
-            AssertSameWorld(oldWorld, newWorld);
-            newWorld.Writer.Violations.Should().Be(0);
-            ownedAfterWalk.Should().BeTrue("the joined walk left the outer operation open and owning the player");
-            newWorld.Writer.InScope.Should().BeFalse("the outer operation closed its scope");
-            newWorld.Ecs.IsFolding.Should().BeFalse();
+
+            (r.OnMoved, p.OnMoved).Should().Be((null, null), "the position callback ran");
+            (step, turn, closed).Should().Be((false, false, false));
+            thrown.Should().Be(throws ? 3 : 0);
+            afterAttempts.Should().Be(atCallback, "a rejected nesting changes nothing");
+            ownedAfter.Should().BeTrue("the outer operation is still open and owns the player");
+            bank.Opened.Should().BeTrue("a rejected removal leaves the bank open");
+            world.Items.Get(GOLD).Should().NotBeNull();
+            world.Items.Get(GOLD).IsDestroyed.Should().BeFalse();
+            PlayerSnapshot(p).Should().Be(PlayerSnapshot(r));
+            AssertSameWorld(reference, world);
+            world.Writer.Violations.Should().Be(3);
+            reference.Writer.Violations.Should().Be(0);
+            world.Writer.InScope.Should().BeFalse("the outer operation closed its scope");
+            world.Ecs.IsFolding.Should().BeFalse();
         }
 
         private const uint BANK = 0x4000_7700, GOLD = 0x4000_7701, ROGUE = 0x0000_3500;
@@ -741,28 +779,6 @@ namespace ClassicUO.UnitTests.Ecs
             (p.Steps.Count, p.Direction).Should().Be((0, Direction.North));
             world.Writer.Violations.Should().Be(2);
             world.Writer.InScope.Should().BeFalse();
-        }
-
-        [Fact]
-        public void A_Walk_From_A_Callback_Does_Not_Join_While_A_Fold_Is_Open()
-        {
-            World world = BuildPlayer(out TestPlayer p);
-            world.Writer.ThrowOnViolation = false;
-            bool step = true, turn = true;
-
-            p.OnMoved = q =>
-            {
-                world.Ecs.BeginFold(q);
-                step = world.Writer.QueuePlayerStep(q, 1001, 1000, 0, Direction.East, false);
-                turn = world.Writer.TurnPlayer(q, Direction.West);
-                world.Ecs.EndFold(q);
-            };
-
-            world.Writer.MoveMobile(p, 1000, 1001, 0);
-
-            (step, turn).Should().Be((false, false));
-            (p.Steps.Count, p.Direction).Should().Be((0, Direction.North));
-            world.Writer.Violations.Should().Be(2);
         }
 
         [Fact]
@@ -1167,32 +1183,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             (p.Steps.Count, p.Direction).Should().Be((2, Direction.South));
             FunnelCheck.Total.Should().Be(0, "PlayerMobile.Walk's queue writes (SetAnimation, LastStepTime, the step) and its coalesced turn");
-        }
-
-        [Fact]
-        public void A_Walk_From_The_Position_Callback_Of_A_Step_Completion_Makes_No_Direct_Writes()
-        {
-            if (!FunnelCheck.Available)
-            {
-                return;
-            }
-
-            Time.Ticks = 100_000;
-            World world = WorldWriterMobileTests.BuildWalkingPlayer(out WorldWriterMobileTests.TestPlayer p);
-            p.Funnel = true;
-            Time.Ticks = 101_000;
-            world.Writer.QueuePlayerStep(p, 1001, 1000, 0, Direction.North, false).Should().BeTrue();
-            Mobile.Step step = p.Steps.Front();
-            p.OnMoved = WorldWriterMobileTests.StandInWalk(Direction.West);
-            FunnelCheck.Reset();
-
-            Time.Ticks = 102_000;
-            world.Writer.CompleteStep(p, in step, false);
-            Time.Ticks = 100_000;
-
-            p.OnMoved.Should().BeNull("the position callback walked");
-            (p.Direction, p.Steps.Count).Should().Be((Direction.West, 1));
-            FunnelCheck.Total.Should().Be(0, "the callback's walk and the step completion's writes after it are the operation's");
         }
 
         // Codex audit of part 8, P2 #2: CreateCharAppearanceGump and RaceChangeGump build their previews from detached

@@ -999,17 +999,14 @@ namespace ClassicUO.UnitTests.Ecs
 
         // A PlayerMobile without its constructor (which reads the UO files): GetUninitializedObject, then Mobile's constructor
         // on it, so the PlayerMobile-only fields stay unset (Skills, Walker, Pathfinder, buffs; nothing here touches them).
-        // World.Player is set to it. Its position and direction callbacks are the test's: the real ones call the plugins and
-        // read the profile. OnMoved stands in for PlayerMobile.OnPositionChanged, where a plugin's RequestMove runs
-        // Player.Walk synchronously.
+        // World.Player is set to it. Its position and direction callbacks are the test's: the real ones send the door and
+        // corpse checks' packets and read the profile. OnMoved stands in for PlayerMobile.OnPositionChanged, OnTurned for
+        // the door check of OnDirectionChanged.
         internal sealed class TestPlayer : PlayerMobile
         {
             public Action<TestPlayer> OnMoved;
-            public Action<TestPlayer> OnTurned; // funnel part 5: a stand-in for the door check's packet (plugin send hooks)
+            public Action<TestPlayer> OnTurned;
             public int PositionCallbacks;
-            // Codex audit of part 8, P2 #1: true on the new World's player, whose stand-in walk (StandInWalk) calls what the
-            // converted PlayerMobile.Walk calls (TurnPlayer, QueuePlayerStep); false: the base revision's direct writes
-            public bool Funnel;
 
             public TestPlayer(World world, uint serial) : base(world, serial) { } // never runs
 
@@ -1054,49 +1051,16 @@ namespace ClassicUO.UnitTests.Ecs
             return world;
         }
 
-        // Player.Walk's writes, as a plugin's RequestMove makes them from the position (or the door check's) callback: two
-        // requests, a coalesced turn, then a step. On the new World (TestPlayer.Funnel) they go through the operations the
-        // converted Walk calls (TurnPlayer, QueuePlayerStep: admission, CloseBank, PlanWalkStep, ApplyStep), which must accept
-        // them while the operation that runs the callback is open (Codex audit of part 8, P2 #1); on the old World they are
-        // the base revision's writes (Direction; OldWalkStep, Walk from CloseBank to PushInputs). Walk's own checks before
-        // them (the walker, the pathfinder, the profile) and the walker's record after them are not world state
-        internal static Action<TestPlayer> StandInWalk(Direction to) => p =>
-        {
-            if (p.Funnel)
-            {
-                p.World.Writer.TurnPlayer(p, to).Should().BeTrue("a coalesced turn from a callback is accepted");
-            }
-            else
-            {
-                p.TestSetDirection(to);
-            }
-
-            int x = p.X, y = p.Y;
-            Pathfinder.GetNewXY((byte)to, ref x, ref y);
-
-            if (p.Funnel)
-            {
-                p.World.Writer.QueuePlayerStep(p, x, y, p.Z, to, true).Should().BeTrue("a step request from a callback is accepted");
-            }
-            else
-            {
-                OldWalkStep(p, x, y, p.Z, to, true);
-            }
-        };
-
         public enum PlayerPlacement { UpdateObject, UpdatePlayer }
 
         [Theory]
         [InlineData(PlayerPlacement.UpdateObject)]
         [InlineData(PlayerPlacement.UpdatePlayer)]
-        public void A_Walk_From_The_Players_Position_Callback_Is_Published_As_Before_T1(PlayerPlacement kind)
+        public void The_Players_Placement_With_Its_Position_Callback_Is_Published_As_Before_T1(PlayerPlacement kind)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             Time.Ticks = NOW + 2000;
-            a.OnMoved = StandInWalk(Direction.West);
-            b.OnMoved = StandInWalk(Direction.West);
 
             if (kind == PlayerPlacement.UpdateObject)
             {
@@ -1115,8 +1079,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             Time.Ticks = NOW;
             b.PositionCallbacks.Should().Be(a.PositionCallbacks).And.BeGreaterThan(1);
-            b.Steps.Count.Should().BeGreaterThan(0, "the callback walked");
-            b.Direction.Should().Be(Direction.West);
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Ecs.IsFolding.Should().BeFalse();
@@ -1154,7 +1116,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Detached_World_Player_Is_Written_As_Before_T1(bool throws)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
-            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = throws;
 
             // 0x25 under the player's serial: the mobile goes, World.Player stays

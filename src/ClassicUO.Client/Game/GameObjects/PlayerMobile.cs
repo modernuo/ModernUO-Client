@@ -578,9 +578,8 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>
         /// T1 (funnel part 8): <see cref="Walk"/>'s coalesced turn (three unconfirmed requests: the direction alone, no packet)
-        /// through the funnel (<c>TurnPlayer</c>: SetMobileDirection's writes, unfolded for the door check, with the walk's
-        /// admission, so a walk from a position callback joins the open operation on the player), then the turn's cooldown.
-        /// Rejected (Codex audit of part 8, P2 #1): nothing changed, no cooldown, false.
+        /// through the funnel (<c>TurnPlayer</c>: SetMobileDirection's writes, unfolded for the door check; started inside an
+        /// open operation it is a rejected nesting), then the turn's cooldown. Rejected: nothing changed, no cooldown, false.
         /// </summary>
         internal bool CoalescedTurn(Direction direction, ushort walkTime)
         {
@@ -700,8 +699,8 @@ namespace ClassicUO.Game.GameObjects
             // T1 (funnel part 8): admission first, then CloseBank, then the walk queue's writes through the funnel
             // (QueuePlayerStep: PlanWalkStep, then SetAnimation(0xFF) when the walk starts while not walking, LastStepTime,
             // the step, the inputs), written before the walker's step record; the walker is not world state and neither side
-            // reads the other. A walk from the player's position callback joins the operation that runs it (Codex audit of
-            // part 8, P2 #1). Rejected: nothing changed, the bank stays open
+            // reads the other. A walk started inside an open operation is a nesting. Rejected: nothing changed, the bank
+            // stays open
             if (!World.Writer.QueuePlayerStep(this, x, y, z, direction, run))
             {
                 return false;

@@ -30,9 +30,7 @@ namespace ClassicUO.Game
     /// <see cref="Placement"/> token that the placement consumes.</item>
     /// </list>
     /// <para>
-    /// Operations do not nest, and only operations open a scope (one documented exception: the player's own walk from a
-    /// position or direction callback joins the open unfolded operation on that player, see <see cref="AdmittedPlayerWalk"/>).
-    /// A violation (nesting, a placement that is not outstanding,
+    /// Operations do not nest, and only operations open a scope. A violation (nesting, a placement that is not outstanding,
     /// a removal of an item this World does not hold, an item upsert of a live mobile) is a bug in the caller: it throws in
     /// CUO_DEVTOOLS builds; in a release build it logs an error once per kind, so a funnel bug never disconnects a player
     /// (coordinator, T1 round 2). A nested operation is then rejected outright (nothing changes; T1 round 4: production code
@@ -3324,9 +3322,9 @@ namespace ClassicUO.Game
         // ---- funnel part 8, group 4: the player's walk (PlayerMobile.Walk)
 
         /// <summary>
-        /// <c>PlayerMobile.Walk</c>'s step request: first the admission (<see cref="AdmittedPlayerWalk"/>) and the player
-        /// check, then <c>CloseBank</c> (the caller's removals, unchanged and unscoped as before T1), then the walk queue's
-        /// writes in their old order (<c>PlanWalkStep</c> from the queue as it is now, then <c>Mobile.ApplyStep</c>: when the
+        /// <c>PlayerMobile.Walk</c>'s step request: first the admission (<see cref="Admitted"/>: a step started inside an
+        /// open operation is a nesting, rejected) and the player check, then <c>CloseBank</c> (the caller's removals,
+        /// unchanged and unscoped as before T1), then the walk queue's writes in their old order (<c>PlanWalkStep</c> from the queue as it is now, then <c>Mobile.ApplyStep</c>: when the
         /// walk starts, <c>SetAnimation(0xFF)</c> if the player was not walking and <c>LastStepTime</c>; the step; the
         /// inputs). Unfolded, as every player path. Only <c>World.Player</c> of this World walks this way; anything else is a
         /// violation, rejected (false: nothing changed, the bank stays open, and Walk returns false before the walker records
@@ -3334,7 +3332,7 @@ namespace ClassicUO.Game
         /// </summary>
         public bool QueuePlayerStep(Mobile player, int x, int y, sbyte z, Direction direction, bool run)
         {
-            if (player == null || !AdmittedPlayerWalk(player, nameof(QueuePlayerStep), out bool joined))
+            if (player == null || !Admitted(nameof(QueuePlayerStep), player.Serial))
             {
                 return false;
             }
@@ -3350,7 +3348,7 @@ namespace ClassicUO.Game
             walker.CloseBank();
             walker.PlanWalkStep(x, y, z, direction, run, out Mobile.StepPlan plan);
 
-            using (joined ? default : Open(player, null))
+            using (Open(player, null))
             {
                 player.ApplyStep(in plan);
             }
@@ -3361,13 +3359,13 @@ namespace ClassicUO.Game
         /// <summary>
         /// <c>PlayerMobile.Walk</c>'s coalesced turn (three unconfirmed requests: the direction alone, no step): as
         /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then DirectionCommitted unfolded for the door
-        /// check, whose Sync writes the inputs: the old turn's one push), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
+        /// check, whose Sync writes the inputs: the old turn's one push), admitted as every operation (<see cref="Admitted"/>). Only <c>World.Player</c> of this
         /// World; anything else is a violation, rejected. False: rejected, nothing changed (Walk then returns false and keeps
         /// its cooldown).
         /// </summary>
         public bool TurnPlayer(Mobile player, Direction direction)
         {
-            if (player == null || !AdmittedPlayerWalk(player, nameof(TurnPlayer), out bool joined))
+            if (player == null || !Admitted(nameof(TurnPlayer), player.Serial))
             {
                 return false;
             }
@@ -3394,39 +3392,13 @@ namespace ClassicUO.Game
             // second inputs commit (unlike SetMobileDirection, whose 0x1B/0x21 callers it keeps as they were)
             Direction directionBefore = player.Direction;
 
-            using (joined ? default : Open(player, null))
+            using (Open(player, null))
             {
                 _world.Ecs.CommitMobile(player, in v);
                 player.DirectionCommitted(directionBefore);
             }
 
             return true;
-        }
-
-        /// <summary>
-        /// The admission of the player's walk (<see cref="QueuePlayerStep"/>, <see cref="TurnPlayer"/>), Codex audit of part 8,
-        /// P2 #1. With nothing open it is <see cref="Admitted"/>. Inside an operation it is the one documented exception to
-        /// "operations do not nest": the player's position and direction callbacks run inside the unfolded operations on the
-        /// player (<see cref="PlaceMobile"/>, <see cref="MoveMobile"/>, <see cref="CompleteStep"/>,
-        /// <see cref="MoveBoatPassenger"/>, <see cref="SetMobileDirection"/>, <see cref="TurnPlayer"/>), and a plugin's
-        /// <c>RequestMove</c> there ran <c>Player.Walk</c> synchronously. The plugin host was the only such caller and has
-        /// been removed, so this exception has no caller left; removing it is a separate change. Before T1 that walk wrote at
-        /// that point; it still does: the walk joins the open operation (no scope of its own, so the outer scope, its
-        /// ownership and its deferred work stay as they are) when that operation's subject is this exact instance (and the
-        /// caller then checks it is <c>World.Player</c> of this World) and nothing is folded (the operations that fold the player run no callback).
-        /// Its writes are then the outer operation's funnel writes, and every push and Sync publishes as before T1; what the
-        /// outer operation writes after its callback is what the old code wrote after it (its commits after the callback are
-        /// the inputs from the getters and the hook Syncs from the cache, never values computed before the callback). Any
-        /// other nesting is rejected as by <see cref="Admitted"/>.
-        /// </summary>
-        private bool AdmittedPlayerWalk(Mobile player, string operation, out bool joined)
-        {
-            // the open operation's own subject, nothing folded. ClearWorld's scope has no subject, so it never matches; a
-            // removal's subject is the removed mobile, and no removal runs a position callback. The caller's player check,
-            // next and still before any side effect, rejects a subject that is not this World's player
-            joined = _open && !_world.Ecs.IsFolding && ReferenceEquals(_subject, player);
-
-            return joined || Admitted(operation, player.Serial);
         }
 
         // ---- T9 S4: the detached previews (character creation, race change)
@@ -3609,16 +3581,15 @@ namespace ClassicUO.Game
         /// <c>PlayerMobile.CloseBank</c>'s removals (0x20 for the player, and the player's walk before its step): every item
         /// in the open bank removed with force (<c>World.RemoveItem(item, true)</c>, contents first, as before T1), in the
         /// bank's child order, in a scope that owns the bank and its subtree, not folded (a removal: no value of its own). The
-        /// caller then empties the bank's list, closes its gump and its Opened flag, as before. Admission as the walk's
-        /// (<see cref="AdmittedPlayerWalk"/>: <c>QueuePlayerStep</c> runs it, and a walk from the player's position or
-        /// direction callback joins the open operation on the player; the joined removal opens no scope and its subtree joins
-        /// the outer scope's), then the player check: only <c>World.Player</c> of this World; anything else is a violation,
-        /// rejected (false: nothing is removed and the caller leaves the bank open). The removed items' placements are
+        /// caller then empties the bank's list, closes its gump and its Opened flag, as before. Admitted as every operation
+        /// (<see cref="Admitted"/>: <c>QueuePlayerStep</c> runs it before its own scope opens; started inside an open
+        /// operation it is a nesting, rejected), then the player check: only <c>World.Player</c> of this World; anything else
+        /// is a violation, rejected (false: nothing is removed and the caller leaves the bank open). The removed items' placements are
         /// cancelled first.
         /// </summary>
         public bool RemoveBankContents(PlayerMobile player, Item bank)
         {
-            if (player == null || bank == null || !AdmittedPlayerWalk(player, nameof(RemoveBankContents), out bool joined))
+            if (player == null || bank == null || !Admitted(nameof(RemoveBankContents), player.Serial))
             {
                 return false;
             }
@@ -3632,7 +3603,7 @@ namespace ClassicUO.Game
 
             CancelSubtreePlacements(bank);
 
-            using (joined ? default : Open(bank, null))
+            using (Open(bank, null))
             {
 #if CUO_DEVTOOLS
                 if (FunnelCheck.Enabled)
