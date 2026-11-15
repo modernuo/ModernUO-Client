@@ -26,7 +26,8 @@ namespace ClassicUO.Loop
         Tooltip = 1 << 13,
         Scene = 1 << 14,
         Motion = 1 << 15,
-        Other = 1 << 16
+        Other = 1 << 16,
+        Driver = 1 << 17
     }
 
     /// <summary>Why present_on_change has a change pending (CUO_ANIM_DUE_CHECK logs it with a mismatch run).</summary>
