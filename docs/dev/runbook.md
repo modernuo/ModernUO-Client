@@ -68,9 +68,9 @@ dotnet publish <repo>/src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -r
 Notes:
 
 - `win-x64` publishes target x86-64-v3 (`IlcInstructionSet`): a CPU with AVX2, FMA and BMI2.
-- On Windows, ILC finds the linker through Visual Studio. `tools/fps-test/publish-aot.ps1` wraps the command in `vcvars64` and adds `-p:IlcUseEnvironmentalTools=true`.
+- On Windows, ILC finds the linker through Visual Studio. `tools/fps-test/publish-aot.ps1` (on `poc/modern-client` only) wraps the command in `vcvars64` and adds `-p:IlcUseEnvironmentalTools=true`.
 - The publish links the static MP3 decoder (`external/x64-static/cuo_mp3.lib`, `external/lib64-static/libcuo_mp3.a`, `external/osx-static/libcuo_mp3.a`). If the library is missing the publish fails with `CUOMP3`. Build it with `src/native/cuo_mp3/build-windows.sh`, `build-linux.sh` or `build-macos.sh`, or pass `-p:CuoMp3Optional=true` to publish without music.
-- `-p:CuoMibcPath=<file.mibc>` applies a static PGO profile (opt-in; `tools/pgo/collect_mibc.py` collects one).
+- `-p:CuoMibcPath=<file.mibc>` applies a static PGO profile (opt-in; `tools/pgo/collect_mibc.py` on `poc/modern-client` collects one).
 
 ### Shader toolchain
 

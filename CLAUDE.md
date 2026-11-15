@@ -30,7 +30,7 @@ Target framework is `net11.0`; `global.json` pins the .NET 11 SDK. Submodules (`
 Other folders (every project is in `ClassicUO.sln`):
 
 - `tests/`: `ClassicUO.UnitTests` (xUnit) and `Uo.Converter.Tests`.
-- `tools/`: `Uo.Converter` (converts a UO install into a pack and verifies it), `ClassicUO.Assets.Mul` (MUL/UOP loaders) and `ClassicUO.IO.Mul` (the MUL/UOP file readers they use), both for the converter and its tests only, `Uo.Render.App` (standalone viewer and test app for `Uo.Render`), `Uo.Net` (protocol client library) and `Uo.Net.Cli` (headless test client), scripts for benchmarking (`aot-bench`, `fps-test`, `pgo`), native builds (`fna3d`, `sdl`), and ECS analysis (`ecs-census`, `ecs-parity`).
+- `tools/`: `Uo.Converter` (converts a UO install into a pack and verifies it), `ClassicUO.Assets.Mul` (MUL/UOP loaders) and `ClassicUO.IO.Mul` (the MUL/UOP file readers they use), both for the converter and its tests only, `Uo.Render.App` (standalone viewer and test app for `Uo.Render`), `Uo.Net` (protocol client library) and `Uo.Net.Cli` (headless test client), native builds (`fna3d`, `sdl`), and development scripts that stay on `poc/modern-client` and are left off the clean branch: benchmarking (`aot-bench`, `fps-test`, `pgo`, `large-scale`, `gpu-fault-repro`, `diag`) and ECS analysis (`ecs-census`, `ecs-parity`).
 - `research/`: experiments that do not ship (`ecs-bench`; `Uo.Client`, the standalone prototype client).
 - `build/`: `DevTools.props`, the one definition of `CuoDevTools`.
 - `docs/dev/`: developer docs.
