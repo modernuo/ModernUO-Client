@@ -237,12 +237,12 @@ namespace ClassicUO
 
         private static readonly string[] _phaseKeys =
         {
-            "pump", "packets", "plugin", "scene_update", "world_mobiles", "world_items", "world_fx_text", "world_ecs", "scene_rest",
+            "pump", "packets", "scene_update", "world_mobiles", "world_items", "world_fx_text", "world_ecs", "scene_rest",
             "ui_update", "update_other", "update", "draw_setup", "lights", "world_prepare", "prep_setup", "prep_walk", "prep_gpu_masks", "prep_hidden",
             "prep_foliage_finish", "prep_text", "prep_cap_multi", "prep_cap_static", "prep_cap_item", "prep_cap_mobile", "prep_cap_other",
             "prep_item_cache", "prep_cap_cached", "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
-            "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame",
+            "cursor", "composite", "draw_other", "draw", "batcher_fna", "present", "frame",
             "ui_traverse", "ui_fna", "ui_pass", "draw_fx", "ui_cache_record", "ui_cache_compare"
         };
 
