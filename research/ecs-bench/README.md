@@ -16,7 +16,7 @@ git clone https://github.com/genaray/Arch.git
 
 ```
 dotnet build research/ecs-bench/EcsBench.csproj -c Release
-dotnet research/ecs-bench/bin/Release/net10.0/EcsBench.dll [benchmark|*] [TinyEcs|Friflo|Arch|*]
+dotnet research/ecs-bench/bin/Release/net11.0/EcsBench.dll [benchmark|*] [TinyEcs|Friflo|Arch|*]
 ```
 
 - Run one library per process to keep thread pools from interfering.

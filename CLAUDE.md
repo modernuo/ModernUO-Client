@@ -11,7 +11,7 @@ The ModernUO client, built on ClassicUO (a fork). It differs from upstream Class
 - The world can be drawn by a GPU renderer (SDL_GPU through FNA3D) as well as the original FNA batcher ("Legacy").
 - It has no plugin host: the legacy plugin API (Razor and the like) and `ClassicUO.Bootstrap` were removed. A new plugin design comes later; do not add hooks for the old one.
 
-Target framework is `net10.0`. Submodules (`git submodule update --init --recursive`) are in `external/`.
+Target framework is `net11.0`; `global.json` pins the .NET 11 SDK. Submodules (`git submodule update --init --recursive`) are in `external/`.
 
 ## Layout
 

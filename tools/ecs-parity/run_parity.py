@@ -4,7 +4,7 @@
 # closes the client, copies the log to --out and deletes the temp folder.
 #
 #   set CUO_TEST_PASSWORD=...   (PowerShell: $env:CUO_TEST_PASSWORD = '...')
-#   python tools/ecs-parity/run_parity.py --exe bin/Release/net10.0/cuo.exe --script tools/ecs-parity/bank.txt --out <scratch>/bank.log
+#   python tools/ecs-parity/run_parity.py --exe bin/Release/net11.0/cuo.exe --script tools/ecs-parity/bank.txt --out <scratch>/bank.log
 import argparse, ctypes, ctypes.wintypes as wt, json, os, shutil, subprocess, sys, tempfile
 
 p = argparse.ArgumentParser()

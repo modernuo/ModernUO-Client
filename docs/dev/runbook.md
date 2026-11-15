@@ -6,7 +6,7 @@ Related docs: [pack-format.md](pack-format.md), [data-formats.md](data-formats.m
 
 ## Prerequisites
 
-- .NET 10 SDK. Every project targets `net10.0` and uses `LangVersion` preview. There is no `global.json`.
+- .NET 11 SDK (`global.json` pins 11.0.100, rolling forward to later feature bands). Every project targets `net11.0` and uses `LangVersion` preview; FNA, SDL3-CS and FileEmbed keep their own targets (net8.0, netstandard2.0).
 - Git submodules:
 
   ```
@@ -176,7 +176,7 @@ Settings come from `settings.json` next to the executable, or from the file name
 Example against a local ModernUO server on the default port:
 
 ```
-<repo>/bin/Release/net10.0/cuo -settings <settings.json> -profilespath <profiles> \
+<repo>/bin/Release/net11.0/cuo -settings <settings.json> -profilespath <profiles> \
     -ip 127.0.0.1 -port 2593 -autologin true -skiploginscreen -saveaccount false \
     -pack <pack> -username <account>
 ```

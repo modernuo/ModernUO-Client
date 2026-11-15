@@ -3,7 +3,7 @@
        converter's frozen MUL loaders (tools/ClassicUO.Assets.Mul) share namespaces with the client's pack loaders. -->
   <PropertyGroup>
     <IsPackable>false</IsPackable>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
