@@ -23,22 +23,16 @@ Target framework is `net10.0`. Submodules (`git submodule update --init --recurs
 - `ClassicUO.IO`: file readers, packet reader and writer, audio decoding.
 - `ClassicUO.Utility`: shared helpers (logging, collections, client version, `Crypter`).
 - `ClassicUO.Bootstrap`: plugin-host launcher.
+- `Uo.Pack`: pack format structs, readers and writers, layer rules data.
+- `Uo.Render`: the GPU world renderer (SDL_GPU): page residency, chunk baking, shaders.
 - `native/cuo_mp3`: C source of the static MP3 decoder.
 
-`poc/` (pack and renderer libraries and tools; not in `ClassicUO.sln`):
-
-- `Uo.Pack`: pack format structs, readers and writers, layer rules data.
-- `Uo.Converter`: converts a UO install into a pack and verifies it.
-- `Uo.Render`: the GPU world renderer (SDL_GPU): page residency, chunk baking, shaders.
-- `Uo.Render.App`: standalone viewer and test app for `Uo.Render`.
-- `Uo.Net`: protocol client library; `Uo.Net.Cli`: headless test client.
-- `Uo.Client`: standalone prototype client.
-
-Other folders:
+Other folders (every project is in `ClassicUO.sln`):
 
 - `tests/`: `ClassicUO.UnitTests` (xUnit) and `Uo.Converter.Tests`.
-- `tools/`: `ClassicUO.Assets.Mul` (MUL/UOP loaders, used by the converter and its tests only), scripts for benchmarking (`aot-bench`, `fps-test`, `pgo`), native builds (`fna3d`, `sdl`), and ECS analysis (`ecs-census`, `ecs-parity`).
-- `research/`: experiments that do not ship (for example `ecs-bench`).
+- `tools/`: `Uo.Converter` (converts a UO install into a pack and verifies it), `ClassicUO.Assets.Mul` (MUL/UOP loaders, used by the converter and its tests only), `Uo.Render.App` (standalone viewer and test app for `Uo.Render`), `Uo.Net` (protocol client library) and `Uo.Net.Cli` (headless test client), scripts for benchmarking (`aot-bench`, `fps-test`, `pgo`), native builds (`fna3d`, `sdl`), and ECS analysis (`ecs-census`, `ecs-parity`).
+- `research/`: experiments that do not ship (`ecs-bench`; `Uo.Client`, the standalone prototype client).
+- `build/`: `DevTools.props`, the one definition of `CuoDevTools`.
 - `scripts/`: `build-naot.sh`.
 - `docs/dev/`: developer docs.
 
@@ -67,7 +61,7 @@ A new ECS read or update path lands behind a `settings.json` switch (`Configurat
 
 ### The pack is the asset source
 
-The client reads art, maps, tile data, hues, animations, gumps, fonts, text and audio from the pack. A few MUL/UOP fallbacks remain (gumps with `CUO_PACK_GUMPS=0`, fonts/cliloc/speech with `CUO_PACK_TEXT=0`, and the startup check for a UO folder); do not add new ones. A change to what the pack holds goes in `poc/Uo.Converter` and `poc/Uo.Pack`, and the same change updates [pack-format.md](docs/dev/pack-format.md) and, for table contents, [data-formats.md](docs/dev/data-formats.md). Body sets are chosen at import ([bodies.md](docs/dev/bodies.md)); equipment layering rules are pack data ([layer-rules.md](docs/dev/layer-rules.md)). The pack keeps no derived duplicates of its own data. Published packs are immutable; the converter writes new files by replacing, never in place.
+The client reads art, maps, tile data, hues, animations, gumps, fonts, text and audio from the pack. A few MUL/UOP fallbacks remain (gumps with `CUO_PACK_GUMPS=0`, fonts/cliloc/speech with `CUO_PACK_TEXT=0`, and the startup check for a UO folder); do not add new ones. A change to what the pack holds goes in `tools/Uo.Converter` and `src/Uo.Pack`, and the same change updates [pack-format.md](docs/dev/pack-format.md) and, for table contents, [data-formats.md](docs/dev/data-formats.md). Body sets are chosen at import ([bodies.md](docs/dev/bodies.md)); equipment layering rules are pack data ([layer-rules.md](docs/dev/layer-rules.md)). The pack keeps no derived duplicates of its own data. Published packs are immutable; the converter writes new files by replacing, never in place.
 
 ### Class A fields: no new direct writes
 

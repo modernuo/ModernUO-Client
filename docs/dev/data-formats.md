@@ -1,6 +1,6 @@
 # Data formats and the import pipeline
 
-This document describes how the client's data gets from a Ultima Online install to a pack, and what the converter (`poc/Uo.Converter`) reads, writes and checks today. It covers UOP and pre-UOP (MUL) installs, the content types and how each is converted, ids and validation, and the converter's command line. The binary layout of the pack is in [pack-format.md](pack-format.md). Creature body choices are in [bodies.md](bodies.md). The equipment layering rules are in [layer-rules.md](layer-rules.md).
+This document describes how the client's data gets from a Ultima Online install to a pack, and what the converter (`tools/Uo.Converter`) reads, writes and checks today. It covers UOP and pre-UOP (MUL) installs, the content types and how each is converted, ids and validation, and the converter's command line. The binary layout of the pack is in [pack-format.md](pack-format.md). Creature body choices are in [bodies.md](bodies.md). The equipment layering rules are in [layer-rules.md](layer-rules.md).
 
 ## 1. Pipeline
 
@@ -14,10 +14,10 @@ pack folder  (manifest.json + binary files)
 client  (opens the pack read-only)
 ```
 
-- One program, `poc/Uo.Converter`, reads the install, writes the pack and then verifies it by reading the pack back and comparing it with the install. There is no separate source tree and no separate build step.
-- The pack layout and the readers and writers live in `poc/Uo.Pack`. The converter decodes the install through the frozen ClassicUO loaders in `tools/ClassicUO.Assets.Mul`, so the pack holds what the client would have resolved.
+- One program, `tools/Uo.Converter`, reads the install, writes the pack and then verifies it by reading the pack back and comparing it with the install. There is no separate source tree and no separate build step.
+- The pack layout and the readers and writers live in `src/Uo.Pack`. The converter decodes the install through the frozen ClassicUO loaders in `tools/ClassicUO.Assets.Mul`, so the pack holds what the client would have resolved.
 - The converter never writes to the install. The client does not read the pack's source install at run time for the sections the pack covers (see pack-format.md for what is still read from the install).
-- Hard-coded per-tile draw rules (the `NoDraw` family) are applied once during conversion and stored as flags in `tiledata.bin` (`poc/Uo.Converter/TileRules.cs`). The equipment layering rules are written to `layerrules.bin` (layer-rules.md).
+- Hard-coded per-tile draw rules (the `NoDraw` family) are applied once during conversion and stored as flags in `tiledata.bin` (`tools/Uo.Converter/TileRules.cs`). The equipment layering rules are written to `layerrules.bin` (layer-rules.md).
 - The pack holds no data that can be derived from another pack file. For example the hue lookup table is built by the client from `hues_raw.bin`. The lower mip levels of art and texmap pages are stored although derived, because rebuilding them at load is expensive.
 
 ## 2. Supported installs
@@ -28,7 +28,7 @@ client  (opens the pack read-only)
 
 ### 2.2 Client version
 
-The oldest supported client is 4.0.11c. Older versions are refused. The version selects record layouts, so it must be right. The converter resolves it in this order (`poc/Uo.Converter/LegacyClientVersion.cs`):
+The oldest supported client is 4.0.11c. Older versions are refused. The version selects record layouts, so it must be right. The converter resolves it in this order (`tools/Uo.Converter/LegacyClientVersion.cs`):
 
 1. `--client-version <x.y.z.w>` (or `x.y.za`, for example `4.0.11c`).
 2. `--cuo-settings <settings.json>`: the `clientversion` string of a ClassicUO settings file.
@@ -203,7 +203,7 @@ animinfo.mul and the client's built-in tables. A loose `Clilocs.txt` and loose `
 
 ## 6. Verification
 
-After conversion, and alone with `--verify-only`, the converter reads the pack back with the `Uo.Pack` readers and checks it against itself and against the install through the client loaders (`poc/Uo.Converter/Verify.cs`). Checks include: art and texture pixels against the loaders; animation bodies, frames and aliases; every gump against `GumpsLoader`; every font glyph; every cliloc string in every language and the overrides record; speech entries; every sound and music id; tile data rules against an independent copy of the old client rules; `layerrules.bin` against the built-in rules; and each map facet. Map verification works out the expected facets and sizes from the source files, compares them with the manifest and each `facet.json`, and compares every block of a MUL facet with an independent read (`MulMapOracle.cs`). With `--only`, only the listed stages are verified. `--no-maps`, `--no-sounds` and `--no-music` remove those checks from a full run.
+After conversion, and alone with `--verify-only`, the converter reads the pack back with the `Uo.Pack` readers and checks it against itself and against the install through the client loaders (`tools/Uo.Converter/Verify.cs`). Checks include: art and texture pixels against the loaders; animation bodies, frames and aliases; every gump against `GumpsLoader`; every font glyph; every cliloc string in every language and the overrides record; speech entries; every sound and music id; tile data rules against an independent copy of the old client rules; `layerrules.bin` against the built-in rules; and each map facet. Map verification works out the expected facets and sizes from the source files, compares them with the manifest and each `facet.json`, and compares every block of a MUL facet with an independent read (`MulMapOracle.cs`). With `--only`, only the listed stages are verified. `--no-maps`, `--no-sounds` and `--no-music` remove those checks from a full run.
 
 The exit code is 0 on success, 1 for a usage or input error, and 2 when verification fails.
 

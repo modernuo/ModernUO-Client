@@ -1,6 +1,6 @@
 # Pack format 1.x
 
-This document specifies the asset pack that the ModernUO client loads instead of the UO client's MUL and UOP files. The converter (`poc/Uo.Converter`) writes packs, and `poc/Uo.Pack` holds the structs, readers and writers that both sides share; the client's loaders are in `src/ClassicUO.Assets/`. Where this text and the code disagree, the code wins. Related pages: [data-formats.md](data-formats.md) (source formats), [bodies.md](bodies.md) (body import choices), [layer-rules.md](layer-rules.md) (`layerrules.bin`), [runbook.md](runbook.md) (converting and running).
+This document specifies the asset pack that the ModernUO client loads instead of the UO client's MUL and UOP files. The converter (`tools/Uo.Converter`) writes packs, and `src/Uo.Pack` holds the structs, readers and writers that both sides share; the client's loaders are in `src/ClassicUO.Assets/`. Where this text and the code disagree, the code wins. Related pages: [data-formats.md](data-formats.md) (source formats), [bodies.md](bodies.md) (body import choices), [layer-rules.md](layer-rules.md) (`layerrules.bin`), [runbook.md](runbook.md) (converting and running).
 
 For every content type described here, the client reads only the pack. MUL and UOP stay only for the content listed in "Not in the pack". The client never reads a patch format. `verdata.mul` is not imported: shard owners merge it into the base files before converting. The converter merges the legacy map patches (`mapdif*`, `mapdifl*`, `stadif*`, `stadifi*`, `stadifl*`) into the maps at import. The `map*x`, `statics*x` and `staidx*x` files are not read; a shard that wants them renames them to the regular names before converting.
 
@@ -212,7 +212,7 @@ The data is semantic: the renderer bakes per-chunk instance buffers on worker th
 
 ### `tiledata.bin`
 
-The pack's only tile data file. `FileHeader` (magic `TILE`, Kind 0), `landCount i32`, `staticCount i32`, `nameBytes i32`, `LandTileInfo[landCount]`, `StaticTileInfo[staticCount]`, then `nameBytes` of UTF-8 name table (`TileDataFile`, `poc/Uo.Pack/PackTables.cs`).
+The pack's only tile data file. `FileHeader` (magic `TILE`, Kind 0), `landCount i32`, `staticCount i32`, `nameBytes i32`, `LandTileInfo[landCount]`, `StaticTileInfo[staticCount]`, then `nameBytes` of UTF-8 name table (`TileDataFile`, `src/Uo.Pack/PackTables.cs`).
 
 **Standardized counts.** Every pack has exactly `landCount` = 0x4000 and `staticCount` = 0x10000, whatever the source install (`PackConst.LandTileCount`, `PackConst.StaticTileCount`). A pre-7.0.9 install has only 0x4000 statics; the converter pads the rest with empty entries (no name, no flags, every field 0), and their `packFlags` come from the same rules as a modern install's empty entries. Any u16 graphic a server sends therefore indexes inside the table, and the client needs no bounds check per site. A source with more entries than the format holds is refused, not truncated. The writer and the reader both require the exact counts.
 
@@ -243,7 +243,7 @@ The pack's only tile data file. `FileHeader` (magic `TILE`, Kind 0), `landCount 
 
 ### NoDraw flags (`TilePackFlags`, in `packFlags`)
 
-ClassicUO used to hide some tiles in code rather than with tiledata flags. The converter (`poc/Uo.Converter/TileRules.cs`, the only code that knows these rules) evaluates that code once and stores the result. Clients and the renderer read only the flags (`Uo.Pack.TileDraw`), so a shard admin hides or shows a tile by editing its flag, with no code change.
+ClassicUO used to hide some tiles in code rather than with tiledata flags. The converter (`tools/Uo.Converter/TileRules.cs`, the only code that knows these rules) evaluates that code once and stores the result. Clients and the renderer read only the flags (`Uo.Pack.TileDraw`), so a shard admin hides or shows a tile by editing its flag, with no code change.
 
 | Bit | Name | Meaning |
 |---|---|---|
@@ -400,7 +400,7 @@ ClassicUO's hard-coded equipment layering (the draw order, the cloak move by fac
 
 ## Skills, skill groups, multimap, string dictionary
 
-The last binary files the client read from the UO folder. `skills.bin` is required: every supported install, from 4.0.11c on, has skills.mul and Skills.idx, so the converter fails without them and the client refuses a pack without `skills.bin`. The others are optional: the converter writes one only when the install has the source file (a stale copy from an earlier run is removed), and a client whose pack lacks it behaves as it did without the file. Reader and writer: `poc/Uo.Pack/MiscData.cs`.
+The last binary files the client read from the UO folder. `skills.bin` is required: every supported install, from 4.0.11c on, has skills.mul and Skills.idx, so the converter fails without them and the client refuses a pack without `skills.bin`. The others are optional: the converter writes one only when the install has the source file (a stale copy from an earlier run is removed), and a client whose pack lacks it behaves as it did without the file. Reader and writer: `src/Uo.Pack/MiscData.cs`.
 
 A **string-list store** is a record store (below) with exactly one slot, whose record is: count u32, blobBytes u32, `StringListRecord[count]` (8 bytes: value u32, end u32), then the UTF-8 blob; entry `i`'s text is `blob[end[i-1] .. end[i])`. The reader caps it at 2^20 entries and 64 MiB of text and requires `8 + 8*count + blobBytes` to equal the record's raw size, with ends that never decrease or pass the blob.
 
@@ -417,7 +417,7 @@ Text and def files shards edit by hand are copied byte for byte into `loose/` un
 
 ## Record stores
 
-Content that the client reads one item at a time, and that the GPU does not sample from pack pages, goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps, ASCII fonts, unicode fonts, cliloc, sound effects, music, the multimap and the string lists use it, each with its own magic, slot argument and record meta. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter` (`poc/Uo.Pack/RecordStore.cs`).
+Content that the client reads one item at a time, and that the GPU does not sample from pack pages, goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps, ASCII fonts, unicode fonts, cliloc, sound effects, music, the multimap and the string lists use it, each with its own magic, slot argument and record meta. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter` (`src/Uo.Pack/RecordStore.cs`).
 
 | Part | Layout |
 |---|---|
@@ -531,7 +531,7 @@ A record store with magic `SNDS` (0x53444E53).
 - **`StoreHeader.flags`** bit 0: converted from `soundLegacyMUL.uop` (else `sound.mul` + `soundidx.mul`). Informational.
 - **Slots:** `slotCount` = highest present id + 1. `arg` = 0 and `reserved` = 0; readers leave out a slot with either set. Ids that share an archive entry (`Sound.def` aliases) share one record.
 - **Records:** codec 0 only, so playing needs no decode. `meta0` = sample rate, must be 22,050; `meta1` = channels, must be 1; `meta2` = name length, 0..40. Payload: `rawBytes - meta2` bytes of 16-bit signed little-endian PCM, a non-zero even length (whole samples), then the name. The name is the archive entry's 40-byte name field up to its first NUL (for example `sword1.wav`), or a loose file's name without the extension.
-- **Converter resolution** (`poc/Uo.Converter/AudioImport.cs`):
+- **Converter resolution** (`tools/Uo.Converter/AudioImport.cs`):
   - the archive the client picked: the UOP on UOP installations when it exists, else the MUL pair;
   - `Sound.def` applied as the client applied it: an id that already has data is skipped, each group entry with data replaces it (the last one wins), and `-1` clears it;
   - then the client folder's loose `Sounds/<id>.wav` files over it, through `AudioConst.ReadWaveFile`: at most `MaxWaveFileBytes` (64 MiB + 1 MiB) checked before the read, chunk sizes compared by subtraction, 22,050 Hz mono 16-bit, and a non-empty even data chunk. A loose file that fails any of these falls back to the archive entry and is listed as a warning;
@@ -600,7 +600,7 @@ camelCase JSON, read case-insensitively (`Uo.Pack.Manifest`):
 
 ## Ship profile
 
-`dotnet run -c Release --project poc/Uo.Converter -- --out <pack dir>` with no format flags writes exactly this (`--out` is required; there is no default output folder):
+`dotnet run -c Release --project tools/Uo.Converter -- --out <pack dir>` with no format flags writes exactly this (`--out` is required; there is no default output folder):
 
 | Content | Pages | Compression |
 |---|---|---|
