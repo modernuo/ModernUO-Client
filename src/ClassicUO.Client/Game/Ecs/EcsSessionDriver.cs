@@ -998,20 +998,6 @@ namespace ClassicUO.Game
                     return true;
                 }
 
-                // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
-                case "itemcache" when args.Length > 0:
-                    Settings.GlobalSettings.GpuPrepareItemCache = args[0] == "on";
-                    Log.Info($"[ECS] driver: item cache {args[0]}");
-
-                    return true;
-
-                // itemmixed on|off: the item cache's mixed tiles (gpu_prepare_item_cache_mixed, E7)
-                case "itemmixed" when args.Length > 0:
-                    Settings.GlobalSettings.GpuPrepareItemCacheMixed = args[0] == "on";
-                    Log.Info($"[ECS] driver: item cache mixed tiles {args[0]}");
-
-                    return true;
-
 #if CUO_DEVTOOLS
                 // fx N graphic [blend [radius [z [f|m|l|e]]]]: N client-side effects round the player (BenchEffects; e: on mobiles and items), fx 0 removes them all
                 case "fx" when args.Length > 0:
@@ -1091,13 +1077,6 @@ namespace ClassicUO.Game
                 case "minimized" when args.Length > 0:
                     GameController.DevForceMinimized = args[0] == "on";
                     Log.Info($"[ECS] driver: simulated minimized window {args[0]} (skip_draw_when_minimized={Settings.GlobalSettings.SkipDrawWhenMinimized})");
-
-                    return true;
-
-                // fxserve on|off: the item cache serves tiles holding effects (gpu_prepare_item_cache_effects, E6)
-                case "fxserve" when args.Length > 0:
-                    Settings.GlobalSettings.GpuPrepareItemCacheEffects = args[0] == "on";
-                    Log.Info($"[ECS] driver: item cache serves effect tiles {args[0]}");
 
                     return true;
 #endif
@@ -1185,13 +1164,6 @@ namespace ClassicUO.Game
                     return true;
                 }
 
-                // w5 on|off: the W5 shortcut that still has a switch (text_skip_expired)
-                case "w5" when args.Length > 0:
-                    Settings.GlobalSettings.TextSkipExpired = args[0] == "on";
-                    Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
-
-                    return true;
-
                 // T9: switches whose off path is deleted; older session scripts still name them, so they are accepted and ignored
                 case "mobcache":
                 case "pushinputs":
@@ -1199,6 +1171,16 @@ namespace ClassicUO.Game
                 case "readequipment":
                 case "layerrules":
                     Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
+
+                    return false;
+
+                // the Gpu prepare's ground-item cache switches and W5's text skip, retired with their off paths; older session
+                // scripts (tools/ecs-parity) still name them, so they are accepted and ignored
+                case "itemcache":
+                case "itemmixed":
+                case "fxserve":
+                case "w5":
+                    Log.Info($"[ECS] driver: '{cmd}' has no off path any more, ignored");
 
                     return false;
 

@@ -72,7 +72,7 @@ namespace ClassicUO.Game.Map
         // walked alone, in tile order.
         public ulong GpuEffectMask;
 
-        /// <summary>E6 (gpu_prepare_item_cache_effects, set per frame by GameScene.GpuItemCacheBegin): effects joining or leaving a
+        /// <summary>E6 (set by GameScene.GpuItemCacheBegin): effects joining or leaving a
         /// tile don't change which items are cached, like mobiles.</summary>
         public static bool GpuEffectsIgnored;
         // the mobiles of tile bit b, in tile-list order: GpuMobiles[GpuMobileStart[b] .. GpuMobileStart[b + 1])

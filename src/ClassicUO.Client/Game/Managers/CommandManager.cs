@@ -81,18 +81,6 @@ namespace ClassicUO.Game.Managers
             );
 #endif
 
-            // -gpuskip [on|off]: the Gpu world prepare skips baked land and statics (no argument toggles)
-            Register
-            (
-                "gpuskip",
-                s =>
-                {
-                    var settings = Configuration.Settings.GlobalSettings;
-                    settings.GpuPrepareSkipBaked = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.GpuPrepareSkipBaked;
-                    GameActions.Print(_world, $"Gpu world prepare skips baked land and statics: {(settings.GpuPrepareSkipBaked ? "on" : "off")}");
-                }
-            );
-
             // -uicache [on|off]: the UI render cache (B8). No argument toggles.
             Register
             (
@@ -102,18 +90,6 @@ namespace ClassicUO.Game.Managers
                     var settings = Configuration.Settings.GlobalSettings;
                     settings.UiRenderCache = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.UiRenderCache;
                     GameActions.Print(_world, $"UI render cache: {(settings.UiRenderCache ? "on" : "off")}");
-                }
-            );
-
-            // -itemcache [on|off]: the Gpu world prepare caches settled ground items' sprites per chunk (no argument toggles)
-            Register
-            (
-                "itemcache",
-                s =>
-                {
-                    var settings = Configuration.Settings.GlobalSettings;
-                    settings.GpuPrepareItemCache = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.GpuPrepareItemCache;
-                    GameActions.Print(_world, $"Gpu world prepare caches ground items: {(settings.GpuPrepareItemCache ? "on" : "off")}");
                 }
             );
 

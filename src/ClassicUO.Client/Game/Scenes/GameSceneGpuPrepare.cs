@@ -45,15 +45,12 @@ namespace ClassicUO.Game.Scenes
         private int _gpuCheckObjects, _gpuCheckAlpha, _gpuCheckDraw, _gpuCheckRuns;
         private string _gpuCheckSample;
 
-        public bool IsGpuPrepareSkipping => _gpuSkipActive;
-
-        // Season statics baked by the world pass (WorldRenderer.SetStaticRemap) while the skipping is on: a meshed static
+        // Season statics baked by the world pass (WorldRenderer.SetStaticRemap): a meshed static
         // whose season graphic is baked needs no per-frame capture, so the walk can skip it like any other.
         private static ushort[] _gpuStaticRemap;
         private Uo.Render.WorldRenderer _gpuRemapWorld;
         private Uo.Render.PackSet _gpuRemapPack; // a facet change keeps the world pass but swaps its pack
         private Managers.Season _gpuRemapSeason;
-        private bool _gpuRemapOn;
 
         private void GpuUpdateStaticSeason(GpuWorldRenderer gpu)
         {
@@ -64,39 +61,33 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            bool want = Settings.GlobalSettings.GpuPrepareSkipBaked;
-
-            if (world == _gpuRemapWorld && world.Pack == _gpuRemapPack && want == _gpuRemapOn && (!want || _world.Season == _gpuRemapSeason))
+            if (world == _gpuRemapWorld && world.Pack == _gpuRemapPack && _world.Season == _gpuRemapSeason)
             {
                 return;
             }
 
             _gpuRemapWorld = world;
             _gpuRemapPack = world.Pack;
-            _gpuRemapOn = want;
             _gpuRemapSeason = _world.Season;
             ushort[] remap = null;
 
-            if (want)
+            for (int g = 0; g < 0x10000; g++)
             {
-                for (int g = 0; g < 0x10000; g++)
+                ushort to = SeasonManager.GetSeasonGraphic(_world.Season, (ushort)g);
+
+                if (to != g)
                 {
-                    ushort to = SeasonManager.GetSeasonGraphic(_world.Season, (ushort)g);
-
-                    if (to != g)
+                    if (remap == null)
                     {
-                        if (remap == null)
+                        remap = new ushort[0x10000];
+
+                        for (int i = 0; i < remap.Length; i++)
                         {
-                            remap = new ushort[0x10000];
-
-                            for (int i = 0; i < remap.Length; i++)
-                            {
-                                remap[i] = (ushort)i;
-                            }
+                            remap[i] = (ushort)i;
                         }
-
-                        remap[g] = to;
                     }
+
+                    remap[g] = to;
                 }
             }
 
@@ -145,14 +136,14 @@ namespace ClassicUO.Game.Scenes
             var profile = ProfileManager.CurrentProfile;
 
             // the gradient circle of transparency is per-object CPU work on baked statics (the out-of-range tint is a uniform)
-            _gpuSkipEnabled = _gpuWorld != null && Settings.GlobalSettings.GpuPrepareSkipBaked && profile != null &&
+            _gpuSkipEnabled = _gpuWorld != null && profile != null &&
                               !(profile.UseCircleOfTransparency && profile.CircleOfTransparencyType == 1);
 
             if (!_gpuSkipEnabled)
             {
                 if (_gpuSkipWasEnabled)
                 {
-                    // back to the full walk (setting off, Legacy renderer): skipped objects may have missed camera moves
+                    // back to the full walk (Legacy renderer, circle of transparency): skipped objects may have missed camera moves
                     UpdateDrawPosition = true;
                 }
 

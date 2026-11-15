@@ -239,13 +239,13 @@ namespace ClassicUO.Game.Scenes
 
         private static void Header(StreamWriter w, string renderer)
         {
-            var s = Configuration.Settings.GlobalSettings;
             w.Write($"golden {FORMAT}\n");
             w.Write($"name {_name} frame {_frameIndex} renderer {renderer}\n");
-            // gpu_ecs_sprites, legacy_ecs_sprites and ecs_effect_sprites are deleted (always the extracts); kept in the header
-            // so captures of older builds compare and measure/t9-golden's path checks still read them
+            // gpu_ecs_sprites, legacy_ecs_sprites and ecs_effect_sprites are deleted (always the extracts), and so is the ground-item
+            // cache's switch (always on); kept in the header so captures of older builds compare and measure/t9-golden's path
+            // checks still read them
             w.Write($"paths gpu_ecs_sprites=1 legacy_ecs_sprites=1 " +
-                    $"ecs_effect_sprites=1 gpu_prepare_item_cache={(s.GpuPrepareItemCache ? 1 : 0)} " +
+                    $"ecs_effect_sprites=1 gpu_prepare_item_cache=1 " +
                     $"hide_mobiles={(HideMobiles ? 1 : 0)}\n");
 
             if (_world?.Player is { } p)

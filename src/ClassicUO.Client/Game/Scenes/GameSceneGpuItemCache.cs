@@ -162,7 +162,7 @@ namespace ClassicUO.Game.Scenes
         }
     }
 
-    // W4: ground-item chunk caching in the Gpu world prepare (setting gpu_prepare_item_cache). W1's skip machinery
+    // W4: ground-item chunk caching in the Gpu world prepare. W1's skip machinery
     // (GameSceneGpuPrepare) applied to settled ground items:
     //   - a chunk's tiles whose only unbaked objects are plain ground items (not corpses, multis, animated art, foliage,
     //     internal, translucent or roof items; no text, no object handles; settled at full alpha below the max Z and the
@@ -177,11 +177,11 @@ namespace ClassicUO.Game.Scenes
     //   - the cached instances go into the capture where the walk would have queued the items (the statics render list's
     //     length when the tile is reached), so the dynamic buffer's order, and with it equal-depth ties, is unchanged; their
     //     lights are added at the same point. DrawnFrame is stamped as the walk does;
-    //   - E7 (gpu_prepare_item_cache_mixed): a tile whose other unbaked objects are items the cache can't hold (corpses,
+    //   - E7: a tile whose other unbaked objects are items the cache can't hold (corpses,
     //     multis, animated / foliage / translucent / roof items, text, fading, ...) that never end the tile's walk is served
     //     too: those items are walked alone where they lie in the tile list, between the cached runs before and after them.
     //     A tile that also holds mobiles walks them in the same pass, in tile order with those items.
-    //   - E6 (gpu_prepare_item_cache_effects): graphic effects (GameEffect) don't count as unbaked objects of a tile for the cache,
+    //   - E6: graphic effects (GameEffect) don't count as unbaked objects of a tile for the cache,
     //     and don't re-extract a chunk when they join or leave a tile (Chunk.GpuEffectsIgnored). A served tile holding effects
     //     (Chunk.GpuEffectMask, rebuilt with the masks) walks them alone, in tile order with its mobiles and walked-alone items:
     //     an effect never ends a tile's walk and goes to the effects list (or the transparent one when its alpha isn't full),
@@ -208,7 +208,7 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects, _gpuItemKeyGen, _gpuItemKeyGeo;
+        private bool _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyGen, _gpuItemKeyGeo;
         // pa-gpusig (GpuItemGen): the switch this pass, the prepare pass count, the player's range key this pass
         private bool _gpuItemGenOn;
         private uint _gpuItemPrepPass;
@@ -249,11 +249,8 @@ namespace ClassicUO.Game.Scenes
             }
 
             var profile = ProfileManager.CurrentProfile;
-            bool want = Settings.GlobalSettings.GpuPrepareItemCache;
             bool gray = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             bool range = profile.NoColorObjectsOutOfRange;
-            bool mixed = Settings.GlobalSettings.GpuPrepareItemCacheMixed;
-            bool effects = want && Settings.GlobalSettings.GpuPrepareItemCacheEffects;
             bool gen = GpuItemGen.Enabled;
             var world = _gpuWorld.World;
             // clip-2: cached item instances carry the depth model's shape bits only when depth_model is on
@@ -266,23 +263,20 @@ namespace ClassicUO.Game.Scenes
             }
 #endif
 
-            if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || mixed != _gpuItemKeyMixed ||
-                effects != _gpuItemKeyEffects || gen != _gpuItemKeyGen || geo != _gpuItemKeyGeo || !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
+            if (gray != _gpuItemKeyGray || range != _gpuItemKeyRange || gen != _gpuItemKeyGen || geo != _gpuItemKeyGeo ||
+                !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
             {
                 _gpuItemKeyGeo = geo;
                 _gpuItemGeneration++;
                 _gpuItemKeyGen = gen;
-                _gpuItemKeyOn = want;
                 _gpuItemKeyGray = gray;
                 _gpuItemKeyRange = range;
-                _gpuItemKeyMixed = mixed;
-                _gpuItemKeyEffects = effects;
-                Chunk.GpuEffectsIgnored = effects;
+                Chunk.GpuEffectsIgnored = true;
                 _gpuItemKeyWorld = world;
                 _gpuItemKeyPack = world?.Pack; // a facet change keeps the world pass but swaps its pack
             }
 
-            if (!want || useHandles || !_gpuSkipActive || world == null)
+            if (useHandles || !_gpuSkipActive || world == null)
             {
                 return;
             }
@@ -404,8 +398,6 @@ namespace ClassicUO.Game.Scenes
             Uo.Pack.SpriteEntry[] art = _gpuArt;
             int offX = _offset.X, offY = _offset.Y;
             bool transient = false;
-            bool mixed = _gpuItemKeyMixed;
-            bool fx = _gpuItemKeyEffects;
             ulong mergeCells = TileWalk.MergeCells(chunk);
             ulong walk = chunk.GpuWalkMask;
 
@@ -426,7 +418,7 @@ namespace ClassicUO.Game.Scenes
                 for (GameObject obj = TileWalk.Open(chunk, b, mergeCells, out TileWalk tileWalk, out bool mergedWalk, out TileListObject list); obj != null; obj = mergedWalk ? tileWalk.Next() : list = list.TNext)
                 {
                     // mobiles are walked on their own (GpuServeCachedTile's callers), E6: effects too
-                    if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
+                    if (IsGpuBaked(obj) || obj is Mobile || obj is GameEffect)
                     {
                         continue;
                     }
@@ -446,7 +438,7 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     // E7: the tile is still served, this item walked alone
-                    if (mixed && GpuItemWalksAlone(obj))
+                    if (GpuItemWalksAlone(obj))
                     {
                         alone = true;
 
@@ -465,7 +457,7 @@ namespace ClassicUO.Game.Scenes
 
                 for (GameObject obj = TileWalk.Open(chunk, b, mergeCells, out TileWalk tileWalk, out bool mergedWalk, out TileListObject list); obj != null; obj = mergedWalk ? tileWalk.Next() : list = list.TNext)
                 {
-                    if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
+                    if (IsGpuBaked(obj) || obj is Mobile || obj is GameEffect)
                     {
                         continue;
                     }
@@ -631,8 +623,7 @@ namespace ClassicUO.Game.Scenes
             // tiles with mobiles stay in the walk, which then skips their items; E7: a tile with walked-alone items leaves it
             // even with mobiles (GpuServeMixedTile walks them, in tile order with those items)
             // E6: so does a tile with effects (walked alone too, in the same pass)
-            ulong fxTiles = _gpuItemKeyEffects ? chunk.GpuEffectMask : 0;
-            walkTiles &= ~(serve & ~(chunk.GpuMobileMask & ~(cache.WalkTiles | fxTiles)));
+            walkTiles &= ~(serve & ~(chunk.GpuMobileMask & ~(cache.WalkTiles | chunk.GpuEffectMask)));
             _gpuServeTiles = serve;
         }
 
@@ -837,7 +828,7 @@ namespace ClassicUO.Game.Scenes
 
             FrameStats.Inc(FrameCounter.ItemCacheTiles);
 
-            if (((cache.WalkTiles | (_gpuItemKeyEffects ? chunk.GpuEffectMask : 0)) & 1UL << b) == 0)
+            if (((cache.WalkTiles | chunk.GpuEffectMask) & 1UL << b) == 0)
             {
                 GpuQueueCachedEntries(cache, s, e);
 
@@ -860,7 +851,7 @@ namespace ClassicUO.Game.Scenes
 
             int w = cache.WalkStart[b], wEnd = cache.WalkStart[b + 1];
             FrameStats.Add(FrameCounter.ItemCacheWalked, wEnd - w);
-            bool effects = _gpuItemKeyEffects && (chunk.GpuEffectMask & 1UL << b) != 0;
+            bool effects = (chunk.GpuEffectMask & 1UL << b) != 0;
 
             if ((chunk.GpuMobileMask & 1UL << b) != 0 || effects)
             {

@@ -43,12 +43,10 @@ namespace ClassicUO
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries skipmin:on|off switch skip_draw_when_minimized, minimized:on|off simulate a minimized window (no OS call); FrameStats frames stop while it is on
-    //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
-    //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache), itemmixed:on|off its mixed tiles (gpu_prepare_item_cache_mixed, E7), fxserve:on|off its tiles holding effects (gpu_prepare_item_cache_effects, E6); effects:N:graphic[:blend[:radius[:z[:f|m|l]]]] spawns N client-side effects (fixed endless, moving, lightning) round the player, effects:0 removes every effect; name:lsreinit is reinit in the large-scale scene
-    //   plan entries w5:on|off switch the W5 shortcut that still has a switch (textskip)
-    //   plan entries textskip:on|off switch skipping the text layout of entities whose overhead texts all expired (text_skip_expired, W5)
-    //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on;
-    //   pickscan:CxR:pick_records compares picking from the T7b extract's records (SpritePickTable) off and on (both renderers);
+    //   plan entries gpuskip:, itemcache:, itemmixed:, fxserve:, w5: and textskip: switched settings whose off paths are deleted; they are skipped
+    //   plan entry effects:N:graphic[:blend[:radius[:z[:f|m|l]]]] spawns N client-side effects (fixed endless, moving, lightning) round the player, effects:0 removes every effect; name:lsreinit is reinit in the large-scale scene
+    //   pickscan:CxR:pick_records hovers a C x R grid of the game view and compares picking from the T7b extract's records
+    //   (SpritePickTable) off and on (both renderers); pickscan:CxR without it (the baked-object skipping off and on) is skipped;
     //   cot:on|off switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
@@ -1461,24 +1459,18 @@ namespace ClassicUO
             Log.Info($"[bench] {entry}: spawned");
         }
 
-        private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanWait, _scanSame, _scanDiff, _scanEmpty;
+        private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanSame, _scanDiff, _scanEmpty;
         private static ulong _scanLastPresent;
         private static ulong _flipLastPresent;
+        // pickscan (T7b part 2b): picking from the extract's records (SpritePickTable.ReadOverride) off, then on
         private static string _scanOff;
-        // pickscan's pick_records mode (T7b part 2b): picking from the extract's records (SpritePickTable.ReadOverride) off, then on
-        private static bool _scanPickRecords;
-
-        private static string ScanWhat => _scanPickRecords ? "pick_records" : "skip";
-
-        // frames a point may wait for the Gpu prepare's skipping to become active before the scan gives up
-        private const int SCAN_WAIT_LIMIT = 600;
 
         private static string Describe(object o)
         {
             return o is Game.GameObjects.GameObject g ? $"{g.GetType().Name} 0x{g.Graphic:X4} at {g.X},{g.Y},{g.Z}" : o?.GetType().Name ?? "nothing";
         }
 
-        // pickscan: per grid point, 3 frames with skipping off, then skipping on until it is active plus 3 frames
+        // pickscan: per grid point, 3 frames with pick_records off, then 3 frames with it on
         private static void UpdatePickScan(GameController game, Game.Scenes.GameScene gs)
         {
             // Picking is produced by Draw. Polling Updates between two presents must not advance the comparison.
@@ -1498,50 +1490,23 @@ namespace ClassicUO
                 b.Y + (int)((index / _scanCols + 0.5f) * b.Height / _scanRows)
             );
             HoldMouse(game);
-            var settings = Configuration.Settings.GlobalSettings;
             _scanFrames++;
 
             if (_scanPhase == 0)
             {
-                if (_scanPickRecords)
-                {
-                    Game.Scenes.SpritePickTable.ReadOverride = false;
-                }
-                else
-                {
-                    settings.GpuPrepareSkipBaked = false;
-                }
+                Game.Scenes.SpritePickTable.ReadOverride = false;
 
                 if (_scanFrames >= 3)
                 {
                     _scanOff = Describe(SelectedObject.Object);
-
-                    if (_scanPickRecords)
-                    {
-                        Game.Scenes.SpritePickTable.ReadOverride = true;
-                    }
-                    else
-                    {
-                        settings.GpuPrepareSkipBaked = true;
-                    }
-
+                    Game.Scenes.SpritePickTable.ReadOverride = true;
                     _scanPhase = 1;
                     _scanFrames = 0;
                 }
             }
             else if (_scanPhase == 1)
             {
-                if (!_scanPickRecords && !gs.IsGpuPrepareSkipping)
-                {
-                    _scanFrames = 0;
-
-                    if (++_scanWait > SCAN_WAIT_LIMIT)
-                    {
-                        Log.Warn($"[bench-scan] abandoned at point {index}: the Gpu prepare's skipping wasn't active after {SCAN_WAIT_LIMIT} frames; {_scanSame} same, {_scanDiff} different so far");
-                        EndPickScan();
-                    }
-                }
-                else if (_scanFrames >= 3)
+                if (_scanFrames >= 3)
                 {
                     string on = Describe(SelectedObject.Object);
 
@@ -1553,17 +1518,15 @@ namespace ClassicUO
                     else
                     {
                         _scanDiff++;
-                        string what = ScanWhat;
-                        Log.Info($"[bench-scan] point {index} mouse {_mouse}: {what} off picks {_scanOff}, {what} on picks {on}");
+                        Log.Info($"[bench-scan] point {index} mouse {_mouse}: pick_records off picks {_scanOff}, pick_records on picks {on}");
                     }
 
                     _scanPhase = 0;
                     _scanFrames = 0;
-                    _scanWait = 0;
 
                     if (--_scanLeft == 0)
                     {
-                        Log.Info($"[bench-scan] done{(_scanPickRecords ? $" ({ScanWhat})" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
+                        Log.Info($"[bench-scan] done (pick_records): {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
                         EndPickScan();
                     }
                 }
@@ -1580,12 +1543,7 @@ namespace ClassicUO
 
         private static void EndPickScan()
         {
-            if (_scanPickRecords)
-            {
-                _scanPickRecords = false;
-                Game.Scenes.SpritePickTable.ReadOverride = null;
-            }
-
+            Game.Scenes.SpritePickTable.ReadOverride = null;
             _scanLeft = 0;
             _mouse = null;
             Input.Mouse.Override = null;
@@ -1940,28 +1898,24 @@ namespace ClassicUO
 
                     if (_plan[_planIndex].StartsWith("pickscan:") && gs != null)
                     {
-                        // pickscan:CxR hovers a C x R grid over the game view; at each point the selection with the Gpu
-                        // prepare's skipping off and then on must be the same object
-                        bool pickRecordsMode = _plan[_planIndex].EndsWith(":pick_records");
-
-                        if (!pickRecordsMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
+                        // pickscan:CxR:pick_records hovers a C x R grid over the game view; at each point the selection with
+                        // pick_records off and then on must be the same object
+                        if (!_plan[_planIndex].EndsWith(":pick_records"))
                         {
-                            // Legacy has no Gpu prepare, so its skipping never becomes active and the scan would never end
-                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the Gpu world renderer isn't active");
+                            // the skip mode compared the baked-object skipping off and on; that switch is retired
+                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: only the pick_records mode is left");
                             _planIndex++;
 
                             break;
                         }
 
                         string[] g = _plan[_planIndex].Substring(9).Split(':')[0].Split('x');
-                        _scanPickRecords = pickRecordsMode;
                         _scanCols = int.Parse(g[0]);
                         _scanRows = int.Parse(g[1]);
                         _scanLeft = _scanCols * _scanRows;
                         _scanPhase = 0;
                         _scanFrames = 0;
                         _scanLastPresent = game.PresentedFrameCount;
-                        _scanWait = 0;
                         _scanSame = _scanDiff = _scanEmpty = 0;
                         Log.Info($"[bench-scan] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs.Camera.Zoom:0.0}");
                         _planIndex++;
@@ -1989,53 +1943,14 @@ namespace ClassicUO
                         break;
                     }
 
-                    if (_plan[_planIndex].StartsWith("itemcache:"))
+                    // the Gpu prepare's baked-object skipping and ground-item cache switches and W5's text skip, retired with their
+                    // off paths: older plans still name them, so they are skipped
+                    if (_plan[_planIndex].StartsWith("gpuskip:") || _plan[_planIndex].StartsWith("itemcache:") ||
+                        _plan[_planIndex].StartsWith("itemmixed:") || _plan[_planIndex].StartsWith("fxserve:") ||
+                        _plan[_planIndex].StartsWith("w5:") || _plan[_planIndex].StartsWith("textskip:"))
                     {
-                        Configuration.Settings.GlobalSettings.GpuPrepareItemCache = _plan[_planIndex] == "itemcache:on";
-                        Log.Info($"[bench] gpu prepare caches ground items: {Configuration.Settings.GlobalSettings.GpuPrepareItemCache}");
+                        Log.Info($"[bench] {_plan[_planIndex]} skipped: that switch has no off path any more");
                         _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("fxserve:"))
-                    {
-                        Configuration.Settings.GlobalSettings.GpuPrepareItemCacheEffects = _plan[_planIndex] == "fxserve:on";
-                        Log.Info($"[bench] gpu item cache serves tiles with effects: {Configuration.Settings.GlobalSettings.GpuPrepareItemCacheEffects}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("itemmixed:"))
-                    {
-                        Configuration.Settings.GlobalSettings.GpuPrepareItemCacheMixed = _plan[_planIndex] == "itemmixed:on";
-                        Log.Info($"[bench] gpu item cache serves mixed tiles: {Configuration.Settings.GlobalSettings.GpuPrepareItemCacheMixed}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("w5:"))
-                    {
-                        var w5s = Configuration.Settings.GlobalSettings;
-                        w5s.TextSkipExpired = _plan[_planIndex] == "w5:on";
-                        Log.Info($"[bench] W5 update shortcuts: {w5s.TextSkipExpired}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("textskip:"))
-                    {
-                        Configuration.Settings.GlobalSettings.TextSkipExpired = _plan[_planIndex] == "textskip:on";
-                        Log.Info($"[bench] overhead text pass skips expired texts: {Configuration.Settings.GlobalSettings.TextSkipExpired}");
-                        _planIndex++;
-                        _stepAt = now + sec;
 
                         break;
                     }
@@ -2064,16 +1979,6 @@ namespace ClassicUO
                     {
                         Configuration.Settings.GlobalSettings.SkipDrawWhenMinimized = _plan[_planIndex] == "skipmin:on";
                         Log.Info($"[bench] skip draw when minimized: {Configuration.Settings.GlobalSettings.SkipDrawWhenMinimized}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("gpuskip:"))
-                    {
-                        Configuration.Settings.GlobalSettings.GpuPrepareSkipBaked = _plan[_planIndex] == "gpuskip:on";
-                        Log.Info($"[bench] gpu prepare skips baked land and statics: {Configuration.Settings.GlobalSettings.GpuPrepareSkipBaked}");
                         _planIndex++;
                         _stepAt = now + sec;
 
