@@ -25,7 +25,7 @@ Related docs: [pack-format.md](pack-format.md), [data-formats.md](data-formats.m
 
 ## Build the client
 
-The solution `ClassicUO.sln` holds every project: `src/`, `tests/`, the C# projects in `tools/`, `research/Uo.Client`, and the FNA, SDL3-CS and FileEmbed projects from `external/`.
+The solution `ClassicUO.sln` holds every project: `src/`, `tests/`, the C# projects in `tools/`, and the FNA, SDL3-CS and FileEmbed projects from `external/`.
 
 ```
 dotnet build <repo>/src/ClassicUO.Client/ClassicUO.Client.csproj -c Release
