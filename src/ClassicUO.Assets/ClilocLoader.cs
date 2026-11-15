@@ -31,7 +31,6 @@ namespace ClassicUO.Assets
             public ClilocTable PackOverrides;
             public ClilocTable Lang;
             public ClilocTable Enu;
-            public bool FromPack;
             public string Language;
 
             // Translate results for empty arguments, bounded; a new state starts empty, so a reload or language change drops them
@@ -54,15 +53,6 @@ namespace ClassicUO.Assets
         {
         }
 
-        /// <summary>
-        /// Read cliloc from the pack's text section when it has one (set before <see cref="Load"/>). CUO_PACK_TEXT=0 starts
-        /// it false: Cliloc.* files even with a text section.
-        /// </summary>
-        public bool UsePack = Environment.GetEnvironmentVariable("CUO_PACK_TEXT") != "0";
-
-        /// <summary>True when the language tables come from the pack.</summary>
-        public bool FromPack => _state.FromPack;
-
         /// <summary>The language in use ("enu" when the one asked for has no strings anywhere).</summary>
         public string Language => _state.Language;
 
@@ -75,100 +65,43 @@ namespace ClassicUO.Assets
         public IReadOnlyDictionary<int, string> LooseOverrides => _state.Ours;
 
         /// <summary>
-        /// The cliloc language codes that exist, lower-case, each exactly three ASCII letters (the language packet's
-        /// wire code; longer pack identifiers are ignored and logged): the pack's language records when the pack can serve
-        /// the text (it has enu: without it the loader reads the files), else the Cliloc.* files the loader would open,
-        /// named in the client folder or in files_override, case-insensitively, whose resolved path exists. Cheap: no
-        /// table is read.
+        /// The cliloc language codes the pack has, lower-case, each exactly three ASCII letters (the language packet's
+        /// wire code; longer pack identifiers are ignored and logged). Cheap: no table is read. A pack without
+        /// text/cliloc.bin throws; an invalid one is logged and lists nothing.
         /// </summary>
         public List<string> AvailableLanguages()
         {
-            string path = PackPath;
-
-            if (path != null && File.Exists(path))
-            {
-                try
-                {
-                    using var store = RecordStore.Open(path, TextConst.MagicCliloc);
-                    var list = new List<string>();
-                    List<string> ignored = null;
-
-                    foreach (string code in ClilocStore.Resolve(store).Languages.Keys)
-                    {
-                        if (IsLanguageCode(code))
-                        {
-                            list.Add(code.ToLowerInvariant());
-                        }
-                        else
-                        {
-                            (ignored ??= new List<string>()).Add(code);
-                        }
-                    }
-
-                    if (ignored != null)
-                    {
-                        Log.Warn($"Cliloc: the pack's languages {string.Join(", ", ignored)} are ignored: a language code is three letters");
-                    }
-
-                    if (list.Contains("enu"))
-                    {
-                        return list;
-                    }
-
-                    Log.Trace("Cliloc: the pack has no usable enu language; listing Cliloc.* files");
-                }
-                catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
-                {
-                    Log.Error($"Cliloc: '{path}' is invalid ({e.Message}); listing Cliloc.* files");
-                }
-            }
-
-            var names = new List<string>(FileManager.OverriddenFiles);
+            string path = RequirePackPath();
+            var list = new List<string>();
 
             try
             {
-                foreach (string p in Directory.EnumerateFiles(FileManager.BasePath))
+                using var store = RecordStore.Open(path, TextConst.MagicCliloc);
+                List<string> ignored = null;
+
+                foreach (string code in ClilocStore.Resolve(store).Languages.Keys)
                 {
-                    names.Add(Path.GetFileName(p));
-                }
-            }
-            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
-            {
-                Log.Error($"Cliloc: cannot list '{FileManager.BasePath}' ({e.Message})");
-            }
-
-            var found = new List<string>();
-
-            foreach (string name in names)
-            {
-                if (name == null || !name.StartsWith("cliloc.", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                string ext = name.Substring("cliloc.".Length).ToLowerInvariant();
-
-                if (!IsLanguageCode(ext) || found.Contains(ext))
-                {
-                    continue;
-                }
-
-                // the path the loader opens for it: an override wins over the folder's file
-                try
-                {
-                    if (File.Exists(FileManager.GetUOFilePath($"Cliloc.{ext}")))
+                    if (IsLanguageCode(code))
                     {
-                        found.Add(ext);
+                        list.Add(code.ToLowerInvariant());
+                    }
+                    else
+                    {
+                        (ignored ??= new List<string>()).Add(code);
                     }
                 }
-                catch (Exception e) when (e is ArgumentException || e is NotSupportedException || e is IOException || e is UnauthorizedAccessException || e is System.Security.SecurityException)
+
+                if (ignored != null)
                 {
-                    // one bad candidate (an empty or invalid files_override target, an unreadable folder) must not stop the others
-                    Log.Warn($"Cliloc: '{ext}' is skipped, its file cannot be checked ({e.Message})");
+                    Log.Warn($"Cliloc: the pack's languages {string.Join(", ", ignored)} are ignored: a language code is three letters");
                 }
             }
+            catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"Cliloc: '{path}' is invalid ({e.Message})");
+            }
 
-            return found;
+            return list;
         }
 
         /// <summary>A language the client can select: exactly three ASCII letters (the language packet carries three characters).</summary>
@@ -192,17 +125,33 @@ namespace ClassicUO.Assets
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             long a0 = GC.GetAllocatedBytesForCurrentThread();
             string requested = string.IsNullOrEmpty(_requested) ? "enu" : _requested;
+            string path = PackPath;
             State state;
 
-            try
+            if (path == null || !File.Exists(path))
             {
-                state = Build(requested);
-            }
-            catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException || e is ArgumentException || e is IndexOutOfRangeException)
-            {
-                // a corrupt Cliloc.* file: nothing new to publish
-                Log.Error($"Cliloc: loading '{requested}' failed ({e.Message})");
+                // the first load can't go on without strings; a reload keeps the ones it has
+                var missing = UOFileManager.MissingPackFile(TextConst.ClilocFile, path);
+
+                if (_state.Lang == null)
+                {
+                    throw missing;
+                }
+
+                Log.Error($"Cliloc: {missing.Message}");
                 state = null;
+            }
+            else
+            {
+                try
+                {
+                    state = Build(requested, path);
+                }
+                catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException || e is ArgumentException || e is IndexOutOfRangeException)
+                {
+                    Log.Error($"Cliloc: loading '{requested}' failed ({e.Message})");
+                    state = null;
+                }
             }
 
             if (state == null)
@@ -214,83 +163,61 @@ namespace ClassicUO.Assets
 
             _state = state;
             Interlocked.Increment(ref _revision);
-            Log.Trace($"Cliloc loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated ({(state.FromPack ? "pack" : "MUL")}, '{state.Language}': {state.Lang.Count} strings{(state.Enu != null ? $" over {state.Enu.Count} English" : "")}{(state.PackOverrides != null ? $", {state.PackOverrides.Count} packed overrides" : "")}{(state.Ours != null ? $", {state.Ours.Count} from {ClilocOverrides.FileName}" : "")})");
+            Log.Trace($"Cliloc loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated ('{state.Language}': {state.Lang.Count} strings{(state.Enu != null ? $" over {state.Enu.Count} English" : "")}{(state.PackOverrides != null ? $", {state.PackOverrides.Count} packed overrides" : "")}{(state.Ours != null ? $", {state.Ours.Count} from {ClilocOverrides.FileName}" : "")})");
         }
 
-        /// <summary>Tests and tools: read this text/cliloc.bin instead of the pack's (still subject to <see cref="UsePack"/>).</summary>
+        /// <summary>Tests and tools: read this text/cliloc.bin instead of the pack's.</summary>
         internal string PackFile;
 
-        private string PackPath => !UsePack ? null : PackFile ?? FileManager.Pack?.PathOf(TextConst.ClilocFile);
+        private string PackPath => PackFile ?? FileManager.Pack?.PathOf(TextConst.ClilocFile);
 
-        // A complete new state, or null. The pack serves when it is usable; a pack that can't serve the languages (no
-        // section, a store that fails to open or resolve, a corrupt language record) makes the loose Cliloc.* files serve,
-        // with the language resolved again for them (Cliloc.<lang>, else Cliloc.enu).
-        //
-        // Complete means: a language other than English has the English base under it, and a Clilocs.txt that exists
-        // was read. When strings are already loaded (a reload), a state missing either is not published: the old one
-        // stays. On the first load there is nothing to keep, so the partial state serves, with the error logged.
-        private State Build(string requested)
+        private string RequirePackPath()
         {
-            bool keepOld = _state.Lang != null;
             string path = PackPath;
-            RecordStore store = null;
-            ClilocDirectory dir = null;
 
-            if (path != null && File.Exists(path))
-            {
-                try
-                {
-                    store = RecordStore.Open(path, TextConst.MagicCliloc);
-                    dir = ClilocStore.Resolve(store);
-                }
-                catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
-                {
-                    Log.Error($"Cliloc: '{path}' is invalid ({e.Message}); reading Cliloc.* files");
-                    store?.Dispose();
-                    store = null;
-                }
-            }
-            else if (FileManager.Pack != null)
-            {
-                Log.Trace(UsePack ? "Cliloc: the pack has no cliloc section; reading Cliloc.* files" : "Cliloc: CUO_PACK_TEXT=0; reading Cliloc.* files");
-            }
-
-            try
-            {
-                var state = (store != null ? LanguagesFromPack(store, dir, requested) : null) ?? LanguagesFromFiles(requested, keepOld);
-
-                if (state == null)
-                {
-                    return null;
-                }
-
-                if (store != null && dir.Overrides >= 0)
-                {
-                    // the shard's own strings in the pack: a bad record is absent, the languages still serve
-                    state.PackOverrides = ClilocStore.ReadTable(store, dir.Overrides, out string why);
-
-                    if (state.PackOverrides == null)
-                    {
-                        Log.Error($"Cliloc: the pack's overrides record has {why}; it is ignored");
-                    }
-                }
-
-                state.Ours = ReadOurs(out bool oursFailed);
-
-                if (oursFailed && keepOld)
-                {
-                    return null;
-                }
-
-                return state;
-            }
-            finally
-            {
-                store?.Dispose();
-            }
+            return path != null && File.Exists(path) ? path : throw UOFileManager.MissingPackFile(TextConst.ClilocFile, path);
         }
 
-        // The pack's language record and, for another language, enu's; null when they can't serve (the files do then).
+        // A complete new state, or null. A store that fails to open or resolve throws (Load logs it); a language record
+        // that is corrupt serves nothing (null).
+        //
+        // Complete means: a language other than English has the English base under it, and a Clilocs.txt that exists
+        // was read. When strings are already loaded (a reload), a state missing the Clilocs.txt is not published: the
+        // old one stays. On the first load there is nothing to keep, so the languages serve, with the error logged.
+        private State Build(string requested, string path)
+        {
+            bool keepOld = _state.Lang != null;
+            using var store = RecordStore.Open(path, TextConst.MagicCliloc);
+            var dir = ClilocStore.Resolve(store);
+            var state = LanguagesFromPack(store, dir, requested);
+
+            if (state == null)
+            {
+                return null;
+            }
+
+            if (dir.Overrides >= 0)
+            {
+                // the shard's own strings in the pack: a bad record is absent, the languages still serve
+                state.PackOverrides = ClilocStore.ReadTable(store, dir.Overrides, out string why);
+
+                if (state.PackOverrides == null)
+                {
+                    Log.Error($"Cliloc: the pack's overrides record has {why}; it is ignored");
+                }
+            }
+
+            state.Ours = ReadOurs(out bool oursFailed);
+
+            if (oursFailed && keepOld)
+            {
+                return null;
+            }
+
+            return state;
+        }
+
+        // The pack's language record and, for another language, enu's; null when they can't serve.
         private static State LanguagesFromPack(RecordStore store, ClilocDirectory dir, string requested)
         {
             string lang = requested.ToLowerInvariant();
@@ -301,7 +228,7 @@ namespace ClassicUO.Assets
                 lang = "enu";
             }
 
-            var state = new State { FromPack = true, Language = lang, Lang = PackTable(store, dir, lang) };
+            var state = new State { Language = lang, Lang = PackTable(store, dir, lang) };
 
             if (state.Lang == null)
             {
@@ -326,7 +253,7 @@ namespace ClassicUO.Assets
         {
             if (!dir.Languages.TryGetValue(lang, out int record))
             {
-                Log.Error($"Cliloc: the pack has no '{lang}'; reading Cliloc.* files");
+                Log.Error($"Cliloc: the pack has no '{lang}'");
 
                 return null;
             }
@@ -335,59 +262,10 @@ namespace ClassicUO.Assets
 
             if (table == null)
             {
-                Log.Error($"Cliloc: the pack's '{lang}' record has {why}; reading Cliloc.* files");
+                Log.Error($"Cliloc: the pack's '{lang}' record has {why}");
             }
 
             return table;
-        }
-
-        // The loose files: Cliloc.<lang>, rolled back to Cliloc.enu when it is missing (as before), and Cliloc.enu under
-        // any other language. Null when not even Cliloc.enu exists, or on a reload (keepOld) when the English base under
-        // another language is missing.
-        private State LanguagesFromFiles(string requested, bool keepOld)
-        {
-            string lang = requested;
-            string path = FileManager.GetUOFilePath($"Cliloc.{lang}");
-
-            if (!File.Exists(path))
-            {
-                Log.Warn($"'Cliloc.{lang}' not found. Rolled back to Cliloc.enu");
-                lang = "enu";
-                path = FileManager.GetUOFilePath("Cliloc.enu");
-            }
-
-            if (!File.Exists(path))
-            {
-                Log.Error($"cliloc not found: '{path}'");
-
-                return null;
-            }
-
-            var state = new State { Language = lang.ToLowerInvariant() };
-
-            if (!string.Equals(lang, "enu", StringComparison.OrdinalIgnoreCase))
-            {
-                string enupath = FileManager.GetUOFilePath("Cliloc.enu");
-
-                if (File.Exists(enupath))
-                {
-                    state.Enu = ReadCliloc(enupath);
-                }
-                else
-                {
-                    // the client reads Cliloc.enu under every language: without it, English-only numbers would vanish
-                    Log.Error($"Cliloc: '{enupath}' is missing; 'Cliloc.{lang}' needs it under it{(keepOld ? "" : " (serving the language alone)")}");
-
-                    if (keepOld)
-                    {
-                        return null;
-                    }
-                }
-            }
-
-            state.Lang = ReadCliloc(path);
-
-            return state;
         }
 
         /// <summary>
@@ -444,65 +322,6 @@ namespace ClassicUO.Assets
             }
 
             return ours;
-        }
-
-        // A Cliloc.* file indexed without creating its strings: each entry's text is the slice ReadUTF8(length) would
-        // decode (cut at the first NUL, clipped to the file), and later duplicates win, as before.
-        static ClilocTable ReadCliloc(string path)
-        {
-            var buf = File.ReadAllBytes(path);
-
-            var output = buf[3] == 0x8E /*|| FileManager.Version >= ClientVersion.CV_7010400*/ ? BwtDecompress.Decompress(buf) : buf;
-
-            var reader = new StackDataReader(output);
-            reader.ReadInt32LE();
-            reader.ReadInt16LE();
-
-            var slices = new Dictionary<int, (int Start, int Length)>();
-
-            while (reader.Remaining > 0)
-            {
-                var number = reader.ReadInt32LE();
-                var flag = reader.ReadUInt8();
-                var length = reader.ReadInt16LE();
-
-                slices[number] = Utf8Slice(ref reader, output, length);
-            }
-
-            var entries = new (int, int, int)[slices.Count];
-            int n = 0;
-
-            foreach (var (id, (start, len)) in slices)
-            {
-                entries[n++] = (id, start, len);
-            }
-
-            return ClilocTable.FromSlices(output, entries);
-        }
-
-        /// <summary>
-        /// The bytes StackDataReader.ReadUTF8(length) decodes at the reader's position, and the same advance: empty
-        /// for length 0 or at the end; else up to <paramref name="length"/> bytes (all that remain for a negative
-        /// length), cut at the first NUL; the position moves by the larger of that size (plus the NUL for a negative
-        /// length) and <paramref name="length"/>.
-        /// </summary>
-        internal static (int Start, int Length) Utf8Slice(ref StackDataReader reader, ReadOnlySpan<byte> data, int length)
-        {
-            int start = reader.Position;
-
-            if (length == 0 || reader.Position + 1 > reader.Length)
-            {
-                return (start, 0);
-            }
-
-            bool fixedLength = length > 0;
-            int remaining = reader.Remaining;
-            int size = fixedLength ? Math.Min(length, remaining) : remaining;
-            int index = data.Slice(start, size).IndexOf((byte)0);
-            size = index < 0 ? size : index;
-            reader.Skip(Math.Max(size + (!fixedLength && index >= 0 ? 1 : 0), length));
-
-            return (start, size);
         }
 
         public override void ClearResources()

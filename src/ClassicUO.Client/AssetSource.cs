@@ -10,8 +10,8 @@ using Uo.Pack;
 namespace ClassicUO
 {
     /// <summary>
-    /// Where the client's assets come from. The pack is required; the UO directory is optional and only feeds the
-    /// remaining loose-file reads (files_override, the CUO_PACK_GUMPS=0 / CUO_PACK_TEXT=0 fallbacks).
+    /// Where the client's assets come from. The pack is required and is the only asset source; the UO directory is
+    /// optional and only feeds the remaining loose-file reads (files_override, Clilocs.txt, Sounds/).
     /// </summary>
     internal static class AssetSource
     {

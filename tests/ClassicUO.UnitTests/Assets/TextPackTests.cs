@@ -1,3 +1,5 @@
+extern alias frozen;
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,12 +12,13 @@ using ClassicUO.Utility;
 using FluentAssertions;
 using Uo.Pack;
 using Xunit;
+using FrozenFiles = frozen::ClassicUO.Assets.UOFileManager;
 
 namespace ClassicUO.UnitTests.Assets
 {
-    // Text in the pack (pack-format.md "Text: fonts, cliloc, speech", poc-log "Text in the pack"): the pack path must
-    // give exactly what the MUL path gives, for every glyph of every font, every cliloc id of every language and every
-    // speech entry; text rendered from either must be the same pixels.
+    // Text in the pack (pack-format.md "Text: fonts, cliloc, speech", poc-log "Text in the pack"): the client's loaders
+    // must give exactly what the frozen MUL loaders (tools/ClassicUO.Assets.Mul) give, for every glyph of every font,
+    // every cliloc id of every language and every speech entry.
     //
     // The pack with a text section: CUO_TEST_TEXT_PACK, else C:\Repositories\uo-packs\classic-1.0 once it has one. Tests
     // that need data they don't find return early.
@@ -40,11 +43,11 @@ namespace ClassicUO.UnitTests.Assets
             return cv;
         }
 
-        private static (UOFileManager Mul, UOFileManager Pack) Managers(PackAssets assets)
+        private static (FrozenFiles Mul, UOFileManager Pack) Managers(PackAssets assets)
         {
             var cv = Version();
 
-            return (new UOFileManager(cv, UoDir, assets), new UOFileManager(cv, UoDir, assets));
+            return (new FrozenFiles(cv, UoDir), new UOFileManager(cv, UoDir, assets));
         }
 
         private static List<string> Languages(string packDir)
@@ -69,15 +72,10 @@ namespace ClassicUO.UnitTests.Assets
             using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
             var mul = mulFm.Fonts;
-            mul.UsePack = false;
             mul.Load();
             var pack = packFm.Fonts;
-            pack.UsePack = true;
             pack.Load();
 
-            pack.AsciiFromPack.Should().BeTrue();
-            pack.UnicodeFromPack.Should().BeTrue();
-            mul.AsciiFromPack.Should().BeFalse();
             pack.LoadedUnicodePages.Should().Be(0, "unicode pages are read on first use");
             pack.FontCount.Should().Be(mul.FontCount);
 
@@ -87,7 +85,7 @@ namespace ClassicUO.UnitTests.Assets
             {
                 for (int j = 0; j < TextConst.AsciiGlyphs; j++)
                 {
-                    var a = mul.GetAsciiGlyph(f, j);
+                    var a = mul.GetAscii(f, j);
                     var b = pack.GetAsciiGlyph(f, j);
                     ascii++;
 
@@ -106,7 +104,18 @@ namespace ClassicUO.UnitTests.Assets
 
                 for (int c = 0; c < 0x10000; c++)
                 {
-                    var a = mul.GetUnicodeGlyph(f, (char)c);
+                    frozen::ClassicUO.Assets.FontCharacterDataUnicode a;
+
+                    try
+                    {
+                        a = mul.GetCharUni(f, (char)c);
+                    }
+                    catch (EndOfStreamException)
+                    {
+                        // the glyph runs past the end of its unifont file: the converter stores none
+                        a = default;
+                    }
+
                     var b = pack.GetUnicodeGlyph(f, (char)c);
 
                     if (a.Data != null)
@@ -127,78 +136,6 @@ namespace ClassicUO.UnitTests.Assets
             glyphs.Should().BeGreaterThan(10000);
         }
 
-        private static readonly string[] Samples =
-        {
-            "Hello, Britannia!",
-            "You see: a bank box (37 items, 1,234 stones)",
-            "The quick brown fox jumps over the lazy dog 0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~",
-            "Ünïcödé àéîõü ßøæ ÇÑ",
-            "日本語のテキスト 中文字符 한국어 텍스트",
-            "Line one\nLine two that is quite a bit longer than the first one, so it wraps",
-            "\u0001\u001F\u007F\u00A0\uFFFF",
-        };
-
-        [Fact]
-        public void Rendered_Text_Is_Identical_From_Pack_And_Mul()
-        {
-            var dir = TextPackDir();
-
-            if (dir == null)
-            {
-                return;
-            }
-
-            using var assets = PackAssets.OpenBefore12ForTests(dir);
-            var (mulFm, packFm) = Managers(assets);
-
-            foreach (var (fm, usePack) in new[] { (mulFm, false), (packFm, true) })
-            {
-                fm.Hues.Load();
-                fm.Fonts.UsePack = usePack;
-                fm.Fonts.Load();
-            }
-
-            int compared = 0;
-
-            foreach (var s in Samples)
-            {
-                for (byte f = 0; f < TextConst.UnicodeFonts; f++)
-                {
-                    if (!mulFm.Fonts.UnicodeFontExists(f))
-                    {
-                        continue;
-                    }
-
-                    foreach (ushort flags in new ushort[] { 0, 0x0001, 0x0002, 0x0008, 0x0010, 0x0080 })
-                    {
-                        var a = mulFm.Fonts.GenerateUnicode(f, s, 0x0021, 30, 200, TEXT_ALIGN_TYPE.TS_LEFT, flags, false, 0);
-                        var b = packFm.Fonts.GenerateUnicode(f, s, 0x0021, 30, 200, TEXT_ALIGN_TYPE.TS_LEFT, flags, false, 0);
-                        Same(a, b).Should().BeTrue($"unicode font {f}, flags 0x{flags:X4}, '{s}'");
-                        mulFm.Fonts.GetWidthUnicode(f, s).Should().Be(packFm.Fonts.GetWidthUnicode(f, s));
-                        compared++;
-                    }
-                }
-
-                for (byte f = 0; f < mulFm.Fonts.FontCount; f++)
-                {
-                    foreach (ushort hue in new ushort[] { 0, 0x0035, 0x0481 })
-                    {
-                        var a = mulFm.Fonts.GenerateASCII(f, s, hue, 200, TEXT_ALIGN_TYPE.TS_CENTER, 0, false, 0);
-                        var b = packFm.Fonts.GenerateASCII(f, s, hue, 200, TEXT_ALIGN_TYPE.TS_CENTER, 0, false, 0);
-                        Same(a, b).Should().BeTrue($"ASCII font {f}, hue 0x{hue:X4}, '{s}'");
-                        mulFm.Fonts.GetWidthASCII(f, s).Should().Be(packFm.Fonts.GetWidthASCII(f, s));
-                        compared++;
-                    }
-                }
-            }
-
-            compared.Should().BeGreaterThan(100);
-        }
-
-        private static bool Same(FontsLoader.FontInfo a, FontsLoader.FontInfo b) =>
-            a.Width == b.Width && a.Height == b.Height && a.LineCount == b.LineCount && (a.Data == null) == (b.Data == null) &&
-            (a.Data == null || a.Data.AsSpan().SequenceEqual(b.Data));
-
         [Fact]
         public void Glyph_Pages_Load_From_Many_Threads()
         {
@@ -210,32 +147,28 @@ namespace ClassicUO.UnitTests.Assets
             }
 
             using var assets = PackAssets.OpenBefore12ForTests(dir);
-            var (mulFm, packFm) = Managers(assets);
-            mulFm.Fonts.UsePack = false;
-            mulFm.Fonts.Load();
-            packFm.Fonts.Load();
+            var (_, packFm) = Managers(assets);
+            var fonts = packFm.Fonts;
+            fonts.Load();
             int bad = 0;
 
-            foreach (var fonts in new[] { mulFm.Fonts, packFm.Fonts })
+            Parallel.For(0, 8, t =>
             {
-                Parallel.For(0, 8, t =>
+                var rng = new Random(t);
+
+                for (int i = 0; i < 20000; i++)
                 {
-                    var rng = new Random(t);
+                    byte f = (byte)rng.Next(TextConst.UnicodeFonts);
+                    char c = (char)rng.Next(0x10000);
+                    var g = fonts.GetUnicodeGlyph(f, c);
+                    var again = fonts.GetUnicodeGlyph(f, c);
 
-                    for (int i = 0; i < 20000; i++)
+                    if (!ReferenceEquals(g.Data, again.Data))
                     {
-                        byte f = (byte)rng.Next(TextConst.UnicodeFonts);
-                        char c = (char)rng.Next(0x10000);
-                        var g = fonts.GetUnicodeGlyph(f, c);
-                        var again = fonts.GetUnicodeGlyph(f, c);
-
-                        if (!ReferenceEquals(g.Data, again.Data))
-                        {
-                            System.Threading.Interlocked.Increment(ref bad);
-                        }
+                        System.Threading.Interlocked.Increment(ref bad);
                     }
-                });
-            }
+                }
+            });
 
             bad.Should().Be(0);
         }
@@ -261,17 +194,14 @@ namespace ClassicUO.UnitTests.Assets
             {
                 var (mulFm, packFm) = Managers(assets);
                 var mul = mulFm.Clilocs;
-                mul.UsePack = false;
                 mul.Load(lang);
                 var pack = packFm.Clilocs;
                 pack.Load(lang);
-                pack.FromPack.Should().BeTrue();
-                mul.FromPack.Should().BeFalse();
                 pack.LanguageTable.Materialized.Should().Be(0, "strings are created on first use");
 
-                var ids = new HashSet<int>();
+                var ids = new HashSet<int>(mul.Entries.Keys);
 
-                foreach (var t in new[] { mul.LanguageTable, mul.EnglishTable, pack.LanguageTable, pack.EnglishTable })
+                foreach (var t in new[] { pack.LanguageTable, pack.EnglishTable })
                 {
                     for (int i = 0; t != null && i < t.Count; i++)
                     {
@@ -318,7 +248,6 @@ namespace ClassicUO.UnitTests.Assets
 
             using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
-            mulFm.Clilocs.UsePack = false;
             mulFm.Clilocs.Load("enu");
             packFm.Clilocs.Load("enu");
             var mul = mulFm.Clilocs;
@@ -427,10 +356,8 @@ namespace ClassicUO.UnitTests.Assets
 
             using var assets = PackAssets.OpenBefore12ForTests(dir);
             var (mulFm, packFm) = Managers(assets);
-            mulFm.Speeches.UsePack = false;
             mulFm.Speeches.Load();
             packFm.Speeches.Load();
-            packFm.Speeches.FromPack.Should().BeTrue();
             var a = mulFm.Speeches.Entries;
             var b = packFm.Speeches.Entries;
             b.Length.Should().Be(a.Length);
@@ -502,39 +429,6 @@ namespace ClassicUO.UnitTests.Assets
             ClilocTable.UnpackLanguage(0x6E65, 0x0075).Should().Be("enu");
             ClilocTable.UnpackLanguage(0x2F65, 0x0075).Should().BeNull();
             ClilocTable.UnpackLanguage(0x0065, 0x0075).Should().BeNull("a gap");
-        }
-
-        [Fact]
-        public void Cliloc_Mul_Index_Matches_ReadUtf8()
-        {
-            // the MUL path's slice rule against StackDataReader.ReadUTF8, on records with NULs, short tails and
-            // negative lengths
-            var rng = new Random(3);
-
-            for (int round = 0; round < 500; round++)
-            {
-                var buf = new byte[rng.Next(1, 64)];
-                rng.NextBytes(buf);
-
-                for (int i = 0; i < buf.Length; i++)
-                {
-                    if (rng.Next(6) == 0)
-                    {
-                        buf[i] = 0;
-                    }
-                }
-
-                int start = rng.Next(buf.Length);
-                short length = (short)rng.Next(-3, 70);
-                var a = new StackDataReader(buf);
-                a.Skip(start);
-                string want = a.ReadUTF8(length);
-                var b = new StackDataReader(buf);
-                b.Skip(start);
-                var (s, l) = ClilocLoader.Utf8Slice(ref b, buf, length);
-                Encoding.UTF8.GetString(buf, s, l).Should().Be(want);
-                b.Position.Should().Be(a.Position);
-            }
         }
 
         [Fact]
