@@ -55,23 +55,17 @@ namespace ClassicUO.Network
         private byte[] _readingBuffer = new byte[4096];
         private readonly PacketLogger _packetLogger = new PacketLogger();
         private readonly CircularBuffer _buffer = new CircularBuffer();
-        private readonly CircularBuffer _pluginsBuffer = new CircularBuffer();
 
-        // Both queues, their generations and every change to them are guarded by _queueLock, which is never held while a
-        // packet handler or a plugin runs (those can send, and a send runs the plugins' outgoing hooks, which inject): packets
-        // are dequeued into a local buffer under the lock and dispatched after it is released. Plugins inject from any thread
-        // (Append is thread-safe on its own; callers need no lock of theirs, and if they take one, it is only ever taken
-        // before _queueLock, never after).
+        // The queue, its generation and every change to them are guarded by _queueLock, which is never held while a packet
+        // handler runs (a handler can send): packets are dequeued into a local buffer under the lock and dispatched after
+        // it is released.
         private readonly object _queueLock = new object();
 
-        // The connection generation the received-bytes queue belongs to, and the one the plugin queue's contents were injected
-        // under (a plugin packet is tagged by the generation current when it is injected, so one injected after Connect but
-        // before the next ParsePackets - e.g. from an outgoing hook during the 0x8C relay's login sends - is kept).
+        // The connection generation the received-bytes queue belongs to.
 #if CUO_DEVTOOLS
         private readonly DiagReceiveTimeline _diagReads = Diagnostics.On ? new() : null;
 #endif
         private int _generation;
-        private int _pluginGeneration;
 
         /// <summary>Times parsing stopped at a packet whose bytes had not all arrived yet (a header or body cut by a read).</summary>
         public int PartialPacketWaits { get; private set; }
@@ -94,12 +88,11 @@ namespace ClassicUO.Network
                 }
             }
 
-            return ParseQueue(socket, world, true) + ParseQueue(socket, world, false);
+            return ParseQueue(socket, world);
         }
 
         // A new connection (or the end of one) starts with empty queues: half a packet from the old stream must not be
-        // glued to the first bytes of the next one, and plugin packets injected under an older connection are void.
-        // Must be called with _queueLock held.
+        // glued to the first bytes of the next one. Must be called with _queueLock held.
         private void SyncGenerations(int generation)
         {
             if (_generation != generation)
@@ -110,18 +103,12 @@ namespace ClassicUO.Network
                 if (Diagnostics.On) _diagReads.Clear();
 #endif
             }
-
-            if (_pluginGeneration != generation)
-            {
-                _pluginGeneration = generation;
-                _pluginsBuffer.Clear();
-            }
         }
 
-        private int ParseQueue(NetClient socket, World world, bool allowPlugins)
+        private int ParseQueue(NetClient socket, World world)
         {
             var packetsCount = 0;
-            var stream = allowPlugins ? _buffer : _pluginsBuffer;
+            var stream = _buffer;
 
             while (true)
             {
@@ -137,7 +124,6 @@ namespace ClassicUO.Network
                 lock (_queueLock)
                 {
                     // the connection may have changed while a packet was handled (the 0x8C relay): what is left is old stream
-                    // (or, in the plugin queue, packets injected before the change; later ones carry the new generation)
                     SyncGenerations(socket.ConnectionGeneration);
 
                     if (stream.Length == 0)
@@ -188,7 +174,7 @@ namespace ClassicUO.Network
 
                         _ = stream.Dequeue(_readingBuffer, 0, packetlength);
 #if CUO_DEVTOOLS
-                        if (Diagnostics.On && allowPlugins)
+                        if (Diagnostics.On)
                         {
                             diagRead = _diagReads.Dequeue(packetlength);
                             if (packetlength == 2 && _readingBuffer[0] == 0x73)
@@ -212,77 +198,25 @@ namespace ClassicUO.Network
 
                 PacketLogger.Default?.Log(packetBuffer.AsSpan(0, packetlength), false);
 
-                // TODO: the pluging function should allow Span<byte> or unsafe type only.
-                // The current one is a bad style decision.
-                // It will be fixed once the new plugin system is done.
-                if (!allowPlugins || Plugin.ProcessRecvPacket(packetBuffer, ref packetlength))
+#if CUO_DEVTOOLS
+                var previousDispatch = Diagnostics.On ? Diagnostics.EnterDispatch(socket.Statistics,
+                    packetlength == 2 && packetBuffer[0] == 0x73 && packetBuffer[1] == diagPingIndex ? diagPingIndex : -1,
+                    diagRead, diagDequeued) : default;
+                try
                 {
-#if CUO_DEVTOOLS
-                    var previousDispatch = Diagnostics.On ? Diagnostics.EnterDispatch(socket.Statistics,
-                        allowPlugins && packetlength == 2 && packetBuffer[0] == 0x73 && packetBuffer[1] == diagPingIndex ? diagPingIndex : -1,
-                        diagRead, diagDequeued) : default;
-                    try
-                    {
 #endif
-                        AnalyzePacket(world, packetBuffer.AsSpan(0, packetlength), offset);
+                    AnalyzePacket(world, packetBuffer.AsSpan(0, packetlength), offset);
 #if CUO_DEVTOOLS
-                    }
-                    finally
-                    {
-                        if (Diagnostics.On) Diagnostics.LeaveDispatch(previousDispatch);
-                    }
-#endif
-                    ++packetsCount;
                 }
+                finally
+                {
+                    if (Diagnostics.On) Diagnostics.LeaveDispatch(previousDispatch);
+                }
+#endif
+                ++packetsCount;
             }
 
             return packetsCount;
-        }
-
-        /// <param name="socket">The connection a plugin packet is injected under (default: the game's).</param>
-        public void Append(Span<byte> data, bool fromPlugins, NetClient socket = null)
-        {
-            if (data.IsEmpty)
-                return;
-
-            if (fromPlugins)
-            {
-                AppendPlugin(data, (socket ?? NetClient.Socket).ConnectionGeneration);
-            }
-            else
-            {
-                lock (_queueLock)
-                {
-                    _buffer.Enqueue(data);
-#if CUO_DEVTOOLS
-                    if (Diagnostics.On) _diagReads.Enqueue(data.Length, 0);
-#endif
-                }
-            }
-        }
-
-        /// <summary>
-        /// Injects a plugin packet made under the given connection generation. Sampling the generation is the caller's;
-        /// comparing it, dropping what is older, stamping and enqueuing are one step under the queue lock, so an injection
-        /// from an older connection can never be queued as if it were new, and never discards newer packets.
-        /// </summary>
-        internal void AppendPlugin(Span<byte> data, int generation)
-        {
-            lock (_queueLock)
-            {
-                if (generation < _pluginGeneration)
-                {
-                    return; // made under a connection that is already over
-                }
-
-                if (generation > _pluginGeneration)
-                {
-                    _pluginGeneration = generation;
-                    _pluginsBuffer.Clear();
-                }
-
-                _pluginsBuffer.Enqueue(data);
-            }
         }
 
         private void AnalyzePacket(World world, ReadOnlySpan<byte> data, int offset)
@@ -1241,9 +1175,6 @@ namespace ClassicUO.Network
                     ProfileManager.CurrentProfile.ShowHouseContent
                 );
             }
-
-            NetClient.Socket.Send_ToPlugins_AllSkills();
-            NetClient.Socket.Send_ToPlugins_AllSpells();
         }
 
         private static void Talk(World world, ref StackDataReader p)
@@ -6467,7 +6398,7 @@ namespace ClassicUO.Network
                     Client.Game.UO.GameCursor.ItemHold.Dropped = false;
                 }
 
-                // after the SingleClick above (it sends a packet, and plugin send hooks run synchronously), as before T1
+                // after the SingleClick above (it sends a packet), as before T1
                 world.Writer.PlaceWorldItem(placement);
 
                 if (item.OnGround && graphic == 0x2006 && ProfileManager.CurrentProfile.AutoOpenCorpses)

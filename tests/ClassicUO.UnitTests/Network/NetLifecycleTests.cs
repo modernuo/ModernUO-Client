@@ -15,7 +15,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Network
 {
-    // L1 follow-ups: idle pump of the plugin queue, protocol state reset on every way a connection ends, the parser's partial
+    // L1 follow-ups: protocol state reset on every way a connection ends, the parser's partial
     // data at connection boundaries, malformed headers, and the login scene's close mapping.
     public class NetLifecycleTests
     {
@@ -49,23 +49,6 @@ namespace ClassicUO.UnitTests.Network
             handlers.Add(0x03, record);
 
             return (handlers, seen);
-        }
-
-        [Fact]
-        public void Idle_Socket_Still_Pumps_The_Parser_And_Plugin_Queue()
-        {
-            var client = MakeClient();
-            client.AttachSocket(new IdleSocket());
-            var (handlers, seen) = MakeHandlers();
-
-            handlers.Append(new byte[] { 0x73, 0x07 }, true); // a packet a plugin injected while the socket is idle
-
-            var packets = client.Drain(data => handlers.ParsePackets(client, null!, data), maxMs: 0);
-
-            packets.Should().Be(1);
-            seen.Should().ContainSingle().Which.Should().Equal(0x73, 0x07);
-
-            client.Drain(data => handlers.ParsePackets(client, null!, data), maxMs: 0).Should().Be(0); // not delivered twice
         }
 
         [Fact]
@@ -415,40 +398,6 @@ namespace ClassicUO.UnitTests.Network
             closed.Should().Be(0);
         }
 
-        // ---- plugin injections are tagged with the connection they were made under ----
-
-        [Fact]
-        public void Plugin_Packet_Injected_After_Connect_Is_Kept_And_One_Injected_Before_Is_Dropped()
-        {
-            var (listener, port) = Listen();
-            var client = MakeClient();
-            var (handlers, seen) = MakeHandlers();
-
-            try
-            {
-                client.Connect("127.0.0.1", port);
-                var server = listener.AcceptSocket();
-
-                handlers.Append(new byte[] { 0x73, 0x01 }, true, client); // injected under the first connection
-                client.Disconnect();
-
-                client.Connect("127.0.0.1", port); // new generation ...
-                var server2 = listener.AcceptSocket();
-                handlers.Append(new byte[] { 0x73, 0x02 }, true, client); // ... injected before the next ParsePackets (a login send hook)
-
-                handlers.ParsePackets(client, null!, Span<byte>.Empty).Should().Be(1);
-
-                seen.Should().ContainSingle().Which.Should().Equal(0x73, 0x02);
-                server.Close();
-                server2.Close();
-            }
-            finally
-            {
-                client.Disconnect();
-                listener.Stop();
-            }
-        }
-
         // ---- circular buffer ----
 
         [Fact]
@@ -483,56 +432,6 @@ namespace ClassicUO.UnitTests.Network
         }
 
         // ---- third audit: locks, the final frame, stale injections, double termination ----
-
-        [Fact]
-        public void Handler_That_Triggers_An_Injecting_Hook_Does_Not_Deadlock_With_A_Background_Injector()
-        {
-            var client = MakeClient();
-            client.AttachSocket(new IdleSocket());
-            var handlers = new PacketHandlers();
-            var handled = 0;
-            var gate = new object(); // stands in for a plugin host's own lock (what Plugin used to take on the Handler)
-
-            // a handler that "sends a response": its outgoing hook takes the plugin lock and injects
-            handlers.Add(0x73, (World _, ref StackDataReader p) =>
-            {
-                System.Threading.Interlocked.Increment(ref handled);
-
-                lock (gate)
-                {
-                    handlers.Append(new byte[] { 0x04, 0x00 }, true, client); // a 2-byte packet nobody handles
-                }
-            });
-
-            var stop = false;
-            var injector = System.Threading.Tasks.Task.Run(() =>
-            {
-                while (!System.Threading.Volatile.Read(ref stop))
-                {
-                    lock (gate)
-                    {
-                        handlers.Append(new byte[] { 0x73, 0x01 }, true, client);
-                    }
-
-                    System.Threading.Thread.Sleep(1);
-                }
-            });
-
-            var parser = System.Threading.Tasks.Task.Run(() =>
-            {
-                for (var i = 0; i < 2000; i++)
-                {
-                    handlers.ParsePackets(client, null!, new byte[] { 0x73, 0x01 });
-                }
-            });
-
-            var finished = parser.Wait(TimeSpan.FromSeconds(20));
-            System.Threading.Volatile.Write(ref stop, true);
-            injector.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
-
-            finished.Should().BeTrue("a handler dispatched with a queue lock held would deadlock against the injector");
-            handled.Should().BeGreaterThanOrEqualTo(2000);
-        }
 
         [Fact]
         public void A_Frame_Enqueued_Just_After_An_Empty_Read_And_Before_The_Close_Is_Not_Lost()
@@ -582,47 +481,6 @@ namespace ClassicUO.UnitTests.Network
 
                 return n;
             }
-        }
-
-        [Fact]
-        public void Plugin_Injection_From_An_Older_Connection_Is_Dropped_Without_Touching_Newer_Packets()
-        {
-            var client = MakeClient();
-            client.AttachSocket(new IdleSocket());
-            var (handlers, seen) = MakeHandlers();
-
-            var oldGeneration = client.ConnectionGeneration;
-            client.Disconnect(); // reconnect: a new generation
-            var newGeneration = client.ConnectionGeneration;
-            newGeneration.Should().BeGreaterThan(oldGeneration);
-
-            handlers.ParsePackets(client, null!, Span<byte>.Empty); // the parser has moved to the new generation
-            handlers.AppendPlugin(new byte[] { 0x73, 0x02 }, newGeneration); // a new-connection injection
-            handlers.AppendPlugin(new byte[] { 0x73, 0x01 }, oldGeneration); // a slow injector that sampled the old generation
-
-            handlers.ParsePackets(client, null!, Span<byte>.Empty).Should().Be(1);
-
-            seen.Should().ContainSingle().Which.Should().Equal(0x73, 0x02);
-        }
-
-        [Fact]
-        public void Malformed_Plugin_Bytes_At_Close_Give_One_Disconnected()
-        {
-            var client = MakeClient();
-            var socket = new QueueSocket();
-            client.AttachSocket(socket);
-            var (handlers, seen) = MakeHandlers();
-            var closed = new List<SocketError>();
-            client.Disconnected += (_, e) => closed.Add(e);
-
-            handlers.Append(new byte[] { 0x03, 0x00, 0x00 }, true, client); // malformed, in the plugin queue
-            socket.RaiseClose();
-
-            client.Drain(d => handlers.ParsePackets(client, null!, d), maxMs: 0);
-            client.Drain(d => handlers.ParsePackets(client, null!, d), maxMs: 0);
-
-            closed.Should().HaveCount(1);
-            closed[0].Should().Be(SocketError.ProtocolNotSupported);
         }
 
         [Fact]

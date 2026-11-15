@@ -39,7 +39,6 @@ namespace ClassicUO
         private RenderTargets _renderTargets = new();
         private readonly RenderLists _renderLists = new();
         private bool _suppressedDraw;
-        private bool _pluginsInitialized = false;
         private bool _loggedWorldTexture;
         private IntPtr _gpuDevice;
         private GpuWorldRenderer _gpuWorld;
@@ -47,7 +46,7 @@ namespace ClassicUO
         private string _worldShotPath;
         private float _displayScale;
 
-        public GameController(IPluginHost pluginHost)
+        public GameController()
         {
             GraphicManager = new GraphicsDeviceManager(this);
 
@@ -67,13 +66,11 @@ namespace ClassicUO
 
             IsFixedTimeStep = false; // Settings.GlobalSettings.FixedTimeStep;
             TargetElapsedTime = TimeSpan.FromMilliseconds(1000.0 / 250.0);
-            PluginHost = pluginHost;
         }
 
         public Scene Scene { get; private set; }
         public AudioManager Audio { get; private set; }
         public UltimaOnline UO { get; } = new UltimaOnline();
-        public IPluginHost PluginHost { get; private set; }
         public GraphicsDeviceManager GraphicManager { get; }
 
         public Rectangle ClientBounds
@@ -295,19 +292,7 @@ namespace ClassicUO
             // fails, auto uses Legacy for the session and forced gpu exits (0xDEAF)
             RendererStartup.AfterDevice(GraphicsDevice, _gpuDevice, CreateStartupGpuWorld);
             Audio.Initialize();
-            // TODO: temporary fix to avoid crash when laoding plugins
             Settings.GlobalSettings.Encryption = (byte) NetClient.Socket.Load(UO.FileManager.Version, (EncryptionType) Settings.GlobalSettings.Encryption);
-
-            Log.Trace("Loading plugins...");
-            PluginHost?.Initialize();
-
-            foreach (string p in Settings.GlobalSettings.Plugins)
-            {
-                Plugin.Create(p);
-            }
-            _pluginsInitialized = true;
-
-            Log.Trace("Done!");
 
             SetScene(new LoginScene(UO.World));
 #endif
@@ -325,7 +310,6 @@ namespace ClassicUO
 
             Audio?.StopMusic();
             Settings.GlobalSettings.Save();
-            Plugin.OnClosing();
 
 #if CUO_DEVTOOLS
             Network.OplDebounceCheck.LogSummary(Network.OplRequestQueue.Budget, "exit");
@@ -752,10 +736,6 @@ namespace ClassicUO
             if (_tickMode != LoopMode.Event) NetClient.Socket.Flush();
             FrameStats.End(FramePhase.Packets);
 
-            FrameStats.Begin(FramePhase.PluginTick);
-            Plugin.Tick();
-            FrameStats.End(FramePhase.PluginTick);
-
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
                 FrameStats.Begin(FramePhase.SceneUpdate);
@@ -1127,10 +1107,6 @@ namespace ClassicUO
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME);
             Profiler.EnterContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
 
-            FrameStats.Begin(FramePhase.PluginDraw);
-            Plugin.ProcessDrawCmdList(GraphicsDevice);
-            FrameStats.End(FramePhase.PluginDraw);
-
             base.Draw(gameTime);
             VisualDue.EndDraw();
 
@@ -1251,21 +1227,6 @@ namespace ClassicUO
                 LoopStats.NoteInputEvent(sdlEvent->type, sdlEvent->common.timestamp);
             }
 
-            // Don't pass SDL events to the plugin host before the plugins are initialized
-            // or the garbage collector can get screwed up
-            if (_pluginsInitialized && Plugin.ProcessWndProc(sdlEvent) != 0)
-            {
-                if ((SDL_EventType)sdlEvent->type == SDL_EventType.SDL_EVENT_MOUSE_MOTION)
-                {
-                    if (UO.GameCursor != null)
-                    {
-                        UO.GameCursor.AllowDrawSDLCursor = false;
-                    }
-                }
-
-                return true;
-            }
-
             switch ((SDL_EventType)sdlEvent->type)
             {
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_ADDED:
@@ -1286,39 +1247,18 @@ namespace ClassicUO
                     Mouse.MouseInWindow = false;
                     break;
 
-                case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_GAINED:
-                    Plugin.OnFocusGained();
-                    break;
-
-                case SDL_EventType.SDL_EVENT_WINDOW_FOCUS_LOST:
-                    Plugin.OnFocusLost();
-                    break;
-
                 case SDL_EventType.SDL_EVENT_KEY_DOWN:
 
                     Keyboard.OnKeyDown(sdlEvent->key);
 
-                    if (
-                        Plugin.ProcessHotkeys(
-                            (int)sdlEvent->key.key,
-                            (int)sdlEvent->key.mod,
-                            true
-                        )
-                    )
-                    {
-                        _ignoreNextTextInput = false;
+                    _ignoreNextTextInput = false;
 
-                        UIManager.KeyboardFocusControl?.InvokeKeyDown(
-                            (SDL_Keycode)sdlEvent->key.key,
-                            sdlEvent->key.mod
-                        );
+                    UIManager.KeyboardFocusControl?.InvokeKeyDown(
+                        (SDL_Keycode)sdlEvent->key.key,
+                        sdlEvent->key.mod
+                    );
 
-                        Scene.OnKeyDown(sdlEvent->key);
-                    }
-                    else
-                    {
-                        _ignoreNextTextInput = true;
-                    }
+                    Scene.OnKeyDown(sdlEvent->key);
 
                     break;
 
@@ -1330,7 +1270,6 @@ namespace ClassicUO
                         sdlEvent->key.mod
                     );
                     Scene.OnKeyUp(sdlEvent->key);
-                    Plugin.ProcessHotkeys(0, 0, false);
 
                     if ((SDL_Keycode)sdlEvent->key.key == SDL_Keycode.SDLK_PRINTSCREEN)
                     {
@@ -1399,8 +1338,6 @@ namespace ClassicUO
                 case SDL_EventType.SDL_EVENT_MOUSE_WHEEL:
                     Mouse.Update();
                     bool isScrolledUp = sdlEvent->wheel.y > 0;
-
-                    Plugin.ProcessMouse(0, (int)sdlEvent->wheel.y);
 
                     if (!Scene.OnMouseWheel(isScrolledUp))
                     {
@@ -1472,14 +1409,6 @@ namespace ClassicUO
                     }
                     else
                     {
-                        if (
-                            buttonType != MouseButtonType.Left
-                            && buttonType != MouseButtonType.Right
-                        )
-                        {
-                            Plugin.ProcessMouse(sdlEvent->button.button, 0);
-                        }
-
                         if (!Scene.OnMouseDown(buttonType))
                         {
                             UIManager.OnMouseButtonDown(buttonType);
@@ -1623,7 +1552,6 @@ namespace ClassicUO
 
             Audio?.StopMusic();
             Settings.GlobalSettings.Save();
-            Plugin.OnClosing();
         }
 
         // DevBench: the world render target of the next drawn frame, without UI, as a PNG

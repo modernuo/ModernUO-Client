@@ -129,12 +129,6 @@
     <DataFiles_vulkan Include="$(ProjectDir)..\..\external\vulkan\icd.d\*.*" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Reference Include="cuoapi">
-      <HintPath>..\..\external\cuoapi\cuoapi.dll</HintPath>
-    </Reference>
-  </ItemGroup>
-
   <PropertyGroup>
     <_IsWindows Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">true</_IsWindows>
     <_IsMacOS Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">true</_IsMacOS>

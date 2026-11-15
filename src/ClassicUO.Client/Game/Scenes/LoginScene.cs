@@ -706,7 +706,7 @@ namespace ClassicUO.Game.Scenes
                         unsafe
                         {
                             Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
-                            NetClient.Socket.Send(b, true, true);
+                            NetClient.Socket.Send(b, skipEncryption: true);
                         }
 
                         NetClient.Socket.Send_SecondLogin(Account, Password, seed);

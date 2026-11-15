@@ -21,22 +21,8 @@ namespace ClassicUO
 {
     internal static class Bootstrap
     {
-        [UnmanagedCallersOnly(EntryPoint = "Initialize", CallConvs = new Type[] { typeof(CallConvCdecl) })]
-        static unsafe void Initialize(IntPtr* argv, int argc, HostBindings* hostSetup)
-        {
-            var args = new string[argc];
-            for (int i = 0; i < argc; i++)
-            {
-                args[i] = Marshal.PtrToStringAnsi(argv[i]);
-            }
-
-            var host = new UnmanagedAssistantHost(hostSetup);
-            Boot(host, args);
-        }
-
-
         [STAThread]
-        public static void Main(string[] args) => Boot(null, args);
+        public static void Main(string[] args) => Boot(args);
 
 #if CUO_DEVTOOLS
         private const bool ClientBuiltWithDevTools = true;
@@ -52,7 +38,7 @@ namespace ClassicUO
             OsLanguage.IsNoLanguage(code);
 
 
-        public static void Boot(UnmanagedAssistantHost pluginHost, string[] args)
+        public static void Boot(string[] args)
         {
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
@@ -119,7 +105,6 @@ namespace ClassicUO
             Environment.SetEnvironmentVariable("FNA3D_BACKBUFFER_SCALE_NEAREST", "1");
             Environment.SetEnvironmentVariable("FNA3D_OPENGL_FORCE_COMPATIBILITY_PROFILE", "1");
             Environment.SetEnvironmentVariable(SDL.SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-            Environment.SetEnvironmentVariable("PATH", Environment.GetEnvironmentVariable("PATH") + ";" + Path.Combine(CUOEnviroment.ExecutablePath, "Data", "Plugins"));
 
             string globalSettingsPath = Settings.GetSettingsFilepath();
 
@@ -184,7 +169,7 @@ namespace ClassicUO
                 // driver (force_driver / FNA3D_FORCE_DRIVER still win)
                 RendererStartup.BeforeDevice();
 
-                Client.Run(pluginHost);
+                Client.Run();
             }
 
             Log.Trace("Closing...");
@@ -373,11 +358,6 @@ namespace ClassicUO
 
                     case "skiploginscreen":
                         CUOEnviroment.SkipLoginScreen = true;
-
-                        break;
-
-                    case "plugins":
-                        Settings.GlobalSettings.Plugins = string.IsNullOrEmpty(value) ? new string[0] : value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
 
                         break;
 

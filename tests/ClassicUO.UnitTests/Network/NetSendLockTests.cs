@@ -37,7 +37,7 @@ namespace ClassicUO.UnitTests.Network
             {
                 NetClient.SendQueuedWake = eventLoop ? () => wakes++ : null;
                 client.Flush(); // packet phase has already run
-                client.Send(new byte[] { 0x73, 1 }, ignorePlugin: true);
+                client.Send(new byte[] { 0x73, 1 });
                 wakes.Should().Be(eventLoop ? 1 : 0);
                 socket.Bytes.Should().BeEmpty();
                 client.Flush();
@@ -300,7 +300,7 @@ namespace ClassicUO.UnitTests.Network
 
                     for (var s = 0; s < perThread; s++)
                     {
-                        client.Send(OwnFrame(thread, s), true);
+                        client.Send(OwnFrame(thread, s));
                     }
                 });
             }
@@ -338,7 +338,7 @@ namespace ClassicUO.UnitTests.Network
             {
                 var f = Frame(0, s, 100);
                 total += f.Length;
-                client.Send(f, true);
+                client.Send(f);
             }
 
             Worker reset = null;
@@ -390,7 +390,7 @@ namespace ClassicUO.UnitTests.Network
                     // keeps sending until the resetter is done, so every reset overlaps live senders
                     for (var s = 0; s < 50000 && !Volatile.Read(ref stopSenders); s++)
                     {
-                        client.Send(OwnFrame(thread, s), true);
+                        client.Send(OwnFrame(thread, s));
                         Interlocked.Increment(ref sent);
                     }
                 });
@@ -433,7 +433,7 @@ namespace ClassicUO.UnitTests.Network
 
             for (var s = 0; s < tail; s++)
             {
-                client.Send(OwnFrame(0, 60000 + s), true);
+                client.Send(OwnFrame(0, 60000 + s));
             }
 
             client.Flush();
@@ -448,7 +448,7 @@ namespace ClassicUO.UnitTests.Network
 
         // ---- connection identity ----
 
-        // A plugin thread's Send is paused at the given point while the connection ends and the next one starts (reset, new
+        // Another thread's Send is paused at the given point while the connection ends and the next one starts (reset, new
         // socket, login handshake, seed, EndHandshake); the paused send then resumes and must not reach the new connection.
         private static void StaleSendAcrossReconnect(Action<NetClient, CaptureSocket, Action> pauseAt)
         {
@@ -460,12 +460,12 @@ namespace ClassicUO.UnitTests.Network
             using var scope = new Scope();
             using var arrived = new SemaphoreSlim(0);
             using var proceed = new SemaphoreSlim(0);
-            Thread pluginThread = null;
+            Thread senderThread = null;
             var pausedOnce = false;
 
             void Pause()
             {
-                if (Thread.CurrentThread == Volatile.Read(ref pluginThread) && !pausedOnce)
+                if (Thread.CurrentThread == Volatile.Read(ref senderThread) && !pausedOnce)
                 {
                     pausedOnce = true;
                     arrived.Release();
@@ -475,23 +475,23 @@ namespace ClassicUO.UnitTests.Network
 
             pauseAt(client, oldSocket, Pause);
 
-            var plugin = scope.Run(() =>
+            var sender = scope.Run(() =>
             {
-                Volatile.Write(ref pluginThread, Thread.CurrentThread);
-                client.Send(new byte[] { 0xEE, 0xEE, 0xEE }, true);
+                Volatile.Write(ref senderThread, Thread.CurrentThread);
+                client.Send(new byte[] { 0xEE, 0xEE, 0xEE });
             });
 
             var newSocket = new CaptureSocket();
 
             try
             {
-                arrived.Wait(Bounded).Should().BeTrue("the plugin send must be paused");
+                arrived.Wait(Bounded).Should().BeTrue("the send must be paused");
 
                 // the connection ends and the next one starts: reset, a new socket, its handshake and seed
                 client.Disconnect();
                 client.AttachSocket(newSocket);
                 var handshake = client.BeginLoginHandshake(2);
-                client.Send(new byte[] { 1, 2, 3, 4 }, true, true);
+                client.Send(new byte[] { 1, 2, 3, 4 }, skipEncryption: true);
                 client.EndHandshake(handshake);
             }
             finally
@@ -499,7 +499,7 @@ namespace ClassicUO.UnitTests.Network
                 proceed.Release();
             }
 
-            plugin.Join();
+            sender.Join();
             client.Flush();
 
             newSocket.Bytes.Should().Equal(new byte[] { 1, 2, 3, 4 }, "only the new connection's seed: no stale packet, before or after it");
@@ -532,19 +532,19 @@ namespace ClassicUO.UnitTests.Network
             client.AttachSocket(socket);
             using var scope = new Scope();
 
-            void PluginSend(byte marker) => scope.Run(() => client.Send(Send3(marker), true)).Join();
+            void OtherThreadSend(byte marker) => scope.Run(() => client.Send(Send3(marker))).Join();
 
-            PluginSend(0xA1); // before the handshake starts
+            OtherThreadSend(0xA1); // before the handshake starts
             var handshake = client.BeginGameHandshake(Seed);
-            PluginSend(0xA2); // game cipher initialised, seed not queued yet
+            OtherThreadSend(0xA2); // game cipher initialised, seed not queued yet
 
             var seed = new byte[] { 0x7F, 0x00, 0x00, 0x01 };
-            client.Send(seed, true, true);
-            client.Send(OwnFrame(0, 0), true); // the handshake thread's own follow-up
-            PluginSend(0xA3); // still inside the handshake
+            client.Send(seed, skipEncryption: true);
+            client.Send(OwnFrame(0, 0)); // the handshake thread's own follow-up
+            OtherThreadSend(0xA3); // still inside the handshake
 
             client.EndHandshake(handshake);
-            PluginSend(0xA4); // after it
+            OtherThreadSend(0xA4); // after it
             client.Flush();
 
             var bytes = socket.Bytes.ToArray();
@@ -567,84 +567,6 @@ namespace ClassicUO.UnitTests.Network
         }
 
         [Fact]
-        public void A_Packet_Injected_By_The_Login_Hook_Follows_The_Login_Packet()
-        {
-            var client = MakeClient(EncryptionType.NONE);
-            var socket = new CaptureSocket();
-            client.AttachSocket(socket);
-            client.Disconnect();
-            client.AttachSocket(socket = new CaptureSocket());
-
-            var login = new byte[] { 0x91, 1, 2, 3 };
-            var ping = new byte[] { 0x73, 9 };
-            client.TestOutgoingHook = (ref Span<byte> m) =>
-            {
-                if (m[0] == 0x91)
-                {
-                    client.Send(ping, true); // a plugin sends from inside the outgoing hook of the login packet
-                }
-
-                return true;
-            };
-
-            var handshake = client.BeginLoginHandshake(5);
-            client.Send(new byte[] { 0, 0, 0, 5 }, true, true); // seed
-            client.Send(login); // runs the hook
-            client.EndHandshake(handshake);
-            client.Flush();
-
-            socket.Bytes.Should().Equal(new byte[] { 0, 0, 0, 5, 0x91, 1, 2, 3, 0x73, 9 }, "seed, login packet, then the injected packet");
-        }
-
-        [Fact]
-        public void A_Plugin_That_Replaces_The_Login_Packet_Still_Gets_Its_Replacement_Queued()
-        {
-            var client = MakeClient(EncryptionType.NONE);
-            client.AttachSocket(new CaptureSocket());
-            client.Disconnect();
-            var socket = new CaptureSocket();
-            client.AttachSocket(socket);
-
-            // suppress 0x91 and forward a replacement from inside the hook (re-entrantly)
-            client.TestOutgoingHook = (ref Span<byte> m) =>
-            {
-                if (m[0] == 0x91)
-                {
-                    client.Send(new byte[] { 0x91, 7, 7, 7 }, true);
-
-                    return false;
-                }
-
-                return true;
-            };
-
-            var handshake = client.BeginLoginHandshake(5);
-            client.Send(new byte[] { 0, 0, 0, 5 }, true, true);
-            client.Send(new byte[] { 0x91, 1, 2, 3 });
-            client.EndHandshake(handshake);
-            client.Flush();
-
-            socket.Bytes.Should().Equal(new byte[] { 0, 0, 0, 5, 0x91, 7, 7, 7 });
-
-            // and one that rewrites the packet in place (same call): accepted as the handshake packet
-            client.Disconnect();
-            client.AttachSocket(socket = new CaptureSocket());
-            client.TestOutgoingHook = (ref Span<byte> m) =>
-            {
-                m = new byte[] { 0x91, 8, 8, 8 };
-
-                return true;
-            };
-            handshake = client.BeginLoginHandshake(6);
-            client.Send(new byte[] { 0, 0, 0, 6 }, true, true);
-            client.Send(new byte[] { 0x91, 1, 2, 3 });
-            client.EndHandshake(handshake);
-            client.Flush();
-
-            socket.Bytes.Should().Equal(new byte[] { 0, 0, 0, 6, 0x91, 8, 8, 8 });
-        }
-
-        [Fact]
         public void A_Reset_Closes_Sends_Until_The_Next_Handshake_Ends_And_Drops_What_Was_Held()
         {
             var (client, socket) = Make(EncryptionType.NONE);
@@ -652,7 +574,7 @@ namespace ClassicUO.UnitTests.Network
 
             var socket2 = new CaptureSocket();
             client.AttachSocket(socket2);
-            client.Send(new byte[] { 9, 9, 9 }, true);
+            client.Send(new byte[] { 9, 9, 9 });
             client.Flush();
             socket2.Bytes.Should().BeEmpty("a connection's sends wait for its handshake");
 
@@ -660,7 +582,7 @@ namespace ClassicUO.UnitTests.Network
             client.Flush();
             socket2.Bytes.Should().Equal(9, 9, 9);
 
-            client.Send(new byte[] { 7, 7, 7 }, true);
+            client.Send(new byte[] { 7, 7, 7 });
             client.Flush();
             socket2.Bytes.Should().Equal(9, 9, 9, 7, 7, 7);
 
@@ -669,7 +591,7 @@ namespace ClassicUO.UnitTests.Network
             client.Disconnect();
             var socket3 = new CaptureSocket();
             client.AttachSocket(socket3);
-            client.Send(new byte[] { 6, 6, 6 }, true); // held for the new connection
+            client.Send(new byte[] { 6, 6, 6 }); // held for the new connection
             client.EndHandshake(stale);
             client.Flush();
             socket3.Bytes.Should().BeEmpty("the stale token must not reopen the new connection");
@@ -697,7 +619,7 @@ namespace ClassicUO.UnitTests.Network
                 {
                     for (var i = 0; i < per; i++)
                     {
-                        client.Send(new byte[] { 1, 2 }, true);
+                        client.Send(new byte[] { 1, 2 });
                     }
                 });
             }

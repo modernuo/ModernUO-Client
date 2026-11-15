@@ -216,7 +216,7 @@ namespace ClassicUO
         public static GameController Game { get; private set; }
 
 
-        public static void Run(IPluginHost pluginHost)
+        public static void Run()
         {
             Debug.Assert(Game == null);
 
@@ -224,7 +224,7 @@ namespace ClassicUO
 
             Microsoft.Xna.Framework.FNALoggerEXT.LogError = GpuDeviceLost.OnFnaError;
 
-            using (Game = new GameController(pluginHost))
+            using (Game = new GameController())
             {
                 // https://github.com/FNA-XNA/FNA/wiki/7:-FNA-Environment-Variables#fna_graphics_enable_highdpi
                 CUOEnviroment.IsHighDPI = Environment.GetEnvironmentVariable("FNA_GRAPHICS_ENABLE_HIGHDPI") == "1";
