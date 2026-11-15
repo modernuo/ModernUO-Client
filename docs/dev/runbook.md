@@ -36,7 +36,7 @@ Output goes to `<repo>/bin/Release/` and `<repo>/bin/Debug/`. The executable is 
 
 ### The `CuoDevTools` property
 
-`src/Directory.Build.props` defines `CuoDevTools`. It defaults to `true` in every configuration. When true it adds the `CUO_DEVTOOLS` compile constant.
+`build/DevTools.props` defines `CuoDevTools`, once for `src/`, `poc/` and `tests/` (each folder's `Directory.Build.props` imports it). It defaults to `true` in every configuration. When true it adds the `CUO_DEVTOOLS` compile constant.
 
 What `CUO_DEVTOOLS` includes:
 
@@ -54,6 +54,8 @@ dotnet build <repo>/src/ClassicUO.Client/ClassicUO.Client.csproj -c Release -p:C
 ```
 
 In that build the DevBench, those checkers and the environment overrides do nothing. The settings switches still work. Build and test both variants for any change that touches guarded code.
+
+The variant without dev tools builds into its own folders: `bin/Release-nodev` (or `bin/Debug-nodev`) for the client, `bin/nodev` and `obj/nodev` inside each project. The two variants never share an assembly. At startup the client compares its own setting with that of the `Uo.Render.dll` it loaded and stops with a "Mixed build" error if they differ.
 
 ### NativeAOT publish
 

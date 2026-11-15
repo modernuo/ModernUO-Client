@@ -43,13 +43,13 @@
   </Target>
 
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
-    <OutputPath>$(ProjectDir)..\..\bin\Release\</OutputPath>
+    <OutputPath>$(ProjectDir)..\..\bin\Release$(CuoVariantSuffix)\</OutputPath>
     <PublishDir>$(ProjectDir)..\..\bin\dist\</PublishDir>
     <Optimize>true</Optimize>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
-    <OutputPath>$(ProjectDir)..\..\bin\Debug\</OutputPath>
+    <OutputPath>$(ProjectDir)..\..\bin\Debug$(CuoVariantSuffix)\</OutputPath>
     <DefineConstants>$(DefineConstants);TRACE</DefineConstants>
   </PropertyGroup>
 

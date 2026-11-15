@@ -1,0 +1,22 @@
+<Project>
+  <!-- CUO_DEVTOOLS: developer tooling (DevBench, runtime world-renderer switching, the CUO_*_CHECK checkers). The one
+       definition for src/, poc/ and tests/: on unless -p:CuoDevTools=false. Guarded code is tagged CLEANUP(release).
+       Imported from Directory.Build.props, before the SDK picks its output folders, so the off variant gets its own
+       obj/nodev and bin/nodev: the two variants never share an assembly (a client built with devtools next to a
+       Uo.Render.dll built without them throws MissingMethodException at login). -->
+  <PropertyGroup>
+    <CuoDevTools Condition="'$(CuoDevTools)' == ''">true</CuoDevTools>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CuoDevTools)' == 'true'">
+    <DefineConstants>$(DefineConstants);CUO_DEVTOOLS</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CuoDevTools)' != 'true'">
+    <BaseIntermediateOutputPath>obj\nodev\</BaseIntermediateOutputPath>
+    <BaseOutputPath>bin\nodev\</BaseOutputPath>
+    <CuoVariantSuffix>-nodev</CuoVariantSuffix>
+    <!-- the dev variant's obj/ and bin/ are not sources of this one -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj\**;bin\**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>
