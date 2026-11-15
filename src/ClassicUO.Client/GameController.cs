@@ -646,6 +646,7 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
             if (Diagnostics.On) Diagnostics.Update();
 #endif
+            RenderInfoCheck();
             FrameStats.Begin(FramePhase.Update);
             FrameStats.Inc(FrameCounter.LoopTicks);
             _updateStartTs = Stopwatch.GetTimestamp();
