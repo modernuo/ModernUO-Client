@@ -68,6 +68,20 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The game time after which the next ping is sent (Time.Ticks &gt; this); 0 before the first.</summary>
         internal long PingDueTick => _timePing;
 
+        /// <summary>
+        /// present_on_change: GameController sends the ping after its draw decision (ServicePing), so it can hold it until
+        /// after a Present that is about to happen; the scene then does not send it from Update.
+        /// </summary>
+        internal bool LoopSendsPing;
+
+        internal bool PingDue => _world.InGame && Time.Ticks > _timePing;
+
+        internal void SendPing()
+        {
+            NetClient.Socket.Statistics.SendPing();
+            _timePing = (long)Time.Ticks + 1000;
+        }
+
         private uint _timeToPlaceMultiInHouseCustomization;
         private readonly UseItemQueue _useItemQueue;
         private bool _useObjectHandles;
@@ -1153,10 +1167,9 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            if (Time.Ticks > _timePing)
+            if (!LoopSendsPing && PingDue)
             {
-                NetClient.Socket.Statistics.SendPing();
-                _timePing = (long)Time.Ticks + 1000;
+                SendPing();
             }
 
             // the animated statics advance first: World.Update's chunk loader waits for the frame an animated static

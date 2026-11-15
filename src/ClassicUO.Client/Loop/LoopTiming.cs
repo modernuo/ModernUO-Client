@@ -212,6 +212,22 @@ namespace ClassicUO.Loop
         public static double MsUntilPing(bool presentOnChange, long pingDueTick, uint ticksAtUpdate, double msSinceUpdate)
             => MsUntilTick(presentOnChange && pingDueTick > 0 && pingDueTick + 1 > ticksAtUpdate, pingDueTick, ticksAtUpdate, msSinceUpdate);
 
+        /// <summary>A present due this soon (ms) after the ping deadline holds the ping until after that present.</summary>
+        public const double PingHoldLeadMs = 1.0;
+
+        /// <summary>The longest a due ping is held for a present (ms past its deadline); past it the ping goes out at once.</summary>
+        public const double PingHoldMaxMs = 50;
+
+        /// <summary>
+        /// present_on_change: whether a due ping is held until right after the next Present instead of sent now. The ping timer
+        /// and the present grid drift slowly against each other, so a ping sent just before a draw had its reply wait out the
+        /// Draw and Present on the single-threaded loop (~40% of pings, in streaks, bench-000843); the spin loop never did,
+        /// since it sends from the Update right after a present. Held when this iteration draws or the next present is within
+        /// <see cref="PingHoldLeadMs"/>, and never longer than <see cref="PingHoldMaxMs"/> past the deadline.
+        /// </summary>
+        public static bool HoldPingForPresent(bool presentOnChange, bool drawsNow, double msUntilPresent, double msPastDeadline)
+            => presentOnChange && msPastDeadline < PingHoldMaxMs && (drawsNow || msUntilPresent <= PingHoldLeadMs);
+
         /// <summary>
         /// Event loop: the per-drain byte and packet caps scale with the time since the previous drain (one Update per frame
         /// instead of one per ~1 ms), at least the base cap and at most four times it. The time cap stays per drain.

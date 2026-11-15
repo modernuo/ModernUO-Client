@@ -808,6 +808,7 @@ namespace ClassicUO
 #endif
 
             _displayDrawDue = displayDue;
+            ServicePing(displayDue);
 
             // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
             // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
@@ -912,6 +913,61 @@ namespace ClassicUO
             if (_tickMode == LoopMode.Event && _suppressedDraw)
             {
                 EventLoopWait();
+            }
+        }
+
+        private bool _pingAfterPresent;
+
+        // present_on_change: the ping goes out from here, after the draw decision, so one due just before a present is held
+        // until right after it (LoopTiming.HoldPingForPresent). Off: GameScene.Update sends it, as before.
+        private void ServicePing(bool drawsNow)
+        {
+            _pingAfterPresent = false;
+
+            if (Scene is not GameScene gs || !gs.IsLoaded || gs.IsDestroyed)
+            {
+                return;
+            }
+
+            bool loopOwned = gs.LoopSendsPing;
+            gs.LoopSendsPing = _presentOnChange;
+
+            // a switch change: a ping the scene skipped last tick goes out now
+            if (!loopOwned || !gs.PingDue)
+            {
+                return;
+            }
+
+            double msUntilPresent = drawsNow ? 0 : MsUntilPresentOnChange();
+
+            if (LoopTiming.HoldPingForPresent(_presentOnChange, drawsNow, msUntilPresent, (double)Time.Ticks - (gs.PingDueTick + 1)))
+            {
+                _pingAfterPresent = drawsNow;
+
+                return;
+            }
+
+            gs.SendPing();
+        }
+
+        // after Present, before the wait: no network work between Draw and Present
+        private void SendHeldPing()
+        {
+            _pingAfterPresent = false;
+
+            if (Scene is not GameScene gs || !gs.PingDue)
+            {
+                return;
+            }
+
+            gs.SendPing();
+            int generation = NetClient.Socket.ConnectionGeneration;
+            NetClient.Socket.Flush();
+
+            if (NetClient.Socket.ConnectionGeneration != generation)
+            {
+                _changePending = true;
+                _changeWhy |= ChangeReason.Connection;
             }
         }
 
@@ -1105,6 +1161,11 @@ namespace ClassicUO
             if (LoopStats.On)
             {
                 LoopStats.NotePresent();
+            }
+
+            if (_pingAfterPresent)
+            {
+                SendHeldPing();
             }
 
             if (_tickMode == LoopMode.Event)
