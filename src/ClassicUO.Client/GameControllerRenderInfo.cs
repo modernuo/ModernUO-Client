@@ -25,7 +25,8 @@ namespace ClassicUO
             // branch (Uo.Render Renderer.ForcePoint); a diagnostic for tile grid lines, read every update
             bool forcePoint = Settings.GlobalSettings.GpuForcePoint;
 
-            if (_gpuWorld != null)
+            // the world pass is null between a drop and its recreation in the next Draw (DevBench reinit, a failed facet switch)
+            if (_gpuWorld?.World != null)
             {
                 _gpuWorld.World.Renderer.ForcePoint = forcePoint;
             }
