@@ -40,7 +40,7 @@ namespace ClassicUO.Game.GameObjects
         public byte Alpha;
         public TextObject DLeft, DRight;
 
-        /// <summary>Counts changes to any DLeft/DRight link (text_tail_cache: a renderer's kept tail is valid while it is
+        /// <summary>Counts changes to any DLeft/DRight link (a renderer's kept tail is valid while it is
         /// unchanged). Every writer of those links bumps it; all of them are on the main thread.</summary>
         internal static uint LinkVersion;
 

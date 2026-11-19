@@ -51,7 +51,10 @@ namespace ClassicUO.UnitTests.Ecs
             "event_loop",
             "present_on_change",
             "present_on_change_anim_due",
-            "event_loop_idle_redraw_ms"
+            "event_loop_idle_redraw_ms",
+            // baked in after quiet-1118 (world text)
+            "text_prune_expired",
+            "text_tail_cache"
         };
 
         [Fact]
