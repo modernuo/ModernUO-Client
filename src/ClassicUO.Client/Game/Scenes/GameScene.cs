@@ -1139,7 +1139,7 @@ namespace ClassicUO.Game.Scenes
                 LoopDue.Now(LoopDueSource.Assets);
             }
 
-            if (UIManager.GetGump<WorldMapGump>() != null)
+            if (WorldMapGump.IsOpen)
             {
                 LoopDue.Now(LoopDueSource.WorldMap);
             }

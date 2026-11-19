@@ -58,5 +58,34 @@ namespace ClassicUO.UnitTests.Game
                 }
             }
         }
+
+        /// <summary>
+        /// worldmap-audit P-3: GameScene's loop hook and WorldMapEntityManager.Enabled read a static open count (set when the
+        /// gump is constructed, cleared after its Dispose) instead of walking the gump list; a second Dispose or a second
+        /// note does not count twice.
+        /// </summary>
+        [Fact]
+        public void Open_Count_Follows_Open_And_Close_Once_Each()
+        {
+            int start = WorldMapGump.OpenCount;
+            bool a = false, b = false;
+
+            WorldMapGump.NoteOpened(ref a);
+            WorldMapGump.NoteOpened(ref a);
+            WorldMapGump.OpenCount.Should().Be(start + 1);
+            WorldMapGump.IsOpen.Should().BeTrue();
+
+            WorldMapGump.NoteOpened(ref b);
+            WorldMapGump.OpenCount.Should().Be(start + 2);
+
+            WorldMapGump.NoteClosed(ref a);
+            WorldMapGump.NoteClosed(ref a);
+            WorldMapGump.OpenCount.Should().Be(start + 1);
+
+            WorldMapGump.NoteClosed(ref b);
+            WorldMapGump.OpenCount.Should().Be(start);
+            a.Should().BeFalse();
+            b.Should().BeFalse();
+        }
     }
 }

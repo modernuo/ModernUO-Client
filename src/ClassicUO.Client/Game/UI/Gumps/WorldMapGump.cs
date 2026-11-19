@@ -88,6 +88,11 @@ namespace ClassicUO.Game.UI.Gumps
         private Task _loadingTask;
         private readonly MapImageHandover<WorldMapImage> _mapImages = new MapImageHandover<WorldMapImage>();
 
+        // game thread: constructed and not yet disposed world map gumps. GameScene's loop hook and
+        // WorldMapEntityManager.Enabled read it instead of walking the gump list (UIManager.GetGump) every frame and call.
+        private static int _openCount;
+        private bool _countedOpen;
+
         public WorldMapGump(World world) : base
         (
             world,
@@ -117,6 +122,31 @@ namespace ClassicUO.Game.UI.Gumps
             LoadZones();
 
             BuildGump();
+
+            NoteOpened(ref _countedOpen);
+        }
+
+        /// <summary>A world map gump exists and is not disposed (the old test was UIManager.GetGump&lt;WorldMapGump&gt;() != null).</summary>
+        internal static bool IsOpen => _openCount > 0;
+
+        internal static int OpenCount => _openCount;
+
+        internal static void NoteOpened(ref bool counted)
+        {
+            if (!counted)
+            {
+                counted = true;
+                _openCount++;
+            }
+        }
+
+        internal static void NoteClosed(ref bool counted)
+        {
+            if (counted)
+            {
+                counted = false;
+                _openCount--;
+            }
         }
 
         public override GumpType GumpType => GumpType.WorldMap;
@@ -311,8 +341,11 @@ namespace ClassicUO.Game.UI.Gumps
             _mapTexture.Dispose();
 
             base.Dispose();
+
+            // after base.Dispose, as GetGump stopped seeing the gump once IsDisposed was set
+            NoteClosed(ref _countedOpen);
         }
 
     }
 
-}
+}
