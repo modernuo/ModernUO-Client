@@ -194,18 +194,6 @@ namespace ClassicUO.Configuration
         // Default off: the atlas only grows.
         [JsonPropertyName("anim_atlas_lru")] public bool AnimAtlasLru { get; set; }
 
-        // perf-audit #2: the world text list keeps its tail (where the draw pass starts) while its links change, validated by a
-        // link-version counter, instead of walking every DRight link in each of the three passes per frame. Read at every use
-        // (CUO_TEXT_TAIL=1|0 overrides it and CUO_TEXT_ORDER_CHECK=1 compares the kept tail and the link order with the full
-        // walk, in developer builds). Default off; off = the walk in every pass.
-        [JsonPropertyName("text_tail_cache")] public bool TextTailCache { get; set; }
-
-        // text-walk: the world text list unlinks a text once it has expired (Time < Time.Ticks), which the draw pass skips anyway,
-        // instead of leaving it linked until its owner is destroyed or five newer texts push it out of the owner's container.
-        // The walks then visit only live texts. Read at every use (CUO_TEXT_PRUNE=1|0 overrides it and CUO_TEXT_PRUNE_CHECK=1
-        // compares the live texts and their order before and after each prune, in developer builds). Default off.
-        [JsonPropertyName("text_prune_expired")] public bool TextPruneExpired { get; set; }
-
         // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
         // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
         // every frame it is visible (GameScene.ApplyMeshHue, MeshHueEpoch). Read once per frame (CUO_MESH_HUE=1|0 overrides
