@@ -174,8 +174,7 @@ namespace ClassicUO.UnitTests.Assets
             loader.LoadOurs();
             loader.TryGetSoundSource(5, out _, out long probed).Should().BeTrue();
             probed.Should().Be(128 * K);
-            int grown = 128 * K + 8 + 256 * K;
-            GrowDataChunk(five, grown);
+            GrowDataChunk(five, 128 * K + 8 + 256 * K);
 
             long before = GC.GetAllocatedBytesForCurrentThread();
             cache.Get(5).Should().BeNull("the file is larger than its admitted size: not this play");
@@ -183,27 +182,27 @@ namespace ClassicUO.UnitTests.Assets
             cache.Evictions.Should().Be(0, "a refused request evicts nothing");
             cache.Bytes.Should().Be(1984 * K);
 
-            // the probe was refreshed: the next request is budgeted at the real size and plays
-            loader.TryGetSoundSource(5, out _, out long refreshed).Should().BeTrue();
-            refreshed.Should().Be(grown);
-            UOSound s5 = cache.Get(5);
-            s5.Should().NotBeNull();
-            ArrayOf(s5).Should().Equal(AudioConst.ReadWaveFile(five, out _));
-            cache.Evictions.Should().Be(1, "id 1 made room this time");
+            // the file broke after load: logged once and dropped, nothing re-probes it (no per-request stat); id 5 has no pack record
+            loader.TryGetSoundSource(5, out _, out _).Should().BeFalse();
+            cache.Get(5).Should().BeNull();
+            cache.Evictions.Should().Be(0);
+
+            UOSound s1 = cache.Get(1);
 
             // 6.wav: valid and small when probed, unreadable when read; the pack's 512 KiB record is larger than what was
             // admitted, so it is not read either, and the next request budgets the record itself
+            long probed6;
             string six = Path.Combine(sounds, "6.wav");
             File.WriteAllBytes(six, Wav(22050, 1, 16, Pcm(64 * K, 106)));
             loader.LoadOurs();
-            loader.TryGetSoundSource(6, out _, out probed).Should().BeTrue();
-            probed.Should().Be(64 * K);
+            loader.TryGetSoundSource(6, out _, out probed6).Should().BeTrue();
+            probed6.Should().Be(64 * K);
             DateTime written = File.GetLastWriteTimeUtc(six);
             byte[] bad = File.ReadAllBytes(six);
             bad[8] = (byte)'X'; // not "WAVE"
             File.WriteAllBytes(six, bad);
             File.SetLastWriteTimeUtc(six, written);
-            playing.Add(s5);
+            playing.Add(s1);
             long evictions = cache.Evictions;
             long held = cache.Bytes;
 
@@ -213,6 +212,7 @@ namespace ClassicUO.UnitTests.Assets
             cache.Evictions.Should().Be(evictions);
             cache.Bytes.Should().Be(held);
 
+            playing.Remove(s1); // idle now: it can make room for the record
             UOSound s6 = cache.Get(6);
             s6.Should().NotBeNull("the pack's record, budgeted at its own size");
             ArrayOf(s6).Should().Equal(p6);
@@ -220,17 +220,17 @@ namespace ClassicUO.UnitTests.Assets
             loader.Dispose();
         }
 
-        // ------------------------------------------------------------------ 4. a stale probe
+        // ------------------------------------------------------------------ 4. loose files are snapshotted at load
 
         [Fact]
-        public void A_Changed_Or_Vanished_Loose_File_Is_Probed_Again()
+        public void Loose_Files_Are_Snapshotted_At_Load_And_Not_Stat_Again()
         {
             const int K = 1024;
             byte[] p8 = Pcm(64 * K, 112);
             var (loader, sounds) = PackClient("stale", null, null, null, null, null, null, null, Pcm(64 * K, 111), p8);
             var cache = new SoundCache(loader, budget: 1 << 20, maxIds: 1024, isBusy: _ => false);
 
-            // too large for the cache: refused, and its size remembered
+            // too large for the cache: refused, and its size is the one LoadOurs saw
             string seven = Path.Combine(sounds, "7.wav");
             string eight = Path.Combine(sounds, "8.wav");
             File.WriteAllBytes(seven, Wav(22050, 1, 16, Pcm(1536 * K, 113)));
@@ -240,29 +240,32 @@ namespace ClassicUO.UnitTests.Assets
             cache.Get(8).Should().BeNull();
             cache.Refusals.Should().Be(2);
 
-            // 7.wav replaced by a small one: the stat differs, so it is probed again and plays
-            byte[] small = Pcm(32 * K, 115);
-            File.WriteAllBytes(seven, Wav(22050, 1, 16, small));
-            UOSound s7 = cache.Get(7);
-            s7.Should().NotBeNull();
-            ArrayOf(s7).Should().Equal(small);
-
-            // 8.wav rewritten to the same length (its data chunk now declares 32 KiB) with a new write time: probed again
+            // 7.wav replaced by a small one, 8.wav rewritten with a new write time: not looked at again
+            File.WriteAllBytes(seven, Wav(22050, 1, 16, Pcm(32 * K, 115)));
             byte[] b8 = File.ReadAllBytes(eight);
             BinaryPrimitives.WriteInt32LittleEndian(b8.AsSpan(40), 32 * K);
             File.WriteAllBytes(eight, b8);
             File.SetLastWriteTimeUtc(eight, DateTime.UtcNow.AddMinutes(1));
-            loader.TryGetSoundSource(8, out _, out long again).Should().BeTrue();
-            again.Should().Be(32 * K, "the length is the same, the write time is not");
+            loader.TryGetSoundSource(7, out _, out long s7).Should().BeTrue();
+            s7.Should().Be(1536 * K, "the snapshot, not the file's present size");
+            loader.TryGetSoundSource(8, out _, out long s8).Should().BeTrue();
+            s8.Should().Be(1536 * K);
+            cache.Get(7).Should().BeNull();
 
-            // 8.wav deleted: the pack's record answers
+            // 8.wav deleted: the snapshot still names it; the read finds it gone, logs once and the pack's record answers
             File.Delete(eight);
-            loader.TryGetSoundSource(8, out long key, out long size).Should().BeTrue();
-            key.Should().BePositive("a pack record");
+            loader.TryGetSoundSource(8, out long key, out _).Should().BeTrue();
+            key.Should().BeNegative("still the loose file's key");
+            loader.TryGetSound(8, out byte[] d8, out _).Should().BeTrue();
+            d8.Should().Equal(p8);
+            loader.TryGetSoundSource(8, out key, out long size).Should().BeTrue();
+            key.Should().BePositive("a pack record from now on");
             size.Should().Be(p8.Length);
-            UOSound s8 = cache.Get(8);
-            s8.Should().NotBeNull();
-            ArrayOf(s8).Should().Equal(p8);
+
+            // a reload (LoadOurs) takes a new snapshot
+            loader.LoadOurs();
+            loader.TryGetSoundSource(7, out _, out s7).Should().BeTrue();
+            s7.Should().Be(32 * K);
             loader.Dispose();
         }
 
