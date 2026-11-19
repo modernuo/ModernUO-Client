@@ -126,7 +126,6 @@ namespace ClassicUO.Configuration
 
         [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
 
-        [JsonPropertyName("upload_skip_unchanged")] public bool UploadSkipUnchanged { get; set; }
 
         // pa-gpusig, the Gpu prepare's ground-item cache: a served tile's cached items are trusted while their chunk's render generation
         // (GpuItemGen.Touch: the WorldWriter commits, text, boat offsets, object handles) is unchanged and the tile was served in

@@ -87,12 +87,6 @@ public sealed unsafe class WorldRenderer : IDisposable
     uint[] _trans;
     ulong[] _transSort;
     readonly TranslucentOrderCache _transOrder;
-    public bool UploadSkipUnchanged;
-#if CUO_DEVTOOLS
-    static readonly bool UploadSkipCheck = Environment.GetEnvironmentVariable("CUO_UPLOAD_SKIP_CHECK") == "1";
-    ulong[] _sortCheck;
-    long _sortChecks, _sortMismatches, _sortCheckLog;
-#endif
     static readonly Comparison<ulong> TransKeyOrder = static (a, b) => a.CompareTo(b);
 
     /// <summary>The translucent list's ascending key sort. NativeAOT's Span&lt;ulong&gt;.Sort() makes a comparison delegate per
@@ -671,37 +665,8 @@ public sealed unsafe class WorldRenderer : IDisposable
         // back to front: ascending depth key; equal keys (a mobile's layers) in reverse emission order, body first
         long diagSort = RenderDiagnostics.Stamp();
         var sortKeys = _transSort.AsSpan(0, _transCount);
-#if CUO_DEVTOOLS
-        if (UploadSkipCheck)
-        {
-            if (_sortCheck == null || _sortCheck.Length < _transSort.Length) _sortCheck = new ulong[_transSort.Length];
-            sortKeys.CopyTo(_sortCheck);
-        }
-#endif
-        bool reusedSort = _transOrder.Sort(sortKeys, UploadSkipUnchanged);
+        bool reusedSort = _transOrder.Sort(sortKeys);
         RenderDiagnostics.Add(reusedSort ? DiagMetric.TranslucentSortReuses : DiagMetric.TranslucentSorts, _transCount > 1 ? 1 : 0);
-#if CUO_DEVTOOLS
-        if (UploadSkipCheck && reusedSort)
-        {
-            var fresh = _sortCheck.AsSpan(0, _transCount);
-            SortTransKeys(fresh);
-            _sortChecks++;
-            if (!fresh.SequenceEqual(sortKeys))
-            {
-                _sortMismatches++;
-                Console.WriteLine($"[upload-skip-check] SORT MISMATCH frame={Frame} count={_transCount}");
-            }
-        }
-        if (UploadSkipCheck)
-        {
-            long sortNow = Stopwatch.GetTimestamp();
-            if (sortNow - _sortCheckLog >= Stopwatch.Frequency * 5)
-            {
-                Console.WriteLine($"[upload-skip-check] sort on={UploadSkipUnchanged} checked={_sortChecks} mismatches={_sortMismatches}");
-                _sortCheckLog = sortNow;
-            }
-        }
-#endif
         for (int i = 0; i < _transCount; i++) _trans[i] = uint.MaxValue - (uint)_transSort[i];
         RenderDiagnostics.Elapsed(DiagMetric.TranslucentSortTicks, diagSort);
         TranslucentCount = _transCount;
@@ -866,7 +831,6 @@ public sealed unsafe class WorldRenderer : IDisposable
     bool Submit(ref Renderer.FrameInput fi)
     {
         fi.Hold = _jumped;
-        Renderer.UploadSkipUnchanged = UploadSkipUnchanged;
         GrowInstancesIfNeeded(fi.StreamOnly || _jumped);
 #if CUO_DEVTOOLS
         if (SignatureOn)

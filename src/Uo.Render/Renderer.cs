@@ -686,13 +686,8 @@ public sealed unsafe class Renderer : IDisposable
     }
 
     public int LastChunkUploads, DrawCalls;
-    public bool UploadSkipUnchanged;
     readonly UploadContentCache _tableContent = new(), _dynamicContent = new(), _transContent = new(), _overrideContent = new();
     ChunkDraw[] _transUpload = [];
-#if CUO_DEVTOOLS
-    static readonly bool UploadSkipCheck = Environment.GetEnvironmentVariable("CUO_UPLOAD_SKIP_CHECK") == "1";
-    long _uploadChecks, _uploadMismatches, _uploadCheckLog;
-#endif
     public long AcquireWaitTicks;
     public bool ForcePoint;
     public SDL_FColor ClearColor = new() { r = 0.02f, g = 0.02f, b = 0.03f, a = 1 };
@@ -720,18 +715,15 @@ public sealed unsafe class Renderer : IDisposable
         int transCount = Math.Min(f.TranslucentCount, MaxTranslucent);
         uint transBytes = (uint)(transCount * sizeof(ChunkDraw));
         uint ovBytes = f.Overrides != null && OverrideSlots > 0 ? (uint)(OverrideSlots * sizeof(OverrideEntry)) : 0;
-        if (UploadSkipUnchanged)
-        {
-            _tableContent.EnsureCapacity(f.Table.Length * sizeof(ChunkDraw));
-            _dynamicContent.EnsureCapacity((f.Dynamic?.Length ?? 0) * sizeof(SpriteInstance));
-            _transContent.EnsureCapacity(MaxTranslucent * sizeof(ChunkDraw));
-            _overrideContent.EnsureCapacity(OverrideSlots * sizeof(OverrideEntry));
-            if (_transUpload.Length < MaxTranslucent) _transUpload = new ChunkDraw[MaxTranslucent];
-            for (int i = 0; i < transCount; i++) _transUpload[i] = new ChunkDraw { First = f.Translucent[i] };
-        }
+        _tableContent.EnsureCapacity(f.Table.Length * sizeof(ChunkDraw));
+        _dynamicContent.EnsureCapacity((f.Dynamic?.Length ?? 0) * sizeof(SpriteInstance));
+        _transContent.EnsureCapacity(MaxTranslucent * sizeof(ChunkDraw));
+        _overrideContent.EnsureCapacity(OverrideSlots * sizeof(OverrideEntry));
+        if (_transUpload.Length < MaxTranslucent) _transUpload = new ChunkDraw[MaxTranslucent];
+        for (int i = 0; i < transCount; i++) _transUpload[i] = new ChunkDraw { First = f.Translucent[i] };
         var tableData = MemoryMarshal.AsBytes(f.Table.AsSpan(0, f.ChunkCount));
         var dynamicData = MemoryMarshal.AsBytes(f.Dynamic.AsSpan(0, f.DynamicCount));
-        ReadOnlySpan<byte> transData = UploadSkipUnchanged ? MemoryMarshal.AsBytes(_transUpload.AsSpan(0, transCount)) : default;
+        var transData = MemoryMarshal.AsBytes(_transUpload.AsSpan(0, transCount));
         var overrideData = MemoryMarshal.AsBytes(f.Overrides.AsSpan(0, (int)ovBytes / sizeof(OverrideEntry)));
         bool uploadTable = PrepareUpload(_tableContent, tableData, _frameTableBuf, 0, tableBytes, DiagMetric.ChunkTableUploadSkips);
         bool uploadDynamic = PrepareUpload(_dynamicContent, dynamicData, InstanceBuffer, f.DynamicFirst * (uint)sizeof(SpriteInstance), dynBytes, DiagMetric.DynamicUploadSkips);
@@ -774,8 +766,8 @@ public sealed unsafe class Renderer : IDisposable
             RenderDiagnostics.Add(DiagMetric.BufferUploadCalls, 1);
         }
         // A cycled backing has unspecified contents. Partial uploads MUST preserve the existing backing; SDL orders
-        // the writes after earlier reads. The off path still cycles and invalidates every history above.
-        bool cycle = !UploadSkipUnchanged;
+        // the writes after earlier reads.
+        bool cycle = false;
         if (uploadTable)
         {
             UploadFrameTable(copy, tableOffset, 0, tableBytes, ref cycle);
@@ -1016,34 +1008,12 @@ public sealed unsafe class Renderer : IDisposable
 
     bool PrepareUpload(UploadContentCache cache, ReadOnlySpan<byte> bytes, IntPtr buffer, uint offset, uint size, DiagMetric skips)
     {
-        bool upload = cache.Prepare(bytes, UploadSkipUnchanged, buffer, offset);
+        bool upload = cache.Prepare(bytes, buffer, offset);
         if (size == 0) return false;
         if (!upload)
         {
             RenderDiagnostics.Add(skips, 1);
-#if CUO_DEVTOOLS
-            if (UploadSkipCheck)
-            {
-                _uploadChecks++;
-                if (!cache.EqualsStored(bytes))
-                {
-                    _uploadMismatches++;
-                    Console.WriteLine($"[upload-skip-check] BYTES MISMATCH category={skips} bytes={size}");
-                }
-            }
-#endif
         }
-#if CUO_DEVTOOLS
-        if (UploadSkipCheck)
-        {
-            long now = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (now - _uploadCheckLog >= System.Diagnostics.Stopwatch.Frequency * 5)
-            {
-                Console.WriteLine($"[upload-skip-check] bytes on={UploadSkipUnchanged} checked={_uploadChecks} mismatches={_uploadMismatches}");
-                _uploadCheckLog = now;
-            }
-        }
-#endif
         return upload;
     }
 
