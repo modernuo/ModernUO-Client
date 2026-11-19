@@ -39,6 +39,8 @@ namespace ClassicUO.Game.UI.Gumps
             public static unsafe Texture2D CreateTextureFromICO_Cur(Stream stream)
             {
                 byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((int) stream.Length);
+                // destroyed in finally: an exception or an early return no longer leaks it
+                SDL.SDL_Surface* surface = null;
 
                 try
                 {
@@ -48,7 +50,6 @@ namespace ClassicUO.Game.UI.Gumps
 
                     int bmp_pitch;
                     int i, pad;
-                    SDL.SDL_Surface* surface;
                     byte* bits;
                     int expand_bmp;
                     int max_col = 0;
@@ -156,9 +157,19 @@ namespace ClassicUO.Game.UI.Gumps
 
                     bi_height >>= 1;
 
+                    // the header is file data: an icon is at most 256x256, and the palette below holds 256 entries
+                    if (bi_width == 0 || bi_height == 0 || bi_width > 256 || bi_height > 256 || (bi_bit_count <= 8 && bi_clr_used > 256))
+                    {
+                        return null;
+                    }
+
                     surface = (SDL.SDL_Surface*)SDL.SDL_CreateSurface((int)bi_width, (int)bi_height,
                         SDL.SDL_GetPixelFormatForMasks(32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000));
 
+                    if (surface == null)
+                    {
+                        return null;
+                    }
 
                     if (bi_bit_count <= 8)
                     {
@@ -285,6 +296,11 @@ namespace ClassicUO.Game.UI.Gumps
 
                     surface = (SDL.SDL_Surface*)INTERNAL_convertSurfaceFormat((IntPtr)surface);
 
+                    if (surface == null)
+                    {
+                        return null;
+                    }
+
                     int len = surface->w * surface->h * 4;
                     byte* pixels = (byte*)surface->pixels;
 
@@ -299,10 +315,18 @@ namespace ClassicUO.Game.UI.Gumps
                     }
 
                     Texture2D texture = new Texture2D(Client.Game.GraphicsDevice, surface->w, surface->h);
-                    texture.SetDataPointerEXT(0, new Rectangle(0, 0, surface->w, surface->h), surface->pixels, len);
-                    ClassicUO.Renderer.TextureUploads.Changed();
 
-                    SDL.SDL_DestroySurface((IntPtr)surface);
+                    try
+                    {
+                        texture.SetDataPointerEXT(0, new Rectangle(0, 0, surface->w, surface->h), surface->pixels, len);
+                        ClassicUO.Renderer.TextureUploads.Changed();
+                    }
+                    catch
+                    {
+                        texture.Dispose();
+
+                        throw;
+                    }
 
                     reader.Release();
 
@@ -310,6 +334,11 @@ namespace ClassicUO.Game.UI.Gumps
                 }
                 finally
                 {
+                    if (surface != null)
+                    {
+                        SDL.SDL_DestroySurface((IntPtr)surface);
+                    }
+
                     System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
                 }
             }
