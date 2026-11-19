@@ -44,8 +44,10 @@ namespace ClassicUO.Loop
         private static bool _drawing;
 
         /// <summary>
-        /// Whether the loop reads the signal this Update. Sources whose due time costs a lookup (corpse frames, the due mobiles'
-        /// records) report only then; the cheap ones always report.
+        /// Whether the loop reads the signal this Update (present on change runs: <see cref="LoopTiming.TracksVisualDue"/>).
+        /// Off, <see cref="At"/> and <see cref="Now"/> record nothing, and the sources whose due time costs a walk or a lookup
+        /// (the mobile clock scan, the due mobiles' records, corpse frames, effects, the scene, drawn text) skip it, so vsync
+        /// on, an fps cap, an inactive or minimized window and the legacy loop pay nothing for it.
         /// </summary>
         public static bool Tracking;
 
@@ -78,6 +80,11 @@ namespace ClassicUO.Loop
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void At(long tick, VisualSource source)
         {
+            if (!Tracking)
+            {
+                return;
+            }
+
             if (_drawing)
             {
                 if (tick < _drawTick)
@@ -97,6 +104,11 @@ namespace ClassicUO.Loop
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Now(VisualSource source)
         {
+            if (!Tracking)
+            {
+                return;
+            }
+
             if (_drawing)
             {
                 _drawNow |= source;

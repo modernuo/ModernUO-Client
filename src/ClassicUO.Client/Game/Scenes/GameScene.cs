@@ -1191,7 +1191,11 @@ namespace ClassicUO.Game.Scenes
             _world.BoatMovingManager.Update();
             _world.Player.Pathfinder.ProcessAutoWalk();
             _world.DelayedObjectClickManager.Update();
-            NoteVisualDue();
+
+            if (VisualDue.Tracking)
+            {
+                NoteVisualDue();
+            }
 
             if (!MoveCharacterByMouseInput() && !currentProfile.DisableArrowBtn)
             {

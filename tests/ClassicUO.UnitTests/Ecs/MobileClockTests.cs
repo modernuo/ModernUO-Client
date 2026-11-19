@@ -82,6 +82,27 @@ namespace ClassicUO.UnitTests.Ecs
             due.Should().BeEquivalentTo(new uint[] { 0x13, 0x14 }, "only the flags: 0x12's idle timer (100) is not before 100");
         }
 
+        // The next visual change is read from the AnimationTimer stream only while the loop tracks it (present on change);
+        // otherwise the scan costs what it did before evloop-4
+        [Fact]
+        public void The_Next_Visual_Tick_Is_Taken_Only_When_Tracked()
+        {
+            var mirror = new WorldMirror();
+            var system = new MobileClockSystem(mirror.Store);
+            EcsEntity e = mirror.UpsertMobile(0x30, 0x190, 0, 1, 1, 0, 0, 0, false);
+            e.AddComponent(Clock(1080, 40000));
+            e.AddComponent(new AnimationTimer { ActionFrames = 5, ExecuteAnimation = true });
+
+            var due = new List<uint>();
+            system.CollectDue(1000, due);
+            due.Should().BeEmpty();
+            system.NextVisualTick.Should().Be(1080);
+
+            system.CollectDue(1000, due, trackVisual: false);
+            due.Should().BeEmpty();
+            system.NextVisualTick.Should().Be(MobileClockRules.NoVisualChange);
+        }
+
         [Fact]
         public void Entity_Removal_Leaves_The_Scan_Consistent()
         {

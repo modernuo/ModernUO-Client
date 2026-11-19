@@ -650,7 +650,7 @@ namespace ClassicUO
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
             VisualDue.BeginUpdate();
-            VisualDue.Tracking = true;
+            VisualDue.Tracking = LoopTiming.TracksVisualDue(_tickMode, _displayCapActive);
             Time.Frame++;
             _totalUpdates++;
             // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)

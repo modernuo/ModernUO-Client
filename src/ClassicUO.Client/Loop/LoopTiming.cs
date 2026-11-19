@@ -109,6 +109,13 @@ namespace ClassicUO.Loop
         public const double AnimDueSafetyNetMs = 1000;
 
         /// <summary>
+        /// Whether this Update collects the next visual change (<see cref="VisualDue.Tracking"/>): only where present on change
+        /// reads it, the event loop with the display-rate cap (fps 0, vsync off, window active). The cap state is the previous
+        /// Update's (it is decided after the walks that report); a mode change catches up one Update later.
+        /// </summary>
+        public static bool TracksVisualDue(LoopMode mode, bool displayCapActive) => mode == LoopMode.Event && displayCapActive;
+
+        /// <summary>
         /// Present on change: whether the visual change the previous Update scheduled has come due by this Update's game
         /// time (sources advance once <c>Time.Ticks</c> is past their due tick, as <see cref="MsUntilTick"/> counts).
         /// <see cref="long.MaxValue"/> = nothing was scheduled.

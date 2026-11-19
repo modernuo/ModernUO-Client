@@ -30,8 +30,13 @@ namespace ClassicUO.Ecs
         /// </summary>
         public long NextVisualTick { get; private set; }
 
-        /// <summary>Appends the serials of the mobiles due at <paramref name="now"/> to <paramref name="due"/>.</summary>
-        public void CollectDue(long now, List<uint> due)
+        /// <summary>
+        /// Appends the serials of the mobiles due at <paramref name="now"/> to <paramref name="due"/>. With
+        /// <paramref name="trackVisual"/> false (the loop does not read the next visual change: vsync on, an fps cap, an
+        /// inactive or minimized window, the legacy loop) the AnimationTimer stream is not read and
+        /// <see cref="NextVisualTick"/> is <see cref="MobileClockRules.NoVisualChange"/>.
+        /// </summary>
+        public void CollectDue(long now, List<uint> due, bool trackVisual = true)
         {
             int scanned = 0;
             long visual = MobileClockRules.NoVisualChange;
@@ -47,7 +52,7 @@ namespace ClassicUO.Ecs
 
                 ReadOnlySpan<MobileClock> clocks = arch.Components<MobileClock>();
                 ReadOnlySpan<Serial> serials = arch.Components<Serial>();
-                ReadOnlySpan<AnimationTimer> timers = arch.ComponentTypes.Has<AnimationTimer>() ? arch.Components<AnimationTimer>() : default;
+                ReadOnlySpan<AnimationTimer> timers = trackVisual && arch.ComponentTypes.Has<AnimationTimer>() ? arch.Components<AnimationTimer>() : default;
                 scanned += n;
 
                 for (int i = 0; i < n; i++)

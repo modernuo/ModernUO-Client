@@ -592,7 +592,7 @@ namespace ClassicUO.Game
             _mobileClockStarted = true;
             _dueMobiles.Clear();
             long t0 = WorldEcs.MobileUpdateStats ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-            Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles);
+            Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles, ClassicUO.Loop.VisualDue.Tracking);
 
             if (t0 != 0)
             {
@@ -639,7 +639,10 @@ namespace ClassicUO.Game
                 }
             }
 
-            NoteVisualTick(Ecs.Clock.NextVisualTick, ClassicUO.Loop.VisualSource.MobileAnim);
+            if (ClassicUO.Loop.VisualDue.Tracking)
+            {
+                NoteVisualTick(Ecs.Clock.NextVisualTick, ClassicUO.Loop.VisualSource.MobileAnim);
+            }
 
             if (AnimFrameCount.UseTables)
             {

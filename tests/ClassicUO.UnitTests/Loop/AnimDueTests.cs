@@ -6,6 +6,7 @@ using Xunit;
 namespace ClassicUO.UnitTests.Loop
 {
     // evloop-4: present on change draws idle frames at the next visual change (no fixed idle redraw period).
+    [Collection("ChunkStaticTileDataCollection")] // VisualDue is process-wide (EffectVisualDueTests)
     public class AnimDueTests
     {
         private const double Interval = 1000.0 / 144;
@@ -61,9 +62,48 @@ namespace ClassicUO.UnitTests.Loop
             LoopTiming.MsUntilTick(true, 1000, 990, 0).Should().Be(11);
         }
 
+        // Only present on change reads the signal: vsync on, an fps cap and an inactive or minimized window leave the display-rate
+        // cap off, and the legacy loop never presents on change
+        [Theory]
+        [InlineData((int)LoopMode.Event, true, true)]
+        [InlineData((int)LoopMode.Event, false, false)]
+        [InlineData((int)LoopMode.Legacy, true, false)]
+        [InlineData((int)LoopMode.Legacy, false, false)]
+        public void The_Visual_Due_Is_Tracked_Only_While_Present_On_Change_Runs(int mode, bool capActive, bool tracked)
+        {
+            LoopTiming.TracksVisualDue((LoopMode)mode, capActive).Should().Be(tracked);
+        }
+
+        [Fact]
+        public void Visual_Due_Records_Nothing_While_Not_Tracking()
+        {
+            bool saved = VisualDue.Tracking;
+
+            try
+            {
+                VisualDue.Tracking = false;
+                VisualDue.Reset();
+                VisualDue.At(300, VisualSource.WorldText);
+                VisualDue.Now(VisualSource.Weather);
+                VisualDue.BeginDraw();
+                VisualDue.At(200, VisualSource.Tooltip);
+                VisualDue.Now(VisualSource.Cursor);
+                VisualDue.EndDraw();
+                VisualDue.NextTick.Should().Be(long.MaxValue);
+                VisualDue.Continuous.Should().Be(VisualSource.None);
+            }
+            finally
+            {
+                VisualDue.Tracking = saved;
+                VisualDue.Reset();
+            }
+        }
+
         [Fact]
         public void Visual_Due_Keeps_The_Earliest_Tick_Per_Set_And_The_Union()
         {
+            bool saved = VisualDue.Tracking;
+            VisualDue.Tracking = true;
             VisualDue.Reset();
             VisualDue.BeginUpdate();
             VisualDue.At(500, VisualSource.MobileAnim);
@@ -92,6 +132,7 @@ namespace ClassicUO.UnitTests.Loop
             VisualDue.Continuous.Should().Be(VisualSource.Effects);
             VisualDue.Reset();
             VisualDue.NextTick.Should().Be(long.MaxValue);
+            VisualDue.Tracking = saved;
         }
 
         private static AnimationTimer Timer(byte frames, bool execute = true, bool fromServer = false)

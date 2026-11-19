@@ -118,6 +118,7 @@ namespace ClassicUO.Game.Managers
 
             int mouseX = Mouse.Position.X;
             int mouseY = Mouse.Position.Y;
+            bool trackVisual = Loop.VisualDue.Tracking;
 
             for (TextObject o = DrawPointer; o != null; o = o.DLeft)
             {
@@ -126,7 +127,10 @@ namespace ClassicUO.Game.Managers
                     continue;
                 }
 
-                NoteVisualDue(o);
+                if (trackVisual)
+                {
+                    NoteVisualDue(o);
+                }
 
                 ushort hue = 0;
 
