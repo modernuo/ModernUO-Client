@@ -3,7 +3,8 @@
 // vsync_present_on_change is a scheduling change: the old path's decision is "draw every tick", so there is no value to compare.
 // CUO_VSYNC_PRESENT_CHECK=1 counts what the switch changes instead (draws the old path would have made, presents, waits, time
 // blocked in Present, missed vblanks) and logs a summary every 5 s. invalid counts a present without a draw or a draw the
-// schedule did not allow while engaged; it is the mismatch count.
+// schedule did not allow while engaged; it is the mismatch count. vsync_mailbox engages the same schedule under vsync (mailbox=True
+// in the summary; the old path, normal vsync, also drew every tick): there present_block_ms should stay near zero.
 using System;
 using System.Diagnostics;
 using ClassicUO.Utility.Logging;
@@ -16,7 +17,7 @@ namespace ClassicUO.Loop
 
         private static long _start, _updates, _draws, _oldDraws, _presents, _waits, _blockSum, _blockMax, _blocked, _missed;
         private static long _last, _maxGap, _period, _invalid;
-        private static bool _switch, _vsync, _engaged, _drawPending, _drawContinuous, _lastContinuous;
+        private static bool _switch, _vsync, _mailbox, _engaged, _drawPending, _drawContinuous, _lastContinuous;
         private static double _hz;
 
         internal static long Mismatches => _invalid;
@@ -28,15 +29,15 @@ namespace ClassicUO.Loop
         public static bool MissedVblank(long gap, long period, bool previousContinuous)
             => previousContinuous && period > 0 && gap * 2 > period * 3;
 
-        public static void Update(long now, bool on, bool vsync, bool engaged, double hz, long period)
+        public static void Update(long now, bool on, bool vsync, bool mailbox, bool engaged, double hz, long period)
         {
-            if (_start == 0 || on != _switch || vsync != _vsync || engaged != _engaged || hz != _hz)
+            if (_start == 0 || on != _switch || vsync != _vsync || mailbox != _mailbox || engaged != _engaged || hz != _hz)
             {
                 _start = now;
                 Reset();
                 _last = 0;
                 _drawPending = false;
-                _switch = on; _vsync = vsync; _engaged = engaged; _hz = hz; _period = period;
+                _switch = on; _vsync = vsync; _mailbox = mailbox; _engaged = engaged; _hz = hz; _period = period;
             }
 
             _updates++;
@@ -49,7 +50,7 @@ namespace ClassicUO.Loop
             double s = (now - _start) / (double)Stopwatch.Frequency;
             double f = 1000.0 / Stopwatch.Frequency;
             Log.Info(FormattableString.Invariant(
-                $"[vsync-present-check] switch={on} vsync={vsync} engaged={engaged} refresh_hz={hz:F3} sec={s:F3} updates/s={_updates / s:F1} draws/s={_draws / s:F1} presents/s={_presents / s:F1} old_draws={_oldDraws} avoided={_oldDraws - _draws} waits/s={_waits / s:F1} present_block_ms(mean/max)={(_presents > 0 ? _blockSum * f / _presents : 0):F3}/{_blockMax * f:F3} blocked={_blocked} missed_vblanks={_missed} max_gap_ms={_maxGap * f:F3} period_ms={period * f:F3} invalid={_invalid} mismatches={_invalid}"));
+                $"[vsync-present-check] switch={on} vsync={vsync} mailbox={mailbox} engaged={engaged} refresh_hz={hz:F3} sec={s:F3} updates/s={_updates / s:F1} draws/s={_draws / s:F1} presents/s={_presents / s:F1} old_draws={_oldDraws} avoided={_oldDraws - _draws} waits/s={_waits / s:F1} present_block_ms(mean/max)={(_presents > 0 ? _blockSum * f / _presents : 0):F3}/{_blockMax * f:F3} blocked={_blocked} missed_vblanks={_missed} max_gap_ms={_maxGap * f:F3} period_ms={period * f:F3} invalid={_invalid} mismatches={_invalid}"));
             _start = now;
             Reset();
         }

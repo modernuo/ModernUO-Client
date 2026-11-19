@@ -26,8 +26,8 @@ public class VsyncPresentCheckTests
     [InlineData(true)]
     public void DrawThenPresentIsNoMismatch(bool switchOn)
     {
-        VsyncPresentCheck.Update(1, !switchOn, true, false, 60, 10);
-        VsyncPresentCheck.Update(2, switchOn, true, switchOn, 60, 10);
+        VsyncPresentCheck.Update(1, !switchOn, true, false, false, 60, 10);
+        VsyncPresentCheck.Update(2, switchOn, true, false, switchOn, 60, 10);
         VsyncPresentCheck.Decision(true, true, true);
         VsyncPresentCheck.Draw(false);
         VsyncPresentCheck.Present(3, 4);
@@ -40,10 +40,25 @@ public class VsyncPresentCheckTests
     [Fact]
     public void DrawNotDueWhileEngagedIsAMismatch()
     {
-        VsyncPresentCheck.Update(1, false, true, false, 60, 10);
-        VsyncPresentCheck.Update(2, true, true, true, 60, 10);
+        VsyncPresentCheck.Update(1, false, true, false, false, 60, 10);
+        VsyncPresentCheck.Update(2, true, true, false, true, 60, 10);
         VsyncPresentCheck.Decision(true, true, false);
         Assert.Equal(1, VsyncPresentCheck.Mismatches);
+    }
+
+    // vsync_mailbox engages the schedule with vsync_present_on_change off; a mailbox change resets the window like a switch change.
+    [Fact]
+    public void MailboxEngagedWindowCountsLikeTheSwitch()
+    {
+        VsyncPresentCheck.Update(1, false, true, false, true, 60, 10);
+        VsyncPresentCheck.Decision(true, true, false);
+        Assert.Equal(1, VsyncPresentCheck.Mismatches);
+        VsyncPresentCheck.Update(2, false, true, true, true, 60, 10);
+        Assert.Equal(0, VsyncPresentCheck.Mismatches);
+        VsyncPresentCheck.Decision(true, true, true);
+        VsyncPresentCheck.Draw(false);
+        VsyncPresentCheck.Present(3, 4);
+        Assert.Equal(0, VsyncPresentCheck.Mismatches);
     }
 }
 #endif

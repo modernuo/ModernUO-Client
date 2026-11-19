@@ -34,6 +34,7 @@ namespace ClassicUO
         private bool _ignoreNextTextInput;
         private readonly float[] _intervalFixedUpdate = new float[2];
         private double _totalElapsed, _currentFpsTime;
+        private long _drawStartTs;
         private uint _totalFrames;
         private UltimaBatcher2D _uoSpriteBatch;
         private RenderTargets _renderTargets = new();
@@ -58,6 +59,8 @@ namespace ClassicUO
 
             GraphicManager.PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8;
             GraphicManager.SynchronizeWithVerticalRetrace = Settings.GlobalSettings.VSync;
+            // before Run creates the device: FNA3D reads it there
+            ApplyMailboxHint();
 
             Window.ClientSizeChanged += WindowOnClientSizeChanged;
             Window.AllowUserResizing = true;
@@ -334,7 +337,11 @@ namespace ClassicUO
             SetRefreshRate(Settings.GlobalSettings.FPS);
 
             _uoSpriteBatch = new UltimaBatcher2D(GraphicsDevice);
-            GraphicsDevice.DeviceReset += (_, _) => _uiCache.Invalidate();
+            GraphicsDevice.DeviceReset += (_, _) =>
+            {
+                _uiCache.Invalidate();
+                RefreshPresentMode();
+            };
 
             _filter = HandleSdlEvent;
             SDL_SetEventFilter(_filter, IntPtr.Zero);
@@ -351,6 +358,8 @@ namespace ClassicUO
             base.LoadContent();
 
             _gpuDevice = GpuInterop.GetDevice(GraphicsDevice);
+            RefreshPresentMode();
+            Log.Info($"present mode {_presentMode} (vsync {GraphicManager.SynchronizeWithVerticalRetrace}, vsync_mailbox {Settings.GlobalSettings.VsyncMailbox})");
             Log.Info($"SDL3 {GpuInterop.GetSdlRevision()}");
             Log.Trace(_gpuDevice != IntPtr.Zero
                 ? $"SDL_GPU device 0x{_gpuDevice:X}: driver={GpuInterop.GetDriverName(_gpuDevice)} shaders={GpuInterop.GetShaderFormats(_gpuDevice)}"
@@ -846,6 +855,7 @@ namespace ClassicUO
             {
                 CUOEnviroment.CurrentRefreshRate = (uint)(_totalFrames * 1000.0 / _currentFpsTime);
                 CUOEnviroment.CurrentLoopRate = (uint)(_totalUpdates * 1000.0 / _currentFpsTime);
+                CUOEnviroment.ShownRefreshRate = FpsDisplay.Shown(CUOEnviroment.CurrentRefreshRate, _displayCapActive, _displayHz, Settings.GlobalSettings.FPS);
 
                 _totalFrames = 0;
                 _totalUpdates = 0;
@@ -863,8 +873,8 @@ namespace ClassicUO
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
             // present on change (evloop-2, baked in after quiet-1115) runs wherever the event loop and the display-rate cap both
-            // run; an fps cap, an inactive or minimized window, the legacy loop and vsync on (unless vsync_present_on_change)
-            // keep their own cadence below
+            // run; an fps cap, an inactive or minimized window, the legacy loop and vsync on (unless vsync_present_on_change or
+            // mailbox mode) keep their own cadence below
             _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive;
 
             if (_presentOnChange)
@@ -945,7 +955,7 @@ namespace ClassicUO
             {
                 bool vsync = GraphicManager.SynchronizeWithVerticalRetrace;
                 bool engaged = _presentOnChange && vsync;
-                VsyncPresentCheck.Update(Stopwatch.GetTimestamp(), Settings.GlobalSettings.VsyncPresentOnChange, vsync, engaged, _displayHz, _displayPeriod);
+                VsyncPresentCheck.Update(Stopwatch.GetTimestamp(), Settings.GlobalSettings.VsyncPresentOnChange, vsync, _presentMode == PresentModeKind.Mailbox, engaged, _displayHz, _displayPeriod);
                 // engaged, the old vsync path drew every tick (it is engaged only when not minimized)
                 VsyncPresentCheck.Decision(engaged || !_suppressedDraw, !_suppressedDraw, displayDue);
             }
@@ -1084,6 +1094,7 @@ namespace ClassicUO
 
         protected override void Draw(GameTime gameTime)
         {
+            _drawStartTs = Stopwatch.GetTimestamp();
             if (LoopStats.On) LoopStats.NoteDraw();
             BeginPresentedChange();
             VisualDue.BeginDraw();
@@ -1210,6 +1221,8 @@ namespace ClassicUO
 
         protected override void EndDraw()
         {
+            // the frame build time (Draw to Present, without the present) for the debug overlay's possible frames/s
+            CUOEnviroment.LastFrameBuildMs = (Stopwatch.GetTimestamp() - _drawStartTs) * 1000.0 / Stopwatch.Frequency;
 #if CUO_DEVTOOLS
             long presentStart = VsyncPresentCheck.On ? Stopwatch.GetTimestamp() : 0;
 #endif

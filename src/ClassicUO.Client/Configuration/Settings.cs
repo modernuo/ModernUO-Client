@@ -76,7 +76,8 @@ namespace ClassicUO.Configuration
         // 0 = uncapped
         [JsonPropertyName("fps")] public int FPS { get; set; } = 0;
 
-        [JsonPropertyName("vsync")] public bool VSync { get; set; }
+        // On for a new settings.json (owner, 2026-11-19); a saved "vsync": false is kept.
+        [JsonPropertyName("vsync")] public bool VSync { get; set; } = true;
 
         [JsonPropertyName("screen_scale")] public float ScreenScale { get; set; } = 1f;
 
@@ -156,6 +157,11 @@ namespace ClassicUO.Configuration
         // for vsync off: unchanged frames skip Draw and Present and the loop waits for the next change instead of blocking in
         // Present every vblank. Off: vsync draws every tick. CUO_VSYNC_PRESENT_CHECK logs the presents it skips.
         [JsonPropertyName("vsync_present_on_change")] public bool VsyncPresentOnChange { get; set; }
+
+        // vsync-mailbox: vsync on presents in mailbox mode where FNA3D's SDL_GPU driver and the window support it (no tearing,
+        // no queued frames; Present does not block), else in normal vsync. In mailbox mode the display-rate schedule and present
+        // on change run as for vsync off. Default off until timed on a quiet machine. The Options menu shows the mode in force.
+        [JsonPropertyName("vsync_mailbox")] public bool VsyncMailbox { get; set; }
 
         // The event loop (GameController.EventLoopWait; Windows, and Linux with event_loop_linux) waits between frames for the socket, window messages, a wake
         // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (plugin ticks,

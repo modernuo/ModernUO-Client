@@ -100,6 +100,7 @@ namespace ClassicUO.Game.UI.Gumps
                          _chatAdditionalButtonsCheckbox,
                          _chatShiftEnterCheckbox,
                          _enableCaveBorder;
+        private Label _presentModeLabel;
         private Checkbox _holdShiftForContext, _holdShiftToSplitStack, _reduceFPSWhenInactive, _uncapFPS, _vsync, _sallosEasyGrab, _partyInviteGump, _objectsFading, _textFading, _holdAltToMoveGumps;
         private Combobox _hpComboBox, _healtbarType, _fieldsType, _hpComboBoxShowWhen;
 
@@ -1611,6 +1612,9 @@ namespace ClassicUO.Game.UI.Gumps
                 startX,
                 startY
             );
+
+            // vsync_mailbox: "VSync (True Triple Buffering)" while mailbox is in force, plain "VSync" otherwise
+            _presentModeLabel = AddLabel(rightArea, PresentModeText(), startX + _vsync.Width + 4, startY);
 
             startY += _vsync.Height + 2;
 
@@ -3905,6 +3909,11 @@ namespace ClassicUO.Game.UI.Gumps
                 Client.Game.SetVSync(_vsync.IsChecked);
             }
 
+            if (_presentModeLabel != null)
+            {
+                _presentModeLabel.Text = PresentModeText();
+            }
+
             string renderer = RendererSelection.SettingValue((WorldRendererMode)_worldRenderer.SelectedIndex);
 
             if (RendererSelection.ParseMode(Settings.GlobalSettings.WorldRendererSetting, null, out _, out _) != (WorldRendererMode)_worldRenderer.SelectedIndex)
@@ -4560,6 +4569,8 @@ namespace ClassicUO.Game.UI.Gumps
 
             return elem;
         }
+
+        private static string PresentModeText() => ClassicUO.Loop.PresentModeRule.OptionsSuffix(Client.Game.PresentMode);
 
         private Label AddLabel(ScrollArea area, string text, int x, int y)
         {

@@ -25,13 +25,51 @@ namespace ClassicUO
         internal ulong PresentedFrameCount { get; private set; }
 #endif
 
+        // ---- vsync_mailbox ----
+        private PresentModeKind _presentMode;
+        internal PresentModeKind PresentMode => _presentMode;
+
+        /// <summary>Sets the hint FNA3D reads at device creation and at every backbuffer reset from vsync_mailbox.</summary>
+        internal static void ApplyMailboxHint() => SDL_SetHint(PresentModeRule.MailboxHint, Settings.GlobalSettings.VsyncMailbox ? "1" : "0");
+
+        /// <summary>Recomputes the present mode after the device is created or reset, on the inputs FNA3D used.</summary>
+        private void RefreshPresentMode()
+        {
+            var interval = GraphicsDevice.PresentationParameters.PresentationInterval;
+            bool vsync = interval == Microsoft.Xna.Framework.Graphics.PresentInterval.One || interval == Microsoft.Xna.Framework.Graphics.PresentInterval.Default;
+            bool sdlGpu = _gpuDevice != IntPtr.Zero;
+            bool hint = sdlGpu && vsync && SDL_GetHintBoolean(PresentModeRule.MailboxHint, false);
+            _presentMode = PresentModeRule.Choose(vsync, sdlGpu, hint,
+                hint && SDL_WindowSupportsGPUPresentMode(_gpuDevice, Window.Handle, SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_MAILBOX),
+                sdlGpu && !vsync && SDL_WindowSupportsGPUPresentMode(_gpuDevice, Window.Handle, SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_IMMEDIATE));
+        }
+
+        /// <summary>vsync_mailbox at run time (the session driver): a backbuffer reset makes FNA3D read the hint again.</summary>
+        internal void SetVsyncMailbox(bool value)
+        {
+            if (Settings.GlobalSettings.VsyncMailbox == value)
+            {
+                return;
+            }
+
+            Settings.GlobalSettings.VsyncMailbox = value;
+            ApplyMailboxHint();
+
+            if (GraphicManager.SynchronizeWithVerticalRetrace)
+            {
+                GraphicsDevice.Reset();
+            }
+        }
+
         private bool DisplayDrawDue(bool inactive, bool minimized)
         {
             bool observe = false;
 #if CUO_DEVTOOLS
             observe = PresentCapCheck.On;
 #endif
-            if (!Settings.GlobalSettings.PresentAtDisplayRate && !observe)
+            bool mailbox = _presentMode == PresentModeKind.Mailbox;
+
+            if (!Settings.GlobalSettings.PresentAtDisplayRate && !mailbox && !observe)
             {
                 _displayCapActive = false;
                 _displaySchedule = default;
@@ -56,10 +94,11 @@ namespace ClassicUO
             }
 
             // vsync_present_on_change needs the event loop: the legacy loop does not wait on skipped frames, so with vsync it
-            // would spin instead of blocking in Present
+            // would spin instead of blocking in Present. Mailbox runs the schedule on both loops, as vsync off does: its Present
+            // never blocked, so the legacy loop spins on skipped frames either way (2ff7d0fb2)
             _displayCapActive = !minimized && _displayPeriod > 0 && DisplayRateSchedule.Enabled(
                 Settings.GlobalSettings.PresentAtDisplayRate, Settings.GlobalSettings.FPS,
-                GraphicManager.SynchronizeWithVerticalRetrace, inactive,
+                GraphicManager.SynchronizeWithVerticalRetrace, mailbox, inactive,
                 Settings.GlobalSettings.VsyncPresentOnChange && _tickMode == LoopMode.Event);
             bool due = _displaySchedule.Due(now, _displayCapActive ? _displayPeriod : 0);
 #if CUO_DEVTOOLS
