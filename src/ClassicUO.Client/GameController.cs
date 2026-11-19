@@ -124,7 +124,7 @@ namespace ClassicUO
 
             if (_waiter != null && _waiter.Ready && _lateWake.Sample(Environment.TickCount64))
             {
-                Log.Warn($"event_loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
+                Log.Warn($"event loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
             }
 
             var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
@@ -163,7 +163,7 @@ namespace ClassicUO
         {
             if (_presentOnChange)
             {
-                // present_on_change: a reply that arrived during Update, Draw or Present is read now, not after the wait
+                // present-on-change: a reply that arrived during Update, Draw or Present is read now, not after the wait
                 EventDrain();
                 RefreshChange();
             }
@@ -200,7 +200,7 @@ namespace ClassicUO
             }
             else if (reason != WakeReason.Wake)
             {
-                // present_on_change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
+                // present-on-change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
                 // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
                 // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
                 _changePending = true;
@@ -851,7 +851,7 @@ namespace ClassicUO
 
             base.Update(gameTime);
 
-            // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
+            // event loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
             if (_tickMode == LoopMode.Event)
             {
                 int flushGeneration = NetClient.Socket.ConnectionGeneration;
@@ -859,7 +859,7 @@ namespace ClassicUO
 
                 if (NetClient.Socket.ConnectionGeneration != flushGeneration)
                 {
-                    // present_on_change: a failed send ended the connection
+                    // present-on-change: a failed send ended the connection
                     _changePending = true;
                 }
             }
@@ -877,7 +877,7 @@ namespace ClassicUO
 
         private bool _pingAfterPresent;
 
-        // present_on_change: the ping goes out from here, after the draw decision, so one due just before a present is held
+        // present-on-change: the ping goes out from here, after the draw decision, so one due just before a present is held
         // until right after it (LoopTiming.HoldPingForPresent). Off: GameScene.Update sends it, as before.
         private void ServicePing(bool drawsNow)
         {
@@ -1193,7 +1193,7 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
-            // present_on_change: any window, input or device event may change the screen (not the poll sentinel or user events)
+            // present-on-change: any window, input or device event may change the screen (not the poll sentinel or user events)
             if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
             {
                 _changePending = true;

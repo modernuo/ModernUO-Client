@@ -501,7 +501,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (Graphic == CORPSES_GUMP)
             {
-                // present_on_change_anim_due: the corpse gump's eye blinks
+                // visual-due tracking: the corpse gump's eye blinks
                 ClassicUO.Loop.VisualDue.At(_corpseEyeTicks, ClassicUO.Loop.VisualSource.Gump);
             }
         }

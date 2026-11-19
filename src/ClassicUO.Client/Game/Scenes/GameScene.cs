@@ -48,7 +48,7 @@ namespace ClassicUO.Game.Scenes
         private const float MAX_LAYER_DEPTH = 0x8000;
         private uint _time_cleanup = Time.Ticks + 5000;
         private bool _alphaChanged;
-        // present_on_change_anim_due: the last list fill walked an animated static or item (tiledata Animation flag); kept
+        // visual-due tracking: the last list fill walked an animated static or item (tiledata Animation flag); kept
         // until the next fill, so a frame that reuses the list keeps it
         private bool _animatedArtInView;
         private long _alphaTimer;
@@ -69,7 +69,7 @@ namespace ClassicUO.Game.Scenes
         internal long PingDueTick => _timePing;
 
         /// <summary>
-        /// present_on_change: GameController sends the ping after its draw decision (ServicePing), so it can hold it until
+        /// present-on-change: GameController sends the ping after its draw decision (ServicePing), so it can hold it until
         /// after a Present that is about to happen; the scene then does not send it from Update.
         /// </summary>
         internal bool LoopSendsPing;
@@ -1107,7 +1107,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        // present_on_change_anim_due (evloop-4): the scene's own visual changes that no packet or input causes. The mobiles,
+        // visual-due tracking (evloop-4): the scene's own visual changes that no packet or input causes. The mobiles,
         // corpses and world text report from their own walks (World.Update, TextRenderer.Draw).
         private void NoteVisualDue()
         {

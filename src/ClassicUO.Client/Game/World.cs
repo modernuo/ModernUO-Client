@@ -680,7 +680,7 @@ namespace ClassicUO.Game
             }
         }
 
-        // present_on_change_anim_due (evloop-4): a due mobile's next visual change after its update this frame
+        // visual-due tracking (evloop-4): a due mobile's next visual change after its update this frame
         private static void NoteMobileVisual(Mobile mob)
         {
             if (!mob.IsDestroyed && mob.TryRecord(out Friflo.Engine.ECS.Entity e))

@@ -379,7 +379,7 @@ namespace ClassicUO.Game.Managers
         {
             if (_lastMacro != null)
             {
-                // present_on_change_anim_due: a running macro acts on its own (delays, waits); its next step time is not tracked
+                // visual-due tracking: a running macro acts on its own (delays, waits); its next step time is not tracked
                 ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Other);
             }
 

@@ -96,7 +96,7 @@ namespace ClassicUO.Game.Managers
 
             if (_damages.Count != 0)
             {
-                // present_on_change_anim_due: damage numbers float up every 25 ms until they expire
+                // visual-due tracking: damage numbers float up every 25 ms until they expire
                 ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.WorldText);
             }
 

@@ -29,7 +29,7 @@ abstract class SocketWrapper : IDisposable
     public virtual int Available => 0;
 
     /// <summary>
-    /// event_loop (Windows): signal <paramref name="evt"/> when the connected socket becomes readable or closes
+    /// event loop (Windows): signal <paramref name="evt"/> when the connected socket becomes readable or closes
     /// (WSAEventSelect). False when not connected or not supported; the caller retries on a later frame.
     /// </summary>
     public virtual bool TryEventSelect(IntPtr evt) => false;

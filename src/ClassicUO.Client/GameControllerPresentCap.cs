@@ -66,7 +66,7 @@ namespace ClassicUO
             return due;
         }
 
-        // ---- present_on_change (evloop-2) ----
+        // ---- present-on-change (evloop-2) ----
         private bool _presentOnChange; // this tick: event loop and display-rate cap active
         private bool _changePending, _continuous;
         private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen, _partialReadTs;
@@ -195,7 +195,7 @@ namespace ClassicUO
             }
         }
 
-        // present_on_change: a non-blocking drain and dispatch outside Update, right after Present and before the wait (never
+        // present-on-change: a non-blocking drain and dispatch outside Update, right after Present and before the wait (never
         // between Draw and Present: a handler can change the scene or reset the device there), with the base caps; the socket
         // event is re-armed first so data left or arriving after it wakes the next wait. Sends are flushed after it.
         private void EventDrain()

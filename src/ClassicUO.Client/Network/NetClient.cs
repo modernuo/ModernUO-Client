@@ -175,13 +175,13 @@ namespace ClassicUO.Network
 
         private Connection _connection;
 
-        /// <summary>event_loop: wakes the main loop's wait (null with the legacy loop).</summary>
+        /// <summary>event loop: wakes the main loop's wait (null with the legacy loop).</summary>
         internal static Action SendQueuedWake;
 
         /// <summary>Bumped whenever a new socket is attached (the event loop binds each one to its wait once).</summary>
         internal int TransportVersion { get; private set; }
 
-        /// <summary>event_loop (Windows): the current socket signals <paramref name="evt"/> when readable or closed.</summary>
+        /// <summary>event loop (Windows): the current socket signals <paramref name="evt"/> when readable or closed.</summary>
         internal bool TryEventSelect(IntPtr evt) => _socket != null && _socket.TryEventSelect(evt);
 
         /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
@@ -666,7 +666,7 @@ namespace ClassicUO.Network
                 }
             }
 
-            // event_loop: sends after the end-of-Update flush (including Draw hooks on the main thread) must end the next
+            // event loop: sends after the end-of-Update flush (including Draw hooks on the main thread) must end the next
             // wait too. The auto-reset wake is sticky. Read once: OnExiting may clear it concurrently.
             var wake = Volatile.Read(ref SendQueuedWake);
 

@@ -303,7 +303,7 @@ namespace ClassicUO.Game.Scenes
         // set by FillGameObjectList while the world settle gate holds: fades complete at once
         private static bool _snapAlphas;
         private static int _alphaStepSize = 25;
-        // present_on_change_anim_due: the last fade step moved an alpha, so the next step (at _alphaTimer) is a visual change
+        // visual-due tracking: the last fade step moved an alpha, so the next step (at _alphaTimer) is a visual change
         private static bool _alphaMoved;
 
         internal static int FadeSteps(long now, ref long next, bool displayPaced)
@@ -1139,7 +1139,7 @@ namespace ClassicUO.Game.Scenes
                                 continue;
                             }
 
-                            // present_on_change_anim_due: an animated static in the walk keeps the static animation clock due
+                            // visual-due tracking: an animated static in the walk keeps the static animation clock due
                             _animatedArtInView |= itemData.IsAnimated;
 
                             if (!IsFoliageVisibleAtSeason(ref itemData, _world.Season))

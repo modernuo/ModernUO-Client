@@ -10,7 +10,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Loop
 {
-    // evloop-5: effects report their next visual change into VisualDue (present_on_change_anim_due) instead of counting as
+    // evloop-5: effects report their next visual change into VisualDue (visual-due tracking) instead of counting as
     // motion while any is alive. Every effect's drawn state (frame, position, offset, life) may change only in an update that
     // the previous update reported as due (Time.Ticks past the earliest due tick) or as changing every frame.
     [Collection("ChunkStaticTileDataCollection")] // Time.Ticks and VisualDue are process-wide

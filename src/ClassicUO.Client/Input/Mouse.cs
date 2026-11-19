@@ -120,7 +120,7 @@ namespace ClassicUO.Input
             {
                 if (Position != Override.Value)
                 {
-                    // present_on_change_anim_due: a scripted move (DevBench, Input.Mouse.Override) has no input wake
+                    // visual-due tracking: a scripted move (DevBench, Input.Mouse.Override) has no input wake
                     ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Cursor);
                 }
 

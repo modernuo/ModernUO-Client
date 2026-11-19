@@ -12,7 +12,7 @@ namespace ClassicUO.Loop
         /// backoff): skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.
         /// </summary>
         Legacy,
-        /// <summary>event_loop: one wait for the socket, window messages, a wake and the next deadline.</summary>
+        /// <summary>event loop: one wait for the socket, window messages, a wake and the next deadline.</summary>
         Event
     }
 
@@ -186,7 +186,7 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
-        /// present_on_change: the ping's game-time deadline is a timer of its own. Without it the Update that crosses the
+        /// present-on-change: the ping's game-time deadline is a timer of its own. Without it the Update that crosses the
         /// deadline is the one after the longest wait, i.e. the one that draws at the next display interval, so the reply
         /// arrived during that Draw and was read after Present (busy Legacy ping 2.6 ms against 0.4 ms with the grid,
         /// bench-000801/000805). Waking at the deadline sends the ping from an Update that does not draw; the reply then ends
@@ -203,7 +203,7 @@ namespace ClassicUO.Loop
         public const double PingHoldMaxMs = 50;
 
         /// <summary>
-        /// present_on_change: whether a due ping is held until right after the next Present instead of sent now. The ping timer
+        /// present-on-change: whether a due ping is held until right after the next Present instead of sent now. The ping timer
         /// and the present grid drift slowly against each other, so a ping sent just before a draw had its reply wait out the
         /// Draw and Present on the single-threaded loop (~40% of pings, in streaks, bench-000843); the spin loop never did,
         /// since it sends from the Update right after a present. Held when this iteration draws or the next present is within

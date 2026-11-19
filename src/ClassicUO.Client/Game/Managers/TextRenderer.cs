@@ -374,7 +374,7 @@ namespace ClassicUO.Game.Managers
         }
 #endif
 
-        // present_on_change_anim_due (evloop-4): a drawn text disappears once Time.Ticks passes its Time and, with text_fading,
+        // visual-due tracking (evloop-4): a drawn text disappears once Time.Ticks passes its Time and, with text_fading,
         // fades every frame over its last second (CalculateAlpha)
         private static void NoteVisualDue(TextObject o)
         {
