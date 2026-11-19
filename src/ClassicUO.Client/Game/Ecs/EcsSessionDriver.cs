@@ -1031,6 +1031,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // vsyncpresent on|off: vsync_present_on_change (present on change with vsync on)
+                case "vsyncpresent" when args.Length > 0:
+                    Settings.GlobalSettings.VsyncPresentOnChange = args[0] == "on";
+                    Log.Info($"[ECS] driver: vsync_present_on_change {args[0]}");
+
+                    return true;
+
                 // throttleupd on|off: throttle_update_when_inactive
                 case "throttleupd" when args.Length > 0:
                     Settings.GlobalSettings.ThrottleUpdateWhenInactive = args[0] == "on";

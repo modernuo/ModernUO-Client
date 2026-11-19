@@ -55,9 +55,12 @@ namespace ClassicUO
                 }
             }
 
+            // vsync_present_on_change needs the event loop: the legacy loop does not wait on skipped frames, so with vsync it
+            // would spin instead of blocking in Present
             _displayCapActive = !minimized && _displayPeriod > 0 && DisplayRateSchedule.Enabled(
                 Settings.GlobalSettings.PresentAtDisplayRate, Settings.GlobalSettings.FPS,
-                GraphicManager.SynchronizeWithVerticalRetrace, inactive);
+                GraphicManager.SynchronizeWithVerticalRetrace, inactive,
+                Settings.GlobalSettings.VsyncPresentOnChange && _tickMode == LoopMode.Event);
             bool due = _displaySchedule.Due(now, _displayCapActive ? _displayPeriod : 0);
 #if CUO_DEVTOOLS
             if (PresentCapCheck.On)
@@ -173,6 +176,9 @@ namespace ClassicUO
         // motion or effects keeps the next one due one interval later (the motion advances in Update, after the wait).
         private void BeginPresentedChange()
         {
+#if CUO_DEVTOOLS
+            if (VsyncPresentCheck.On) VsyncPresentCheck.Draw(_continuous);
+#endif
             _lastDrawTs = Stopwatch.GetTimestamp();
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;

@@ -7707,3 +7707,51 @@ about 950-1900 Control.Update visits, 353 draw visits, ~20 hit visits, 0 keyboar
 The sort is already gated by `_needSort`, the keyboard walk only runs while no control holds focus (0 here), hit test stops early. Too few to matter
 (~0.2 % of a frame): the dirty-control skip is designed (handoffs/ui-walks.md) but not implemented. Side finding: the heavy scene allocates a constant
 5840 B/frame in ui_cache_record (0 B with the 4 base gumps); source not yet bisected.
+
+## 2026-11-19 vsync-poc: present on change with vsync on (bg/vsync-poc, base a7026ee75)
+
+Owner request 2026-11-15 (parked-timing.txt): with vsync on the main thread stays busy because the display-rate schedule and
+present on change engaged only with vsync off, so vsync drew every tick and blocked in Present once per vblank.
+
+- **vsync_present_on_change (5074366ac, default off).** `DisplayRateSchedule.Enabled` takes the switch; on, vsync no longer
+  disables the schedule, so `_displayCapActive`, present on change, `VisualDue.Tracking` and the loop-owned ping engage as
+  for vsync off, with the period from the SDL display mode (unknown refresh keeps the old cadence). It needs the event loop:
+  the legacy loop does not wait on skipped frames, so with vsync it would spin instead of blocking in Present. fps caps,
+  inactive and minimized windows keep their cadences. Renderer-independent (both present through FNA3D SDL_GPU).
+- **Checker.** A value comparison makes no sense for a scheduling change, so `CUO_VSYNC_PRESENT_CHECK=1` logs a 5 s summary
+  `[vsync-present-check]`: switch, vsync, engaged, draws/presents/waits per second, old_draws (ticks the old vsync path
+  draws) and avoided, time blocked in Present (mean/max), blocked presents (> half a period), missed vblanks (gap > 1.5
+  periods after a continuous frame) and invalid (present without a draw, draw not due while engaged) as mismatches.
+  Driver `vsyncpresent on|off`; the `display` diag line prints `vsync_present_on_change=`.
+- **Gate (bench-000887, NativeAOT dev, busy machine, 143.86 Hz).** Last 5 s window per phase, Gpu / Legacy:
+
+  | phase | presents/s | Present block mean ms | avoided draws | mismatches |
+  |---|---|---|---|---|
+  | vsync, switch on, idle | 2.0 / 2.0 | 0.18 / 0.24 | 305 / 305 | 0 |
+  | vsync, switch on, walking (busiest window) | 68 / 73 | 0.16 / 0.17 | | 0 |
+  | vsync, switch off (old path) | 143.9 / 143.9 | 6.78 / 6.76 | 0 | 0 |
+  | vsync off (anim) | 2.0 / 2.0 | 0.13 / 0.18 | | 0 |
+  | vsync, switch on, inactive (not engaged, 10 fps) | 10 / 10 | | | 0 |
+
+  The old vsync path spends a whole period blocked in Present on every frame (the swapchain queue is always full: blocked
+  720 of 720 presents in Legacy); present on change keeps it empty. missed_vblanks 0 everywhere. Effect frames differ in
+  the world shots on both renderers. The walk-shot check failed on Legacy in this run because the quiet spot is plain
+  grass (a 2-tile step left the image byte-identical); the scene now shoots facing east, mid-walk and facing south
+  (bench-000891).
+- **Counts** (anim / vsync / vpoc arms, both spots): bench-000888 (Gpu), bench-000889 (Legacy). 143.86 Hz display; CPU and
+  ping are indicative only (busy machine). vpoc = vsync on with the switch on.
+
+  | Spot, renderer | arm | presents/s | cpu ms/s | ping RTT p50 ms |
+  |---|---|---|---|---|
+  | quiet, Gpu | vsync / vpoc | 143.9 / 2.0 | 78.1 / 7.8 | 5.89 / 0.12 |
+  | quiet, Legacy | vsync / vpoc | 143.9 / 2.0 | 74.9 / 6.2 | 5.97 / 0.13 |
+  | busy, Gpu | vsync / vpoc | 143.9 / 133.1 | 234.2 / 237.5 | 6.94 / 0.13 |
+  | busy, Legacy | vsync / vpoc | 143.9 / 133.0 | 391.9 / 381.1 | 6.94 / 0.16 |
+
+  vpoc matches the vsync-off anim arm (quiet 2.0 presents/s, 9.4 cpu ms/s). Gate-2 bench-000891: `VSYNC-POC GATE PASS` on both
+  renderers.
+  bake-evloop's vsync arm (bench-000874/875) had 143.9 presents/s, 140-153 cpu ms/s and ping RTT ~6.9 ms at the quiet spot.
+- **Tests.** DisplayRateTests (Enabled with the switch off and on, setting default and round trip), VsyncPresentCheckTests.
+  ClassicUO.UnitTests 4121 pass / 6 skipped. Client builds with and without CuoDevTools.
+- **Parked timing.** measure/vsync-poc/job-timing-{g,l}-PARKED.sh: CPU ms/s and ping RTT, vsync on, switch off vs on
+  (interleaved in each session), three rounds, both spots. Memory: none.
