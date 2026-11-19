@@ -458,5 +458,48 @@ namespace ClassicUO.UnitTests.Game
                 Directory.Delete(dir, true);
             }
         }
+
+        /// <summary>
+        /// worldmap-audit P-7: a freshly built map is posted from its build buffer instead of being read back from the PNG it
+        /// was just written to. The adopted buffer must hold exactly the pixels the decode of that PNG returns, and the image
+        /// frees it (NativeMemory) once, on Dispose.
+        /// </summary>
+        [Fna3dFact]
+        public unsafe void An_Adopted_Build_Buffer_Equals_The_Decoded_Png_And_Is_Freed_Once()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                const int W = 257, H = 131;
+                byte[] rgba = MapLikePixels(W, H);
+                string png = Path.Combine(dir, "map.png");
+
+                void* buffer = NativeMemory.Alloc((nuint)rgba.Length);
+                rgba.CopyTo(new Span<byte>(buffer, rgba.Length));
+
+                using (var stream = ClassicUO.Utility.AtomicFile.OpenWrite(png))
+                {
+                    Uo.Render.Png.Write(stream, W, H, new ReadOnlySpan<byte>(buffer, rgba.Length));
+                    stream.Commit();
+                }
+
+                WorldMapImage built = WorldMapImage.AdoptNativeMemory(W, H, buffer);
+                using WorldMapImage decoded = WorldMapGump.DecodeMapImage(png);
+
+                built.Width.Should().Be(decoded.Width);
+                built.Height.Should().Be(decoded.Height);
+                built.ByteLength.Should().Be(decoded.ByteLength);
+                built.Span.SequenceEqual(decoded.Span).Should().BeTrue("the image posted from the build is the one the PNG decodes to");
+
+                built.Dispose();
+                built.Dispose();
+                built.Pixels.Should().Be(IntPtr.Zero);
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
     }
 }

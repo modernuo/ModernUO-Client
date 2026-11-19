@@ -10,20 +10,30 @@ using Microsoft.Xna.Framework.Graphics;
 namespace ClassicUO.Game.UI.Gumps
 {
     /// <summary>
-    /// A decoded world map image: RGBA8 pixels (R first, rows top to bottom) in native memory owned by this object and
-    /// freed by <see cref="Dispose"/>. The load task decodes it and the game thread uploads and disposes it
+    /// A world map image: RGBA8 pixels (R first, rows top to bottom) in native memory owned by this object and freed by
+    /// <see cref="Dispose"/>: decoded by stb_image (<see cref="DecodePng"/>) or adopted from the build
+    /// (<see cref="AdoptNativeMemory"/>). The load task makes it and the game thread uploads and disposes it
     /// (<see cref="WorldMapGump.MapImageHandover{T}"/>).
     /// </summary>
     internal sealed unsafe class WorldMapImage : IDisposable
     {
         private IntPtr _pixels;
+        private readonly bool _nativeMemory;
 
-        private WorldMapImage(int width, int height, IntPtr pixels)
+        private WorldMapImage(int width, int height, IntPtr pixels, bool nativeMemory)
         {
             Width = width;
             Height = height;
             _pixels = pixels;
+            _nativeMemory = nativeMemory;
         }
+
+        /// <summary>
+        /// Takes ownership of a <see cref="NativeMemory"/> buffer of width*height RGBA pixels (the freshly built map, which
+        /// is then not read back from the PNG just written). From this call on the image frees it; the caller must not.
+        /// </summary>
+        public static WorldMapImage AdoptNativeMemory(int width, int height, void* pixels) =>
+            new WorldMapImage(width, height, (IntPtr)pixels, nativeMemory: true);
 
         public int Width { get; }
 
@@ -40,7 +50,16 @@ namespace ClassicUO.Game.UI.Gumps
         {
             IntPtr pixels = Interlocked.Exchange(ref _pixels, IntPtr.Zero);
 
-            if (pixels != IntPtr.Zero)
+            if (pixels == IntPtr.Zero)
+            {
+                return;
+            }
+
+            if (_nativeMemory)
+            {
+                NativeMemory.Free((void*)pixels);
+            }
+            else
             {
                 Fna3d.ImageFree(pixels);
             }
@@ -86,7 +105,7 @@ namespace ClassicUO.Game.UI.Gumps
                     throw new InvalidDataException($"stb_image returned {width}x{height}, {len} bytes");
                 }
 
-                return new WorldMapImage(width, height, pixels);
+                return new WorldMapImage(width, height, pixels, nativeMemory: false);
             }
             finally
             {

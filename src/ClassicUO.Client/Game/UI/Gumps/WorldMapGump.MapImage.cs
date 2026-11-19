@@ -177,9 +177,13 @@ namespace ClassicUO.Game.UI.Gumps
                     _mapCache[mapKey] = fileMapPath;
                 }
 
+                // P-7: a map built here is posted from its build buffer, not read back from the PNG it was written to
+                WorldMapImage built = null;
+
                 if (!File.Exists(fileMapPath))
                 {
-                    // RGBA, one uint per pixel (R in the low byte); native (up to ~118 MB for Felucca), freed once written
+                    // RGBA, one uint per pixel (R in the low byte); native (up to ~118 MB for Felucca); the image owns it
+                    // once written, and the finally frees it on any earlier failure
                     uint* imgPixels = null;
 
                     try
@@ -333,6 +337,10 @@ namespace ClassicUO.Game.UI.Gumps
                         using var stream2 = AtomicFile.OpenWrite(fileMapPath, 3000);
                         Uo.Render.Png.Write(stream2, realWidth + OFFSET_PIX, realHeight + OFFSET_PIX, new ReadOnlySpan<byte>(imgPixels, size * sizeof(uint)));
                         stream2.Commit();
+
+                        // the same pixels a decode of the PNG returns (lossless RGBA8); ownership moves in one statement
+                        built = WorldMapImage.AdoptNativeMemory(realWidth + OFFSET_PIX, realHeight + OFFSET_PIX, imgPixels);
+                        imgPixels = null;
                     }
                     catch (Exception ex)
                     {
@@ -347,21 +355,39 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                 }
 
-                if (File.Exists(fileMapPath) && _mapImages.IsCurrent(load))
+                WorldMapImage image = built;
+
+                try
                 {
+                    if (!_mapImages.IsCurrent(load))
+                    {
+                        return; // the finally disposes a built image
+                    }
+
                     // decoded here, uploaded by Update: FNA3D/SDL_GPU textures are created and disposed on the game thread
-                    WorldMapImage image = DecodeMapImage(fileMapPath);
+                    if (image == null && File.Exists(fileMapPath))
+                    {
+                        image = DecodeMapImage(fileMapPath);
+                    }
 
                     if (image != null)
                     {
                         // logged before Post: once posted, Update may upload it before this task logs again
                         Log.Info($"[worldmap] map {mapIndex} decoded {image.Width}x{image.Height}, load {load}");
 
-                        if (!_mapImages.Post(load, image))
+                        WorldMapImage posted = image;
+                        image = null;
+
+                        if (!_mapImages.Post(load, posted))
                         {
                             Log.Info($"[worldmap] load {load} dropped (superseded or the gump closed)");
                         }
                     }
+                }
+                finally
+                {
+                    // not posted (superseded, or an exception before Post): nothing else owns it
+                    image?.Dispose();
                 }
             }
             catch (ThreadInterruptedException)
