@@ -52,20 +52,7 @@ namespace ClassicUO.Game.UI.Controls
             {
                 var texture = artInfo.Texture;
                 var sourceRectangle = artInfo.UV;
-                renderLists.AddGumpWithAtlas
-                (
-                    (batcher) =>
-                    {
-                        batcher.Draw(
-                            texture,
-                            new Vector2(x + _tileX, y + _tileY),
-                            sourceRectangle,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpWithAtlas(GumpCommand.SpriteAt(texture, x + _tileX, y + _tileY, sourceRectangle, hueVector, layerDepth));
 
                 return true;
             }

@@ -12,7 +12,7 @@ using System.Xml;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal class NetworkStatsGump : Gump
+    internal class NetworkStatsGump : Gump, IGumpDeferredDraw
     {
         private static Point _last_position = new Point(-1, -1);
 
@@ -118,6 +118,13 @@ namespace ClassicUO.Game.UI.Gumps
             }
             float layerDepth = layerDepthRef;
 
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+
+            return true;
+        }
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
             if (_ping < 150)
@@ -139,22 +146,15 @@ namespace ClassicUO.Game.UI.Gumps
 
             hueVector.Y = 1;
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    batcher.DrawString
-                    (
-                        Fonts.Bold,
-                        _cacheText,
-                        x + 10,
-                        y + 10,
-                        hueVector,
-                        layerDepth
-                    );
-                    return true;
-                }
+            batcher.DrawString
+            (
+                Fonts.Bold,
+                _cacheText,
+                x + 10,
+                y + 10,
+                hueVector,
+                layerDepth
             );
-
             return true;
         }
 

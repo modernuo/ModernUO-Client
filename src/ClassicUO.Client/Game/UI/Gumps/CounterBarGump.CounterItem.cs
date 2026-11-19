@@ -428,12 +428,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-                renderLists.AddGumpNoAtlas(batcher =>
-                {
-                    batcher.DrawRectangle(color, x, y, Width, Height, hueVector, layerDepth);
-
-                    return true;
-                });
+                renderLists.AddGumpNoAtlas(GumpCommand.Outline(color, x, y, Width, Height, hueVector, layerDepth));
 
                 return true;
             }
@@ -513,25 +508,13 @@ namespace ClassicUO.Game.UI.Gumps
 
                         var texture = artInfo.Texture;
                         var sourceRectangle = artInfo.UV;
-                        renderLists.AddGumpWithAtlas
-                        (
-                            (batcher) =>
-                            {
-                                batcher.Draw(
-                                    texture,
-                                    new Rectangle(x + point.X, y + point.Y, originalSize.X, originalSize.Y),
-                                    new Rectangle(
-                                        sourceRectangle.X + rect.X,
-                                        sourceRectangle.Y + rect.Y,
-                                        rect.Width,
-                                        rect.Height
-                                    ),
-                                    hueVector,
-                                    layerDepth
-                                );
-                                return true;
-                            }
-                        );
+                        renderLists.AddGumpWithAtlas(GumpCommand.Sprite(
+                            texture,
+                            new Rectangle(x + point.X, y + point.Y, originalSize.X, originalSize.Y),
+                            new Rectangle(sourceRectangle.X + rect.X, sourceRectangle.Y + rect.Y, rect.Width, rect.Height),
+                            hueVector,
+                            layerDepth
+                        ));
                     }
 
                     return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);

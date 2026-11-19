@@ -5,7 +5,7 @@ using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    class CreditsGump : Gump
+    class CreditsGump : Gump, IGumpDeferredDraw
     {
         private const ushort BACKGROUND_IMG = 0x0500;
         private Point _offset;
@@ -73,15 +73,15 @@ Ultima Online(R) 2021 Electronic Arts Inc. All Rights Reserved.
             base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
             float layerDepth = layerDepthRef;
 
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+            return true;
+        }
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    batcher.DrawString(Fonts.Bold, CREDITS, x + _offset.X, y + _offset.Y, hueVector, layerDepth);
-                    return true;
-                }
-            );
+            batcher.DrawString(Fonts.Bold, CREDITS, x + _offset.X, y + _offset.Y, hueVector, layerDepth);
             return true;
         }
     }

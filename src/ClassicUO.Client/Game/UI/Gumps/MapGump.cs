@@ -13,7 +13,7 @@ using System.Collections.Generic;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal class MapGump : Gump
+    internal class MapGump : Gump, IGumpDeferredDraw
     {
         private readonly Button[] _buttons = new Button[3];
         private readonly List<Control> _container = new List<Control>();
@@ -207,49 +207,52 @@ namespace ClassicUO.Game.UI.Gumps
             base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
             float layerDepth = layerDepthRef;
 
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+            return true;
+        }
+
+        private RenderLists _childRenderLists;
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas
+            batcher.Draw
             (
-                batcher =>
-                {
-                    batcher.Draw
-                    (
-                        _mapTexture,
-                        new Rectangle(x + _hit.X, y + _hit.Y, _hit.Width, _hit.Height),
-                        hueVector,
-                        layerDepth
-                    );
-
-                    var texture = SolidColorTextureCache.GetTexture(Color.White);
-                    RenderLists childRenderLists = new();
-                    for (int i = 0; i < _container.Count; i++)
-                    {
-                        // HACK: redraw because pins are drawn when calling base.Draw(batcher, x, y);
-                        _container[i].AddToRenderLists(childRenderLists, x + _container[i].X, y + _container[i].Y, ref layerDepth);
-
-                        if (i + 1 >= _container.Count)
-                        {
-                            break;
-                        }
-
-                        Control c0 = _container[i];
-                        Control c1 = _container[i + 1];
-
-                        batcher.DrawLine
-                        (
-                            texture,
-                            new Vector2(c0.ScreenCoordinateX, c0.ScreenCoordinateY),
-                            new Vector2(c1.ScreenCoordinateX, c1.ScreenCoordinateY),
-                            hueVector,
-                            1,
-                            layerDepth
-                        );
-                    }
-                    childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                    return true;
-                }
+                _mapTexture,
+                new Rectangle(x + _hit.X, y + _hit.Y, _hit.Width, _hit.Height),
+                hueVector,
+                layerDepth
             );
+
+            var texture = SolidColorTextureCache.GetTexture(Color.White);
+            RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+            childRenderLists.Clear();
+            for (int i = 0; i < _container.Count; i++)
+            {
+                // HACK: redraw because pins are drawn when calling base.Draw(batcher, x, y);
+                _container[i].AddToRenderLists(childRenderLists, x + _container[i].X, y + _container[i].Y, ref layerDepth);
+
+                if (i + 1 >= _container.Count)
+                {
+                    break;
+                }
+
+                Control c0 = _container[i];
+                Control c1 = _container[i + 1];
+
+                batcher.DrawLine
+                (
+                    texture,
+                    new Vector2(c0.ScreenCoordinateX, c0.ScreenCoordinateY),
+                    new Vector2(c1.ScreenCoordinateX, c1.ScreenCoordinateY),
+                    hueVector,
+                    1,
+                    layerDepth
+                );
+            }
+            childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+            childRenderLists.Clear();
             return true;
         }
 
@@ -431,14 +434,7 @@ namespace ClassicUO.Game.UI.Gumps
                 base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
                 float layerDepth = layerDepthRef;
 
-                renderLists.AddGumpNoAtlas
-                (
-                    batcher =>
-                    {
-                        _text.Draw(batcher, x - _text.Width - 1, y, layerDepth);
-                        return true;
-                    }
-                );
+                renderLists.AddGumpNoAtlas(_text, x - _text.Width - 1, y, layerDepth);
                 return true;
             }
 
