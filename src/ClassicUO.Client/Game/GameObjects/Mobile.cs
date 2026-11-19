@@ -1017,6 +1017,19 @@ namespace ClassicUO.Game.GameObjects
             // T9 S8c: the walk queue and offset go with the record (a destroyed instance reads none)
             base.Destroy();
 
+            // the caches go back for the next mobile that comes into range (MobileFrameCache.Rent, WornCache.Rent)
+            if (FrameCache != null)
+            {
+                MobileFrameCache.Return(FrameCache);
+                FrameCache = null;
+            }
+
+            if (EquipCache != null)
+            {
+                WornCache.Return(EquipCache);
+                EquipCache = null;
+            }
+
             if (!(this is PlayerMobile))
             {
                 UIManager.GetGump<PaperDollGump>(serial)?.Dispose();

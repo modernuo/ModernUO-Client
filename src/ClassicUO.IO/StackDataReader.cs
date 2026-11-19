@@ -412,6 +412,28 @@ namespace ClassicUO.IO
             return ReadString(Encoding.Unicode, length, 2, safe);
         }
 
+        // ReadUnicodeLE(length) (fixed length, not safe) decoded into destination (length + 1 chars) instead of a string;
+        // returns the number of chars written.
+        public int ReadUnicodeLE(int length, scoped Span<char> destination)
+        {
+            if (length <= 0 || Position + 2 > Length)
+            {
+                return 0;
+            }
+
+            int size = Math.Min(length * 2, Remaining);
+            ReadOnlySpan<byte> slice = _data.Slice(Position, size);
+
+            int index = MemoryMarshal.Cast<byte, char>(slice).IndexOf('\0') * 2;
+            size = index < 0 ? size : index;
+
+            int written = Encoding.Unicode.GetChars(slice.Slice(0, size), destination);
+
+            Position += Math.Max(size, length * 2);
+
+            return written;
+        }
+
         public string ReadUTF8(bool safe = false)
         {
             return ReadString(Encoding.UTF8, -1, 1, safe);

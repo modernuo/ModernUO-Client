@@ -87,6 +87,43 @@ namespace ClassicUO.UnitTests.Assets
             return fonts;
         }
 
+        // The layout nodes of strings that are generated or measured and dropped come from a stack on the creating thread:
+        // results must not depend on what an earlier string left in them.
+        [Fact]
+        public void Pooled_Layout_Nodes_Give_The_Same_Result_After_Other_Strings()
+        {
+            var tmp = Path.Combine(Path.GetTempPath(), "cuo-fontpool-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmp);
+
+            try
+            {
+                var fonts = LoadFonts(tmp);
+                string[] texts = { "A", "AA A", "A\nAA\nA", new string('A', 70), "A A A A A A A A A A A A A A A A A A A A A A A A A" };
+                var expected = new System.Collections.Generic.List<(FontsLoader.FontInfo info, int width)>();
+
+                foreach (string t in texts)
+                {
+                    expected.Add((fonts.GenerateUnicode(0, t, 0xFFFF, 0, 40, TEXT_ALIGN_TYPE.TS_LEFT, 0x0001, false, 0), fonts.GetWidthExUnicode(0, t, 40, TEXT_ALIGN_TYPE.TS_LEFT, 0x0001)));
+                }
+
+                for (int round = 0; round < 3; round++)
+                {
+                    for (int i = texts.Length - 1; i >= 0; i--)
+                    {
+                        var info = fonts.GenerateUnicode(0, texts[i], 0xFFFF, 0, 40, TEXT_ALIGN_TYPE.TS_LEFT, 0x0001, false, 0);
+                        Same(expected[i].info, info, $"round {round} text {i}");
+                        fonts.GetWidthExUnicode(0, texts[i], 40, TEXT_ALIGN_TYPE.TS_LEFT, 0x0001).Should().Be(expected[i].width);
+                    }
+                }
+
+                fonts.ClearResources();
+            }
+            finally
+            {
+                Directory.Delete(tmp, true);
+            }
+        }
+
         [Fact]
         public void Another_Thread_Gets_Its_Own_Array()
         {

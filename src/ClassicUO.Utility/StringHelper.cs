@@ -138,6 +138,28 @@ namespace ClassicUO.Utility
         }
 
 
+        // In place; same result as the string overload (each character is tested before it is written, and the
+        // next one is still the original).
+        public static void CapitalizeAllWords(Span<char> chars)
+        {
+            bool capitalizeNext = true;
+
+            for (int i = 0; i < chars.Length; i++)
+            {
+                char c = chars[i];
+
+                if (capitalizeNext)
+                {
+                    chars[i] = char.ToUpper(c);
+                }
+
+                if (!char.IsWhiteSpace(c))
+                {
+                    capitalizeNext = i + 1 < chars.Length && char.IsWhiteSpace(chars[i + 1]);
+                }
+            }
+        }
+
         public static string CapitalizeAllWords(string str)
         {
             if (string.IsNullOrEmpty(str))

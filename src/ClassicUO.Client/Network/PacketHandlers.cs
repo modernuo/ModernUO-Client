@@ -5025,13 +5025,63 @@ namespace ClassicUO.Network
 
         // Reused by MegaCliloc (main thread, not re-entrant): property lists for every new object in a crowded area
         // arrive at hundreds per second, and a new list per packet was one of the larger allocation sites there.
-        private static readonly List<(int, string, int)> _megaClilocLines = new List<(int, string, int)>();
+        private static readonly List<MegaClilocLine> _megaClilocLines = new List<MegaClilocLine>();
+
+        // All line texts of the packet being parsed live in one reused buffer (a string per line was garbage as soon as
+        // the joined property text existed); only the name and the joined text become strings. A few KB per client.
+        private static char[] _megaClilocChars = new char[4096];
+
+        private readonly struct MegaClilocLine
+        {
+            public readonly int Cliloc;
+            public readonly int Start;
+            public readonly int Length;
+            public readonly int ArgCliloc;
+
+            public MegaClilocLine(int cliloc, int start, int length, int argCliloc)
+            {
+                Cliloc = cliloc;
+                Start = start;
+                Length = length;
+                ArgCliloc = argCliloc;
+            }
+        }
+
+        private static void EnsureMegaChars(int needed)
+        {
+            if (needed > _megaClilocChars.Length)
+            {
+                Array.Resize(ref _megaClilocChars, Math.Max(needed, _megaClilocChars.Length * 2));
+            }
+        }
+
+        private static void AppendMegaChars(ReadOnlySpan<char> text, ref int used)
+        {
+            EnsureMegaChars(used + text.Length);
+            text.CopyTo(_megaClilocChars.AsSpan(used));
+            used += text.Length;
+        }
+
+        // open + line + "</basefont>", in place
+        private static void WrapMegaChars(int lineStart, string open, ref int used)
+        {
+            const string Close = "</basefont>";
+            int length = used - lineStart;
+
+            EnsureMegaChars(used + open.Length + Close.Length);
+            _megaClilocChars.AsSpan(lineStart, length).CopyTo(_megaClilocChars.AsSpan(lineStart + open.Length));
+            open.CopyTo(_megaClilocChars.AsSpan(lineStart));
+            Close.CopyTo(_megaClilocChars.AsSpan(lineStart + open.Length + length));
+            used = lineStart + open.Length + length + Close.Length;
+        }
 
         // Same result as argument.Split('#', RemoveEmptyEntries) giving exactly two parts and parsing the second,
         // without the separator and result arrays.
-        internal static int ParseArgCliloc(string argument)
+        internal static int ParseArgCliloc(string argument) => ParseArgCliloc(argument.AsSpan());
+
+        internal static int ParseArgCliloc(ReadOnlySpan<char> argument)
         {
-            ReadOnlySpan<char> rest = argument.AsSpan();
+            ReadOnlySpan<char> rest = argument;
             ReadOnlySpan<char> second = default;
             int parts = 0;
 
@@ -5102,9 +5152,9 @@ namespace ClassicUO.Network
                 entity = world.FindItem(serial);
             }
 
-            List<(int, string, int)> list = _megaClilocLines;
+            List<MegaClilocLine> list = _megaClilocLines;
             list.Clear();
-            int totalLength = 0;
+            int used = 0;
 
             while (p.Position < p.Length)
             {
@@ -5117,18 +5167,23 @@ namespace ClassicUO.Network
 
                 ushort length = p.ReadUInt16BE();
 
-                string argument = string.Empty;
+                // The argument is only parsed, never kept: decode it into a stack buffer instead of a string per line.
+                Span<char> argBuffer = length <= 512 ? stackalloc char[(length / 2) + 1] : new char[(length / 2) + 1];
+                ReadOnlySpan<char> argument = length != 0
+                    ? argBuffer.Slice(0, p.ReadUnicodeLE(length / 2, argBuffer))
+                    : ReadOnlySpan<char>.Empty;
 
-                if (length != 0)
+                int lineStart = used;
+
+                if (argument.IsEmpty)
                 {
-                    argument = p.ReadUnicodeLE(length / 2);
+                    AppendMegaChars(Client.Game.UO.FileManager.Clilocs.Translate(cliloc, string.Empty, true), ref used);
                 }
-
-                string str = Client.Game.UO.FileManager.Clilocs.Translate(cliloc, argument, true);
-
-                if (str == null)
+                else
                 {
-                    continue;
+                    ValueStringBuilder translated = Client.Game.UO.FileManager.Clilocs.TranslateToBuilder(cliloc, argument, true);
+                    AppendMegaChars(translated.AsSpan(), ref used);
+                    translated.Dispose();
                 }
 
                 int argcliloc = ParseArgCliloc(argument);
@@ -5138,26 +5193,29 @@ namespace ClassicUO.Network
                 {
                     case 1080418:
                         if (Client.Game.UO.Version >= Utility.ClientVersion.CV_60143)
-                            str = "<basefont color=#40a4fe>" + str + "</basefont>";
+                            WrapMegaChars(lineStart, "<basefont color=#40a4fe>", ref used);
                         break;
                     case 1061170:
                         if (int.TryParse(argument, out var strength) && world.PlayerState.Strength < strength)
-                            str = "<basefont color=#FF0000>" + str + "</basefont>";
+                            WrapMegaChars(lineStart, "<basefont color=#FF0000>", ref used);
                         break;
                     case 1062613:
-                        str = "<basefont color=#FFCC33>" + str + "</basefont>";
+                        WrapMegaChars(lineStart, "<basefont color=#FFCC33>", ref used);
                         break;
                     case 1159561:
-                        str = "<basefont color=#b66dff>" + str + "</basefont>";
+                        WrapMegaChars(lineStart, "<basefont color=#b66dff>", ref used);
                         break;
                 }
 
+                int lineLength = used - lineStart;
 
                 for (int i = 0; i < list.Count; i++)
                 {
+                    MegaClilocLine other = list[i];
+
                     if (
-                        list[i].Item1 == cliloc
-                        && string.Equals(list[i].Item2, str, StringComparison.Ordinal)
+                        other.Cliloc == cliloc
+                        && _megaClilocChars.AsSpan(other.Start, other.Length).SequenceEqual(_megaClilocChars.AsSpan(lineStart, lineLength))
                     )
                     {
                         list.RemoveAt(i);
@@ -5166,9 +5224,7 @@ namespace ClassicUO.Network
                     }
                 }
 
-                list.Add((cliloc, str, argcliloc));
-
-                totalLength += str.Length;
+                list.Add(new MegaClilocLine(cliloc, lineStart, lineLength, argcliloc));
             }
 
             Item container = null;
@@ -5188,47 +5244,39 @@ namespace ClassicUO.Network
                     || container.Layer == Layer.ShopSell;
             }
 
-            bool first = true;
-
             string name = string.Empty;
             string data = string.Empty;
             int namecliloc = 0;
 
             if (list.Count != 0)
             {
-                Span<char> span = stackalloc char[totalLength];
-                ValueStringBuilder sb = new ValueStringBuilder(span);
+                MegaClilocLine nameLine = list[0];
+                name = new string(_megaClilocChars, nameLine.Start, nameLine.Length);
 
-                foreach (var s in list)
+                if (entity != null && !SerialHelper.IsMobile(serial))
                 {
-                    string str = s.Item2;
-
-                    if (first)
-                    {
-                        name = str;
-
-                        if (entity != null && !SerialHelper.IsMobile(serial))
-                        {
-                            world.Writer.SetName(entity, str);
-                            namecliloc = s.Item3 > 0 ? s.Item3 : s.Item1;
-                        }
-
-                        first = false;
-                    }
-                    else
-                    {
-                        if (sb.Length != 0)
-                        {
-                            sb.Append('\n');
-                        }
-
-                        sb.Append(str);
-                    }
+                    world.Writer.SetName(entity, name);
+                    namecliloc = nameLine.ArgCliloc > 0 ? nameLine.ArgCliloc : nameLine.Cliloc;
                 }
 
-                data = sb.ToString();
+                if (list.Count > 1)
+                {
+                    int dataStart = used;
 
-                sb.Dispose();
+                    for (int i = 1; i < list.Count; i++)
+                    {
+                        MegaClilocLine line = list[i];
+
+                        if (used > dataStart)
+                        {
+                            AppendMegaChars("\n", ref used);
+                        }
+
+                        AppendMegaChars(_megaClilocChars.AsSpan(line.Start, line.Length), ref used);
+                    }
+
+                    data = new string(_megaClilocChars, dataStart, used - dataStart);
+                }
             }
 
             int[] clilocs = null;
@@ -5239,7 +5287,7 @@ namespace ClassicUO.Network
 
                 for (int i = 0; i < list.Count; i++)
                 {
-                    clilocs[i] = list[i].Item1;
+                    clilocs[i] = list[i].Cliloc;
                 }
             }
 

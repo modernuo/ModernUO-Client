@@ -43,7 +43,15 @@ From a comparison with a reference client (reports in cuo-poc-state/audits (paci
 | Pool `Item`s entering range | `World.GetOrCreateItem` (280 B each) | ~4.3 MB per 15 s of ls_walk | switch `item_pool` (default off, `bg/item-pool`); alloc jobs pending, then flip |
 | Prefill the item pool at login (8,192 x 280 B, ~2.3 MB per client) | `ItemPool` | first-walk Item reuse | open; behaviour change, needs switch + checker (queue presize done, a119ae333) |
 | `MobileSpriteExtract.Emit` per-call arrays | MobileSpriteExtract | small, per mobile drawn | open (alloc-ui-1 report) |
-| Fresh AllocationTick trace of ls_walk after alloc-ui-1 | whole client | re-rank the remaining allocation sources | open |
+| Fresh AllocationTick trace of ls_walk after alloc-ui-1 | whole client | re-rank the remaining allocation sources | done (walk-alloc, bench-000866): ~6 MB per 15 s window, MegaCliloc ~3.4 MB; ranked list below |
+| MegaCliloc: string per property line, per argument, `CapitalizeAllWords`, `ToString` for int parse | PacketHandlers.MegaCliloc, ClilocLoader.TranslateUncached | ~2.3 MB per 15 s of ls_walk | merged-ready 314d0bf17 (bg/walk-alloc): ls_walk avg B/frame Gpu 4541 -> 4089, Legacy 4922 -> 3154 (bench-000868) |
+| `MultilinesFontInfo.Data` list growth per text (`FontsLoader.GetInfoUnicode`) | FontsLoader.cs | ~1 MB per 15 s of ls_walk | done 937217778 (bg/walk-alloc-2): nodes pooled for `GenerateUnicode`/`GetWidthExUnicode`; `RenderedText` nodes stay per text (open, needs a lifecycle) |
+| `GpuItemCache.Grow` Entry[] | GpuItemCache | ~540 KB per window (Gpu) | already on `ArrayPool` in the trace base; the rest is first-time pool fill (nothing cheap left) |
+| `DisplayClilocString` Cp1252 string plus `ChatOnMessageReceived` string | PacketHandlers, GameScene | ~740 KB per window; journal text, partly kept | open (low) |
+| `WorldState.Refresh` WornCache and Item[] per new mobile; `MobileFrameCache` ctor per new mobile | WorldState, MobileAnimationSystem | ~425 KB, ~320-530 KB per window | done 937217778: pooled in `Mobile.Destroy` (32 each). `ContentsSlot` is already pooled; its 321 KB is one `Dictionary` growth (open, presize trades ~200 KB resident) |
+| `MobileSpriteExtract.Emit` SpriteInstance[] per call | MobileSpriteExtract | ~317 KB per window | done 937217778: it was `cache.Abs` per new mobile, kept across pooled caches |
+| `EquipmentSlots` archetype heaps created on first `SetName` | Friflo archetype creation | ~835 KB, Legacy, one-time | open (low) |
+| `WorldEcs.RunCheck` allocations (~1.1 MB per window) | checker only (`-ecscheck`) | not a product cost | note |
 | Measure text without rasterizing for the `RenderedText` atlas path | RenderedText / FontsLoader | part of ~40 % of ls_walk allocation | open |
 | One-off ~677 KB allocation once per Legacy run, 20-30 s after login | unknown | 1 frame; raised town_walk tipon avg to 92 B/frame | open; not reproduced in 3 JIT runs, likely NativeAOT-only (lazy static init/type loader), needs an AOT-side method |
 | Name-gump creation ~600 B/frame for first windows of the handles walk | ui_update | one-time per new mobile | open (low) |
