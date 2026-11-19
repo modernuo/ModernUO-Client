@@ -5,12 +5,13 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Input;
+using ClassicUO.Renderer;
 using System;
 using System.Linq;
 
 namespace ClassicUO.Game.UI.Controls
 {
-    internal class Combobox : Control
+    internal class Combobox : Control, IGumpDeferredDraw
     {
         private readonly byte _font;
         private readonly string[] _items;
@@ -92,25 +93,28 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            float layerDepth = layerDepthRef;
-            renderLists.AddGumpNoAtlas
-            (
-                (batcher) =>
-                {
-                    // work-around to allow clipping children
-                    RenderLists comboBoxRenderLists = new();
-                    base.AddToRenderLists(comboBoxRenderLists, x, y, ref layerDepth);
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
-                    if (batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        comboBoxRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                        batcher.ClipEnd();
-                    }
-                    return true;
-                }
-            );
+            return true;
+        }
 
+        // the children draw inside the clip, through a RenderLists of their own that is reused every frame
+        private RenderLists _childRenderLists;
 
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            // work-around to allow clipping children
+            RenderLists comboBoxRenderLists = _childRenderLists ??= new RenderLists();
+            comboBoxRenderLists.Clear();
+            base.AddToRenderLists(comboBoxRenderLists, x, y, ref layerDepth);
+
+            if (batcher.ClipBegin(x, y, Width, Height))
+            {
+                comboBoxRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                batcher.ClipEnd();
+            }
+
+            comboBoxRenderLists.Clear();
 
             return true;
         }
@@ -153,7 +157,7 @@ namespace ClassicUO.Game.UI.Controls
             base.OnMouseUp(x, y, button);
         }
 
-        private class ComboboxGump : Gump
+        private class ComboboxGump : Gump, IGumpDeferredDraw
         {
             private const int ELEMENT_HEIGHT = 15;
 
@@ -253,22 +257,27 @@ namespace ClassicUO.Game.UI.Controls
             public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
             {
                 float layerDepth = layerDepthRef + 100f; // Combo list should be over other gumps
-                renderLists.AddGumpNoAtlas
-                (
-                    (batcher) =>
-                    {
-                        // work-around to allow clipping children
-                        RenderLists comboBoxRenderLists = new();
-                        base.AddToRenderLists(comboBoxRenderLists, x, y, ref layerDepth);
+                renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
 
-                        if (batcher.ClipBegin(x, y, Width, Height))
-                        {
-                            comboBoxRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                            batcher.ClipEnd();
-                        }
-                        return true;
-                    }
-                );
+                return true;
+            }
+
+            private RenderLists _childRenderLists;
+
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
+                // work-around to allow clipping children
+                RenderLists comboBoxRenderLists = _childRenderLists ??= new RenderLists();
+                comboBoxRenderLists.Clear();
+                base.AddToRenderLists(comboBoxRenderLists, x, y, ref layerDepth);
+
+                if (batcher.ClipBegin(x, y, Width, Height))
+                {
+                    comboBoxRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                    batcher.ClipEnd();
+                }
+
+                comboBoxRenderLists.Clear();
 
                 return true;
             }

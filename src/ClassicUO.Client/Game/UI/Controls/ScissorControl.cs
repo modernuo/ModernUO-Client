@@ -4,7 +4,7 @@ using ClassicUO.Game.Scenes;
 
 namespace ClassicUO.Game.UI.Controls
 {
-    internal class ScissorControl : Control
+    internal class ScissorControl : Control, IGumpDeferredDraw
     {
         public ScissorControl(bool enabled, int x, int y, int width, int height) : this(enabled)
         {
@@ -28,21 +28,22 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            bool clipIt(Renderer.UltimaBatcher2D batcher)
-            {
-                if (DoScissor)
-                {
-                    batcher.ClipBegin(x, y, Width, Height);
-                }
-                else
-                {
-                    batcher.ClipEnd();
-                }
-                return true;
-            }
+            renderLists.AddGumpWithAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
-            renderLists.AddGumpWithAtlas(clipIt);
-            renderLists.AddGumpNoAtlas(clipIt);
+            return true;
+        }
+
+        bool IGumpDeferredDraw.DrawDeferred(Renderer.UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            if (DoScissor)
+            {
+                batcher.ClipBegin(x, y, Width, Height);
+            }
+            else
+            {
+                batcher.ClipEnd();
+            }
 
             return true;
         }
