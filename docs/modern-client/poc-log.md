@@ -7874,3 +7874,41 @@ and ClipEnd still runs. Left out of the scenes. Builds in both variants; 4122 un
 Base 6ea53b00b. Opening CounterBarGump crashed with InvalidOperationException (empty stack) from `UltimaBatcher2D.ClipEnd`. Cause: the gump adds a begin `ScissorControl` sized 0x0 until `OnResize`, so `ClipBegin` returns false (also false when nothing is left after clipping) and pushes no scissor, but the end `ScissorControl` still called `ClipEnd`. Pre-existing: the pre-alloc-gump-2 lambda had the same pairing (d69b24b04 did not change it).
 Fix: `ClipPairTracker` counts begins that pushed nothing; the matching end skips `ClipEnd`. Other ClipBegin users (Combobox, HtmlControl, ResizePic, ScrollArea, StbTextBox, LoginGump, MenuGump, ModernBookGump, OptionsGump, ResizableJournal, WorldMapGump) already call ClipEnd only inside `if (ClipBegin)`; HouseCustomizationGump uses ScissorControl and is covered by the same fix. Plain bug fix, no switch.
 Verified (measure/counterbar-crash, bench-000912): `open counter` crashes base on GPU and Legacy, runs to quit on the fix and the counter bar draws (shot read). Unit tests in `ClipPairTrackerTests`; both build variants.
+
+## 2026-11-19 loop-linux (bg/loop-linux): the event loop's wait on Linux (epoll), `event_loop_linux` (default off)
+Base 2ff7d0fb2. Code 038f92f83 (waiter, factory, switch, tests) and f0e57c1e2 (a waiter whose native library does not load
+falls back to the legacy loop instead of failing at startup).
+- **Seam.** `LoopWaiterFactory.Choose(isWindows, isLinux, event_loop_linux)` picks the waiter per OS: Windows always
+  `Win32LoopWaiter` (unchanged), Linux `LinuxEpollLoopWaiter` with the switch on, else none (legacy loop, logged as
+  `main loop: Legacy (event_loop_linux is off)`). `LoopTiming.Decide`'s first argument is now "this OS has a waiter". The
+  macOS sibling (loop-macos) adds its kind to the same factory.
+- **Waiter.** One `epoll_wait` over: the game socket (EPOLLIN|EPOLLRDHUP|EPOLLONESHOT, re-armed by `BindNet` before each
+  drain with EPOLL_CTL_MOD, so a capped drain or a peer close wakes once and never spins), a wake eventfd (sticky; only the
+  reported source is consumed, as with Windows' auto-reset event), a CLOCK_MONOTONIC timerfd for the deadline (fallback:
+  epoll's ms timeout, rounded up; name gets `-ms`), the display fd (X11 `XConnectionNumber`, Wayland `wl_display_get_fd`,
+  from the SDL window properties) and an eventfd written by an SDL event watch for events other threads push (skipped on
+  the loop thread). Before blocking it pumps SDL and returns Input if SDL's queue, Xlib's queue (`XEventsQueued`
+  QueuedAfterFlush) or libwayland's default queue (`wl_display_prepare_read` fails; cancelled at once so the GPU WSI is
+  never held) has events. Same probe (three 1 ms waits) and LateWakeMonitor backoff as Windows. Reason order when several
+  are ready: net, wake, timer, input (MsgWaitForMultipleObjectsEx's order). The socket fd is watched as is (no mode
+  change); reads already go through Poll + Receive and sends stay blocking. Names: `epoll-x11`, `epoll-wayland`,
+  `epoll-nodisplay` (+`-ms`).
+- **Latency bound.** Input SDL reads from its own fds (evdev/udev gamepads, IME), and an SDL event pushed from another
+  thread in the instant between its watch call and its queue insert, is picked up by the next Update: at most
+  event_loop_max_wait_ms (16 ms; event_loop_idle_max_wait_ms with event_loop_idle_wait). io_uring is out of scope; the
+  waiter is the seam a ring receive arm would fall back to.
+- **IORingGroup copies** (BSD 3-Clause, owner-approved; commit 86efd04cdca8b202a42f33fddd0d95b962e36f7b): `LoopLinux.cs`
+  (libc epoll/eventfd/read/write/close declarations and epoll constants, from EPoll/LinuxEpollGroup.Syscalls.cs and
+  EPoll/Structs.cs) and `LinuxEpollLoopWaiter.cs` (wake eventfd set-up, guarded Wake, Dispose drain, epoll_event layout,
+  from EPoll/LinuxEpollGroup.cs), with the licence header.
+- **Tests.** EventLoopTests: factory choice per OS and switch, Decide, timerfd deadline conversion (never a zero
+  it_value), epoll ms fallback rounding, reason order, epoll_event layout; two Linux-only waiter tests (sticky wake,
+  ClearWake, timer; socket wake per arm, re-arm with unread data, peer close wakes once without spinning) that return
+  early on Windows. ClassicUO.UnitTests 4179 pass / 6 skipped. Client builds with and without CuoDevTools; a linux-x64
+  publish compiles (stops at the missing static cuo_mp3 library here).
+- **Windows unchanged.** Jobs on JIT Release dev builds of base 2ff7d0fb2 and 038f92f83: bench-000913 (loop counts,
+  counts-quiet scene, gpu, base then branch) and bench-000914 (loop-idle gate, both renderers, branch). Results: see the
+  coordinator's merge note.
+- **Linux runs** are the owner's: steps in cuo-poc-state/manual-tests/loop-linux.md (build, settings, idle/walk/gumps/chat/
+  alt-tab/minimize/vsync under X11 and Wayland, pidstat idle CPU switch off vs on, log lines to send back). Memory: five
+  fds and an epoll instance; no managed memory, no per-frame allocation (stackalloc event buffers).
