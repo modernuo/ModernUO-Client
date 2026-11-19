@@ -162,6 +162,9 @@ namespace ClassicUO.Game
         private static void SelectCached(World world, Mobile m, ushort graphic, ref AnimationState s, ref EquipmentSlots eq)
         {
             MobileFrameCache cache = m.FrameCache ??= MobileFrameCache.Rent();
+#if CUO_DEVTOOLS
+            cache.CheckOwner(m.Serial);
+#endif
             MobileFrameCache.SelectKey key = default;
             bool cacheable = (s.Flags & AnimStateFlags.HasSteps) == 0;
 

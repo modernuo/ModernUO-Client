@@ -122,7 +122,7 @@ namespace ClassicUO.Assets
         public FontsLoader(UOFileManager fileManager) : base(fileManager) { }
 
 
-        // Layout nodes of the strings that are measured or drawn and then dropped (GetWidthUnicode, GenerateUnicode)
+        // Layout nodes of the strings that are measured or drawn and then dropped (GetWidthExUnicode, GenerateUnicode)
         // come from this stack and go back to it, with their Data list capacity, instead of growing a new List per
         // string (~1 MB per 15 s of walking in a crowded area). Nodes handed out by GetInfoUnicode to a caller that
         // keeps them (RenderedText) are never returned. Only the creating thread uses it.

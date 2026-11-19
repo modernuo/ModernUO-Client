@@ -7,12 +7,15 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // W5: the mobile frame cache. The in-client check (CUO_MOBILE_CACHE_CHECK) covers the replay against fresh selections
     // and extracts; these cover the pure parts.
+    [Collection("CachePool")]
     public class MobileFrameCacheTests
     {
+        // The pools are process-wide statics that other test classes also rent from, so nothing here asserts that Rent hands
+        // back a particular instance: the reset is checked on the instance itself, and the pool-full test runs alone.
         [Fact]
-        public void Returned_Cache_Comes_Back_Reset()
+        public void Reset_Clears_A_Used_Cache()
         {
-            MobileFrameCache c = MobileFrameCache.Rent();
+            var c = new MobileFrameCache();
             c.SelectValid = true;
             c.EmitValid = true;
             c.AbsValid = true;
@@ -22,39 +25,98 @@ namespace ClassicUO.UnitTests.Ecs
             c.LightCount = 1;
             c.EnsureLegacyCapacity(8);
             c.LegacyCount = 3;
-            MobileFrameCache.Return(c);
+            c.LegacyLightCount = 2;
+            c.LegacyEntries[1].Kind = 4;
+            c.Reset();
 
-            MobileFrameCache again = MobileFrameCache.Rent();
-            Assert.Same(c, again);
-            Assert.False(again.SelectValid);
-            Assert.False(again.EmitValid);
-            Assert.False(again.AbsValid);
-            Assert.False(again.LegacyValid);
-            Assert.Equal(0, again.Count);
-            Assert.Equal(0, again.LightCount);
-            Assert.Equal(0, again.LegacyCount);
-            Assert.True(again.Entries.Length >= 20);
+            Assert.False(c.SelectValid);
+            Assert.False(c.EmitValid);
+            Assert.False(c.AbsValid);
+            Assert.False(c.LegacyValid);
+            Assert.Equal(0, c.Count);
+            Assert.Equal(0, c.LightCount);
+            Assert.Equal(0, c.LegacyCount);
+            Assert.Equal(0, c.LegacyLightCount);
+            Assert.Equal(0, c.LegacyEntries[1].Kind);
+            Assert.True(c.Entries.Length >= 20);
         }
 
         [Fact]
-        public void Returned_Worn_Cache_Comes_Back_Reset()
+        public void Reset_Clears_A_Used_Worn_Cache()
         {
-            WornCache c = WornCache.Rent();
+            var c = new WornCache();
             c.Serial = 5;
             c.Epoch = 3;
             c.Version = 9;
             c.Writes = 4;
             c.Held = WornHeld.Record;
             c.Items = new ClassicUO.Game.GameObjects.Item[3];
-            WornCache.Return(c);
+            c.Reset();
 
-            WornCache again = WornCache.Rent();
-            Assert.Same(c, again);
-            Assert.Equal(0u, again.Serial);
-            Assert.Equal(WornHeld.Unknown, again.Held);
-            Assert.Equal(0UL, again.Version);
-            Assert.All(again.Items, i => Assert.Null(i));
+            Assert.Equal(0u, c.Serial);
+            Assert.Equal(0u, c.Epoch);
+            Assert.Equal(WornHeld.Unknown, c.Held);
+            Assert.Equal(0UL, c.Version);
+            Assert.Equal(0L, c.Writes);
+            Assert.Null(c.Layers);
+            Assert.Equal(3, c.Items.Length);
+            Assert.All(c.Items, i => Assert.Null(i));
         }
+
+        [Fact]
+        public void Return_Drops_Caches_Past_The_Pool_Cap()
+        {
+            var frames = new System.Collections.Generic.List<MobileFrameCache>();
+            var worn = new System.Collections.Generic.List<WornCache>();
+
+            // empty both pools (nothing else runs in parallel with this collection)
+            for (int i = 0; i < 64; i++)
+            {
+                frames.Add(MobileFrameCache.Rent());
+                worn.Add(WornCache.Rent());
+            }
+
+            int framesKept = 0, wornKept = 0;
+
+            foreach (MobileFrameCache c in frames)
+            {
+                framesKept += MobileFrameCache.Return(c) ? 1 : 0;
+            }
+
+            foreach (WornCache c in worn)
+            {
+                wornKept += WornCache.Return(c) ? 1 : 0;
+            }
+
+            Assert.Equal(32, framesKept);
+            Assert.Equal(32, wornKept);
+
+            // a kept cache comes back reset and is one of those returned
+            MobileFrameCache again = MobileFrameCache.Rent();
+            Assert.Contains(again, frames);
+            Assert.False(again.SelectValid);
+            WornCache wAgain = WornCache.Rent();
+            Assert.Contains(wAgain, worn);
+            Assert.Equal(0u, wAgain.Serial);
+        }
+
+#if CUO_DEVTOOLS
+        [Fact]
+        public void Double_Return_Is_Refused_And_Counted()
+        {
+            long frameBefore = MobileFrameCache.DoubleReturns;
+            long wornBefore = WornCache.DoubleReturns;
+            var c = new MobileFrameCache();
+            var w = new WornCache();
+
+            Assert.True(MobileFrameCache.Return(c));
+            Assert.False(MobileFrameCache.Return(c));
+            Assert.True(WornCache.Return(w));
+            Assert.False(WornCache.Return(w));
+            Assert.Equal(frameBefore + 1, MobileFrameCache.DoubleReturns);
+            Assert.Equal(wornBefore + 1, WornCache.DoubleReturns);
+        }
+#endif
 
         [Fact]
         public void Replayed_Depth_Matches_The_Extracts_Expressions_Bit_For_Bit()

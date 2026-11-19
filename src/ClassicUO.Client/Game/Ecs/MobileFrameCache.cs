@@ -145,37 +145,90 @@ namespace ClassicUO.Game
 
         internal static MobileFrameCache Rent()
         {
+            MobileFrameCache c = null;
+
             lock (_pool)
             {
                 if (_pool.Count != 0)
                 {
-                    return _pool.Pop();
+                    c = _pool.Pop();
                 }
             }
 
-            return new MobileFrameCache();
+            c ??= new MobileFrameCache();
+#if CUO_DEVTOOLS
+            c.InPool = false;
+#endif
+            return c;
         }
 
-        internal static void Return(MobileFrameCache cache)
+#if CUO_DEVTOOLS
+        // CUO_DEVTOOLS guards for the pool: a cache returned while already pooled, and a cache read for a mobile other than
+        // the one that rented it. Both are counted in the [mobile-cache-check] summary.
+        public bool InPool;
+        public uint OwnerSerial;
+        public static long DoubleReturns, OwnerMismatches;
+
+        internal void CheckOwner(uint serial)
         {
-            cache.Invalidate();
-            cache.Count = 0;
-            cache.LightCount = 0;
-            cache.LegacyCount = 0;
-            cache.LegacyLightCount = 0;
-            cache.Pack = null;
-            cache.LegacySource = null;
-            cache.Key = default;
-            cache.Selected = default;
-            Array.Clear(cache.LegacyEntries);
+            if (OwnerSerial == 0)
+            {
+                OwnerSerial = serial;
+            }
+            else if (OwnerSerial != serial)
+            {
+                OwnerMismatches++;
+                ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] frame cache of 0x{OwnerSerial:X8} used by 0x{serial:X8}");
+                OwnerSerial = serial;
+            }
+        }
+#endif
+
+        internal static bool Return(MobileFrameCache cache)
+        {
+#if CUO_DEVTOOLS
+            if (cache.InPool)
+            {
+                DoubleReturns++;
+                ClassicUO.Utility.Logging.Log.Warn("[mobile-cache-check] frame cache returned while already in the pool");
+                return false;
+            }
+#endif
+
+            cache.Reset();
 
             lock (_pool)
             {
                 if (_pool.Count < MAX_POOLED)
                 {
+#if CUO_DEVTOOLS
+                    cache.InPool = true;
+#endif
                     _pool.Push(cache);
+
+                    return true;
                 }
             }
+
+            return false;
+        }
+
+        // What a rented cache must look like: nothing valid, nothing counted, no references to the previous mobile.
+        internal void Reset()
+        {
+#if CUO_DEVTOOLS
+            OwnerSerial = 0;
+#endif
+            Invalidate();
+            Count = 0;
+            LightCount = 0;
+            LegacyCount = 0;
+            LegacyLightCount = 0;
+            Pack = null;
+            LegacySource = null;
+            Key = default;
+            Selected = default;
+            Array.Clear(LegacyEntries);
         }
 
         public void Invalidate()

@@ -47,38 +47,73 @@ namespace ClassicUO.Game
 
         internal static WornCache Rent()
         {
+            WornCache c = null;
+
             lock (_pool)
             {
                 if (_pool.Count != 0)
                 {
-                    return _pool.Pop();
+                    c = _pool.Pop();
                 }
             }
 
-            return new WornCache();
+            c ??= new WornCache();
+#if CUO_DEVTOOLS
+            c.InPool = false;
+#endif
+            return c;
         }
 
-        internal static void Return(WornCache c)
-        {
-            c.Entity = default;
-            c.Serial = 0;
-            c.Epoch = 0;
-            c.Version = 0;
-            c.Writes = 0;
-            c.Held = WornHeld.Unknown;
-            c.Layers = null;
+#if CUO_DEVTOOLS
+        // CUO_DEVTOOLS guards: a cache returned while already pooled, and (WorldState.Refresh) a cache whose Serial is not its
+        // mobile's after the refresh. Counted in the [mobile-cache-check] summary.
+        public bool InPool;
+        public static long DoubleReturns, SerialMismatches;
+#endif
 
-            if (c.Items != null)
+        internal static bool Return(WornCache c)
+        {
+#if CUO_DEVTOOLS
+            if (c.InPool)
             {
-                Array.Clear(c.Items);
+                DoubleReturns++;
+                ClassicUO.Utility.Logging.Log.Warn("[mobile-cache-check] worn cache returned while already in the pool");
+                return false;
             }
+#endif
+
+            c.Reset();
 
             lock (_pool)
             {
                 if (_pool.Count < 32)
                 {
+#if CUO_DEVTOOLS
+                    c.InPool = true;
+#endif
                     _pool.Push(c);
+
+                    return true;
                 }
+            }
+
+            return false;
+        }
+
+        // What a rented cache must look like: no record, no items, not valid for any epoch or version.
+        internal void Reset()
+        {
+            Entity = default;
+            Serial = 0;
+            Epoch = 0;
+            Version = 0;
+            Writes = 0;
+            Held = WornHeld.Unknown;
+            Layers = null;
+
+            if (Items != null)
+            {
+                Array.Clear(Items);
             }
         }
     }
@@ -409,6 +444,13 @@ namespace ClassicUO.Game
             }
 
             c.Writes = mirror.WornWrites;
+#if CUO_DEVTOOLS
+            if (c.Serial != mobile.Serial || c.InPool)
+            {
+                WornCache.SerialMismatches++;
+                ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] worn cache of 0x{c.Serial:X8} (pooled {c.InPool}) read for 0x{mobile.Serial:X8}");
+            }
+#endif
 
             return c;
         }
