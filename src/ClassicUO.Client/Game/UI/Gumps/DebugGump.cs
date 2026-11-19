@@ -13,7 +13,7 @@ using System.Xml;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal class DebugGump : Gump
+    internal class DebugGump : Gump, IGumpDeferredDraw
     {
         private const string DEBUG_STRING_0 = "- Presented FPS: {0} (Min={1}, Max={2}), Zoom: {3:0.00}, Total Objs: {4}\n";
         private const string DEBUG_STRING_1 = "- Mobiles: {0}   Items: {1}   Statics: {2}   Multi: {3}   Lands: {4}   Effects: {5}\n";
@@ -177,22 +177,22 @@ namespace ClassicUO.Game.UI.Gumps
             }
             float layerDepth = layerDepthRef;
 
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+            return true;
+        }
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    batcher.DrawString
-                    (
-                        Fonts.Bold,
-                        _cacheText,
-                        x + 10,
-                        y + 10,
-                        hueVector,
-                        layerDepth
-                    );
-                    return true;
-                }
+            batcher.DrawString
+            (
+                Fonts.Bold,
+                _cacheText,
+                x + 10,
+                y + 10,
+                hueVector,
+                layerDepth
             );
             return true;
         }

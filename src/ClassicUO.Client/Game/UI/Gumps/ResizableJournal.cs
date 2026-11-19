@@ -3,6 +3,7 @@ using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
+using ClassicUO.Renderer;
 using ClassicUO.Game.UI.Controls;
 using ClassicUO.Input;
 using ClassicUO.Utility.Collections;
@@ -299,7 +300,7 @@ namespace ClassicUO.Game.UI.Gumps
             base.Dispose();
         }
 
-        private class JournalEntriesContainer : Control
+        private class JournalEntriesContainer : Control, IGumpDeferredDraw
         {
             private Deque<JournalData> journalDatas = new Deque<JournalData>();
 
@@ -328,35 +329,40 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
                 float layerDepth = layerDepthRef;
+
+                renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+                return true;
+            }
+
+            private RenderLists _childRenderLists;
+
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
                 int my = y;
 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
+                if (batcher.ClipBegin(x, y, Width, Height))
+                {
+                    RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+                    childRenderLists.Clear();
+                    foreach (JournalData journalEntry in journalDatas)
                     {
-                        if (batcher.ClipBegin(x, y, Width, Height))
+                        if (journalEntry == null || string.IsNullOrEmpty(journalEntry.EntryText.Text))
+                            continue;
+
+                        if (!CanBeDrawn(journalEntry.TextType, journalEntry.MessageType))
+                            continue;
+
+                        if (my + journalEntry.EntryText.Height - y >= _scrollBar.Value && my - y <= _scrollBar.Value + _scrollBar.Height)
                         {
-                            RenderLists childRenderLists = new();
-                            foreach (JournalData journalEntry in journalDatas)
-                            {
-                                if (journalEntry == null || string.IsNullOrEmpty(journalEntry.EntryText.Text))
-                                    continue;
-
-                                if (!CanBeDrawn(journalEntry.TextType, journalEntry.MessageType))
-                                    continue;
-
-                                if (my + journalEntry.EntryText.Height - y >= _scrollBar.Value && my - y <= _scrollBar.Value + _scrollBar.Height)
-                                {
-                                    journalEntry.TimeStamp.AddToRenderLists(childRenderLists, x, my - _scrollBar.Value, ref layerDepth);
-                                    journalEntry.EntryText.AddToRenderLists(childRenderLists, x + (journalEntry.TimeStamp.Width + 5), my - _scrollBar.Value, ref layerDepth);
-                                }
-                                my += journalEntry.EntryText.Height;
-                            }
-                            childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                            batcher.ClipEnd();
+                            journalEntry.TimeStamp.AddToRenderLists(childRenderLists, x, my - _scrollBar.Value, ref layerDepth);
+                            journalEntry.EntryText.AddToRenderLists(childRenderLists, x + (journalEntry.TimeStamp.Width + 5), my - _scrollBar.Value, ref layerDepth);
                         }
-                        return true;
+                        my += journalEntry.EntryText.Height;
                     }
-                );
+                    childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                    childRenderLists.Clear();
+                    batcher.ClipEnd();
+                }
                 return true;
             }
 

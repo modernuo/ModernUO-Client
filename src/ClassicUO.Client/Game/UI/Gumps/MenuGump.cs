@@ -138,7 +138,7 @@ namespace ClassicUO.Game.UI.Gumps
             NetClient.Socket.Send_MenuResponse(LocalSerial, (ushort)ServerSerial, 0, 0, 0);
         }
 
-        class ItemView : Control
+        class ItemView : Control, IGumpDeferredDraw
         {
             private readonly ushort _graphic;
             private readonly ushort _hue;
@@ -164,25 +164,24 @@ namespace ClassicUO.Game.UI.Gumps
                 if (_graphic != 0)
                 {
                     float layerDepth = layerDepthRef;
-                    renderLists.AddGumpWithAtlas
-                    (
-                        (batcher) =>
-                        {
-                            ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(_graphic);
-
-                            Vector3 hueVector = ShaderHueTranslator.GetHueVector(_hue, _isPartial, 1f);
-
-                            batcher.Draw(artInfo.Texture, new Vector2(x, y), artInfo.UV, hueVector, layerDepth);
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpWithAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
                 }
 
                 return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
             }
+
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
+                ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(_graphic);
+
+                Vector3 hueVector = ShaderHueTranslator.GetHueVector(_hue, _isPartial, 1f);
+
+                batcher.Draw(artInfo.Texture, new Vector2(x, y), artInfo.UV, hueVector, layerDepth);
+                return true;
+            }
         }
 
-        private class ContainerHorizontal : Control
+        private class ContainerHorizontal : Control, IGumpDeferredDraw
         {
             private int _value;
 
@@ -209,51 +208,54 @@ namespace ClassicUO.Game.UI.Gumps
             public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
             {
                 float layerDepth = layerDepthRef;
-                renderLists.AddGumpNoAtlas
-                (
-                    batcher =>
-                    {
-                        if (batcher.ClipBegin(x, y, Width, Height))
-                        {
-                            int width = 0;
-                            int maxWidth = Value + Width;
-                            bool drawOnly1 = true;
-
-                            RenderLists childRenderLists = new();
-                            foreach (Control child in Children)
-                            {
-                                if (!child.IsVisible)
-                                {
-                                    continue;
-                                }
-
-                                child.X = width - Value;
-
-                                if (width + child.Width <= Value) { }
-                                else if (width + child.Width <= maxWidth)
-                                {
-                                    child.AddToRenderLists(childRenderLists, child.X + x, y, ref layerDepth);
-                                }
-                                else
-                                {
-                                    if (drawOnly1)
-                                    {
-                                        child.AddToRenderLists(childRenderLists, child.X + x, y, ref layerDepth);
-                                        drawOnly1 = false;
-                                    }
-                                }
-
-                                width += child.Width;
-                            }
-                            childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-
-                            batcher.ClipEnd();
-                        }
-                        return true;
-                    }
-                );
+                renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
 
                 return true; // base.Draw(batcher,position, hue);
+            }
+
+            private RenderLists _childRenderLists;
+
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
+                if (batcher.ClipBegin(x, y, Width, Height))
+                {
+                    int width = 0;
+                    int maxWidth = Value + Width;
+                    bool drawOnly1 = true;
+
+                    RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+                    childRenderLists.Clear();
+                    foreach (Control child in Children)
+                    {
+                        if (!child.IsVisible)
+                        {
+                            continue;
+                        }
+
+                        child.X = width - Value;
+
+                        if (width + child.Width <= Value) { }
+                        else if (width + child.Width <= maxWidth)
+                        {
+                            child.AddToRenderLists(childRenderLists, child.X + x, y, ref layerDepth);
+                        }
+                        else
+                        {
+                            if (drawOnly1)
+                            {
+                                child.AddToRenderLists(childRenderLists, child.X + x, y, ref layerDepth);
+                                drawOnly1 = false;
+                            }
+                        }
+
+                        width += child.Width;
+                    }
+                    childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                    childRenderLists.Clear();
+
+                    batcher.ClipEnd();
+                }
+                return true;
             }
 
             public void CalculateWidth()

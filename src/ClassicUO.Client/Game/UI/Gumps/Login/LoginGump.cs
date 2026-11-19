@@ -572,7 +572,7 @@ namespace ClassicUO.Game.UI.Gumps.Login
             }
         }
 
-        private class PasswordStbTextBox : StbTextBox
+        private class PasswordStbTextBox : StbTextBox, IGumpDeferredDraw
         {
             private new Point _caretScreenPosition;
             private new readonly RenderedText _rendererCaret;
@@ -712,22 +712,22 @@ namespace ClassicUO.Game.UI.Gumps.Login
             public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
             {
                 float layerDepth = layerDepthRef;
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        if (batcher.ClipBegin(x, y, Width, Height))
-                        {
-                            DrawSelection(batcher, x, y, layerDepth);
+                renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
 
-                            _rendererText.Draw(batcher, x, y, layerDepth);
+                return true;
+            }
 
-                            DrawCaret(batcher, x, y, layerDepth);
-                            batcher.ClipEnd();
-                        }
-                        return true;
-                    }
-                );
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
+                if (batcher.ClipBegin(x, y, Width, Height))
+                {
+                    DrawSelection(batcher, x, y, layerDepth);
 
+                    _rendererText.Draw(batcher, x, y, layerDepth);
+
+                    DrawCaret(batcher, x, y, layerDepth);
+                    batcher.ClipEnd();
+                }
                 return true;
             }
         }

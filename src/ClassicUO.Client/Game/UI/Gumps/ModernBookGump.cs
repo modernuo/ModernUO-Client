@@ -17,7 +17,7 @@ using System.Text;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal class ModernBookGump : Gump
+    internal class ModernBookGump : Gump, IGumpDeferredDraw
     {
         internal const int MAX_BOOK_LINES = 10;
         private const int MAX_BOOK_CHARS_PER_LINE = 53;
@@ -395,23 +395,22 @@ namespace ClassicUO.Game.UI.Gumps
             // handlers via _bookPage.RealignCaretAndActivePage(), so a single mismatch
             // between _caretScreenPosition and _pageCoords cannot spin SetActivePage
             // every frame.
-            renderLists.AddGumpNoAtlas
-            (
-                batcher =>
-                {
-                    if (!batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        return true;
-                    }
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
 
-                    DrawBookPage(batcher, x, y, layerDepth, (ActivePage - 1) * 2, RIGHT_X);
-                    DrawBookPage(batcher, x, y, layerDepth, (ActivePage - 1) * 2 - 1, LEFT_X);
+            return true;
+        }
 
-                    batcher.ClipEnd();
-                    return true;
-                }
-            );
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            if (!batcher.ClipBegin(x, y, Width, Height))
+            {
+                return true;
+            }
 
+            DrawBookPage(batcher, x, y, layerDepth, (ActivePage - 1) * 2, RIGHT_X);
+            DrawBookPage(batcher, x, y, layerDepth, (ActivePage - 1) * 2 - 1, LEFT_X);
+
+            batcher.ClipEnd();
             return true;
         }
 
