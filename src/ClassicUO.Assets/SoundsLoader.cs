@@ -28,8 +28,9 @@ namespace ClassicUO.Assets
         /// </summary>
         private readonly Dictionary<int, Loose> _ours = new Dictionary<int, Loose>();
 
-        // a loose file as it was when LoadOurs looked at it: the client does not assume client files change while it runs,
-        // so nothing re-stats it per request; a file that breaks later is an I/O error, handled where it is read
+        // a loose file as LoadOurs listed it (existence is the session's set); Pcm is -1 until its header is probed on first
+        // use, then kept for the session: the client does not assume client files change while it runs, so nothing re-stats
+        // it per request, and a file that breaks later is an I/O error, handled where it is read
         private readonly record struct Loose(string Path, int Pcm);
 
         public const int MAX_SOUND_DATA_INDEX_COUNT = 0xFFFF;
@@ -148,9 +149,10 @@ namespace ClassicUO.Assets
         }
 
         /// <summary>
-        /// Index and probe Sounds/&lt;id&gt;.wav, if the folder is there at all: one listing and one bounded header read per
-        /// file, at load. Files are trusted after that (no per-sound stat; the client does not assume client files change
-        /// while it runs). A file the client would refuse is logged once here and left out, so the pack's sound plays.
+        /// Index Sounds/&lt;id&gt;.wav, if the folder is there at all: one directory listing, no file reads, so startup does
+        /// not grow with the number of loose files. The listing is the session's set (the client does not assume client
+        /// files change while it runs); a file's header is probed on its first use and the result kept. The one discovery
+        /// point for loose sounds: a later asset-reload feature re-runs it here.
         /// </summary>
         public void LoadOurs()
         {
@@ -165,20 +167,11 @@ namespace ClassicUO.Assets
 
             foreach (string path in Directory.EnumerateFiles(folder, "*.wav"))
             {
-                if (!int.TryParse(Path.GetFileNameWithoutExtension(path), out int id)
-                    || id < 0 || id >= MAX_SOUND_DATA_INDEX_COUNT)
+                if (int.TryParse(Path.GetFileNameWithoutExtension(path), out int id)
+                    && id >= 0 && id < MAX_SOUND_DATA_INDEX_COUNT)
                 {
-                    continue;
+                    _ours[id] = new Loose(path, -1);
                 }
-
-                if (AudioConst.ProbeWaveFile(path, out int pcm) is { } bad)
-                {
-                    Log.Warn($"{Path.GetFileName(path)}: {bad}; it is being ignored");
-
-                    continue;
-                }
-
-                _ours[id] = new Loose(path, pcm);
             }
 
             if (_ours.Count > 0)
@@ -198,8 +191,8 @@ namespace ClassicUO.Assets
         /// <summary>
         /// Where <paramref name="sound"/> would come from, without reading its PCM: <paramref name="key"/> names the source
         /// (a pack record, shared by its aliases, or the id's loose file) and <paramref name="pcmBytes"/> is its PCM size: a
-        /// record's from the table, a loose file's from its header as LoadOurs probed it (no stat or read per request; a
-        /// file the client would refuse was left out at load, so the pack's record is named instead and budgeted before it
+        /// record's from the table, a loose file's from its header as LoadOurs probed it (probed on first use, then kept; a
+        /// file the client would refuse is dropped then, so the pack's record is named instead and budgeted before it
         /// is read). The renderer's sound cache uses it to share one
         /// array per record and to make room before any read. False when the id has no playable source.
         /// </summary>
@@ -215,10 +208,29 @@ namespace ClassicUO.Assets
 
             if (_ours.TryGetValue(sound, out Loose mine))
             {
-                key = LooseKey(sound);
-                pcmBytes = mine.Pcm;
+                if (mine.Pcm < 0)
+                {
+                    if (AudioConst.ProbeWaveFile(mine.Path, out int probed) is { } bad)
+                    {
+                        // unreadable or unplayable: once is enough, the pack's sound (if any) plays from now on
+                        Log.Warn($"{Path.GetFileName(mine.Path)}: {bad}; it is being ignored");
+                        _ours.Remove(sound);
+                        mine = default;
+                    }
+                    else
+                    {
+                        mine = new Loose(mine.Path, probed);
+                        _ours[sound] = mine;
+                    }
+                }
 
-                return true;
+                if (mine.Path != null)
+                {
+                    key = LooseKey(sound);
+                    pcmBytes = mine.Pcm;
+
+                    return true;
+                }
             }
 
             RecordStore store = _sounds;

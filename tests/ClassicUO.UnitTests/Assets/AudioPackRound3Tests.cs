@@ -262,6 +262,16 @@ namespace ClassicUO.UnitTests.Assets
             key.Should().BePositive("a pack record from now on");
             size.Should().Be(p8.Length);
 
+            // LoadOurs only lists: a file written after the listing is unknown, a listed one is probed on its first use
+            string nine = Path.Combine(sounds, "9.wav");
+            File.WriteAllBytes(nine, Wav(22050, 1, 16, Pcm(8 * K, 116)));
+            loader.TryGetSoundSource(9, out _, out _).Should().BeFalse("not in the listing");
+            File.WriteAllBytes(Path.Combine(sounds, "10.wav"), new byte[] { 1, 2, 3 });
+            loader.LoadOurs();
+            loader.TryGetSoundSource(9, out _, out long s9).Should().BeTrue();
+            s9.Should().Be(8 * K);
+            loader.TryGetSoundSource(10, out _, out _).Should().BeFalse("unplayable: dropped at its first use");
+
             // a reload (LoadOurs) takes a new snapshot
             loader.LoadOurs();
             loader.TryGetSoundSource(7, out _, out s7).Should().BeTrue();
