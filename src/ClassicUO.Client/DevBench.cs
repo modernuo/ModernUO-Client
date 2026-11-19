@@ -42,7 +42,7 @@ namespace ClassicUO
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries skipmin:on|off switch skip_draw_when_minimized, minimized:on|off simulate a minimized window (no OS call); FrameStats frames stop while it is on
-    //   plan entries gpuskip:, itemcache:, itemmixed:, fxserve:, w5: and textskip: switched settings whose off paths are deleted; they are skipped
+    //   plan entries gpuskip:, itemcache:, itemmixed:, fxserve:, w5:, textskip: and uicache: switched settings whose off paths are deleted; they are skipped
     //   plan entry effects:N:graphic[:blend[:radius[:z[:f|m|l]]]] spawns N client-side effects (fixed endless, moving, lightning) round the player, effects:0 removes every effect; name:lsreinit is reinit in the large-scale scene
     //   pickscan:CxR:pick_records hovers a C x R grid of the game view and compares picking from the T7b extract's records
     //   (SpritePickTable) off and on (both renderers); pickscan:CxR without it (the baked-object skipping off and on) is skipped;
@@ -1936,7 +1936,8 @@ namespace ClassicUO
                     // off paths: older plans still name them, so they are skipped
                     if (_plan[_planIndex].StartsWith("gpuskip:") || _plan[_planIndex].StartsWith("itemcache:") ||
                         _plan[_planIndex].StartsWith("itemmixed:") || _plan[_planIndex].StartsWith("fxserve:") ||
-                        _plan[_planIndex].StartsWith("w5:") || _plan[_planIndex].StartsWith("textskip:"))
+                        _plan[_planIndex].StartsWith("w5:") || _plan[_planIndex].StartsWith("textskip:") ||
+                        _plan[_planIndex].StartsWith("uicache:"))
                     {
                         Log.Info($"[bench] {_plan[_planIndex]} skipped: that switch has no off path any more");
                         _planIndex++;
