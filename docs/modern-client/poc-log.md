@@ -7698,3 +7698,40 @@ The owner baked in both world-text switches after quiet-1118 (bench-000883/884: 
 - **Removed.** Settings `text_tail_cache` and `text_prune_expired`; `TextRenderer.PruneOn` / `TailCacheOn`, the `CUO_TEXT_PRUNE` / `CUO_TEXT_TAIL` overrides, both checkers (`CUO_TEXT_PRUNE_CHECK`, `CUO_TEXT_ORDER_CHECK`) with their test hooks and summary logs, and the off paths (full forward walk without the kept tail, no prune). The prune and the kept tail always run; `TextObject.LinkVersion` stays (it validates the tail). The world-text FrameStats counters stay (they never depended on the checkers). Both keys are in `RemovedSwitchSettingsTests`.
 - **Numbers (quiet-1118, both on vs both off).** Legacy ls_z1 -9.1 %, lswalk -4.5 %; Gpu ls_z1 -9.7 %, lswalk -8.4 %. The tipref run showed the earlier Legacy ls_z1 regression (pre vs ref) did not reproduce quietly (-2.4 %), so no bisect.
 - **Tests.** TextRendererPruneTests and TextRendererTailTests run on the single path (switch-off and checker variants dropped).
+
+## 2026-11-19 vsync-poc: present on change with vsync on (bg/vsync-poc, base a7026ee75)
+
+Owner request 2026-11-15 (parked-timing.txt): with vsync on the main thread stays busy because the display-rate schedule and
+present on change engaged only with vsync off, so vsync drew every tick and blocked in Present once per vblank.
+
+- **vsync_present_on_change (5074366ac, default off).** `DisplayRateSchedule.Enabled` takes the switch; on, vsync no longer
+  disables the schedule, so `_displayCapActive`, present on change, `VisualDue.Tracking` and the loop-owned ping engage as
+  for vsync off, with the period from the SDL display mode (unknown refresh keeps the old cadence). It needs the event loop:
+  the legacy loop does not wait on skipped frames, so with vsync it would spin instead of blocking in Present. fps caps,
+  inactive and minimized windows keep their cadences. Renderer-independent (both present through FNA3D SDL_GPU).
+- **Checker.** A value comparison makes no sense for a scheduling change, so `CUO_VSYNC_PRESENT_CHECK=1` logs a 5 s summary
+  `[vsync-present-check]`: switch, vsync, engaged, draws/presents/waits per second, old_draws (ticks the old vsync path
+  draws) and avoided, time blocked in Present (mean/max), blocked presents (> half a period), missed vblanks (gap > 1.5
+  periods after a continuous frame) and invalid (present without a draw, draw not due while engaged) as mismatches.
+  Driver `vsyncpresent on|off`; the `display` diag line prints `vsync_present_on_change=`.
+- **Gate (bench-000887, NativeAOT dev, busy machine, 143.86 Hz).** Last 5 s window per phase, Gpu / Legacy:
+
+  | phase | presents/s | Present block mean ms | avoided draws | mismatches |
+  |---|---|---|---|---|
+  | vsync, switch on, idle | 2.0 / 2.0 | 0.18 / 0.24 | 305 / 305 | 0 |
+  | vsync, switch on, walking (busiest window) | 68 / 73 | 0.16 / 0.17 | | 0 |
+  | vsync, switch off (old path) | 143.9 / 143.9 | 6.78 / 6.76 | 0 | 0 |
+  | vsync off (anim) | 2.0 / 2.0 | 0.13 / 0.18 | | 0 |
+  | vsync, switch on, inactive (not engaged, 10 fps) | 10 / 10 | | | 0 |
+
+  The old vsync path spends a whole period blocked in Present on every frame (the swapchain queue is always full: blocked
+  720 of 720 presents in Legacy); present on change keeps it empty. missed_vblanks 0 everywhere. Effect frames differ in
+  the world shots on both renderers. The walk-shot check failed on Legacy in this run because the quiet spot is plain
+  grass (a 2-tile step left the image byte-identical); the scene now shoots facing east, mid-walk and facing south
+  (bench-000891).
+- **Counts** (anim / vsync / vpoc arms, both spots): bench-000888 (Gpu), bench-000889 (Legacy); results in the handoff.
+  bake-evloop's vsync arm (bench-000874/875) had 143.9 presents/s, 140-153 cpu ms/s and ping RTT ~6.9 ms at the quiet spot.
+- **Tests.** DisplayRateTests (Enabled with the switch off and on, setting default and round trip), VsyncPresentCheckTests.
+  ClassicUO.UnitTests 4121 pass / 6 skipped. Client builds with and without CuoDevTools.
+- **Parked timing.** measure/vsync-poc/job-timing-{g,l}-PARKED.sh: CPU ms/s and ping RTT, vsync on, switch off vs on
+  (interleaved in each session), three rounds, both spots. Memory: none.
