@@ -38,11 +38,14 @@ namespace ClassicUO.Game.UI.Controls
         {
             if (DoScissor)
             {
-                batcher.ClipBegin(x, y, Width, Height);
+                ClipPairTracker.Begin(batcher.ClipBegin(x, y, Width, Height));
             }
             else
             {
-                batcher.ClipEnd();
+                if (ClipPairTracker.End())
+                {
+                    batcher.ClipEnd();
+                }
             }
 
             return true;
