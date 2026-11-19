@@ -7755,3 +7755,64 @@ present on change engaged only with vsync off, so vsync drew every tick and bloc
   ClassicUO.UnitTests 4121 pass / 6 skipped. Client builds with and without CuoDevTools.
 - **Parked timing.** measure/vsync-poc/job-timing-{g,l}-PARKED.sh: CPU ms/s and ping RTT, vsync on, switch off vs on
   (interleaved in each session), three rounds, both spots. Memory: none.
+
+## 2026-11-19 loop-idle: idle event-loop wakes and the legacy cap spin (bg/loop-idle, base 490eb9ffa)
+
+Two findings from vsync-poc. (A) An idle in-game client (about 2 presents/s) still ran about 63 Updates/s: every event-loop
+wait was capped at `event_loop_max_wait_ms` (16) for work Update polls that the loop does not track. (B) In the legacy loop
+(off Windows, or during a late-wake backoff) a frame the display-rate cap skipped did not wait, so Update spun between presents.
+
+- **Survey of what Update polls** (beyond VisualDue's visual deadlines, queued actions, the next step and the ping): timed and
+  non-visual: the use-item queue (1 s, only with queued uses), the delayed single click, the OPL request drain (a share per
+  Update while requests pend), music streaming (`UOMusic.Update` keeps 3 FAudio buffers queued, ~186 ms each at 44.1 kHz), the
+  world map's 250 ms party/guild query, the ping outside present on change, driver/DevBench scripts. Input held without events:
+  mouse buttons (item pick-up after the double-click delay, drags), movement keys, right-mouse walking, continue-running,
+  following, auto-walk, a running macro. Async work drained in Update: chunk loads, art/texmap/gump/animation decodes.
+  Housekeeping that tolerates delay: unused-block cleanup (500 ms), range sweep (50 ms), world-map pruning (1 s), sound cleanup.
+  Out of game (login scene: async connect, reconnect timer) everything stays at the old cadence.
+- **A: `event_loop_idle_wait` (default off) + `event_loop_idle_max_wait_ms` (250).** On, the loop gathers that work right
+  before each wait (`LoopDue`, statics, no allocation): deadlines for the use queue, the delayed click, the music refill (one
+  buffer's length once the three are queued), driver waits and the ping in every mode; states that poll every Update (the
+  input, walking, macro, OPL, asset, music-opening, world-map, DevBench and not-in-game cases above) keep the 16 ms cadence.
+  Otherwise the wait runs to the earliest deadline (present, timers, LoopDue), at most 250 ms. A deadline already past at the
+  Update start keeps the cadence (no spin). Presents are unchanged: their schedule already covers every visual deadline.
+- **Checker `CUO_LOOP_IDLE_CHECK=1`** compares each Update with the 16 ms cadence: late_due (a LoopDue deadline served more
+  than 16 + 2 ms late), untracked_send (a non-ping packet sent by an Update a timer wake started more than 18 ms after the
+  previous one, with nothing tracked due: untracked work), music_underrun; 5 s summary with waits by cause and the sources
+  that held the cadence (`busy_by`, added in 0c619af67). Driver `loopidle on|off`; the `display` diag line prints the switch.
+- **B: plain fix (7c63594da).** The skipped frame sleeps as the legacy fps-cap path does (`LegacySleep`, 1 ms, 12 ms with
+  `throttle_update_when_inactive`); the draw decision and schedule are unchanged. `CUO_LOOP_LEGACY=1` (developer builds) forces
+  the legacy loop on Windows so it can be counted.
+- **Gate (bench-000902, NativeAOT dev b30d53d2b, busy machine, quiet spot): `LOOP-IDLE GATE PASS` on both renderers.** Median
+  5 s window, Gpu / Legacy:
+
+  | phase | updates/s | checker mismatches |
+  |---|---|---|
+  | vsync off, switch on, idle | 10.9 / 11.1 then 8.0 / 7.9 | 0 |
+  | vsync off, switch on, walking (busiest window) | 68.2 / 68.5 | 0 |
+  | vsync on + vsync_present_on_change, switch on, idle | 7.8 / 7.8 | 0 |
+  | inactive (10 fps draws), switch on | 15.2 / 15.6 | 0 |
+  | minimized, switch on | 8.3 / 8.2 | 0 |
+  | switch off (old cadence) | 63.4 / 63.5 | 0 |
+
+  late_due, untracked_send and music_underrun were 0 in every window. World shots still change across walks and effect
+  frames with vsync off and with vsync on. The speech text is not in the world shot, so its expiry is not checked by shots;
+  text expiry, buff and gump timers are VisualDue deadlines of the present schedule, which this change does not touch.
+- **Counts, Gpu (bench-000903, busy machine; CPU and ping indicative).** Switch off / on, median windows, checker on:
+
+  | spot, arm | loops/s | presents/s | timer wakes (8 windows) | cpu ms/s | ping RTT p50 ms | alloc/frame B |
+  |---|---|---|---|---|---|---|
+  | quiet, vsync off | 62.9 / 7.9 | 2.0 / 2.6 | 2483 / 134 | 18.7 / 12.5 | 0.168 / 0.181 | 606 / 568 |
+  | quiet, vsync on + vsync_present_on_change | 62.8 / 7.2 | 2.0 / 2.0 | 1238 / 127 | 21.9 / 14.0 | 0.222 / 0.226 | 602 / 600 |
+  | busy, vsync off | 185.9 / 181.7 | 132.3 / 132.2 | | 330 / 320 | 0.204 / 0.180 | 15.1 / 13.3 |
+  | busy, vsync on + vsync_present_on_change | 182.6 / 182.1 | 132.0 / 132.3 | | 350 / 347 | 0.189 / 0.192 | 13.6 / 13.4 |
+
+  At the busy spot presents run at the display rate either way, so the switch changes nothing there. Checker: 0 late_due,
+  0 untracked_send, 0 music_underrun in every window; at the quiet spot about 2.7 waits/s were held at 16 ms by a polling
+  source (gate-2 with busy_by attributes them).
+- **Pending:** bench-000904 (counts Legacy), bench-000905 (legacy loop before/after B), bench-000906 (gate-2 with busy_by):
+  results in the handoff (cuo-poc-state/handoffs/loop-idle.md).
+- **Tests.** ClassicUO.UnitTests 4148 pass / 6 skipped. LoopIdleTests (switch default, max wait in both states, LoopDue deadlines and stale ones, idle wait off/on, music
+  without a stream), LoopIdleCheckTests. Client builds with and without CuoDevTools.
+- **Parked timing.** measure/loop-idle/job-timing-{g,l}-PARKED.sh: CPU ms/s, loops/s and ping RTT, switch off vs on with vsync
+  off and with vsync on + vsync_present_on_change, three rounds, both spots. Memory: none.
