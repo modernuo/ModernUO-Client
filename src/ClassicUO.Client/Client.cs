@@ -92,7 +92,10 @@ namespace ClassicUO
             Animations = new Renderer.Animations.Animations(FileManager.Animations, game.GraphicsDevice);
             ClassicUO.Game.AnimAtlasLruSetup.Enable(Animations);
             Arts = new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, game.GraphicsDevice);
-            Gumps = new Renderer.Gumps.Gump(FileManager.Gumps, game.GraphicsDevice);
+#if CUO_DEVTOOLS
+            Uo.Buffers.PoolAudit.Log = static s => Log.Warn(s);
+#endif
+            Gumps = new Renderer.Gumps.Gump(FileManager.Gumps, game.GraphicsDevice, GumpDecodeBudgetEnabled());
             Texmaps = new Renderer.Texmaps.Texmap(FileManager.Texmaps, game.GraphicsDevice);
             Lights = new Renderer.Lights.Light(FileManager.Lights, game.GraphicsDevice);
             MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, game.GraphicsDevice);
@@ -103,6 +106,19 @@ namespace ClassicUO
 
             World = new World();
             GameCursor = new GameCursor(World, game.DpiScale);
+        }
+
+        // switch gump_decode_budget, read once at startup (the gump decoder is built with or without the budget)
+        internal static bool GumpDecodeBudgetEnabled()
+        {
+#if CUO_DEVTOOLS
+            switch (Environment.GetEnvironmentVariable("CUO_GUMP_DECODE_BUDGET"))
+            {
+                case "1": return true;
+                case "0": return false;
+            }
+#endif
+            return Settings.GlobalSettings.GumpDecodeBudget;
         }
 
         public void Unload()

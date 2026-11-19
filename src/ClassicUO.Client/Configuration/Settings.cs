@@ -196,6 +196,12 @@ namespace ClassicUO.Configuration
         // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
 
+        // buffer-pools: gump worker decodes are counted in their own 32 MiB decode budget (DecodeBudget.Gumps) and wait for
+        // room there, so a burst of large gumps cannot hold an unbounded amount of pooled pixels, and UI decodes never wait
+        // behind world decodes. Off: gump decodes are not counted, as before. Read at startup (CUO_GUMP_DECODE_BUDGET=1|0
+        // overrides it in developer builds); CUO_GUMP_BUDGET_CHECK=1 compares held and admitted bytes. Default off.
+        [JsonPropertyName("gump_decode_budget")] public bool GumpDecodeBudget { get; set; }
+
         // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
         // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
         // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.

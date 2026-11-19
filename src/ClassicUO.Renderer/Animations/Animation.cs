@@ -10,6 +10,7 @@ using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Animations
 {
@@ -334,10 +335,10 @@ namespace ClassicUO.Renderer.Animations
                     {
                         if (buffer != null)
                         {
-                            ArrayPool<uint>.Shared.Return(buffer);
+                            BufferPool.Return(buffer);
                         }
 
-                        buffer = ArrayPool<uint>.Shared.Rent(count);
+                        buffer = BufferPool.Rent<uint>(count);
                     }
 
                     _animationLoader.DecodeFrame(index, buffer);
@@ -348,7 +349,7 @@ namespace ClassicUO.Renderer.Animations
             {
                 if (buffer != null)
                 {
-                    ArrayPool<uint>.Shared.Return(buffer);
+                    BufferPool.Return(buffer);
                 }
             }
 
@@ -775,7 +776,7 @@ namespace ClassicUO.Renderer.Animations
             public readonly byte Action, Dir;
             public readonly AnimDirEntry Entry;
             public readonly SpriteInfo[] Sprites;
-            public readonly FrameBuffers Buffers; // rented from ArrayPool<uint>.Shared; returned by Upload, ReturnAll or Decode's failure
+            public readonly FrameBuffers Buffers; // rented from the shared family (BufferPool.RentShared); returned by Upload, ReturnAll or Decode's failure
 
             public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
             {
@@ -785,7 +786,7 @@ namespace ClassicUO.Renderer.Animations
                 Dir = dir;
                 Entry = entry;
                 Sprites = sprites;
-                Buffers = new FrameBuffers(sprites.Length, ArrayPool<uint>.Shared);
+                Buffers = new FrameBuffers(sprites.Length, SharedFamilyPool<uint>.Instance);
             }
 
             public override void Execute()

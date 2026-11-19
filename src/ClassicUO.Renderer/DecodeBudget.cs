@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
 using System.Threading;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer
 {
@@ -18,7 +19,7 @@ namespace ClassicUO.Renderer
     /// decode handing back its buffers) and the main thread (upload, drop, cancel) may both release it. An owner's waiting
     /// (never started) items are taken out with <see cref="CancelWaiting"/>.</para>
     /// <para>The bytes are the pooled capacity the item's buffers will hold (<see cref="PooledBytes"/>, what
-    /// <c>ArrayPool&lt;uint&gt;.Shared.Rent</c> returns), not the logical pixel payload.</para>
+    /// <c>BufferPool.RentShared&lt;uint&gt;</c> returns), not the logical pixel payload.</para>
     /// CUO_DECODE_CAP_MB sets the shared cap (0 = unlimited: the budget only counts).
     /// </summary>
     public sealed class DecodeBudget
@@ -35,13 +36,19 @@ namespace ClassicUO.Renderer
                 : DefaultCapBytes;
         }
 
-        /// <summary>The budget art, texmap and animation decodes share (gumps are not counted).</summary>
+        /// <summary>The budget art, texmap and animation decodes share (gumps have their own, <see cref="Gumps"/>).</summary>
         public static readonly DecodeBudget Shared = new DecodeBudget(CapFromEnv());
 
+        /// <summary>Gump decodes' own budget (switch gump_decode_budget): a gump can hold up to 16-20 MiB, and its own budget
+        /// keeps UI decodes from waiting behind world decodes.</summary>
+        public const long GumpCapBytes = 32L << 20;
+
+        public static readonly DecodeBudget Gumps = new DecodeBudget(GumpCapBytes);
+
         /// <summary>
-        /// The bytes <c>ArrayPool&lt;uint&gt;.Shared.Rent(elements)</c> hands out: the shared pool rounds a request up to a
-        /// power of two (at least 16 elements) for every size it pools (up to 2^30 elements); a larger request is allocated
-        /// exactly, so the power of two is still an upper bound there.
+        /// The bytes <c>BufferPool.RentShared&lt;uint&gt;(elements)</c> hands out: a power of two (at least 16 elements) up
+        /// to 64 KiB, then the large pool's class (at most 25 % above the request); above the largest class the request
+        /// is allocated exactly.
         /// </summary>
         public static long PooledBytes(long elements)
         {
@@ -50,7 +57,7 @@ namespace ClassicUO.Renderer
                 return 0;
             }
 
-            return elements > 1L << 30 ? elements * 4 : (long)Math.Max(16UL, BitOperations.RoundUpToPowerOf2((ulong)elements)) * 4;
+            return elements > int.MaxValue ? elements * 4 : BufferPool.PooledBytes<uint>((int)elements);
         }
 
         private const byte StateNone = 0, StateWaiting = 1, StateAdmitted = 2;

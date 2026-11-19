@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Diagnostics;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework.Graphics;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Gumps
 {
@@ -34,14 +35,27 @@ namespace ClassicUO.Renderer.Gumps
         public static int TotalSyncLoads;
         public static long TotalSyncTicks;
 
-        public Gump(GumpsLoader gumpsLoader, GraphicsDevice device)
+        /// <param name="decodeBudget">Switch gump_decode_budget (read at startup): worker decodes are counted in
+        /// <see cref="DecodeBudget.Gumps"/> (32 MiB in flight) and wait for room there. Off: not counted, as before.</param>
+        public Gump(GumpsLoader gumpsLoader, GraphicsDevice device, bool decodeBudget = false)
         {
             _gumpsLoader = gumpsLoader;
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[gumpsLoader.Count];
             _picker = new PixelPicker(_spriteInfos.Length);
-            _decoder = new FirstSightDecoder("gump", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
+            _decoder = CreateDecoder(_spriteInfos.Length, DecodeOnWorker, UploadDecoded, decodeBudget ? PooledBytesOf : null);
         }
+
+        /// <summary>The gump decoder: counted in <see cref="DecodeBudget.Gumps"/> when <paramref name="bytesOf"/> is given
+        /// (switch gump_decode_budget on), else outside any budget. Tests build it without a device.</summary>
+        internal static FirstSightDecoder CreateDecoder(int count, Func<FirstSightDecoder.Job, bool> decode, Action<FirstSightDecoder.Job> upload,
+            Func<uint, long> bytesOf, DecodeBudget budget = null) =>
+            new FirstSightDecoder("gump", count, decode, upload, bytesOf, bytesOf != null ? budget ?? DecodeBudget.Gumps : null);
+
+        private long PooledBytesOf(uint idx) => DecodeBudget.PooledBytes(_gumpsLoader.PixelCount(idx));
+
+        /// <summary>Whether worker decodes are counted in <see cref="DecodeBudget.Gumps"/> (switch gump_decode_budget).</summary>
+        public bool DecodeBudgetOn => _decoder.CountedIn != null;
 
         public void Reload()
         {
@@ -244,6 +258,13 @@ namespace ClassicUO.Renderer.Gumps
         /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
         public void DrainReady(long deadline)
         {
+#if CUO_DEVTOOLS
+            if (GumpBudgetCheck.Enabled)
+            {
+                GumpBudgetCheck.Observe(_decoder);
+            }
+#endif
+
             if (_decoder.HasReady)
             {
                 long t0 = Stopwatch.GetTimestamp();
@@ -256,7 +277,7 @@ namespace ClassicUO.Renderer.Gumps
         public void CancelPending() => _decoder.Cancel();
 
         // Worker thread: touches only the loader's pack store and size table (immutable after Load, reads thread-safe),
-        // the hue table (immutable) and ArrayPool, plus the job.
+        // the hue table (immutable) and the buffer pools, plus the job.
         private bool DecodeOnWorker(FirstSightDecoder.Job job)
         {
             int count = _gumpsLoader.PixelCount(job.Index);
@@ -266,7 +287,7 @@ namespace ClassicUO.Renderer.Gumps
                 return false;
             }
 
-            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            job.Pixels = BufferPool.RentShared<uint>(count);
             var info = _gumpsLoader.GetGump(job.Index, job.Pixels);
 
             if (info.Pixels.IsEmpty)
@@ -344,7 +365,7 @@ namespace ClassicUO.Renderer.Gumps
                 {
                     FrameSyncLoads++;
                     // the image only lives until the atlas upload: decode into a pooled buffer
-                    var buffer = ArrayPool<uint>.Shared.Rent(count);
+                    var buffer = BufferPool.Rent<uint>(count);
 
                     try
                     {
@@ -357,7 +378,7 @@ namespace ClassicUO.Renderer.Gumps
                     }
                     finally
                     {
-                        ArrayPool<uint>.Shared.Return(buffer);
+                        BufferPool.Return(buffer);
                     }
                 }
 
