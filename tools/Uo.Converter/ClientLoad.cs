@@ -5,8 +5,8 @@ using ClassicUO.Utility;
 namespace Uo.Converter;
 
 /// <summary>
-/// The subset of UOFileManager.Load the converter needs. The full Load also initialises animations, which needs the
-/// native zlib that ClassicUO ships with its client (not available to a plain console app), and loaders we don't use.
+/// The subset of UOFileManager.Load the converter needs. The full Load also initialises animations and loaders we
+/// don't use.
 /// Order matches UOFileManager.Load; ReadArtDefFile is private there so it is ported verbatim below.
 /// Verdata.mul is unsupported by design (shard owners merge it into the base files with their own tools; ClassicUO
 /// itself only reads it below 5.0.0a) and is never loaded. Map diffs (mapdif*/stadif*) are applied for legacy clients
