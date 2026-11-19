@@ -7605,3 +7605,28 @@ Follow-ups of perf-17's static box (perf-opportunities). One switch, `pick_early
 - **Per-graphic box (target 3): not done.** It needs the graphic read the early reject avoids, plus a ~256 KB table read per pick; 97 % of Legacy static picks are already rejected. Left open in perf-opportunities.
 - **Jobs (set measure/perf-19; base ddba05e6f, new 5cd18449c, NativeAOT dev).** gate-gpu bench2-000035 PERF19 PASS (bench2-000033 failed only on a `rename a_horse` driver command that found no horse near the player); gate-legacy bench3-000026 PERF19 PASS; switch, item_offset_flag and both checkers on, 0 mismatches. x19 (boat17 and this renderer's pick scans): bench6-000049 Legacy X19 PASS (4.10M static picks / 3.97M early rejects, 23.56M item picks / 23.56M early rejects, PICKJUDGE 3 scans pass); bench2-000034 Gpu X19 PASS (2.59M / 1.96M static, 18.1M / 13.3M item, 1.42M multi picks all rejected, PICKJUDGE 6 scans pass). Multi picks (11.0M Legacy gate, 5.9M Gpu gate, boats) were all early rejects: no scene puts a house under the mouse, so the near-mouse multi case is covered by the unit tests only. golden (off) bench6-000048 GOLDEN SAME. alloc base/off/on bench5-000034 (Gpu) and bench5-000035 (Legacy): main-thread p50 0 B/frame in every window for all three arms.
 - **Tests.** PickBoxTests: the item box against every mask and stack pixel for sized and unsized entries, a far mouse rejected before a multi or an item reads its art, the multi box moved by the boat offset, the item full test kept without ArtWait, the checker's counts. ClassicUO.UnitTests 4036 passed / 6 skipped (dev), 3982 / 6 (`CuoDevTools=false`); both client variants build.
+
+## 2026-11-18 bake-evloop: the event-loop switches baked in (bg/bake-evloop)
+
+Owner decision from quiet-1115 (main-thread CPU -62..-92 %, ping equal or better): `event_loop`, `present_on_change` and
+`present_on_change_anim_due` are permanent. Base 23c6f167c.
+
+- **event_loop (72738809d).** Setting, `CUO_EVENT_LOOP` / `CUO_EVENT_LOOP_MAX_WAIT_MS` and the driver `eventloop` command
+  removed. The legacy sleep loop stays as the mode fallback (not Windows, no working waiter, late-wake backoff). Queued
+  actions always run every due one. `event_loop_max_wait_ms` stays.
+- **present_on_change (43d82a423).** Runs whenever the event loop and the display-rate cap run (fps 0, vsync off, window
+  active); vsync on, an fps cap, inactive/minimized windows and the legacy loop keep their cadences. Setting, DevBench and
+  driver `presentchange`, `CUO_PRESENT_CHANGE_CHECK` and the wait's grid-deadline arm (switch-off only) removed.
+- **anim_due + idle redraw (4143c1423).** Idle frames at the next visual change with the 1 s safety net;
+  `event_loop_idle_redraw_ms` was only used without anim-due and is gone. `CUO_ANIM_DUE_CHECK`, the change-reason
+  bookkeeping it read, DevBench `animdue`, driver `animdue`/`idleredraw` removed; LoopTiming has one present schedule.
+  a105e9902 drops the batcher and GPU world frame signatures, which only that checker used.
+- **Tracking gate (5e24b99f6, coordinator request).** `VisualDue.Tracking` follows `LoopTiming.TracksVisualDue` (event loop
+  and display-rate cap active, last Update's cap state). Off, `MobileClockSystem.CollectDue` skips the AnimationTimer
+  stream and NextVisualTick, GameScene and drawn text skip their notes and `VisualDue.At/Now` record nothing, so vsync on,
+  fps caps, inactive windows and the legacy loop pay nothing for the signal.
+- **Old settings.json** naming `event_loop`, `present_on_change`, `present_on_change_anim_due` or `event_loop_idle_redraw_ms`
+  loads (RemovedSwitchSettingsTests). The `display` diag line now prints `loop=<mode>` and the engaged `present_on_change`.
+- **Verification.** Client builds with and without `CuoDevTools`. ClassicUO.UnitTests 4062 pass / 6 skipped. Counts jobs
+  (one round, NativeAOT dev of 5e24b99f6, scenes and scripts in cuo-poc-state/measure/bake-evloop): bench-000874 (Gpu),
+  bench-000875 (Legacy); arms `anim` (fps 0, vsync off) and `vsync` (vsync on). Busy machine: CPU and latency indicative.
