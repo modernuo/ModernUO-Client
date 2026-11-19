@@ -182,3 +182,74 @@ Source: cuo-poc-state audits/perf-audit-1111/out.md. Savings are provisional (ex
 - Runtime zlib: the client's own zlib (native zlib.dll/libz P/Invoke plus a managed 32-bit port) is replaced by the .NET 11 `ZLibDecoder` (`ZlibInflater`, a reused per-thread decoder, 0 B per call; 5685fffa2, d26514e96). Only the 0xD8 house and 0xDD gump handlers used it at run time. No timing claim.
 - World text (2026-11-19): expired texts pruned and the list tail kept, both baked in (1fd26ed45; quiet-1118 ls_z1 frame -9 % on both renderers). UI walks measured (1e4fa7f30): UIManager.Update sort is already gated by `_needSort`, `HandleKeyboardInput` visits 0 controls while a control holds focus, 12 gumps cost 0.035-0.075 ms/frame: closed, nothing to do.
 - Gump closures (2026-11-19): every capturing lambda in AddToRenderLists replaced by typed GumpCommands (a1bfb21d1, 6ea53b00b; skills gump 5840 -> ~150 B/frame, Options gump 7.9 KB -> 44 B/frame); GumpClosureGuardTests keeps them out.
+
+## igzip (IGzip.Bindings) and the pack codec: igzip vs zstd vs Brotli (2026-11-19, bg/igzip-eval)
+
+Question: is IGzip.Bindings (Intel ISA-L igzip, BSD-2, 1.0.0) useful to the client, for network inflate or as the pack codec? Answer: no. The useful finding is a different one: the .NET 11 BCL `ZstandardEncoder`/`ZstandardDecoder` (no new dependency) decodes every pack record kind 2.4 to 3.6 times faster than today's Brotli, and at level 19 the pack is about 5 % smaller. The earlier deflate evaluation is on bg/deflate-eval (f6b728385).
+
+**What is compressed (checked at 2ff7d0fb2, pack classic-1.5).** On the wire, only the 0xD8 house planes and the 0xDD gump layout and text (3 call sites in `PacketHandlers.cs`, through `ZlibInflater` = BCL `ZLibDecoder`); the stream's Huffman layer is not deflate. In the pack nothing is deflate: `FileHeader.Kind` is raw, Brotli or chunked Brotli, and record stores use codec raw or Brotli. Brotli-coded data in the pack: anim pages 623 MB (2,632 files, 2,632 MB decoded), art pages 66 MB (331 MB), map regions 57 MB (297 files, 350 MB), gump records 28 MB (375 large images, 94 MB; the 3,915 small ones are stored raw RLE, 29 MB), texmap pages 16 MB (43 MB), multimap 9 MB (30 MB), stringdict, fonts and unifont under 1 MB. Pages and regions are quality 5, records quality 9. Tables and audio are raw.
+
+**Q1, network inflate.** A few 1 to 30 KB calls per session. Another session's pinned BenchmarkDotNet run for the ModernUO server (same data shapes, isal vs libdeflate vs .NET 11 zlib-ng decode): gump small 1.94 / 1.76 / 2.33 us, gump large 6.36 / 5.91 / 7.93 us, house plane 0.95 / 0.98 / 1.00 us. igzip would save under 2 us per packet. Nothing to gain. (That session chose ISA-L level 1 for the server's wire compression, since its encoder is about 1.8x faster than libdeflate level 1. The output stays zlib, so the client is unaffected.)
+
+**Method.** Scratch bench (net11, `DOTNET_TieredCompilation=0`, `benchpin.py`: P-cores, High priority, single-threaded decode loop), 11 interleaved rounds in random order, reused decoders, whole-buffer decode into a preallocated destination, medians with [min-max] over rounds. The machine was busy with other agents, so treat absolute times as noisy and the ratios as the result. An earlier unpinned run gave the same ordering with wider spreads and is not used here. Sizes come from a larger sample (75 regions, 121 art chunks, all 44 tex chunks, 212 anim chunks, all 375 Brotli gump records, 1,290 raw gump records), extrapolated to the pack by kind. zstd window 2^22, Brotli window 22 (as built). "Deflate" means a zlib stream written by BCL zlib-ng level 9 (smaller than igzip's own levels) and decoded by igzip.
+
+Decode time per unit, pinned (us, median [min-max]), and size as a percentage of raw:
+
+| Unit | Brotli as built | zstd 19 | zstd 9 | deflate, igzip decode | deflate, BCL decode | igzip L1 stream |
+|---|---|---|---|---|---|---|
+| Region, 1.32 MB avg | 2670 [2520-2824], 21.6 % | 1078 [1043-1145], 19.3 % | 1078, 22.9 % | 876 [864-951], 23.6 % | 1120, 23.6 % | 1612, 29.5 % |
+| Art chunk, 1 MiB | 2402 [1879-2484], 18.7 % | 830 [575-901], 17.1 % | 668, 19.4 % | 787 [698-902], 19.7 % | 925 | 1121, 23.5 % |
+| Anim chunk, 512 KB avg | 1262 [989-1310] (br9 1000), 20.8 % | 302 [271-415], 19.9 % | 297, 21.2 % | 380 [373-493], 21.0 % | 425 | 401, 22.9 % |
+| Gump record, 274 KB avg (br9) | 586 [582-599], 28.8 % | 240 [237-242], 27.0 % | 184, 30.3 % | 251 [249-258], 29.8 % | 304 | 321, 34.1 % |
+| Art page as one stream, 10.9 MB | 13730 [13501-14164], 11.0 % | 3867 [3791-4025], 9.8 % | 3498, 11.1 % | 5434 [5239-5612], 12.1 % | 5646 | 6444, 14.1 % |
+| Small gump record, 7.3 KB (stored raw today: 0.1 us) | 21.3 (br5), 33.7 % | 11.0, 33.0 % | 8.0, 35.9 % | 10.7, 35.4 % | 12.7 | 12.4, 39.3 % |
+
+Ratio to Brotli as built (per-round ratio, median [min-max]): zstd 19 0.41 [0.39-0.42] region, 0.34 [0.27-0.38] art, 0.28 [0.23-0.33] anim, 0.41 [0.40-0.41] gump. Deflate with igzip: 0.34, 0.36, 0.37 and 0.43.
+
+- **igzip vs zlib-ng on the same stream:** igzip takes 0.78 to 0.96 of zlib-ng's time.
+- **igzip vs zstd 19:** igzip is faster only on regions, by 0.2 ms per region. It is 5 to 40 % slower on chunks, records and whole pages, and the deflate files are 6 to 22 % larger than zstd 19.
+- **Brotli at a lower quality is not faster.** q1 and q3 decode at the same speed or slower than q5, and the files are 5 to 31 % larger, so the "cheaper Brotli" middle option is dead.
+- **Streaming vs whole-buffer igzip** (stateful `isal_inflate` fed 64 KiB of input at a time into the full destination, against the stateless one-shot): within 5 % on every set, including the 10.9 MB page. The pack always knows the decoded size, and chunks are at most 1 MiB, so whole-buffer per chunk or record fits every pack use. Streaming would only matter for a reader that cannot hold the compressed record, and none exists.
+- **zstd dictionaries** (BCL `ZstandardDictionary.Train`, 112 KiB, trained on records outside the measured sample, 0.5 to 3.3 s each): art 17.1 to 17.0 %, anim no change, large gumps no change, small raw gumps 33.0 to 31.7 %. Decode time was the same or slightly slower. The pack's compressed records are large (chunks of 512 KB to 1 MiB, gump images of about 274 KB), so a dictionary has nothing to add. The ModernUO step cache gained from one because its records are small and alike; that does not carry over. A dictionary would be a new pack file (an encoding parameter, not derived data, so the no-duplicates rule allows it), but it is not worth adding.
+
+**Trade-off per pack use, in absolute terms.** Decode is worker CPU in every case (regions are prefetched, `region_wait_us` 0; pages decode on `ChunkedBrotliDecoder` lanes), so the saving is worker CPU and page pop-in latency, not frame time. "Pack MB" means pack bytes on disk; the OS page cache shares the same bytes across 3 or 4 clients on one machine. Decoded buffers are identical in every option, so per-client memory does not change beyond the decoder contexts: zstd's are small, and an `IGzipBinding` allocates 255 KB of native state per thread, even for decode only.
+
+| Use | Event | zstd 19: ms saved / pack MB | deflate + igzip: ms saved / pack MB | zstd 9: ms saved / pack MB |
+|---|---|---|---|---|
+| Regions | per region; a teleport loads up to 4 | -1.6 per region, -6.4 per teleport / -7.8 MB | -1.8 / -7.2 / +4.0 MB | -1.6 / -6.4 / +3.0 MB |
+| Art pages | per page, 11 chunks (decoded in parallel on 2 to 8 lanes) | -17 CPU, about -2 to -9 wall per page (the earlier record evaluation measured about 14 ms average page latency) / -5.5 MB | -17 / +2.2 MB | -19 / +1.7 MB |
+| Tex pages | per chunk | about -1.6 / -1.5 MB | about -1.6 / +1.1 MB | about -1.7 / +0.2 MB |
+| Anim pages | per page, 1 MB | -1.9 per new body or action set / -25.6 MB | -1.8 / +16.2 MB | -1.9 / +10.6 MB |
+| Large gumps | first open | -0.35 / -1.8 MB | -0.33 / +0.9 MB | -0.40 / +1.4 MB |
+| Any streaming | CPU per 100 MB decoded | about -0.17 s (Brotli 0.20 to 0.24 s, zstd 19 0.06 to 0.08 s) | about -0.16 s | about -0.17 s |
+| Total pack | | about -42 MB (-5 % of the 800 MB of Brotli data) | about +24 MB | about +17 MB |
+
+Startup: `[load] pages` was 167 to 180 ms in the record evaluation. The share of that spent in Brotli decode was not measured here. If most of it is decode, zstd cuts it by about two thirds. The client job in the parked list would show the real figure.
+
+**Break-even.** zstd 19 is faster and smaller for every use, so it has no break-even; it dominates Brotli q5/q9. Its only costs:
+
+- Conversion time: encode runs at about 13 MB/s per thread, against about 120 MB/s for Brotli q5 on 8 threads. That is roughly 4 to 5 minutes for a full pack (3.45 GB decoded) on 8 threads, against about 30 s. The owner said conversion speed does not matter.
+- A pack revision: new kinds and a codec value, and every Brotli file re-encoded. Published packs are immutable, so it becomes a new version.
+
+Deflate with igzip beats zstd 19 only on regions, by 0.2 ms per region (0.8 ms of worker CPU per teleport), and costs 11 MB more than zstd 19 on regions alone plus a native dependency. That is never worth it. Brotli q11 would save about 83 MB against today with no decode change; zstd 19 gives about half of that disk saving plus the speed. A separate size option: compress the 3,915 small raw-RLE gump records with zstd 19, saving about 20 MB on disk at about 11 us per small-gump decode (0.5 ms for a window with 50 new small gumps). This is the owner's call; it is the one real size-against-time trade-off here.
+
+**Q3, practical fit of IGzip.Bindings.**
+- Licence: the package is BSD-2-Clause (matches the client); the bundled ISA-L 2.32.1 is BSD-3-Clause (notice required).
+- Natives: bundled only for win-x64 (888 KB, KERNEL32/ntdll dependencies only) and osx-arm64. Linux needs the distro `libisal2`, which is not bundled; the csproj lists linux-x64 and linux-arm64 RIDs with no binary. No osx-x64 (falls back to Homebrew), no win-arm64, no WASM.
+- NativeAOT: `LibraryImport` source-generated with a `DllImportResolver`. Under AOT `Assembly.Location` is empty, so the runtimes/ probe is skipped and it loads `isa-l.dll` from the loader path (next to the exe). It is a separate DLL, not linked statically.
+- API: one-shot stateless `Pack`/`Unpack` over spans, no managed allocation per call, one instance per thread (not thread-safe), 255 KB native per instance. There is no streaming API; the bench bound `isal_inflate` itself through the same struct offsets.
+- zstd by comparison: it ships inside `System.IO.Compression.Native` (ZSTD symbols present in the win-x64, linux-x64 and osx-arm64 11.0.0 runtime packs), the same native library NativeAOT already links for Brotli. It is not yet confirmed with an AOT build of the client, and browser availability was not checked.
+
+**Switch scope (not implemented).**
+- Format: `FileKind` 3 (zstd) and 4 (chunked zstd); `StoreConst` codec 2 (zstd).
+- Code: `ChunkedBrotli`/`ChunkedBrotliDecoder` generalised over the codec; the `PackReaders` page and region readers and writers; `RecordStore`; the `GetMaxCompressedLength` validation in `GumpsLoader`, `FontsLoader`, `ClilocStore`, `MiscData` and `GumpCodec`; `PackAssets.DecodeChunk`; `Uo.Render` `PageResidency` and `Region`. Converter: `PageCodec`, `Program` options, `Atlas`, `ArtConvert`, `AnimConvert`, `GumpConvert`, `MiscConvert`, `TextConvert`, `Verify`. About 7 unit-test files. About 35 files reference Brotli.
+- Docs: `docs/dev/pack-format.md` (Compression, ship profile, record stores), `docs/dev/data-formats.md`, `docs/modern-client/pack-format.md`.
+- Compatibility: readers accept mixed kinds, but an older client throws on an unknown kind, so this is a pack revision (a required-file marker or manifest version 2), published as a new pack version.
+- Switch and checker: a decode checker is not needed (decoding is byte-exact by construction), but `Verify` should compare the decoded bytes of the two packs.
+
+**Recommendation.**
+1. Do not adopt IGzip.Bindings in the client, either for the network (under 2 us per packet) or for the pack (zstd is as fast or faster, smaller, and needs no native).
+2. Consider zstd 19 (BCL, no dictionary) as the pack codec for pages, regions and Brotli records: 2.4 to 3.6x faster decode, about 42 MB smaller, at the price of a pack revision and slower conversion. It is worth a measured slice when page pop-in or startup page load matters. First measure the Brotli share of `[load] pages` and art-page latency in the client (parked).
+3. Keep Brotli q5/q9 until then. Lower Brotli qualities are not an option.
+
+Bench sources and a quiet-machine version: `cuo-poc-state/measure/igzip-eval/` (`bench-PARKED.sh`).
