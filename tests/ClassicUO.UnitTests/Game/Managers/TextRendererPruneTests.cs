@@ -14,6 +14,8 @@ namespace ClassicUO.UnitTests.Game.Managers
     [Collection("TextRendererStatics")]
     public class TextRendererPruneTests : IDisposable
     {
+        // Time.Ticks is a shared static that unrelated tests set: the cases that do not move it use times no uint can straddle
+        private const long Dead = -5, Live = 5_000_000_000;
         private const uint T0 = 1_000_000;
         private readonly uint _ticks;
         private readonly List<string> _mismatches = new List<string>();
@@ -84,7 +86,7 @@ namespace ClassicUO.UnitTests.Game.Managers
         [Fact]
         public void Off_Leaves_Expired_Texts_Linked()
         {
-            var (r, _) = Build(false, T0 - 5, T0 + 100, T0 - 1, T0 + 50);
+            var (r, _) = Build(false, Dead, Live, Dead, Live);
 
             r.Update();
 
@@ -94,7 +96,7 @@ namespace ClassicUO.UnitTests.Game.Managers
         [Fact]
         public void On_Unlinks_Expired_Texts_And_Keeps_The_Order_Of_The_Rest()
         {
-            var (r, objs) = Build(true, T0 - 5, T0 + 100, T0 - 1, T0 + 50, T0);
+            var (r, objs) = Build(true, Dead, Live + 1, Dead, Live + 2, Live);
             var before = Visited(r);
 
             r.Update();
@@ -112,6 +114,7 @@ namespace ClassicUO.UnitTests.Game.Managers
         {
             var (r, _) = Build(true, T0 + 100, T0 + 10, T0 + 50);
 
+            Time.Ticks = T0;
             r.Update();
             Linked(r).Should().Be(3);
 
@@ -130,6 +133,7 @@ namespace ClassicUO.UnitTests.Game.Managers
         {
             var (r, _) = Build(true, T0 + 1000);
 
+            Time.Ticks = T0;
             r.Update();
 
             var late = TextObject.Create(null);
@@ -147,7 +151,7 @@ namespace ClassicUO.UnitTests.Game.Managers
         [Fact]
         public void Draw_Start_Is_The_Tail_Of_The_Pruned_List()
         {
-            var (r, objs) = Build(true, T0 - 3, T0 + 7, T0 + 8);
+            var (r, objs) = Build(true, Dead, Live, Live + 1);
 
             r.Update();
 
@@ -158,7 +162,7 @@ namespace ClassicUO.UnitTests.Game.Managers
         [Fact]
         public void Pruned_Text_Can_Still_Be_Destroyed_And_Moved()
         {
-            var (r, objs) = Build(true, T0 - 3, T0 + 7);
+            var (r, objs) = Build(true, Dead, Live);
 
             r.Update();
             objs[0].Destroy();
