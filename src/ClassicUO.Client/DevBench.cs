@@ -37,8 +37,7 @@ namespace ClassicUO
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
     //   plan mode gumpopen (name:gumpopen) opens large windows one by one, cold, and logs their gump decode cost ([bench-gumpopen]), then
     //   the gump picker check ([bench-gumppick]); CUO_BENCH_GUMPOPEN sets the list. eqhue:hex,... hues the player's equipped items locally
-    //   plan entries uicache:on|off switch the UI render cache (ui_render_cache, B8); CUO_UI_CACHE_CHECK=1|N compares the UI
-    //   target with a replay of the recordings and with a direct redraw every N frames (default 30)
+    //   CUO_UI_CACHE_CHECK=1|N compares the UI render cache's target (B8) with a replay of the recordings every N frames (default 30)
     //   plan entry minimap opens the minimap gump
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
@@ -1927,16 +1926,6 @@ namespace ClassicUO
                     {
                         cotProfile.UseCircleOfTransparency = _plan[_planIndex] == "cot:on";
                         Log.Info($"[bench] circle of transparency {cotProfile.UseCircleOfTransparency} (type {cotProfile.CircleOfTransparencyType}, radius {cotProfile.CircleOfTransparencyRadius})");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("uicache:"))
-                    {
-                        Configuration.Settings.GlobalSettings.UiRenderCache = _plan[_planIndex] == "uicache:on";
-                        Log.Info($"[bench] ui render cache: {Configuration.Settings.GlobalSettings.UiRenderCache}");
                         _planIndex++;
                         _stepAt = now + sec;
 

@@ -81,18 +81,6 @@ namespace ClassicUO.Game.Managers
             );
 #endif
 
-            // -uicache [on|off]: the UI render cache (B8). No argument toggles.
-            Register
-            (
-                "uicache",
-                s =>
-                {
-                    var settings = Configuration.Settings.GlobalSettings;
-                    settings.UiRenderCache = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.UiRenderCache;
-                    GameActions.Print(_world, $"UI render cache: {(settings.UiRenderCache ? "on" : "off")}");
-                }
-            );
-
             Register
             (
                 "debug",

@@ -137,7 +137,6 @@ namespace ClassicUO.Configuration
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
         [JsonPropertyName("text_quad_cache")] public bool TextQuadCache { get; set; }
-        [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
 
         // A minimized window skips world prepare, draw and present (GameController.Update); packets, update and audio keep running.
         // Not an ECS path, so there is no CUO_*_CHECK checker: nothing old to compare against, the draw is simply not run.
