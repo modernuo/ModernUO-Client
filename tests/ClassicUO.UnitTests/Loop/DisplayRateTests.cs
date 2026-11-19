@@ -106,6 +106,13 @@ public class DisplayRateTests
         => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, 0, true, false, false, false));
 
     [Fact]
+    public void VsyncIsOnForNewSettingsAndASavedOffIsKept()
+    {
+        Assert.True(new Settings().VSync);
+        Assert.False(JsonSerializer.Deserialize<Settings>("{\"vsync\":false}").VSync);
+    }
+
+    [Fact]
     public void VsyncMailboxIsOffByDefaultAndRoundTrips()
     {
         Assert.False(new Settings().VsyncMailbox);

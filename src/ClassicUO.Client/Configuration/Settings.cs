@@ -76,7 +76,8 @@ namespace ClassicUO.Configuration
         // 0 = uncapped
         [JsonPropertyName("fps")] public int FPS { get; set; } = 0;
 
-        [JsonPropertyName("vsync")] public bool VSync { get; set; }
+        // On for a new settings.json (owner, 2026-11-19); a saved "vsync": false is kept.
+        [JsonPropertyName("vsync")] public bool VSync { get; set; } = true;
 
         [JsonPropertyName("screen_scale")] public float ScreenScale { get; set; } = 1f;
 
