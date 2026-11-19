@@ -155,13 +155,15 @@ namespace ClassicUO.Configuration
 
         // vsync-poc: with vsync on (fps 0, window active, event loop) the display-rate schedule and present on change run as
         // for vsync off: unchanged frames skip Draw and Present and the loop waits for the next change instead of blocking in
-        // Present every vblank. Off: vsync draws every tick. CUO_VSYNC_PRESENT_CHECK logs the presents it skips.
-        [JsonPropertyName("vsync_present_on_change")] public bool VsyncPresentOnChange { get; set; }
+        // Present every vblank. Off: vsync draws every tick. CUO_VSYNC_PRESENT_CHECK logs the presents it skips. Default on after
+        // quiet-1119 (bench-000921/922: quiet idle CPU 55-90 -> 9-19 ms/s, ping RTT p50 5.9 -> 0.12 ms, both renderers).
+        [JsonPropertyName("vsync_present_on_change")] public bool VsyncPresentOnChange { get; set; } = true;
 
         // vsync-mailbox: vsync on presents in mailbox mode where FNA3D's SDL_GPU driver and the window support it (no tearing,
         // no queued frames; Present does not block), else in normal vsync. In mailbox mode the display-rate schedule and present
-        // on change run as for vsync off. Default off until timed on a quiet machine. The Options menu shows the mode in force.
-        [JsonPropertyName("vsync_mailbox")] public bool VsyncMailbox { get; set; }
+        // on change run as for vsync off. The Options menu shows the mode in force. Default on after quiet-1119 (bench-000919/920:
+        // idle CPU 68-90 -> 9-22 ms/s, walking 70-84 -> 25-37, ping RTT p50 5.9-7.5 -> 0.12 ms, both renderers).
+        [JsonPropertyName("vsync_mailbox")] public bool VsyncMailbox { get; set; } = true;
 
         // The event loop (GameController.EventLoopWait; Windows, and Linux with event_loop_linux) waits between frames for the socket, window messages, a wake
         // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (plugin ticks,
@@ -172,8 +174,9 @@ namespace ClassicUO.Configuration
         // driver waits, the ping; input held, a macro, pending decodes and OPL requests keep the cadence above) and, when none
         // of it polls, waits until the next known deadline, at most event_loop_idle_max_wait_ms, instead of at most
         // event_loop_max_wait_ms. Out of game the cadence above stays. CUO_LOOP_IDLE_CHECK reports deadlines served late. Off:
-        // unchanged.
-        [JsonPropertyName("event_loop_idle_wait")] public bool EventLoopIdleWait { get; set; }
+        // unchanged. Default on after quiet-1119 (bench-000923/924: quiet idle loops/s 63 -> 7, CPU about halved on Gpu; ping
+        // unchanged within ~20 us; busy and walking unchanged).
+        [JsonPropertyName("event_loop_idle_wait")] public bool EventLoopIdleWait { get; set; } = true;
 
         [JsonPropertyName("event_loop_idle_max_wait_ms")] public int EventLoopIdleMaxWaitMs { get; set; } = 250;
 
