@@ -136,6 +136,18 @@ public class DisplayRateTests
     public void PresentModeFollowsFna3dChoice(bool vsync, bool sdlGpu, bool hint, bool mailboxSupported, bool immediateSupported, int expected)
         => Assert.Equal((PresentModeKind)expected, PresentModeRule.Choose(vsync, sdlGpu, hint, mailboxSupported, immediateSupported));
 
+    // SDL_GPU on Metal (macOS): METAL_SupportsPresentMode reports VSYNC and IMMEDIATE, never MAILBOX. With the switch on, vsync
+    // stays normal vsync, the schedule keeps vsync's cadence and Options shows plain "VSync".
+    [Fact]
+    public void MetalHasNoMailboxAndShowsPlainVsync()
+    {
+        var mode = PresentModeRule.Choose(true, true, true, false, true);
+        Assert.Equal(PresentModeKind.Vsync, mode);
+        Assert.Equal(string.Empty, PresentModeRule.OptionsSuffix(mode));
+        Assert.False(DisplayRateSchedule.Enabled(true, 0, true, mode == PresentModeKind.Mailbox, false, false));
+        Assert.Equal(PresentModeKind.Immediate, PresentModeRule.Choose(false, true, true, false, true));
+    }
+
     // Players see "VSync (True Triple Buffering)" only while mailbox is in force; "mailbox" stays in logs.
     [Theory]
     [InlineData((int)PresentModeKind.Mailbox, "(True Triple Buffering)")]
