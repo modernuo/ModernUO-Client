@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
-using System.Buffers;
 using System.Runtime.InteropServices;
 using Uo.Pack;
 using Uo.Render;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -37,7 +37,7 @@ namespace ClassicUO.Assets
 
             ClearOutsideTrim(in e, pixels);
             int count = e.W * e.H;
-            var rented = ArrayPool<byte>.Shared.Rent(count * 2);
+            var rented = BufferPool.Rent<byte>(count * 2);
 
             try
             {
@@ -51,7 +51,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(rented);
+                BufferPool.Return(rented);
             }
         }
 
@@ -77,7 +77,7 @@ namespace ClassicUO.Assets
 
             ClearOutsideTrim(in e, pixels);
             int count = e.W * e.H;
-            var rented = ArrayPool<byte>.Shared.Rent(count);
+            var rented = BufferPool.Rent<byte>(count);
 
             try
             {
@@ -97,7 +97,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(rented);
+                BufferPool.Return(rented);
             }
         }
 

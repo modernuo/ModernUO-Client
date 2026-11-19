@@ -12,6 +12,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uo.Pack;
+using BufferPool = Uo.Buffers.BufferPool;
 
 namespace ClassicUO.Assets
 {
@@ -390,7 +391,7 @@ namespace ClassicUO.Assets
             if (store != null && store.TryGet(font, out var slot, out var rec) && Volatile.Read(ref _badRecords[slot.Record - 1]) == 0)
             {
                 int bad = (int)slot.Record - 1;
-                byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+                byte[] buf = BufferPool.Rent<byte>((int)rec.RawBytes);
 
                 try
                 {
@@ -415,7 +416,7 @@ namespace ClassicUO.Assets
                 }
                 finally
                 {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                    BufferPool.Return(buf);
                 }
             }
 
@@ -491,7 +492,7 @@ namespace ClassicUO.Assets
                 return _emptyPage;
             }
 
-            byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+            byte[] buf = BufferPool.Rent<byte>((int)rec.RawBytes);
 
             try
             {
@@ -527,7 +528,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                BufferPool.Return(buf);
             }
         }
 

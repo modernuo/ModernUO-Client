@@ -8,6 +8,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -262,7 +263,7 @@ namespace ClassicUO.Assets
                 return new GumpInfo { Pixels = pixels, Width = w, Height = h };
             }
 
-            var raw = System.Buffers.ArrayPool<byte>.Shared.Rent((int)record.RawBytes);
+            var raw = BufferPool.Rent<byte>((int)record.RawBytes);
 
             try
             {
@@ -279,7 +280,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(raw);
+                BufferPool.Return(raw);
             }
         }
 
