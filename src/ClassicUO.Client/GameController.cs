@@ -806,6 +806,12 @@ namespace ClassicUO
                 {
                     _suppressedDraw = true;
                     SuppressDraw();
+
+                    // the event loop waits in EventLoopWait; the legacy loop sleeps as on its fps-cap path, or it spins
+                    if (_tickMode == LoopMode.Legacy && !gameTime.IsRunningSlowly)
+                    {
+                        LegacySleep(idleSleepMs);
+                    }
                 }
             }
             else if (x <= 0)
