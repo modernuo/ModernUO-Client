@@ -866,7 +866,7 @@ namespace ClassicUO
             bool inactive = FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive)
                 && ProfileManager.CurrentProfile != null
                 && (ProfileManager.CurrentProfile.ReduceFPSWhenInactive || FocusRule.ForceInactive);
-            double x = _intervalFixedUpdate[inactive ? 1 : 0];
+            double x = PresentModeRule.CapInterval(_intervalFixedUpdate[inactive ? 1 : 0], _presentMode, _displayHz);
             _suppressedDraw = false;
             bool minimized = IsMinimizedForDrawSkip();
             _tickInterval = x;

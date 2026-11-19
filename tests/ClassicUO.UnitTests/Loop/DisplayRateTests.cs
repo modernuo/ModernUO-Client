@@ -138,6 +138,19 @@ public class DisplayRateTests
 
     // SDL_GPU on Metal (macOS): METAL_SupportsPresentMode reports VSYNC and IMMEDIATE, never MAILBOX. With the switch on, vsync
     // stays normal vsync, the schedule keeps vsync's cadence and Options shows plain "VSync".
+    // owner 2026-11-19: under mailbox an fps cap above the refresh rate is held to the display rate
+    [Theory]
+    [InlineData((int)PresentModeKind.Mailbox, 1000.0 / 240, 144.0, 1000.0 / 144)]
+    [InlineData((int)PresentModeKind.Mailbox, 1000.0 / 60, 144.0, 1000.0 / 60)]
+    [InlineData((int)PresentModeKind.Mailbox, 0.0, 144.0, 0.0)]
+    [InlineData((int)PresentModeKind.Mailbox, 1000.0 / 240, 0.0, 1000.0 / 240)]
+    [InlineData((int)PresentModeKind.Vsync, 1000.0 / 240, 144.0, 1000.0 / 240)]
+    [InlineData((int)PresentModeKind.Immediate, 1000.0 / 240, 144.0, 1000.0 / 240)]
+    public void MailboxHoldsAnFpsCapToTheDisplayRate(int mode, double intervalMs, double hz, double expected)
+    {
+        Assert.Equal(expected, PresentModeRule.CapInterval(intervalMs, (PresentModeKind)mode, hz), 9);
+    }
+
     [Fact]
     public void MetalHasNoMailboxAndShowsPlainVsync()
     {
