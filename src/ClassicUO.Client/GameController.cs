@@ -99,6 +99,9 @@ namespace ClassicUO
         // ---- event loop (evloop-1 arm A; baked in after quiet-1115) ----
 #if CUO_DEVTOOLS
         private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
+        // CUO_LOOP_LEGACY=1: the legacy loop on Windows too, so its paths can be measured (they run off Windows and during a
+        // late-wake backoff)
+        private static readonly bool _forceLegacyLoop = Environment.GetEnvironmentVariable("CUO_LOOP_LEGACY") == "1";
 #endif
 
         private LoopWaiter _waiter;
@@ -128,6 +131,9 @@ namespace ClassicUO
             }
 
             var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+#if CUO_DEVTOOLS
+            if (_forceLegacyLoop) mode = LoopMode.Legacy;
+#endif
 
             if (mode != _loggedMode)
             {
