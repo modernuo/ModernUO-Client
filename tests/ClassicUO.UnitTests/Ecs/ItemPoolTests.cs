@@ -11,20 +11,17 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // item_pool: World offers the destroyed items it drops from Items to its ItemPool; after the quarantine GetOrCreateItem
-    // hands one out again, reset to a new Item's state. Off, nothing is pooled and every new serial is a new object.
+    // World offers the destroyed items it drops from Items to its ItemPool; after the quarantine GetOrCreateItem
+    // hands one out again, reset to a new Item's state.
     [Collection(nameof(TimeTicksCollection))]
     public class ItemPoolTests
     {
         private const uint PLAYER = 0x0000_0100;
         private const uint ROCK = 0x4000_2001, COIN = 0x4000_2002, BAG = 0x4000_2003, GEM = 0x4000_2004;
 
-        private static World Build(bool pool)
+        private static World Build()
         {
-            World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer _, PLAYER);
-            world.ItemPoolOverride = pool;
-
-            return world;
+            return WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer _, PLAYER);
         }
 
         private static Item AddItem(World w, uint serial, uint container = 0xFFFF_FFFF)
@@ -51,43 +48,10 @@ namespace ClassicUO.UnitTests.Ecs
         private static void CommitReady(World w) => w.ItemPool.Commit(Time.Ticks - ItemPool.QuarantineMs - 1);
 
         [Fact]
-        public void The_Setting_Defaults_On()
+        public void A_Swept_Or_Force_Removed_Item_Comes_Back_Reset_After_The_Quarantine()
         {
-            new ClassicUO.Configuration.Settings().ItemPool.Should().BeTrue();
-        }
-
-        [Fact]
-        public void Off_Nothing_Is_Pooled_And_A_New_Serial_Is_A_New_Object()
-        {
-            World w = Build(false);
-            bool createdBefore = w.ItemPoolCreated; // the test World may have been built with the setting's default (on)
-            Item rock = AddItem(w, ROCK);
-            Item coin = AddItem(w, COIN);
-            w.RemoveItem(ROCK, true);
-            w.RemoveItem(COIN);
-            w.DropDestroyedItems();
-            w.ReleasePools();
-            w.ItemPoolCreated.Should().Be(createdBefore, "with the switch off the World does not create its pool");
-            CommitReady(w);
-
-            w.ItemPool.Offered.Should().Be(0);
-            w.ItemPool.Count.Should().Be(0);
-            Item bag = AddItem(w, BAG);
-            bag.Should().NotBeSameAs(rock).And.NotBeSameAs(coin);
-            rock.Incarnation.Should().Be(0);
-        }
-
-        [Fact]
-        public void On_A_Swept_Or_Force_Removed_Item_Comes_Back_Reset_After_The_Quarantine()
-        {
-#if CUO_DEVTOOLS
-            ItemPool.CheckOverride = true;
-            long mismatches = ItemPool.Mismatches;
-#endif
-
-            try
             {
-                World w = Build(true);
+                World w = Build();
                 Item rock = AddItem(w, ROCK);
                 Item coin = AddItem(w, COIN);
                 rock.TestSetHue(0x21);
@@ -122,24 +86,13 @@ namespace ClassicUO.UnitTests.Ecs
                 w.ItemPool.Reused.Should().Be(2);
                 w.ItemPool.Count.Should().Be(0);
                 AddItem(w, ROCK).Should().NotBeSameAs(rock).And.NotBeSameAs(coin, "the pool is empty: a new Item");
-
-#if CUO_DEVTOOLS
-                ItemPool.Mismatches.Should().Be(mismatches, "every reused item equals a new Item after the reset");
-                ItemPool.Checks.Should().BeGreaterThan(0);
-#endif
-            }
-            finally
-            {
-#if CUO_DEVTOOLS
-                ItemPool.CheckOverride = null;
-#endif
             }
         }
 
         [Fact]
         public void Retired_Items_Come_Back_Only_After_The_Quarantine_Oldest_First()
         {
-            World w = Build(true);
+            World w = Build();
             // stamped just before the clock, so the GetOrCreateItem between the commits (at Time.Ticks) finds none ready
             uint t0 = Time.Ticks - 100;
             Item rock = AddItem(w, ROCK);
@@ -160,7 +113,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Container_And_Its_Contents_Are_Pooled_Together()
         {
-            World w = Build(true);
+            World w = Build();
             int before = w.Items.Count;
             AddItem(w, BAG);
             w.Writer.PlaceInContainer(COIN, 0x0EED, 5, 10, 10, 0, BAG, out _);
@@ -184,7 +137,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Items_Still_Listed_Are_Refused_And_The_Selection_Is_Scrubbed()
         {
-            World w = Build(true);
+            World w = Build();
             Item rock = AddItem(w, ROCK);
             Item coin = AddItem(w, COIN);
             w.RemoveItem(ROCK, true);
@@ -204,7 +157,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Detached_And_Live_Items_Never_Reach_The_Pool()
         {
-            World w = Build(true);
+            World w = Build();
             Item preview = Item.Create(w, 0x4000_3000);
             w.ItemPool.Offer(preview); // alive
             Item rock = AddItem(w, ROCK);
@@ -219,7 +172,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Closed_Pool_Keeps_Nothing()
         {
-            World w = Build(true);
+            World w = Build();
             AddItem(w, ROCK);
             w.RemoveItem(ROCK, true);
             CommitReady(w);
@@ -236,7 +189,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Texts_And_Damage_Do_Not_Follow_A_Reused_Owner()
         {
-            World w = Build(true);
+            World w = Build();
             Item rock = AddItem(w, ROCK);
             var text = TextObject.Create(w);
             text.Owner = rock;
@@ -259,7 +212,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Bench_Pick_Target_Key_Rejects_A_Reused_Item()
         {
-            World w = Build(true);
+            World w = Build();
             Item rock = AddItem(w, ROCK);
             var key = new DevBench.PickKey(rock);
             key.Matches(rock).Should().BeTrue();

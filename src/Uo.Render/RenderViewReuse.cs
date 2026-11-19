@@ -9,9 +9,9 @@ public struct RenderViewReuse
     int _art, _anim;
     bool _valid;
 
-    public readonly bool Matches(bool enabled, in RectI view, in RectI need, float scale,
+    public readonly bool Matches(in RectI view, in RectI need, float scale,
         long chunks, int art, int anim, bool settled)
-        => enabled && settled && _valid && Same(_view, view) && Same(_need, need) && _scale == scale
+        => settled && _valid && Same(_view, view) && Same(_need, need) && _scale == scale
             && _chunks == chunks && _art == art && _anim == anim;
 
     public void Remember(in RectI view, in RectI need, float scale, long chunks, int art, int anim)

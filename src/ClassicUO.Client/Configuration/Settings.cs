@@ -126,8 +126,6 @@ namespace ClassicUO.Configuration
 
         [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
 
-        [JsonPropertyName("render_view_reuse")] public bool RenderViewReuse { get; set; }
-        [JsonPropertyName("upload_skip_unchanged")] public bool UploadSkipUnchanged { get; set; }
 
         // pa-gpusig, the Gpu prepare's ground-item cache: a served tile's cached items are trusted while their chunk's render generation
         // (GpuItemGen.Touch: the WorldWriter commits, text, boat offsets, object handles) is unchanged and the tile was served in
@@ -139,7 +137,6 @@ namespace ClassicUO.Configuration
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
         [JsonPropertyName("text_quad_cache")] public bool TextQuadCache { get; set; }
-        [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
 
         // A minimized window skips world prepare, draw and present (GameController.Update); packets, update and audio keep running.
         // Not an ECS path, so there is no CUO_*_CHECK checker: nothing old to compare against, the draw is simply not run.
@@ -205,12 +202,6 @@ namespace ClassicUO.Configuration
         // Default off.
         [JsonPropertyName("pick_skip_off_world")] public bool PickSkipOffWorld { get; set; }
 
-        // perf-16: the world list fill walks only the tiles of its square range that can reach the screen (a diamond in tile
-        // space, FillDiamond) instead of every tile of the square. Same objects drawn, hidden and picked; drops the pre-cull
-        // work on objects far above or below the view. CUO_FILL_DIAMOND=1|0 overrides it in developer builds,
-        // CUO_FILL_DIAMOND_CHECK=1|N checks it. Default off.
-        [JsonPropertyName("world_fill_diamond")] public bool WorldFillDiamond { get; set; }
-
         // pa-itemprep: the world fill's item branch reads the graphic and the flags from the item's packed ItemDrawRow (one
         // record lookup) instead of the Graphic and Flags getters (ItemPrep). CUO_ITEM_PREP_ROWS=1|0 overrides it in developer
         // builds, CUO_ITEM_PREP_CHECK=1 checks it. Default off.
@@ -221,24 +212,6 @@ namespace ClassicUO.Configuration
         // CUO_ITEM_PICK_CHECK=1 checks it. Default off.
         [JsonPropertyName("item_pick_early_reject")] public bool ItemPickEarlyReject { get; set; }
 
-        // perf-17: an item's boat offset read (ItemOffsets) tests a flag on the item, set by the boat operations' write,
-        // instead of the world's offset count, so while a boat moves only the items with an offset look up their record.
-        // CUO_ITEM_OFFSET_FLAG=1|0 overrides it in developer builds, CUO_ITEM_OFFSET_FLAG_CHECK=1 checks it. Default off.
-        [JsonPropertyName("item_offset_flag")] public bool ItemOffsetFlag { get; set; }
-
-        // perf-17, perf-19: the pick test of a static, a multi component and an art item rejects a mouse outside the box the
-        // largest static art can reach from the object's anchor before it reads the graphic and the art entry (PickBox).
-        // Replaces perf-17's static_pick_early_reject (statics only, never on by default). CUO_PICK_EARLY_REJECT=1|0
-        // overrides it in developer builds, CUO_PICK_EARLY_REJECT_CHECK=1 checks it. Default off.
-        [JsonPropertyName("pick_early_reject")] public bool PickEarlyReject { get; set; }
-
-
-        // item-pool: the items World drops (out of range, deleted, swept) wait 2 s in a bounded pool (8,192 items, ~2.3 MB)
-        // and are reset and reused for the items that enter range next (ItemPool), instead of a new Item each. Read once at
-        // startup (CUO_ITEM_POOL=1|0 overrides it in developer builds; CUO_ITEM_POOL_CHECK=1 compares every reused item with a
-        // new one). Default on since 2026-11-11 (owner; gates with the checker: 0 mismatches over ~15k reuses, ls_walk
-        // B/frame -24..34 %); off = a new Item for every item entering range.
-        [JsonPropertyName("item_pool")] public bool ItemPool { get; set; } = true;
 
         // anim-count: while the Gpu world renderer draws, the animation advance reads a mobile's frame count from the pack's
         // animation tables (AnimFrameCount) instead of the Legacy frame cache, which decodes and uploads the direction into the

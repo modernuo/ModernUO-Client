@@ -248,8 +248,6 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `compatibility` (or `legacy`) |
-| `ui_render_cache` | `true` | Record UI draws and keep the UI target when unchanged |
-| `world_fill_diamond` | `false` | The world list fill walks only the tiles of its square range that can reach the screen (the Gpu hidden pass visits a wider band; chunks with no such tile get no chunk-level work) |
 
 ## Environment variables
 
@@ -262,8 +260,7 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_FUNNEL_CHECK=1` | Dev. Report writes to the class A fields that keep a setter (X/Y/Z and the other caches) and the Mobile's record helpers made outside the `WorldWriter` funnel |
 | `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1\|every`, `CUO_GPU_SKIP_CHECK` | Check the Gpu world prepare shortcuts against the full work |
 | `CUO_W5_CHECK=1`, `CUO_MOBILE_CACHE_CHECK=1`, `CUO_MOBILE_INPUT_CHECK=1` | Check the active item list, the mobile frame cache and the pushed inputs |
-| `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI target with a replay every N frames |
-| `CUO_FILL_DIAMOND=1\|0`, `CUO_FILL_DIAMOND_CHECK=1\|N` | Dev. Override `world_fill_diamond`; walk the whole square every Nth fill (default 10) and log anything drawn, hidden (also by the edge pass) or picked on a tile the diamond skips; the summary gives tiles outside the walk's and the hidden pass's bands and empty chunks (`[fill-diamond-check]` every 5 s) |
+| `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI render cache's target with a replay of its recordings every N frames |
 | `CUO_TILE_ORDER_CHECK=1\|every\|N`, `CUO_RECYCLE_CHECK=1\|reuse` | Check the tile lists (order, links, no item, mobile or effect in a list), the dynamic tile index (entries valid and sorted, the merged walk in key order, every placed object reachable) and map object reuse |
 | `CUO_ANIM_SYNC=1`, `CUO_ART_SYNC=1`, `CUO_CHUNK_SYNC=1` | Decode animations, art or map chunks synchronously |
 | `CUO_RENDERER_PROBE_FAIL=device\|world`, `CUO_RENDERER_LEGACY_DRIVER=OpenGL` | Force the renderer selection fallbacks for testing |
@@ -287,7 +284,7 @@ DevBench variables are in the next section.
 | `CUO_BENCH_PICK=1` | Hover-and-click picking test |
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS="x y;x y"`, `CUO_BENCH_GO="x y"`, `CUO_BENCH_EXIT=1` | UI tour, screenshot spots, go to a spot, walk and quit |
 
-Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan (`uicache`). The entries of retired switches (`gpuskip`, `itemcache`, `itemmixed`, `fxserve`, `textskip`, `w5`) are skipped.
+Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan. The entries of retired switches (`uicache`, `gpuskip`, `itemcache`, `itemmixed`, `fxserve`, `textskip`, `w5`) are skipped.
 
 Typical run:
 

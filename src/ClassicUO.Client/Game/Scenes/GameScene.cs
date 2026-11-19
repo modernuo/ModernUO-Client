@@ -629,7 +629,6 @@ namespace ClassicUO.Game.Scenes
             }
 
             PickSkip.BeginFill(UIManager.IsMouseOverWorld);
-            ItemOffsets.BeginFrame();
             PickBox.BeginFill();
 
             // T6a: the tile lists exactly as this frame's walk (both renderers) is about to read them
@@ -676,14 +675,8 @@ namespace ClassicUO.Game.Scenes
             GetViewPort();
             GpuPrepareBegin();
             // perf-16 world_fill_diamond: walk only the square's tiles that can reach the screen (FillDiamond)
-            bool diamondOn = FillDiamond.Enabled;
-            FillDiamond.Bands diamond = BeginFillDiamond(diamondOn);
+            FillDiamond.Bands diamond = BeginFillDiamond();
             bool gpuFill = _gpuWorld != null;
-            // CUO_FILL_DIAMOND_CHECK: this fill walks the whole square and judges what the diamond would skip
-            bool diamondCheck = diamondOn && FillDiamond.BeginCheckFrame();
-#if CUO_DEVTOOLS
-            _diamondSelection = SelectedObject.Object;
-#endif
 
             if (UpdateDrawPosition)
             {
@@ -761,11 +754,10 @@ namespace ClassicUO.Game.Scenes
                         continue;
 
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
-                    // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it. A check
-                    // frame (CUO_FILL_DIAMOND_CHECK) does everything and judges what the masks leave out.
-                    ulong inWalk = FillDiamond.ChunkMasks(diamondOn, gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
+                    // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
+                    ulong inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
 
-                    if (inHidden == 0 && !diamondCheck)
+                    if (inHidden == 0)
                         continue;
 
                     // Build chunk mesh if dirty
@@ -808,24 +800,9 @@ namespace ClassicUO.Game.Scenes
 
                     // T6b: the tiles whose walk merges the dynamic index
                     ulong mergeCells = ClassicUO.Game.Map.TileWalk.MergeCells(chunk);
-                    // perf-16: the tiles this fill walks (the diamond's, or all with the switch off or on a check frame);
-                    // perf-18: the tiles its Gpu hidden pass visits
-                    ulong tileMask = diamondCheck ? ulong.MaxValue : inWalk;
-                    ulong hiddenMask = diamondCheck ? ulong.MaxValue : inHidden;
-#if CUO_DEVTOOLS
-                    ulong probeTiles = diamondCheck ? ~inWalk : 0;
-                    ulong probeHidden = diamondCheck ? ~inHidden : 0;
-
-                    if (diamondCheck)
-                    {
-                        FillDiamond.CountChunk(inWalk, inHidden);
-                    }
-
-                    if (probeTiles != 0)
-                    {
-                        DiamondCheckBefore(chunk, probeTiles, mergeCells);
-                    }
-#endif
+                    // perf-16: the tiles this fill walks (the diamond's); perf-18: the tiles its Gpu hidden pass visits
+                    ulong tileMask = inWalk;
+                    ulong hiddenMask = inHidden;
 
                     for (var x = 0; x < 8 && tileMask != 0; x++)
                     {
@@ -897,13 +874,6 @@ namespace ClassicUO.Game.Scenes
                         walkStart = FrameStats.AddSince(FramePhase.PrepWalk, walkStart);
                     }
 
-#if CUO_DEVTOOLS
-                    if (probeTiles != 0)
-                    {
-                        DiamondCheckAfterWalk(chunk, probeTiles, mergeCells, in diamond.Walk);
-                    }
-#endif
-
                     // after the chunk's walk: CollectGpuHidden only reads what the walk stamped on this tile's objects
                     if (_gpuWorld != null && (hiddenMask | edgeTiles) != 0)
                     {
@@ -925,30 +895,12 @@ namespace ClassicUO.Game.Scenes
                                 // them but outside the walk's was not walked; the walk would have drawn (stamped) nothing there
                                 if ((full || (walkTiles & bit) != 0) && (hiddenMask & bit) != 0)
                                 {
-#if CUO_DEVTOOLS
-                                    if ((probeHidden & bit) != 0)
-                                    {
-                                        DiamondCheckHidden(firstObj, !full, in diamond.Hidden);
-                                    }
-                                    else
-#endif
-                                    {
-                                        CollectGpuHidden(firstObj, !full);
-                                    }
+                                    CollectGpuHidden(firstObj, !full);
                                 }
 
                                 if ((edgeTiles & bit) != 0)
                                 {
-#if CUO_DEVTOOLS
-                                    if ((probeHidden & bit) != 0)
-                                    {
-                                        DiamondCheckEdge(firstObj, in diamond.Hidden);
-                                    }
-                                    else
-#endif
-                                    {
-                                        GpuHideCulledBaked(firstObj);
-                                    }
+                                    GpuHideCulledBaked(firstObj);
                                 }
                             }
                         }
@@ -977,14 +929,6 @@ namespace ClassicUO.Game.Scenes
                 BareWalk(map, minChunkX, minChunkY, maxChunkX, maxChunkY);
                 FrameStats.Begin(FramePhase.WorldPrepare);
             }
-
-#if CUO_DEVTOOLS
-            if (diamondCheck)
-            {
-                DiamondCheckSelection(in diamond.Walk);
-                FillDiamond.Report(_gpuWorld != null);
-            }
-#endif
 
             long foliageStart = FrameStats.Stamp();
             GpuPrepareEnd();
