@@ -10,7 +10,7 @@ using System.Diagnostics;
 
 namespace ClassicUO
 {
-    // B8: the UI render cache (setting ui_render_cache).
+    // B8: the UI render cache (always on; baked in after quiet-1115).
     //
     // The UI pass still runs in full every frame (scene DrawUI, the gump tree, the cursor), so every side effect of drawing
     // (SelectedObject.HealthbarObject/SelectedContainer, world text ordering, ...) is kept. What is skipped is the GPU work:
@@ -170,22 +170,19 @@ namespace ClassicUO
             }
         }
 
-        // ---- CUO_UI_CACHE_CHECK=1|N (dev): every N frames (default 30) the UI target is compared with two references ----
+        // ---- CUO_UI_CACHE_CHECK=1|N (dev): every N frames (default 30) the UI target is compared with a replay ----
         //
         //   replay: both recordings replayed into a scratch target, the cursor straight over the gumps (no copy). Catches a
         //           kept target that the current textures or states would no longer draw, and an inexact copy.
-        //   direct: the UI pass run a second time without recording (scene DrawUI, gumps, cursor), as with the cache off.
-        //           Catches a recording or replay that draws differently from the batcher's own flushes.
         //
-        // The second pass repeats drawing's side effects within the frame (selection, world text order), so check runs are
-        // for correctness only. CUO_UI_CACHE_CHECK_DIR=dir saves the first mismatches as PNGs.
+        // CUO_UI_CACHE_CHECK_DIR=dir saves the first mismatches as PNGs.
 
         private static readonly int _uiCacheCheckEvery = ParseCheckEvery(Environment.GetEnvironmentVariable("CUO_UI_CACHE_CHECK"));
         private static readonly string _uiCacheCheckDir = Environment.GetEnvironmentVariable("CUO_UI_CACHE_CHECK_DIR");
-        private RenderTarget2D _uiCheckReplay, _uiCheckDirect;
+        private RenderTarget2D _uiCheckReplay;
         private Color[] _uiCheckTarget, _uiCheckRef;
-        private int _uiCheckFrame, _uiChecks, _uiChecksCached, _uiChecksUntouched, _uiReplayMismatches, _uiDirectMismatches, _uiCheckSaved;
-        private long _uiReplayPixels, _uiDirectPixels, _uiCheckLastLog;
+        private int _uiCheckFrame, _uiChecks, _uiChecksCached, _uiChecksUntouched, _uiReplayMismatches, _uiCheckSaved;
+        private long _uiReplayPixels, _uiCheckLastLog;
         private string _uiCheckFirst;
 
         private static int ParseCheckEvery(string value)
@@ -209,7 +206,6 @@ namespace ClassicUO
             int w = uiTarget.Width, h = uiTarget.Height;
 
             EnsureCheckTarget(ref _uiCheckReplay, uiTarget);
-            EnsureCheckTarget(ref _uiCheckDirect, uiTarget);
 
             if (_uiCheckTarget == null || _uiCheckTarget.Length != w * h)
             {
@@ -222,26 +218,18 @@ namespace ClassicUO
             _uoSpriteBatch.ReplayPass(_uiCache.Gumps);
             _uoSpriteBatch.ReplayPass(_uiCache.Final, 1); // segment 0 is the copy of the cache target
 
-            device.SetRenderTarget(_uiCheckDirect);
-            device.Clear(Color.Transparent);
-            DrawSceneUiAndGumps();
-            DrawCursor();
             device.SetRenderTarget(null);
 
             string state = $"gumps {(gumpsCached ? "kept" : "drawn")}, ui {(untouched ? "kept" : "drawn")}";
             uiTarget.GetData(_uiCheckTarget);
             _uiCheckReplay.GetData(_uiCheckRef);
             int replayDiffs = CountDiffs("replay", state, uiTarget, _uiCheckReplay);
-            _uiCheckDirect.GetData(_uiCheckRef);
-            int directDiffs = CountDiffs("direct", state, uiTarget, _uiCheckDirect);
 
             _uiChecks++;
             _uiChecksCached += gumpsCached ? 1 : 0;
             _uiChecksUntouched += untouched ? 1 : 0;
             _uiReplayMismatches += replayDiffs > 0 ? 1 : 0;
             _uiReplayPixels += replayDiffs;
-            _uiDirectMismatches += directDiffs > 0 ? 1 : 0;
-            _uiDirectPixels += directDiffs;
 
             long now = Stopwatch.GetTimestamp();
 
@@ -249,7 +237,7 @@ namespace ClassicUO
             {
                 _uiCheckLastLog = now;
                 Log.Info($"[ui-cache-check] checks {_uiChecks} (gumps kept {_uiChecksCached}, ui kept {_uiChecksUntouched}), " +
-                         $"replay mismatched {_uiReplayMismatches} ({_uiReplayPixels} px), direct mismatched {_uiDirectMismatches} ({_uiDirectPixels} px)" +
+                         $"replay mismatched {_uiReplayMismatches} ({_uiReplayPixels} px)" +
                          (_uiCheckFirst != null ? ", first " + _uiCheckFirst : ""));
             }
         }

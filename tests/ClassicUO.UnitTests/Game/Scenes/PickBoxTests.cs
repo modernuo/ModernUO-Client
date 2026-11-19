@@ -9,7 +9,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Game.Scenes
 {
-    // perf-17, perf-19 (pick_early_reject): the pick test of a static, a multi component and an art item rejects a mouse
+    // perf-17, perf-19 (PickBox): the pick test of a static, a multi component and an art item rejects a mouse
     // outside the box the largest static art can reach from the anchor. The box must hold every pixel the full test can hit:
     // the picker's OrigW x OrigH mask at the anchor minus the art entry's stored offset ((OrigW >> 1) - 22, OrigH - 44), or
     // minus 0, 0 while the entry is unset; for an item also that mask 5 px up and left (a stack's copy).
@@ -29,12 +29,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
         private static void Reset()
         {
-#if CUO_DEVTOOLS
-            PickBox.ResetForTests();
-#else
-            PickBox.OverrideForTests = null;
-            PickBox.Active = PickBox.ItemActive = PickBox.RejectOn = false;
-#endif
+            PickBox.Active = PickBox.ItemActive = false;
         }
 
         [Theory]
@@ -101,7 +96,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var st = new Static(world) { Graphic = 0x0ABC };
             st.RealScreenPosition = new Point(500, 400);
             PickBox.SetBounds(100, 120);
-            PickBox.Active = PickBox.RejectOn = true;
+            PickBox.Active = true;
 
             // no Client.Game in tests: a pick that reached the full test would throw
             foreach (Point mouse in new[] { new Point(100, 400), new Point(500, 50), new Point(1000, 400), new Point(500, 900) })
@@ -112,18 +107,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void The_Switch_Reads_The_Setting_Default_Off()
-        {
-            PickBox.OverrideForTests = null;
-            PickBox.Enabled.Should().Be(ClassicUO.Configuration.Settings.GlobalSettings.PickEarlyReject);
-            new ClassicUO.Configuration.Settings().PickEarlyReject.Should().BeFalse();
-
-            PickBox.OverrideForTests = true;
-            PickBox.Enabled.Should().BeTrue();
-        }
-
-        [Fact]
-        public void Switch_Off_Leaves_The_Full_Test()
+        public void Inactive_Box_Leaves_The_Full_Test()
         {
             var world = new World();
             var st = new Static(world) { Graphic = 0x0ABC };
@@ -196,7 +180,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var m = new Multi(world) { Graphic = 0x0ABC };
             m.RealScreenPosition = new Point(500, 400);
             PickBox.SetBounds(100, 120);
-            PickBox.Active = PickBox.RejectOn = true;
+            PickBox.Active = true;
 
             // no Client.Game in tests: a pick that reached the full test would throw
             foreach (Point mouse in new[] { new Point(100, 400), new Point(500, 50), new Point(1000, 400), new Point(500, 900) })
@@ -214,7 +198,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             m.RealScreenPosition = new Point(500, 400);
             m.Offset = new Vector3(300, 0, 0);
             PickBox.SetBounds(100, 120);
-            PickBox.Active = PickBox.RejectOn = true;
+            PickBox.Active = true;
 
             // inside the box only with the offset: the full test runs (and throws without Client.Game)
             SelectedObject.TranslatedMousePositionByViewport = new Point(850, 400);
@@ -233,7 +217,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Item item = world.GetOrCreateItem(0x4000_0010);
             item.RealScreenPosition = new Point(500, 400);
             PickBox.SetBounds(100, 120);
-            PickBox.Active = PickBox.ItemActive = PickBox.RejectOn = true;
+            PickBox.Active = PickBox.ItemActive = true;
 
             // no Client.Game in tests: a pick that reached the full test would throw
             foreach (Point mouse in new[] { new Point(100, 400), new Point(500, 50), new Point(1000, 400), new Point(500, 900) })
@@ -250,7 +234,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Item item = world.GetOrCreateItem(0x4000_0011);
             item.RealScreenPosition = new Point(500, 400);
             PickBox.SetBounds(100, 120);
-            PickBox.Active = PickBox.RejectOn = true;
+            PickBox.Active = true;
             PickBox.ItemActive = false;
             SelectedObject.TranslatedMousePositionByViewport = new Point(100, 400);
 
@@ -258,26 +242,5 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Action pick = () => item.CheckMouseSelection();
             pick.Should().Throw<Exception>();
         }
-
-#if CUO_DEVTOOLS
-        [Theory]
-        [InlineData(0, false, false, 0)]
-        [InlineData(1, false, true, 0)]
-        [InlineData(2, true, false, 0)]
-        [InlineData(2, true, true, 1)]
-        [InlineData(1, true, true, 1)]
-        public void The_Checker_Counts_Only_A_Reject_The_Full_Test_Hit(int kindIndex, bool reject, bool hit, int mismatches)
-        {
-            var kind = (PickBox.Kind)kindIndex;
-            var world = new World();
-            var st = new Static(world) { Graphic = 0x0ABC };
-
-            PickBox.Judge(kind, st, 0x0ABC, reject, hit, notResident: reject);
-
-            PickBox.Mismatches.Should().Be(mismatches);
-            PickBox.EarlyRejects(kind).Should().Be(reject ? 1 : 0);
-            PickBox.NotResident.Should().Be(reject ? 1 : 0);
-        }
-#endif
     }
 }

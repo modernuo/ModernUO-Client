@@ -11,25 +11,22 @@ public sealed class TranslucentOrderCache
     }
 
     /// <returns>True when the previous sort was reused.</returns>
-    public bool Sort(Span<ulong> keys, bool enabled)
+    public bool Sort(Span<ulong> keys)
     {
-        if (enabled && keys.Length == _count && keys.SequenceEqual(_input.AsSpan(0, _count)))
+        if (keys.Length == _count && keys.SequenceEqual(_input.AsSpan(0, _count)))
         {
             _sorted.AsSpan(0, _count).CopyTo(keys);
             return true;
         }
-        if (enabled)
+        if (keys.Length > _input.Length)
         {
-            if (keys.Length > _input.Length)
-            {
-                int cap = Math.Max(keys.Length, _input.Length * 2);
-                Array.Resize(ref _input, cap); Array.Resize(ref _sorted, cap);
-            }
-            keys.CopyTo(_input);
+            int cap = Math.Max(keys.Length, _input.Length * 2);
+            Array.Resize(ref _input, cap); Array.Resize(ref _sorted, cap);
         }
+        keys.CopyTo(_input);
         if (keys.Length > 1) WorldRenderer.SortTransKeys(keys);
-        if (enabled) keys.CopyTo(_sorted);
-        _count = enabled ? keys.Length : -1;
+        keys.CopyTo(_sorted);
+        _count = keys.Length;
         return false;
     }
 }

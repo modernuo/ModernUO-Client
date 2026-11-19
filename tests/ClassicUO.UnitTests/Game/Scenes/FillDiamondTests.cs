@@ -6,29 +6,14 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Game.Scenes
 {
-    // perf-16 (world_fill_diamond): the fill walks only the tiles of its square range whose objects the walk or the Gpu hidden
+    // perf-16 (FillDiamond): the fill walks only the tiles of its square range whose objects the walk or the Gpu hidden
     // pass can still act on. A tile outside the bands must be culled by the walk for every Z and give CollectGpuHidden nothing
-    // to hide; with the switch off every tile is walked.
+    // to hide.
     [Collection(nameof(FillDiamondTests))]
     public sealed class FillDiamondTests : IDisposable
     {
-        public FillDiamondTests()
-        {
-            Reset();
-        }
-
         public void Dispose()
         {
-            Reset();
-        }
-
-        private static void Reset()
-        {
-#if CUO_DEVTOOLS
-            FillDiamond.ResetForTests();
-#else
-            FillDiamond.OverrideForTests = null;
-#endif
         }
 
         // (offX, offY, view width, view height, anchor margin): views like GetViewPort's (world pixels, margin 44 / zoom)
@@ -223,16 +208,14 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
-        public void Switch_off_walks_every_tile_switch_on_the_diamond(bool gpu)
+        public void Chunk_masks_are_the_diamond(bool gpu)
         {
             var (min, max, view) = Frame(1920, 1080, 44);
             var b = FillDiamond.ComputeBands(0, 0, min, max, gpu, view, 250);
 
-            FillDiamond.ChunkMasks(false, gpu, 40, -10, in b, out ulong hidden).Should().Be(ulong.MaxValue);
-            hidden.Should().Be(ulong.MaxValue);
-            FillDiamond.ChunkMasks(true, gpu, 40, -10, in b, out hidden).Should().Be(0UL, "a chunk far beside the view");
+            FillDiamond.ChunkMasks(gpu, 40, -10, in b, out ulong hidden).Should().Be(0UL, "a chunk far beside the view");
             hidden.Should().Be(0UL);
-            FillDiamond.ChunkMasks(true, gpu, 0, 0, in b, out hidden).Should().Be(FillDiamond.ChunkMask(0, 0, in b.Walk)).And.NotBe(0UL);
+            FillDiamond.ChunkMasks(gpu, 0, 0, in b, out hidden).Should().Be(FillDiamond.ChunkMask(0, 0, in b.Walk)).And.NotBe(0UL);
             hidden.Should().Be(FillDiamond.ChunkMask(0, 0, in b.Hidden));
         }
 
@@ -275,7 +258,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 {
                     for (int chunkY = cy - r; chunkY <= cy + r; chunkY++)
                     {
-                        ulong walk = FillDiamond.ChunkMasks(true, gpu, chunkX, chunkY, in b, out ulong hidden);
+                        ulong walk = FillDiamond.ChunkMasks(gpu, chunkX, chunkY, in b, out ulong hidden);
 
                         walk.Should().Be(FillDiamond.ChunkMask(chunkX, chunkY, in b.Walk));
                         (walk & ~hidden).Should().Be(0UL, $"chunk {chunkX},{chunkY}: walked tiles are hidden-pass tiles");
@@ -323,15 +306,6 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void The_override_selects_the_switch_state()
-        {
-            FillDiamond.OverrideForTests = true;
-            FillDiamond.Enabled.Should().BeTrue();
-            FillDiamond.OverrideForTests = false;
-            FillDiamond.Enabled.Should().BeFalse();
-        }
-
-        [Fact]
         public void Max_static_art_height_reads_the_static_entries_only()
         {
             var art = new Uo.Pack.SpriteEntry[0x4000 + 4];
@@ -341,54 +315,5 @@ namespace ClassicUO.UnitTests.Game.Scenes
             FillDiamond.MaxStaticArtHeight(art).Should().Be(333);
             FillDiamond.MaxStaticArtHeight(null).Should().BeGreaterThan(333);
         }
-
-        [Theory]
-        [InlineData(null, 0)]
-        [InlineData("0", 0)]
-        [InlineData("1", 10)]
-        [InlineData("4", 4)]
-        [InlineData("x", 0)]
-        public void Check_every_parses(string v, int expected)
-        {
-            FillDiamond.ParseCheck(v).Should().Be(expected);
-        }
-
-#if CUO_DEVTOOLS
-        [Fact]
-        public void Check_frames_come_every_nth_fill()
-        {
-            FillDiamond.CheckEveryForTests = 3;
-            int n = 0;
-
-            for (int i = 0; i < 9; i++)
-            {
-                n += FillDiamond.BeginCheckFrame() ? 1 : 0;
-            }
-
-            n.Should().Be(3);
-        }
-
-        [Fact]
-        public void Check_frames_count_walk_hidden_and_empty_chunks()
-        {
-            FillDiamond.CountChunk(0x0FUL, 0xFFUL);
-            FillDiamond.CountChunk(0, 0);
-            FillDiamond.CountChunk(ulong.MaxValue, ulong.MaxValue);
-
-            FillDiamond.OutsideWalk.Should().Be(60 + 64);
-            FillDiamond.OutsideHidden.Should().Be(56 + 64);
-            FillDiamond.EmptyChunks.Should().Be(1);
-            FillDiamond.Mismatches.Should().Be(0);
-        }
-
-        [Fact]
-        public void Edge_overrides_outside_the_hidden_bands_are_mismatches()
-        {
-            var b = new FillDiamond.Bounds { DLo = 0, DHi = 1, SLo = 0, SHi = 1 };
-            FillDiamond.EdgeHidden(40, 2, 3, in b);
-
-            FillDiamond.Mismatches.Should().Be(3);
-        }
-#endif
     }
 }

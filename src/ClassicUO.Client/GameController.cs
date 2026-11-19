@@ -999,7 +999,6 @@ namespace ClassicUO
             // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
             _renderTargets.PreserveWorldContents = Scene is GameScene;
             _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
-            _renderTargets.UiCache = Settings.GlobalSettings.UiRenderCache;
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
                 new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
@@ -1066,7 +1065,7 @@ namespace ClassicUO
             int uiFlushes0 = UltimaBatcher2D.FrameFlushes, uiDrawCalls0 = UltimaBatcher2D.FrameDrawCalls;
             long uiFna0 = UltimaBatcher2D.FrameGpuTicks;
 
-            if (drawUi && _renderTargets.UiCache && _renderTargets.UiCacheRenderTarget is { IsDisposed: false })
+            if (drawUi && _renderTargets.UiCacheRenderTarget is { IsDisposed: false })
             {
                 DrawUiCached();
             }

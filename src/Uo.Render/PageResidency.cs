@@ -387,22 +387,6 @@ public sealed unsafe class PageResidency
         MissingVisible = 0;
     }
 
-#if CUO_DEVTOOLS
-    // the reuse checker verifies that a full touch walk cannot change any eviction input.
-    internal ulong TouchDecisionHash()
-    {
-        ulong h = (ulong)MissingVisible;
-        for (int i = 0; i < _layerUsed.Length; i++) h = (h ^ (ulong)_layerUsed[i]) * 1099511628211UL;
-        for (int i = 0; i < LogicalCount; i++)
-        {
-            h = (h ^ (ulong)_requested[i]) * 1099511628211UL;
-            h = (h ^ (ulong)_state[i]) * 1099511628211UL;
-            h = (h ^ Table[i]) * 1099511628211UL;
-        }
-        return h;
-    }
-#endif
-
     /// <summary>The renderer's copy tracker (set by <see cref="Renderer.RenderFrame"/>): staging slots are reused only
     /// after their last copy retired, and mapped without cycling (<see cref="StagingSlots"/>).</summary>
     public CopyRetirement Retire { get => _slots.Retire; set => _slots.Retire = value; }
