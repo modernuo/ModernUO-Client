@@ -105,6 +105,7 @@ namespace ClassicUO
 #endif
 
         private LoopWaiter _waiter;
+        private LoopWaiterKind _waiterKind;
         private bool _waiterTried;
         private readonly LateWakeMonitor _lateWake = new LateWakeMonitor();
         private LoopMode _tickMode, _loggedMode = (LoopMode)(-1);
@@ -115,12 +116,13 @@ namespace ClassicUO
 
         private LoopMode DecideLoopMode()
         {
-            if (!_waiterTried && OperatingSystem.IsWindows())
+            if (!_waiterTried)
             {
                 _waiterTried = true;
-                _waiter = new Win32LoopWaiter();
+                _waiterKind = LoopWaiterFactory.Choose(OperatingSystem.IsWindows(), OperatingSystem.IsLinux(), Settings.GlobalSettings.EventLoopLinux);
+                _waiter = LoopWaiterFactory.Create(_waiterKind, Window.Handle);
 
-                if (_waiter.Ready)
+                if (_waiter is { Ready: true })
                 {
                     Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
                 }
@@ -131,7 +133,7 @@ namespace ClassicUO
                 Log.Warn($"event loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
             }
 
-            var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+            var mode = LoopTiming.Decide(_waiterKind != LoopWaiterKind.None, _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
 #if CUO_DEVTOOLS
             if (_forceLegacyLoop) mode = LoopMode.Legacy;
 #endif
@@ -139,7 +141,7 @@ namespace ClassicUO
             if (mode != _loggedMode)
             {
                 _loggedMode = mode;
-                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : " (event loop not available)")}");
+                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : _waiterKind == LoopWaiterKind.None ? $" ({LoopWaiterFactory.NoWaiterReason(OperatingSystem.IsLinux())})" : " (event loop not available)")}");
                 LoopStats.Mode = mode == LoopMode.Event ? "event" : "legacy";
             }
 
