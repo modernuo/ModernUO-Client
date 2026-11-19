@@ -148,20 +148,7 @@ namespace ClassicUO.Game.UI.Gumps
                     }
 
                     var sourceRectangle = gumpInfo.UV;
-                    renderLists.AddGumpWithAtlas
-                    (
-                        (batcher) =>
-                        {
-                            batcher.Draw(
-                                texture,
-                                new Vector2(x + (Width - sourceRectangle.Width), y),
-                                sourceRectangle,
-                                hueVector,
-                                layerDepth
-                            );
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpWithAtlas(GumpCommand.SpriteAt(texture, x + (Width - sourceRectangle.Width), y, sourceRectangle, hueVector, layerDepth));
                 }
             }
 
@@ -176,50 +163,55 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (drawLoc != Location)
                 {
-                    Texture2D previewColor = SolidColorTextureCache.GetTexture(Color.Silver);
-                    hueVector = ShaderHueTranslator.GetHueVector(0, false, 0.5f);
-                    renderLists.AddGumpNoAtlas
-                    (
-                        (batcher) =>
-                        {
-                            batcher.Draw(
-                                previewColor,
-                                new Rectangle(drawLoc.X, drawLoc.Y, Width, Height),
-                                hueVector,
-                                layerDepth
-                            );
-
-
-                            hueVector.Z = 1f;
-
-                            // double rectangle for thicker "stroke"
-                            batcher.DrawRectangle(
-                                previewColor,
-                                drawLoc.X,
-                                drawLoc.Y,
-                                Width,
-                                Height,
-                                hueVector,
-                                layerDepth
-                            );
-
-                            batcher.DrawRectangle(
-                                previewColor,
-                                drawLoc.X + 1,
-                                drawLoc.Y + 1,
-                                Width - 2,
-                                Height - 2,
-                                hueVector,
-                                layerDepth
-                            );
-
-                            return true;
-                        }
-                    );
+                    QueueAnchorPreview(renderLists, drawLoc, layerDepth);
                 }
             }
 
             return true;
+        }
+
+        // Kept out of AddToRenderLists: a closure capturing that method's locals is allocated on every call, drop or not.
+        private void QueueAnchorPreview(RenderLists renderLists, Point drawLoc, float layerDepth)
+        {
+            Texture2D previewColor = SolidColorTextureCache.GetTexture(Color.Silver);
+            Vector3 hueVector = ShaderHueTranslator.GetHueVector(0, false, 0.5f);
+            renderLists.AddGumpNoAtlas
+            (
+                (batcher) =>
+                {
+                    batcher.Draw(
+                        previewColor,
+                        new Rectangle(drawLoc.X, drawLoc.Y, Width, Height),
+                        hueVector,
+                        layerDepth
+                    );
+
+                    hueVector.Z = 1f;
+
+                    // double rectangle for thicker "stroke"
+                    batcher.DrawRectangle(
+                        previewColor,
+                        drawLoc.X,
+                        drawLoc.Y,
+                        Width,
+                        Height,
+                        hueVector,
+                        layerDepth
+                    );
+
+                    batcher.DrawRectangle(
+                        previewColor,
+                        drawLoc.X + 1,
+                        drawLoc.Y + 1,
+                        Width - 2,
+                        Height - 2,
+                        hueVector,
+                        layerDepth
+                    );
+
+                    return true;
+                }
+            );
         }
 
         protected override void CloseWithRightClick()
