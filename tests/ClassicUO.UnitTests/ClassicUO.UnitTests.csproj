@@ -37,7 +37,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\external\x64\zlib.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))" Link="zlib.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Utility/zlib-vectors.txt" Link="zlib-vectors.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The converter's audio importer (it depends only on ClassicUO.IO and Uo.Pack), run on synthetic MUL files. -->

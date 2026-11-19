@@ -16,10 +16,10 @@ namespace ClassicUO.UnitTests.Utility
         }
 
         [Theory]
-        [MemberData(nameof(ZlibCompatTests.Cases), MemberType = typeof(ZlibCompatTests))]
+        [MemberData(nameof(ZlibPayloads.Cases), MemberType = typeof(ZlibPayloads))]
         public void RoundTrip_ExactSizedDestination(int index)
         {
-            byte[] src = ZlibCompatTests.Payloads()[index];
+            byte[] src = ZlibPayloads.All()[index];
             byte[] dst = new byte[src.Length];
 
             ZlibInflater.TryDecompress(Compress(src), dst, out int written).Should().BeTrue();
@@ -30,7 +30,7 @@ namespace ClassicUO.UnitTests.Utility
         [Fact]
         public void DestinationTooSmall_Fails()
         {
-            byte[] src = ZlibCompatTests.Payloads()[6];
+            byte[] src = ZlibPayloads.All()[6];
 
             ZlibInflater.TryDecompress(Compress(src), new byte[src.Length - 1], out _).Should().BeFalse();
         }
@@ -38,7 +38,7 @@ namespace ClassicUO.UnitTests.Utility
         [Fact]
         public void LargerDestination_ReportsWritten()
         {
-            byte[] src = ZlibCompatTests.Payloads()[7];
+            byte[] src = ZlibPayloads.All()[7];
             byte[] dst = new byte[src.Length + 50];
 
             ZlibInflater.TryDecompress(Compress(src), dst, out int written).Should().BeTrue();
@@ -48,7 +48,7 @@ namespace ClassicUO.UnitTests.Utility
         [Fact]
         public void TruncatedAndGarbage_Fail_ThenDecoderStillWorks()
         {
-            byte[] src = ZlibCompatTests.Payloads()[6];
+            byte[] src = ZlibPayloads.All()[6];
             byte[] comp = Compress(src);
             byte[] dst = new byte[src.Length];
 
@@ -73,7 +73,7 @@ namespace ClassicUO.UnitTests.Utility
         [Fact]
         public void TrailingBytesAfterStream_AreIgnored()
         {
-            byte[] src = ZlibCompatTests.Payloads()[7];
+            byte[] src = ZlibPayloads.All()[7];
             byte[] comp = Compress(src);
             byte[] padded = new byte[comp.Length + 9];
             comp.CopyTo(padded, 0);
@@ -86,7 +86,7 @@ namespace ClassicUO.UnitTests.Utility
         [Fact]
         public void SteadyState_DoesNotAllocate()
         {
-            byte[] src = ZlibCompatTests.Payloads()[6];
+            byte[] src = ZlibPayloads.All()[6];
             byte[] comp = Compress(src);
             byte[] dst = new byte[src.Length];
 
