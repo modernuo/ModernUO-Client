@@ -20,13 +20,13 @@ namespace ClassicUO.UnitTests.Loop
         // ---- mode decision (fallbacks) ----
 
         [Theory]
-        [InlineData(false, true, false, 0)] // not Windows
-        [InlineData(true, false, false, 0)] // waiter missing or its probe failed
+        [InlineData(false, true, false, 0)] // no waiter for this OS (LoopWaiter.Create returned null)
+        [InlineData(true, false, false, 0)] // the waiter's probe failed
         [InlineData(true, true, true, 0)] // late-wake backoff in force
         [InlineData(true, true, false, 1)]
-        public void Decide_Falls_Back_To_Legacy_Unless_Everything_Is_Ready(bool windows, bool ready, bool suspended, int expected)
+        public void Decide_Falls_Back_To_Legacy_Unless_Everything_Is_Ready(bool hasWaiter, bool ready, bool suspended, int expected)
         {
-            LoopTiming.Decide(windows, ready, suspended).Should().Be((LoopMode)expected);
+            LoopTiming.Decide(hasWaiter, ready, suspended).Should().Be((LoopMode)expected);
         }
 
         // ---- frame cap ----
