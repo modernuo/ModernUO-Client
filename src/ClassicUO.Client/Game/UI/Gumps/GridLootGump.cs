@@ -321,21 +321,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    batcher.DrawRectangle(
-                        SolidColorTextureCache.GetTexture(Color.Gray),
-                        x,
-                        y,
-                        Width,
-                        Height,
-                        hueVector,
-                        layerDepth
-                    );
-                    return true;
-                }
-            );
+            renderLists.AddGumpNoAtlas(GumpCommand.Outline(SolidColorTextureCache.GetTexture(Color.Gray), x, y, Width, Height, hueVector, layerDepth));
             return true;
         }
 
@@ -518,30 +504,13 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                     var texture = artInfo.Texture;
                     var sourceRectangle = artInfo.UV;
-                    renderLists.AddGumpWithAtlas
-                    (
-                        (batcher) =>
-                        {
-                            batcher.Draw(
-                                texture,
-                                new Rectangle(
-                                    x + point.X,
-                                    y + point.Y + _hit.Y,
-                                    originalSize.X,
-                                    originalSize.Y
-                                ),
-                                new Rectangle(
-                                    sourceRectangle.X + rect.X,
-                                    sourceRectangle.Y + rect.Y,
-                                    rect.Width,
-                                    rect.Height
-                                ),
-                                hueVector,
-                                layerDepth
-                            );
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpWithAtlas(GumpCommand.Sprite(
+                        texture,
+                        new Rectangle(x + point.X, y + point.Y + _hit.Y, originalSize.X, originalSize.Y),
+                        new Rectangle(sourceRectangle.X + rect.X, sourceRectangle.Y + rect.Y, rect.Width, rect.Height),
+                        hueVector,
+                        layerDepth
+                    ));
                 }
 
                 hueVector = ShaderHueTranslator.GetHueVector(
@@ -550,37 +519,12 @@ namespace ClassicUO.Game.UI.Gumps
                     1f
                 );
                 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        batcher.DrawRectangle(
-                            SolidColorTextureCache.GetTexture(Color.Gray),
-                            x,
-                            y + 15,
-                            Width,
-                            Height - 15,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpNoAtlas(GumpCommand.Outline(SolidColorTextureCache.GetTexture(Color.Gray), x, y + 15, Width, Height - 15, hueVector, layerDepth));
                 if (_hit.MouseIsOver)
                 {
                     Vector3 hoverHue = ShaderHueTranslator.GetHueVector(0);
                     hoverHue.Z = 0.2f;
-                    renderLists.AddGumpNoAtlas(
-                        batcher =>
-                        {
-                            batcher.Draw(
-                                SolidColorTextureCache.GetTexture(Color.Yellow),
-                                new Rectangle(x + 1, y + 15, Width - 1, Height - 15),
-                                hoverHue,
-                                layerDepth
-                            );
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(SolidColorTextureCache.GetTexture(Color.Yellow), new Rectangle(x + 1, y + 15, Width - 1, Height - 15), hoverHue, layerDepth));
                     hueVector.Z = 1;
                 }
 

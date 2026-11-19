@@ -149,19 +149,7 @@ namespace ClassicUO.Game.UI.Controls
 
                     Rectangle rect = new(x + j * _cellWidth, y + i * _cellHeight, _cellWidth, _cellHeight);
 
-                    renderLists.AddGumpNoAtlas(
-                        batcher =>
-                        {
-                            batcher.Draw
-                            (
-                                texture,
-                                rect,
-                                hueVector,
-                                colorLayerDepth
-                            );
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(texture, rect, hueVector, colorLayerDepth));
                 }
             }
 
@@ -178,19 +166,7 @@ namespace ClassicUO.Game.UI.Controls
                                     rect.Height = 2
                                     );
 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw
-                        (
-                            SolidColorTextureCache.GetTexture(Color.White),
-                            rect,
-                            hueVector,
-                            selectorLayerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(SolidColorTextureCache.GetTexture(Color.White), rect, hueVector, selectorLayerDepth));
             }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);

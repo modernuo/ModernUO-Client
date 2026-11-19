@@ -15,7 +15,7 @@ using System.Xml;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal class MiniMapGump : Gump
+    internal class MiniMapGump : Gump, IGumpDeferredDraw
     {
         struct ColorInfo
         {
@@ -126,88 +126,88 @@ namespace ClassicUO.Game.UI.Gumps
             }
             float layerDepth = layerDepthRef;
 
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+            return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
+        }
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(
-                batcher =>
+            ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(
+                    _useLargeMap ? BIG_MAP_GRAPHIC : SMALL_MAP_GRAPHIC
+                );
+
+            if (gumpInfo.Texture == null)
+            {
+                Dispose();
+
+                return false;
+            }
+
+            // Drawn before its first Update (or before the player exists): the blank pixel buffers are built in CreateMap,
+            // which Update has not run yet. Build them now, or draw the empty frame only.
+            if (_blankGumpsPixels[_useLargeMap ? 1 : 0] == null)
+            {
+                if (!World.InGame || World.Player == null)
                 {
-                    ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(
-                            _useLargeMap ? BIG_MAP_GRAPHIC : SMALL_MAP_GRAPHIC
-                        );
-
-                    if (gumpInfo.Texture == null)
-                    {
-                        Dispose();
-
-                        return false;
-                    }
-
-                    // Drawn before its first Update (or before the player exists): the blank pixel buffers are built in CreateMap,
-                    // which Update has not run yet. Build them now, or draw the empty frame only.
-                    if (_blankGumpsPixels[_useLargeMap ? 1 : 0] == null)
-                    {
-                        if (!World.InGame || World.Player == null)
-                        {
-                            batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
-
-                            return true;
-                        }
-
-                        CreateMap();
-                    }
-
                     batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
 
-                    CreateMiniMapTexture(gumpInfo.Texture, gumpInfo.UV);
-
-                    batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
-
-                    if (_draw)
-                    {
-                        int w = Width >> 1;
-                        int h = Height >> 1;
-
-                        Texture2D mobilesTextureDot = SolidColorTextureCache.GetTexture(Color.Red);
-
-                        foreach (Mobile mob in World.Mobiles.Values)
-                        {
-                            if (mob == World.Player)
-                            {
-                                continue;
-                            }
-
-                            int xx = mob.X - World.Player.X;
-                            int yy = mob.Y - World.Player.Y;
-
-                            int gx = xx - yy;
-                            int gy = xx + yy;
-
-                            hueVector = ShaderHueTranslator.GetHueVector(
-                                Notoriety.GetHue(mob.NotorietyFlag)
-                            );
-
-                            batcher.Draw(
-                                mobilesTextureDot,
-                                new Rectangle(x + w + gx, y + h + gy, 2, 2),
-                                hueVector,
-                                layerDepth
-                            );
-                        }
-
-                        //DRAW PLAYER DOT
-                        hueVector = ShaderHueTranslator.GetHueVector(0);
-
-                        batcher.Draw(
-                            SolidColorTextureCache.GetTexture(Color.White),
-                            new Rectangle(x + w, y + h, 2, 2),
-                            hueVector,
-                            layerDepth
-                        );
-                    }
                     return true;
                 }
-            );
-            return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
+
+                CreateMap();
+            }
+
+            batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
+
+            CreateMiniMapTexture(gumpInfo.Texture, gumpInfo.UV);
+
+            batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
+
+            if (_draw)
+            {
+                int w = Width >> 1;
+                int h = Height >> 1;
+
+                Texture2D mobilesTextureDot = SolidColorTextureCache.GetTexture(Color.Red);
+
+                foreach (Mobile mob in World.Mobiles.Values)
+                {
+                    if (mob == World.Player)
+                    {
+                        continue;
+                    }
+
+                    int xx = mob.X - World.Player.X;
+                    int yy = mob.Y - World.Player.Y;
+
+                    int gx = xx - yy;
+                    int gy = xx + yy;
+
+                    hueVector = ShaderHueTranslator.GetHueVector(
+                        Notoriety.GetHue(mob.NotorietyFlag)
+                    );
+
+                    batcher.Draw(
+                        mobilesTextureDot,
+                        new Rectangle(x + w + gx, y + h + gy, 2, 2),
+                        hueVector,
+                        layerDepth
+                    );
+                }
+
+                //DRAW PLAYER DOT
+                hueVector = ShaderHueTranslator.GetHueVector(0);
+
+                batcher.Draw(
+                    SolidColorTextureCache.GetTexture(Color.White),
+                    new Rectangle(x + w, y + h, 2, 2),
+                    hueVector,
+                    layerDepth
+                );
+            }
+            return true;
         }
 
         protected override bool OnMouseDoubleClick(int x, int y, MouseButtonType button)

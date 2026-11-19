@@ -4504,34 +4504,8 @@ namespace ClassicUO.Game.UI.Gumps
             float layerDepth = layerDepthRef;
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(batcher =>
-            {
-                batcher.Draw
-                (
-                    LogoTexture,
-                    new Rectangle
-                    (
-                        x + 190,
-                        y + 20,
-                        WIDTH - 250,
-                        400
-                    ),
-                    hueVector,
-                    layerDepth
-                );
-
-                batcher.DrawRectangle
-                (
-                    SolidColorTextureCache.GetTexture(Color.Gray),
-                    x,
-                    y,
-                    Width,
-                    Height,
-                    hueVector,
-                    layerDepth
-                );
-                return true;
-            });
+            renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(LogoTexture, new Rectangle(x + 190, y + 20, WIDTH - 250, 400), hueVector, layerDepth));
+            renderLists.AddGumpNoAtlas(GumpCommand.Outline(SolidColorTextureCache.GetTexture(Color.Gray), x, y, Width, Height, hueVector, layerDepth));
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
         }
@@ -4916,7 +4890,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
-        private class InputField : Control
+        private class InputField : Control, IGumpDeferredDraw
         {
             private readonly StbTextBox _textbox;
 
@@ -4967,18 +4941,24 @@ namespace ClassicUO.Game.UI.Gumps
             public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
             {
                 float layerDepth = layerDepthRef;
-                renderLists.AddGumpNoAtlas(batcher =>
-                {
-                    if (batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        RenderLists childRenderLists = new();
-                        base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
+                renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepth));
+                return true;
+            }
 
-                        childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                        batcher.ClipEnd();
-                    }
-                    return true;
-                });
+            private RenderLists _childRenderLists;
+
+            bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
+                if (batcher.ClipBegin(x, y, Width, Height))
+                {
+                    RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+                    childRenderLists.Clear();
+                    base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
+
+                    childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                    childRenderLists.Clear();
+                    batcher.ClipEnd();
+                }
                 return true;
             }
 

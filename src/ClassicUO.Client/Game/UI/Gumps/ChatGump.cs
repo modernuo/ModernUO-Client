@@ -488,26 +488,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (MouseIsOver)
                 {
-                    renderLists.AddGumpNoAtlas
-                    (
-                        batcher =>
-                        {
-                            batcher.Draw
-                            (
-                                SolidColorTextureCache.GetTexture(Color.Cyan),
-                                new Rectangle
-                                (
-                                    x,
-                                    y,
-                                    Width,
-                                    Height
-                                ),
-                                hueVector,
-                                layerDepth
-                            );
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(SolidColorTextureCache.GetTexture(Color.Cyan), new Rectangle(x, y, Width, Height), hueVector, layerDepth));
                 }
 
                 return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);

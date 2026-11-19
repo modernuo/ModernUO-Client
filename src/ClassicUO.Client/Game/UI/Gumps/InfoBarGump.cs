@@ -6,6 +6,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Controls;
 using ClassicUO.Renderer;
+using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework;
 using System.Collections.Generic;
 using System.Linq;
@@ -194,39 +195,10 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(_warningLinesHue);
 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw
-                        (
-                            SolidColorTextureCache.GetTexture(Color.White),
-                            new Rectangle
-                            (
-                                _data.ScreenCoordinateX,
-                                _data.ScreenCoordinateY,
-                                _data.Width,
-                                2
-                            ),
-                            hueVector,
-                            layerDepth
-                        );
+                Texture2D white = SolidColorTextureCache.GetTexture(Color.White);
 
-                        batcher.Draw
-                        (
-                            SolidColorTextureCache.GetTexture(Color.White),
-                            new Rectangle
-                            (
-                                _data.ScreenCoordinateX,
-                                _data.ScreenCoordinateY + Parent.Height - 2,
-                                _data.Width,
-                                2
-                            ),
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(white, new Rectangle(_data.ScreenCoordinateX, _data.ScreenCoordinateY, _data.Width, 2), hueVector, layerDepth));
+                renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(white, new Rectangle(_data.ScreenCoordinateX, _data.ScreenCoordinateY + Parent.Height - 2, _data.Width, 2), hueVector, layerDepth));
             }
 
             return true;
