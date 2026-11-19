@@ -1005,8 +1005,7 @@ namespace ClassicUO.Assets
                     if (dbuf.Length < entry.DecompressedLength)
                         dbuf = new byte[entry.DecompressedLength];
 
-                    var ok = ZLib.Decompress(buf.AsSpan(0, entry.Length), dbuf.AsSpan(0, entry.DecompressedLength));
-                    if (ok != ZLib.ZLibError.Ok)
+                    if (!ZlibInflater.TryDecompress(buf.AsSpan(0, entry.Length), dbuf.AsSpan(0, entry.DecompressedLength), out _))
                         continue;
 
                     reader = new StackDataReader(dbuf.AsSpan(0, entry.DecompressedLength));
@@ -1398,8 +1397,7 @@ namespace ClassicUO.Assets
             if (index.CompressionType >= CompressionType.Zlib)
             {
                 var dbuf = new byte[(int)index.UncompressedSize];
-                var result = ZLib.Decompress(buf, dbuf);
-                if (result != ZLib.ZLibError.Ok)
+                if (!ZlibInflater.TryDecompress(buf, dbuf, out _))
                 {
                     Log.Error($"error reading uop animation. AnimID: {animID} | Group: {animGroup} | Dir: {direction} | FileIndex: {fileIndex}");
 

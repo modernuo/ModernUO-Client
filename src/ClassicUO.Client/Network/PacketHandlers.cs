@@ -5330,7 +5330,14 @@ namespace ClassicUO.Network
 
             try
             {
-                var result = ZLib.Decompress(source.Slice(sourcePosition, clen), span.Slice(0, dlen));
+                if (!ZlibInflater.TryDecompress(source.Slice(sourcePosition, clen), span.Slice(0, dlen), out int inflated) || inflated != dlen)
+                {
+                    // A misconfigured server can send a wrong dlen or a damaged stream; drop this plane.
+                    Log.Warn($"Custom house 0x{item.Serial:X8}: bad compressed plane (clen {clen}, dlen {dlen})");
+
+                    return;
+                }
+
                 var reader = new StackDataReader(span.Slice(0, dlen));
 
                 ushort id = 0;
@@ -5604,9 +5611,16 @@ namespace ClassicUO.Network
 
             try
             {
-                ZLib.Decompress(p.Buffer.Slice(p.Position, (int)clen), decData.AsSpan(0, dlen));
-
-                layout = Encoding.UTF8.GetString(decData.AsSpan(0, dlen));
+                // A bad stream (wrong dlen from a misconfigured server) yields an empty layout; the gump opens empty.
+                if (ZlibInflater.TryDecompress(p.Buffer.Slice(p.Position, (int)clen), decData.AsSpan(0, dlen), out int inflated))
+                {
+                    layout = Encoding.UTF8.GetString(decData.AsSpan(0, inflated));
+                }
+                else
+                {
+                    Log.Warn($"Compressed gump 0x{gumpID:X8}: bad layout stream (clen {clen}, dlen {dlen})");
+                    layout = string.Empty;
+                }
             }
             finally
             {
@@ -5628,10 +5642,16 @@ namespace ClassicUO.Network
 
                     try
                     {
-                        ZLib.Decompress(p.Buffer.Slice(p.Position, (int)clen), decData.AsSpan(0, dlen));
+                        if (!ZlibInflater.TryDecompress(p.Buffer.Slice(p.Position, (int)clen), decData.AsSpan(0, dlen), out int inflated))
+                        {
+                            // Same edge as the layout above: all lines read as empty.
+                            Log.Warn($"Compressed gump 0x{gumpID:X8}: bad text-lines stream (clen {clen}, dlen {dlen})");
+                            inflated = 0;
+                        }
+
                         p.Skip((int)clen);
 
-                        var reader = new StackDataReader(decData.AsSpan(0, dlen));
+                        var reader = new StackDataReader(decData.AsSpan(0, inflated));
 
                         for (int i = 0; i < linesNum; ++i)
                         {

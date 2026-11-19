@@ -55,8 +55,7 @@ public sealed class StringDictionaryLoader : UOFileLoader
         file.Read(buf);
 
         var dbuf = new byte[index.DecompressedLength];
-        var result = ZLib.Decompress(buf, dbuf);
-        if (result != ZLib.ZLibError.Ok)
+        if (!ZlibInflater.TryDecompress(buf, dbuf, out _))
             return;
 
         var reader = new StackDataReader(dbuf);
