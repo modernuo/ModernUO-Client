@@ -66,16 +66,11 @@ namespace ClassicUO
             return due;
         }
 
-        private double MsUntilDisplayDraw()
-            => Math.Max(0, (_displaySchedule.Next - Stopwatch.GetTimestamp()) * 1000.0 / Stopwatch.Frequency);
-
         // ---- present_on_change (evloop-2) ----
-        private bool _presentOnChange; // this tick: event loop, display-rate cap active and the switch on
+        private bool _presentOnChange; // this tick: event loop and display-rate cap active
         private bool _changePending, _continuous;
         private ChangeReason _changeWhy; // what set _changePending since the last draw (CUO_ANIM_DUE_CHECK logs it)
         private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen, _partialReadTs;
-
-        private static bool PresentOnChangeSwitch => Settings.GlobalSettings.PresentOnChange;
 
         // ---- present_on_change_anim_due (evloop-4) ----
         // _visualDueTick: the earliest visual due tick seen by the last RefreshChange (long.MaxValue: none); once Time.Ticks is
@@ -215,18 +210,13 @@ namespace ClassicUO
             }
         }
 
-        private bool PresentOnChangeDue(bool gridDue)
+        private bool PresentOnChangeDue()
         {
             RefreshChange();
             long now = Stopwatch.GetTimestamp();
             bool animDue = AnimDueScheduling;
-            bool due = LoopTiming.PresentDue(_changePending, MsSinceLastPresent(now), DisplayIntervalMs, IdleRedrawMsFor(animDue), animDue,
+            return LoopTiming.PresentDue(_changePending, MsSinceLastPresent(now), DisplayIntervalMs, IdleRedrawMsFor(animDue), animDue,
                 animDue ? MsUntilVisualDue() : double.PositiveInfinity);
-#if CUO_DEVTOOLS
-            if (PresentChangeCheck.On)
-                PresentChangeCheck.Tick(now, true, gridDue, due, _changePending, _displayPeriod);
-#endif
-            return due;
         }
 
         private double MsUntilPresentOnChange()
@@ -286,8 +276,6 @@ namespace ClassicUO
                 _drawnNetTs = 0;
             }
 #if CUO_DEVTOOLS
-            if (PresentChangeCheck.On) PresentChangeCheck.Present(now);
-
             if (AnimDueCheck.On && _presentOnChange)
             {
                 AnimDueCheck.EndFrame(now, _uoSpriteBatch.FrameSignature, Uo.Render.WorldRenderer.LastSignature,

@@ -170,9 +170,9 @@ namespace ClassicUO
 
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
             double maxWait = Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            // the event loop with the display-rate cap always presents on change (Update), so the grid's own deadline is not needed
             double wait = LoopTiming.WaitMs(
-                _presentOnChange ? MsUntilPresentOnChange()
-                : _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                _presentOnChange ? MsUntilPresentOnChange() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
                 MsUntilNextTimer(since),
                 maxWait
             );
@@ -760,18 +760,14 @@ namespace ClassicUO
             _tickInterval = x;
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
-            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive && PresentOnChangeSwitch;
+            // present on change (evloop-2, baked in after quiet-1115) runs wherever the event loop and the display-rate cap both
+            // run; vsync on, an fps cap, an inactive or minimized window, or the legacy loop keep their own cadence below
+            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive;
 
             if (_presentOnChange)
             {
-                displayDue = PresentOnChangeDue(displayDue);
+                displayDue = PresentOnChangeDue();
             }
-#if CUO_DEVTOOLS
-            else if (PresentChangeCheck.On)
-            {
-                PresentChangeCheck.Tick(Stopwatch.GetTimestamp(), false, displayDue, displayDue, false, _displayPeriod);
-            }
-#endif
 
             _displayDrawDue = displayDue;
             ServicePing(displayDue);

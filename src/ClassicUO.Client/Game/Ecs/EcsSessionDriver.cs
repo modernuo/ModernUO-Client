@@ -1040,13 +1040,6 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // presentchange on|off: present_on_change (evloop-2 counts jobs compare it with the grid in one session)
-                case "presentchange" when args.Length > 0:
-                    Settings.GlobalSettings.PresentOnChange = args[0] == "on";
-                    Log.Info($"[ECS] driver: present_on_change {args[0]}");
-
-                    return true;
-
                 // animdue on|off: present_on_change_anim_due (evloop-4 counts jobs compare it with the idle redraw in one session)
                 case "animdue" when args.Length > 0:
                     Settings.GlobalSettings.PresentOnChangeAnimDue = args[0] == "on";

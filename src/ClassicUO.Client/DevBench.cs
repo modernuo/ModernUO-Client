@@ -1796,14 +1796,6 @@ namespace ClassicUO
                         break;
                     }
 
-                    if (_plan[_planIndex].StartsWith("presentchange:"))
-                    {
-                        Configuration.Settings.GlobalSettings.PresentOnChange = _plan[_planIndex] == "presentchange:on";
-                        Log.Info($"[bench] present_on_change {Configuration.Settings.GlobalSettings.PresentOnChange}");
-                        _planIndex++;
-                        break;
-                    }
-
                     if (_plan[_planIndex].StartsWith("animdue:"))
                     {
                         Configuration.Settings.GlobalSettings.PresentOnChangeAnimDue = _plan[_planIndex] == "animdue:on";
