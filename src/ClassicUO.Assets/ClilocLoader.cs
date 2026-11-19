@@ -412,16 +412,22 @@ namespace ClassicUO.Assets
         }
 
         [return: NotNull]
-        private unsafe string TranslateUncached(int clilocNum, string arg, bool capitalize)
+        private string TranslateUncached(int clilocNum, string arg, bool capitalize)
+        {
+            ValueStringBuilder sb = TranslateToBuilder(clilocNum, arg == null ? ReadOnlySpan<char>.Empty : arg.AsSpan(), capitalize);
+            string result = sb.ToString();
+            sb.Dispose();
+
+            return result;
+        }
+
+        // The translated text in a pooled builder (caller disposes), for callers that copy it on instead of keeping a
+        // string per line (MegaCliloc property lists).
+        public ValueStringBuilder TranslateToBuilder(int clilocNum, ReadOnlySpan<char> arg, bool capitalize)
         {
             string baseCliloc = GetString(clilocNum);
 
-            if (arg == null)
-            {
-                arg = "";
-            }
-
-            var roChars = arg.AsSpan();
+            var roChars = arg;
 
 
             // get count of valid args
@@ -519,20 +525,22 @@ namespace ClassicUO.Assets
                         }
                     }
 
-                    if (!int.TryParse(sb.RawChars.Slice(start, count).ToString(), out index))
+                    if (!int.TryParse(sb.RawChars.Slice(start, count), out index))
                     {
-                        return $"MegaCliloc: error for {clilocNum}";
+                        sb.Dispose();
+
+                        return new ValueStringBuilder($"MegaCliloc: error for {clilocNum}".AsSpan());
                     }
 
                     --index;
 
-                    var a = index < 0 || index >= totalArgs ? string.Empty.AsSpan() : arg.AsSpan().Slice(locations[index].Item1, locations[index].Item2 - locations[index].Item1);
+                    var a = index < 0 || index >= totalArgs ? string.Empty.AsSpan() : arg.Slice(locations[index].Item1, locations[index].Item2 - locations[index].Item1);
 
                     if (a.Length > 1)
                     {
                         if (a[0] == '#')
                         {
-                            if (int.TryParse(a.Slice(1).ToString(), out int id1))
+                            if (int.TryParse(a.Slice(1), out int id1))
                             {
                                 var ss = GetString(id1);
 
@@ -546,7 +554,7 @@ namespace ClassicUO.Assets
                                 }
                             }
                         }
-                        else if (has_arguments && int.TryParse(a.ToString(), out int clil))
+                        else if (has_arguments && int.TryParse(a, out int clil))
                         {
                             if (TryGetString(clil, out string value) && !string.IsNullOrEmpty(value))
                             {
@@ -564,16 +572,12 @@ namespace ClassicUO.Assets
                     }
                 }
 
-                baseCliloc = sb.ToString();
-
-                sb.Dispose();
-
                 if (capitalize)
                 {
-                    baseCliloc = StringHelper.CapitalizeAllWords(baseCliloc);
+                    StringHelper.CapitalizeAllWords(sb.RawChars.Slice(0, sb.Length));
                 }
 
-                return baseCliloc;
+                return sb;
             }
         }
     }
