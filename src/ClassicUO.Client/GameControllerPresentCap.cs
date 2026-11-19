@@ -69,47 +69,15 @@ namespace ClassicUO
         // ---- present_on_change (evloop-2) ----
         private bool _presentOnChange; // this tick: event loop and display-rate cap active
         private bool _changePending, _continuous;
-        private ChangeReason _changeWhy; // what set _changePending since the last draw (CUO_ANIM_DUE_CHECK logs it)
         private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen, _partialReadTs;
 
-        // ---- present_on_change_anim_due (evloop-4) ----
+        // ---- the next visual change (evloop-4, baked in after quiet-1115) ----
         // _visualDueTick: the earliest visual due tick seen by the last RefreshChange (long.MaxValue: none); once Time.Ticks is
         // past it the change has happened in this Update. _netEchoTick: one present 250 ms after a dispatched packet, for the
         // UI that polls packet-fed data (status 250 ms, info bar 125 ms, counter bar 100 ms) and shows it after the packet's own
         // present.
         private long _visualDueTick = long.MaxValue, _netEchoTick = long.MaxValue;
         private const int NetEchoMs = 250;
-
-        private static bool AnimDueSwitch => Settings.GlobalSettings.PresentOnChangeAnimDue;
-
-        // the anim-due schedule decides idle frames: the switch is on and the checker is not forcing display-rate frames
-        private static bool AnimDueScheduling
-        {
-            get
-            {
-#if CUO_DEVTOOLS
-                if (AnimDueCheck.On)
-                {
-                    return false;
-                }
-#endif
-                return AnimDueSwitch;
-            }
-        }
-
-        private static bool AnimDueTracking
-        {
-            get
-            {
-#if CUO_DEVTOOLS
-                if (AnimDueCheck.On)
-                {
-                    return true;
-                }
-#endif
-                return AnimDueSwitch;
-            }
-        }
 
         private long NextVisualTick => Math.Min(VisualDue.NextTick, _netEchoTick);
 
@@ -122,9 +90,6 @@ namespace ClassicUO
 
         private double DisplayIntervalMs => _displayPeriod * 1000.0 / Stopwatch.Frequency;
 
-        // 0 = the display interval (LoopTiming.MsUntilPresent never goes below it)
-        private static double IdleRedrawMs => Math.Max(0, Settings.GlobalSettings.EventLoopIdleRedrawMs);
-
         // The rate limit runs from the last draw start, not the present end: anchored on the present, every frame would add
         // its own draw time to the interval (busy GPU frames fell to ~50/s in bench-000791).
         private double MsSinceLastPresent(long now)
@@ -134,7 +99,6 @@ namespace ClassicUO
         private void NoteNetChange(long ts)
         {
             _changePending = true;
-            _changeWhy |= ChangeReason.Net;
 
             if (_pendingNetTs == 0)
             {
@@ -160,13 +124,12 @@ namespace ClassicUO
                 else
                 {
                     _changePending = true;
-                    _changeWhy |= ChangeReason.Connection;
                 }
             }
         }
 
-        // Continuous motion the loop cannot see as a wake: mobile and boat steps (interpolation, completion, turns) and live
-        // effects. Anything else that animates is covered by the idle redraw.
+        // Visual changes the loop cannot see as a wake: mobile and boat steps (interpolation, completion, turns), sources that
+        // change every frame while active, and the next due visual change (VisualDue, filled during Update and Draw).
         private void RefreshChange()
         {
             long motion = StepSystem.Interpolated + StepSystem.Completed + StepSystem.Turns
@@ -176,89 +139,44 @@ namespace ClassicUO
             {
                 _motionSeen = motion;
                 _changePending = _continuous = true;
-                _changeWhy |= ChangeReason.Motion;
             }
 
-            // present_on_change_anim_due: effects report their next change into VisualDue (EffectSystem.NoteVisualDue); without
-            // it every live effect counts as motion
-            if (!AnimDueTracking && UO.World is { InGame: true } world && !world.Effects.IsEmpty)
+            if (VisualDue.Continuous != VisualSource.None)
             {
                 _changePending = _continuous = true;
-                _changeWhy |= ChangeReason.Effects;
             }
 
-            if (AnimDueTracking)
+            if (LoopTiming.VisualDueReached(_visualDueTick, Time.Ticks))
             {
-                if (VisualDue.Continuous != VisualSource.None)
-                {
-                    _changePending = _continuous = true;
-                    _changeWhy |= ChangeReason.Continuous;
-                }
-
-                if (LoopTiming.VisualDueReached(_visualDueTick, Time.Ticks))
-                {
-                    _changePending = true;
-                    _changeWhy |= ChangeReason.Due;
-                }
-
-                if (LoopTiming.VisualDueReached(_netEchoTick, Time.Ticks))
-                {
-                    _netEchoTick = long.MaxValue;
-                }
-
-                _visualDueTick = NextVisualTick;
+                _changePending = true;
             }
+
+            if (LoopTiming.VisualDueReached(_netEchoTick, Time.Ticks))
+            {
+                _netEchoTick = long.MaxValue;
+            }
+
+            _visualDueTick = NextVisualTick;
         }
 
         private bool PresentOnChangeDue()
         {
             RefreshChange();
-            long now = Stopwatch.GetTimestamp();
-            bool animDue = AnimDueScheduling;
-            return LoopTiming.PresentDue(_changePending, MsSinceLastPresent(now), DisplayIntervalMs, IdleRedrawMsFor(animDue), animDue,
-                animDue ? MsUntilVisualDue() : double.PositiveInfinity);
+
+            return LoopTiming.PresentDue(_changePending, MsSinceLastPresent(Stopwatch.GetTimestamp()), DisplayIntervalMs, MsUntilVisualDue());
         }
 
         private double MsUntilPresentOnChange()
-        {
-            bool animDue = AnimDueScheduling;
-
-            return LoopTiming.MsUntilPresent(_changePending, MsSinceLastPresent(Stopwatch.GetTimestamp()), DisplayIntervalMs,
-                IdleRedrawMsFor(animDue), animDue, animDue ? MsUntilVisualDue() : double.PositiveInfinity);
-        }
-
-        // CUO_ANIM_DUE_CHECK draws idle frames at the display interval (idle redraw 0) so every frame the signal would skip is
-        // drawn and compared
-        private static double IdleRedrawMsFor(bool animDue)
-        {
-#if CUO_DEVTOOLS
-            if (AnimDueCheck.On)
-            {
-                return 0;
-            }
-#endif
-            return IdleRedrawMs;
-        }
+            => LoopTiming.MsUntilPresent(_changePending, MsSinceLastPresent(Stopwatch.GetTimestamp()), DisplayIntervalMs, MsUntilVisualDue());
 
         // Draw start: what changed so far is in this frame; later changes stay pending for the next one. A frame drawn during
         // motion or effects keeps the next one due one interval later (the motion advances in Update, after the wait).
         private void BeginPresentedChange()
         {
-#if CUO_DEVTOOLS
-            if (AnimDueCheck.On)
-            {
-                AnimDueCheck.BeginFrame(_changePending, _changeWhy, _visualDueTick);
-                UltimaBatcher2D.SignatureOn = Uo.Render.WorldRenderer.SignatureOn = true;
-                _uoSpriteBatch.FrameSignature = 0;
-                _uoSpriteBatch.SignatureSprites = 0;
-                Uo.Render.WorldRenderer.LastSignature = 0;
-            }
-#endif
             _lastDrawTs = Stopwatch.GetTimestamp();
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;
             _changePending = _continuous;
-            _changeWhy = _continuous ? ChangeReason.Carried : ChangeReason.None;
             _continuous = false;
         }
 
@@ -275,13 +193,6 @@ namespace ClassicUO
 
                 _drawnNetTs = 0;
             }
-#if CUO_DEVTOOLS
-            if (AnimDueCheck.On && _presentOnChange)
-            {
-                AnimDueCheck.EndFrame(now, _uoSpriteBatch.FrameSignature, Uo.Render.WorldRenderer.LastSignature,
-                    _uoSpriteBatch.SignatureSprites, AnimDueSwitch, VisualDue.Continuous, VisualDue.NextSource, NextVisualTick, Time.Ticks);
-            }
-#endif
         }
 
         // present_on_change: a non-blocking drain and dispatch outside Update, right after Present and before the wait (never

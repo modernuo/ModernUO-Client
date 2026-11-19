@@ -160,21 +160,6 @@ namespace ClassicUO.Configuration
         // macros, audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.
         [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
 
-        // present on change (GameControllerPresentCap): the redraw period (ms) when nothing tracked changed. 0 (default) = the display interval: idle frames
-        // at display rate as with the grid, so no visual change; a packet then waits for the next interval from the last draw.
-        // A longer period (opt-in, e.g. 50 ms, the shortest discrete animation cadence, ITEM_EFFECT_ANIMATION_DELAY) leaves
-        // room to present an idle-time packet at once, at the cost of idle animations at that rate. Never shorter than the
-        // display interval.
-        [JsonPropertyName("event_loop_idle_redraw_ms")] public int EventLoopIdleRedrawMs { get; set; }
-
-        // evloop-4: with present_on_change, an idle frame is drawn when the next visual change is due (an animation frame, an
-        // idle animation, a text expiry, collected during Update; sources that change every frame present at display rate
-        // while active) instead of every event_loop_idle_redraw_ms, which is then unused. With nothing animating no idle frame
-        // is drawn; packets and input still present at once (rate-limited from the last present). Only meaningful with
-        // present_on_change. CUO_ANIM_DUE_CHECK=1 keeps drawing at display rate and compares every frame the signal would have
-        // skipped with the last frame it would have presented. Default off.
-        [JsonPropertyName("present_on_change_anim_due")] public bool PresentOnChangeAnimDue { get; set; }
-
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

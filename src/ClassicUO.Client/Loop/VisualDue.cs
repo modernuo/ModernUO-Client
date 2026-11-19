@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 
 namespace ClassicUO.Loop
 {
-    /// <summary>What a scheduled or continuous visual change comes from (CUO_ANIM_DUE_CHECK names it in a mismatch).</summary>
+    /// <summary>What a scheduled or continuous visual change comes from.</summary>
     [Flags]
     internal enum VisualSource : uint
     {
@@ -30,25 +30,8 @@ namespace ClassicUO.Loop
         Driver = 1 << 17
     }
 
-    /// <summary>Why present_on_change has a change pending (CUO_ANIM_DUE_CHECK logs it with a mismatch run).</summary>
-    [Flags]
-    internal enum ChangeReason : ushort
-    {
-        None = 0,
-        Wake = 1 << 0,
-        Net = 1 << 1,
-        Connection = 1 << 2,
-        SdlEvent = 1 << 3,
-        Actions = 1 << 4,
-        Motion = 1 << 5,
-        Effects = 1 << 6,
-        Continuous = 1 << 7,
-        Due = 1 << 8,
-        Carried = 1 << 9
-    }
-
     /// <summary>
-    /// present_on_change_anim_due (evloop-4): the next visual change that no packet or input causes. Sources report a due game
+    /// Present on change (evloop-4): the next visual change that no packet or input causes. Sources report a due game
     /// tick (the change happens in the first Update with <c>Time.Ticks</c> past it) or that they change every frame while
     /// active. Two sets: the Update set is cleared at each Update start and filled by the Update walks; the Draw set is cleared
     /// at each Draw start and filled while drawing (state only the draw evaluates), so it describes the last drawn frame until
@@ -61,8 +44,8 @@ namespace ClassicUO.Loop
         private static bool _drawing;
 
         /// <summary>
-        /// Whether the loop reads the signal this Update (present_on_change_anim_due or CUO_ANIM_DUE_CHECK). Sources whose due
-        /// time costs a lookup (corpse frames, the due mobiles' records) report only then; the cheap ones always report.
+        /// Whether the loop reads the signal this Update. Sources whose due time costs a lookup (corpse frames, the due mobiles'
+        /// records) report only then; the cheap ones always report.
         /// </summary>
         public static bool Tracking;
 

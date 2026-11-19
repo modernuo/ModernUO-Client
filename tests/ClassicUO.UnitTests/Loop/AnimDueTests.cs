@@ -1,5 +1,3 @@
-using System.Text.Json;
-using ClassicUO.Configuration;
 using ClassicUO.Ecs;
 using ClassicUO.Loop;
 using FluentAssertions;
@@ -7,71 +5,50 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Loop
 {
-    // evloop-4: present_on_change_anim_due, idle frames at the next visual change instead of every idle redraw period.
+    // evloop-4: present on change draws idle frames at the next visual change (no fixed idle redraw period).
     public class AnimDueTests
     {
         private const double Interval = 1000.0 / 144;
 
         [Fact]
-        public void Setting_Is_Off_By_Default_And_Round_Trips()
+        public void A_Pending_Change_Presents_One_Interval_After_The_Last_Present()
         {
-            new Settings().PresentOnChangeAnimDue.Should().BeFalse();
-            JsonSerializer.Deserialize<Settings>("{\"present_on_change_anim_due\":true}").PresentOnChangeAnimDue.Should().BeTrue();
-        }
-
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void A_Pending_Change_Presents_One_Interval_After_The_Last_Present_In_Both_States(bool animDue)
-        {
-            LoopTiming.MsUntilPresent(true, 2, Interval, 0, animDue, double.PositiveInfinity).Should().BeApproximately(Interval - 2, 1e-9);
-            LoopTiming.MsUntilPresent(true, 40, Interval, 50, animDue, double.PositiveInfinity).Should().Be(0);
-            LoopTiming.PresentDue(true, 40, Interval, 50, animDue, double.PositiveInfinity).Should().BeTrue();
+            LoopTiming.MsUntilPresent(true, 2, Interval, double.PositiveInfinity).Should().BeApproximately(Interval - 2, 1e-9);
+            LoopTiming.MsUntilPresent(true, 40, Interval, double.PositiveInfinity).Should().Be(0);
+            LoopTiming.PresentDue(true, 40, Interval, double.PositiveInfinity).Should().BeTrue();
+            // a pending change does not wait for a later visual due
+            LoopTiming.MsUntilPresent(true, 40, Interval, 500).Should().Be(0);
         }
 
         [Fact]
-        public void Off_Keeps_The_Idle_Redraw_Period_And_Ignores_The_Visual_Due()
-        {
-            LoopTiming.MsUntilPresent(false, 20, Interval, 50, false, 5).Should().Be(30);
-            LoopTiming.MsUntilPresent(false, 2, Interval, 0, false, double.PositiveInfinity).Should().BeApproximately(Interval - 2, 1e-9);
-            LoopTiming.PresentDue(false, Interval, Interval, 0, false, double.PositiveInfinity).Should().BeTrue();
-        }
-
-        [Fact]
-        public void On_With_Nothing_Due_Presents_Only_The_Safety_Net()
+        public void With_Nothing_Due_Only_The_Safety_Net_Presents()
         {
             // evloop-5: nothing scheduled, so the next idle frame is the safety net, one second after the last present
-            LoopTiming.MsUntilPresent(false, 200, Interval, 0, true, double.PositiveInfinity).Should().Be(LoopTiming.AnimDueSafetyNetMs - 200);
-            LoopTiming.PresentDue(false, 500, Interval, 50, true, double.PositiveInfinity).Should().BeFalse();
-            LoopTiming.PresentDue(false, LoopTiming.AnimDueSafetyNetMs, Interval, 50, true, double.PositiveInfinity).Should().BeTrue();
-            LoopTiming.PresentDue(false, 1e6, Interval, 50, true, double.PositiveInfinity).Should().BeTrue();
+            LoopTiming.MsUntilPresent(false, 200, Interval, double.PositiveInfinity).Should().Be(LoopTiming.AnimDueSafetyNetMs - 200);
+            LoopTiming.PresentDue(false, 500, Interval, double.PositiveInfinity).Should().BeFalse();
+            LoopTiming.PresentDue(false, LoopTiming.AnimDueSafetyNetMs, Interval, double.PositiveInfinity).Should().BeTrue();
+            LoopTiming.PresentDue(false, 1e6, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
         [Fact]
         public void The_Safety_Net_Never_Delays_An_Earlier_Due_And_Never_Beats_The_Rate_Limit()
         {
-            LoopTiming.MsUntilPresent(false, 100, Interval, 0, true, 30).Should().Be(30);
-            LoopTiming.MsUntilPresent(false, 100, Interval, 0, true, 5000).Should().Be(LoopTiming.AnimDueSafetyNetMs - 100);
-            LoopTiming.MsUntilPresent(false, 2, Interval, 0, true, double.PositiveInfinity).Should().Be(LoopTiming.AnimDueSafetyNetMs - 2);
+            LoopTiming.MsUntilPresent(false, 100, Interval, 30).Should().Be(30);
+            LoopTiming.MsUntilPresent(false, 100, Interval, 5000).Should().Be(LoopTiming.AnimDueSafetyNetMs - 100);
+            LoopTiming.MsUntilPresent(false, 2, Interval, double.PositiveInfinity).Should().Be(LoopTiming.AnimDueSafetyNetMs - 2);
             // before the first present there is no last present: present at once
-            LoopTiming.MsUntilPresent(false, double.PositiveInfinity, Interval, 0, true, double.PositiveInfinity).Should().Be(0);
+            LoopTiming.MsUntilPresent(false, double.PositiveInfinity, Interval, double.PositiveInfinity).Should().Be(0);
         }
 
         [Fact]
-        public void Off_Has_No_Safety_Net_Only_The_Idle_Redraw_Period()
-        {
-            LoopTiming.MsUntilPresent(false, 200, Interval, 5000, false, double.PositiveInfinity).Should().Be(4800);
-        }
-
-        [Fact]
-        public void On_Presents_When_The_Visual_Change_Is_Due_But_Not_Within_The_Interval()
+        public void Presents_When_The_Visual_Change_Is_Due_But_Not_Within_The_Interval()
         {
             // due in 30 ms, last present 100 ms ago: wait for the due time
-            LoopTiming.MsUntilPresent(false, 100, Interval, 50, true, 30).Should().Be(30);
+            LoopTiming.MsUntilPresent(false, 100, Interval, 30).Should().Be(30);
             // due now but the last present was 2 ms ago: the rate limit holds it to the interval
-            LoopTiming.MsUntilPresent(false, 2, Interval, 50, true, 0).Should().BeApproximately(Interval - 2, 1e-9);
-            LoopTiming.PresentDue(false, 100, Interval, 50, true, 0).Should().BeTrue();
-            LoopTiming.PresentDue(false, 100, Interval, 50, true, LoopTiming.DrawSlackMs + 0.1).Should().BeFalse();
+            LoopTiming.MsUntilPresent(false, 2, Interval, 0).Should().BeApproximately(Interval - 2, 1e-9);
+            LoopTiming.PresentDue(false, 100, Interval, 0).Should().BeTrue();
+            LoopTiming.PresentDue(false, 100, Interval, LoopTiming.DrawSlackMs + 0.1).Should().BeFalse();
         }
 
         [Fact]

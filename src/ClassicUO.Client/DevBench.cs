@@ -1796,14 +1796,6 @@ namespace ClassicUO
                         break;
                     }
 
-                    if (_plan[_planIndex].StartsWith("animdue:"))
-                    {
-                        Configuration.Settings.GlobalSettings.PresentOnChangeAnimDue = _plan[_planIndex] == "animdue:on";
-                        Log.Info($"[bench] present_on_change_anim_due {Configuration.Settings.GlobalSettings.PresentOnChangeAnimDue}");
-                        _planIndex++;
-                        break;
-                    }
-
                     if (_plan[_planIndex].StartsWith("vsync:"))
                     {
                         game.SetVSync(_plan[_planIndex] == "vsync:on");

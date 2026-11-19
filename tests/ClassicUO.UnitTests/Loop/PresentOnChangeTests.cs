@@ -1,5 +1,3 @@
-using System.Text.Json;
-using ClassicUO.Configuration;
 using ClassicUO.Loop;
 using FluentAssertions;
 using Xunit;
@@ -13,44 +11,18 @@ namespace ClassicUO.UnitTests.Loop
         private const double Interval = 1000.0 / 60;
 
         [Fact]
-        public void Idle_Redraw_Setting_Defaults_To_Zero_And_Round_Trips()
-        {
-            var s = new Settings();
-            s.EventLoopIdleRedrawMs.Should().Be(0, "0 = idle frames at the display interval (no visual change)");
-
-            var r = JsonSerializer.Deserialize<Settings>("{\"event_loop_idle_redraw_ms\":100}");
-            r.EventLoopIdleRedrawMs.Should().Be(100);
-        }
-
-        [Fact]
         public void A_Change_After_An_Idle_Interval_Presents_At_Once()
         {
-            LoopTiming.MsUntilPresent(true, 40, Interval, 50).Should().Be(0);
-            LoopTiming.PresentDue(true, 40, Interval, 50).Should().BeTrue();
+            LoopTiming.MsUntilPresent(true, 40, Interval, double.PositiveInfinity).Should().Be(0);
+            LoopTiming.PresentDue(true, 40, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
         [Fact]
         public void A_Change_Soon_After_A_Present_Waits_For_The_Interval()
         {
-            LoopTiming.MsUntilPresent(true, 5, Interval, 50).Should().BeApproximately(Interval - 5, 1e-9);
-            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs - 0.01, Interval, 50).Should().BeFalse();
-            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs + 0.01, Interval, 50).Should().BeTrue();
-        }
-
-        [Fact]
-        public void No_Change_Redraws_After_The_Idle_Period_Never_Faster_Than_The_Interval()
-        {
-            LoopTiming.MsUntilPresent(false, 20, Interval, 50).Should().Be(30);
-            LoopTiming.PresentDue(false, 20, Interval, 50).Should().BeFalse();
-            LoopTiming.PresentDue(false, 50, Interval, 50).Should().BeTrue();
-            LoopTiming.MsUntilPresent(false, 5, Interval, 1).Should().BeApproximately(Interval - 5, 1e-9);
-        }
-
-        [Fact]
-        public void Default_Idle_Redraw_Zero_Means_The_Display_Interval()
-        {
-            LoopTiming.MsUntilPresent(false, 5, Interval, 0).Should().BeApproximately(Interval - 5, 1e-9);
-            LoopTiming.PresentDue(false, Interval, Interval, 0).Should().BeTrue();
+            LoopTiming.MsUntilPresent(true, 5, Interval, double.PositiveInfinity).Should().BeApproximately(Interval - 5, 1e-9);
+            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs - 0.01, Interval, double.PositiveInfinity).Should().BeFalse();
+            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs + 0.01, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
         [Fact]
@@ -150,7 +122,7 @@ namespace ClassicUO.UnitTests.Loop
         [Fact]
         public void The_First_Present_Is_Due_At_Once()
         {
-            LoopTiming.PresentDue(false, double.PositiveInfinity, Interval, 50).Should().BeTrue();
+            LoopTiming.PresentDue(false, double.PositiveInfinity, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
         // Both schedules on one timeline: idle, then one packet 100.301 ms in. The grid (the legacy loop's display-rate cap)
@@ -181,7 +153,7 @@ namespace ClassicUO.UnitTests.Loop
                 if (presentOnChange)
                 {
                     double since = lastPresent == 0 ? double.PositiveInfinity : (t - lastPresent) / 1000.0;
-                    due = LoopTiming.PresentDue(change, since, period / 1000.0, 1000); // idle redraw out of the way
+                    due = LoopTiming.PresentDue(change, since, period / 1000.0, double.PositiveInfinity); // nothing animates
                 }
                 else
                 {

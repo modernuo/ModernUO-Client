@@ -204,7 +204,6 @@ namespace ClassicUO
                 // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
                 // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
                 _changePending = true;
-                _changeWhy |= ChangeReason.Wake;
             }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
@@ -651,7 +650,7 @@ namespace ClassicUO
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
             VisualDue.BeginUpdate();
-            VisualDue.Tracking = AnimDueTracking;
+            VisualDue.Tracking = true;
             Time.Frame++;
             _totalUpdates++;
             // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
@@ -848,7 +847,6 @@ namespace ClassicUO
             if (_queuedActions.RunDue(Time.Ticks) > 0)
             {
                 _changePending = true;
-                _changeWhy |= ChangeReason.Actions;
             }
 
             base.Update(gameTime);
@@ -863,7 +861,6 @@ namespace ClassicUO
                 {
                     // present_on_change: a failed send ended the connection
                     _changePending = true;
-                    _changeWhy |= ChangeReason.Connection;
                 }
             }
 
@@ -929,7 +926,6 @@ namespace ClassicUO
             if (NetClient.Socket.ConnectionGeneration != generation)
             {
                 _changePending = true;
-                _changeWhy |= ChangeReason.Connection;
             }
         }
 
@@ -1201,7 +1197,6 @@ namespace ClassicUO
             if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
             {
                 _changePending = true;
-                _changeWhy |= ChangeReason.SdlEvent;
             }
 
             if (LoopStats.On)

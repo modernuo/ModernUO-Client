@@ -162,7 +162,7 @@ namespace ClassicUO.Game
 
                     Log.Info($"[ECS] driver> {line}");
 
-                    // present_on_change_anim_due: a script line stands in for input (it opens and closes gumps, spawns and
+                    // present on change: a script line stands in for input (it opens and closes gumps, spawns and
                     // clears effects, moves the cursor), so the frame after it is drawn like the frame after an input event
                     ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Driver);
 
@@ -1030,20 +1030,6 @@ namespace ClassicUO.Game
                 case "presentcap" when args.Length > 0:
                     Settings.GlobalSettings.PresentAtDisplayRate = args[0] == "on";
                     Log.Info($"[ECS] driver: present_at_display_rate {args[0]}");
-
-                    return true;
-
-                // idleredraw <ms>: event_loop_idle_redraw_ms (0 = the display interval)
-                case "idleredraw" when args.Length > 0 && int.TryParse(args[0], out int idleMs):
-                    Settings.GlobalSettings.EventLoopIdleRedrawMs = idleMs;
-                    Log.Info($"[ECS] driver: event_loop_idle_redraw_ms {idleMs}");
-
-                    return true;
-
-                // animdue on|off: present_on_change_anim_due (evloop-4 counts jobs compare it with the idle redraw in one session)
-                case "animdue" when args.Length > 0:
-                    Settings.GlobalSettings.PresentOnChangeAnimDue = args[0] == "on";
-                    Log.Info($"[ECS] driver: present_on_change_anim_due {args[0]}");
 
                     return true;
 
