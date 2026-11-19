@@ -38,7 +38,9 @@ namespace ClassicUO.UnitTests.Ecs
             "gpu_prepare_item_cache",
             "gpu_prepare_item_cache_mixed",
             "gpu_prepare_item_cache_effects",
-            "text_skip_expired"
+            "text_skip_expired",
+            // baked in after quiet-1115 (event loop)
+            "event_loop"
         };
 
         [Fact]

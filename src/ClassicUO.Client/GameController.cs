@@ -96,20 +96,9 @@ namespace ClassicUO
             _queuedActions.Add(Time.Ticks + time, action);
         }
 
-        // ---- event_loop (evloop-1 arm A) ----
+        // ---- event loop (evloop-1 arm A; baked in after quiet-1115) ----
 #if CUO_DEVTOOLS
-        // the jobs' override of the settings (CUO_EVENT_LOOP=1|0, CUO_EVENT_LOOP_MAX_WAIT_MS)
-        private static readonly bool? _eventLoopEnv = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-        private static readonly int _eventLoopMaxWaitEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MAX_WAIT_MS"), out var mw) && mw > 0 ? mw : 0;
         private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
-#else
-        private static readonly bool? _eventLoopEnv = null;
-        private const int _eventLoopMaxWaitEnv = 0;
 #endif
 
         private LoopWaiter _waiter;
@@ -120,13 +109,9 @@ namespace ClassicUO
         private bool _tickDrawSkipped;
         private long _updateStartTs, _lastDrainTs;
 
-        private static bool EventLoopSwitch => _eventLoopEnv ?? Settings.GlobalSettings.EventLoop;
-
         private LoopMode DecideLoopMode()
         {
-            bool on = EventLoopSwitch;
-
-            if (on && !_waiterTried && OperatingSystem.IsWindows())
+            if (!_waiterTried && OperatingSystem.IsWindows())
             {
                 _waiterTried = true;
                 _waiter = new Win32LoopWaiter();
@@ -142,12 +127,12 @@ namespace ClassicUO
                 Log.Warn($"event_loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
             }
 
-            var mode = LoopTiming.Decide(on, OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+            var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
 
             if (mode != _loggedMode)
             {
                 _loggedMode = mode;
-                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : on ? " (event_loop on, not available)" : "")}");
+                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : " (event loop not available)")}");
                 LoopStats.Mode = mode == LoopMode.Event ? "event" : "legacy";
             }
 
@@ -184,7 +169,7 @@ namespace ClassicUO
             }
 
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
-            double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            double maxWait = Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
             double wait = LoopTiming.WaitMs(
                 _presentOnChange ? MsUntilPresentOnChange()
                 : _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
@@ -863,8 +848,8 @@ namespace ClassicUO
             }
 
 
-            // event_loop on: every due action (one Update per frame or wake); off: one per Update, as before
-            if (_queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch) > 0)
+            // every due action: one Update per frame or wake, not one per ~1 ms
+            if (_queuedActions.RunDue(Time.Ticks) > 0)
             {
                 _changePending = true;
                 _changeWhy |= ChangeReason.Actions;

@@ -7,7 +7,10 @@ namespace ClassicUO.Loop
     /// <summary>How the main loop spends the time between frames.</summary>
     internal enum LoopMode
     {
-        /// <summary>The original loop: skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.</summary>
+        /// <summary>
+        /// The original loop, the fallback where the event loop cannot run (not Windows, no working waiter, late-wake
+        /// backoff): skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.
+        /// </summary>
         Legacy,
         /// <summary>event_loop: one wait for the socket, window messages, a wake and the next deadline.</summary>
         Event
@@ -20,12 +23,12 @@ namespace ClassicUO.Loop
         public const double DrawSlackMs = 0.5;
 
         /// <summary>
-        /// The loop mode for this iteration. The event loop needs the switch, Windows (its wait is
-        /// MsgWaitForMultipleObjectsEx), a working waiter, and no late-wake backoff in force; otherwise the legacy loop runs.
+        /// The loop mode for this iteration. The event loop needs Windows (its wait is MsgWaitForMultipleObjectsEx), a working
+        /// waiter, and no late-wake backoff in force; otherwise the legacy loop runs.
         /// </summary>
-        public static LoopMode Decide(bool switchOn, bool isWindows, bool waiterReady, bool lateWakeSuspended)
+        public static LoopMode Decide(bool isWindows, bool waiterReady, bool lateWakeSuspended)
         {
-            if (!switchOn || !isWindows || !waiterReady || lateWakeSuspended)
+            if (!isWindows || !waiterReady || lateWakeSuspended)
             {
                 return LoopMode.Legacy;
             }
