@@ -142,20 +142,7 @@ namespace ClassicUO.Game.GameObjects
             // drawn graphic, sprite or art entry read for it (nor the full test's art request; the draw looks the art up)
             if (Scenes.PickBox.ItemActive && itemGraphic != CORPSE_GRAPHIC)
             {
-                bool reject = Scenes.PickBox.RejectsItem(this);
-
-#if CUO_DEVTOOLS
-                if (Scenes.PickBox.Checking)
-                {
-                    bool hit = FullPick(itemGraphic, out ushort drawn);
-                    bool notResident = reject && drawn != 0 && !Client.Game.UO.Arts.RequestArt(drawn);
-                    Scenes.PickBox.Judge(Scenes.PickBox.Kind.Item, this, drawn, reject, hit, notResident);
-
-                    return hit && !(reject && Scenes.PickBox.RejectOn);
-                }
-#endif
-
-                if (reject)
+                if (Scenes.PickBox.RejectsItem(this))
                 {
                     return false;
                 }
@@ -164,7 +151,7 @@ namespace ClassicUO.Game.GameObjects
             return FullPick(itemGraphic, out _);
         }
 
-        // the pick test before pick_early_reject; drawn: the art graphic it tested (0 for a corpse, or when it stopped first)
+        // the pick test after the early reject; drawn: the art graphic it tested (0 for a corpse, or when it stopped first)
         private bool FullPick(ushort itemGraphic, out ushort drawn)
         {
             drawn = 0;

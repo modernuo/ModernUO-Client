@@ -110,19 +110,8 @@ namespace ClassicUO.Game.GameObjects
             {
                 Point anchor = RealScreenPosition;
                 Point mouse = SelectedObject.TranslatedMousePositionByViewport;
-                bool reject = PickBox.Rejects(mouse.X - anchor.X, mouse.Y - anchor.Y);
 
-#if CUO_DEVTOOLS
-                if (PickBox.Checking)
-                {
-                    bool hit = FullPick();
-                    PickBox.Judge(PickBox.Kind.Static, this, Graphic, reject, hit);
-
-                    return hit && !(reject && PickBox.RejectOn);
-                }
-#endif
-
-                if (reject)
+                if (PickBox.Rejects(mouse.X - anchor.X, mouse.Y - anchor.Y))
                 {
                     return false;
                 }
@@ -131,7 +120,7 @@ namespace ClassicUO.Game.GameObjects
             return FullPick();
         }
 
-        // the pick test before pick_early_reject
+        // the pick test after the early reject
         private bool FullPick()
         {
             if (
