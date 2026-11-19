@@ -413,27 +413,14 @@ namespace ClassicUO.Game.UI.Gumps
                 {
 
                     var sourceRectangle = gumpInfo.UV;
-                    renderLists.AddGumpWithAtlas
-                    (
-                        (batcher) =>
-                        {
-                            batcher.Draw(texture, new Vector2(x, y), sourceRectangle, hueVector, layerDepth);
-                            return true;
-                        }
-                    );
+                    renderLists.AddGumpWithAtlas(GumpCommand.SpriteAt(texture, x, y, sourceRectangle, hueVector, layerDepth));
                     if (
                         ProfileManager.CurrentProfile != null
                         && ProfileManager.CurrentProfile.BuffBarTime
                     )
                     {
-                        renderLists.AddGumpNoAtlas
-                    (
-                        (batcher) =>
-                        {
-                            _gText.Draw(batcher, x - 3, y + sourceRectangle.Height / 2 - 3, hueVector.Z);
-                            return true;
-                        }
-                    );
+                        // hueVector.Z lands in Draw's depth parameter, as the old closure did
+                        renderLists.AddGumpNoAtlas(_gText, x - 3, y + sourceRectangle.Height / 2 - 3, hueVector.Z);
                     }
                 }
 
