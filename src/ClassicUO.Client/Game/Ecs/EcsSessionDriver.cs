@@ -1069,7 +1069,7 @@ namespace ClassicUO.Game
 
                 case "vsync" when args.Length > 0:
                     Client.Game.SetVSync(args[0] == "on");
-                    Log.Info($"[ECS] driver: vsync {args[0]}");
+                    Log.Info($"[ECS] driver: vsync {args[0]}, present mode {Client.Game.PresentMode}");
 
                     return true;
 
@@ -1077,6 +1077,13 @@ namespace ClassicUO.Game
                 case "vsyncpresent" when args.Length > 0:
                     Settings.GlobalSettings.VsyncPresentOnChange = args[0] == "on";
                     Log.Info($"[ECS] driver: vsync_present_on_change {args[0]}");
+
+                    return true;
+
+                // vsyncmailbox on|off: vsync_mailbox (vsync on presents in mailbox mode where supported)
+                case "vsyncmailbox" when args.Length > 0:
+                    Client.Game.SetVsyncMailbox(args[0] == "on");
+                    Log.Info($"[ECS] driver: vsync_mailbox {args[0]}, present mode {Client.Game.PresentMode}");
 
                     return true;
 

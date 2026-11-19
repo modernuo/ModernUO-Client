@@ -58,6 +58,8 @@ namespace ClassicUO
 
             GraphicManager.PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8;
             GraphicManager.SynchronizeWithVerticalRetrace = Settings.GlobalSettings.VSync;
+            // before Run creates the device: FNA3D reads it there
+            ApplyMailboxHint();
 
             Window.ClientSizeChanged += WindowOnClientSizeChanged;
             Window.AllowUserResizing = true;
@@ -314,7 +316,11 @@ namespace ClassicUO
             SetRefreshRate(Settings.GlobalSettings.FPS);
 
             _uoSpriteBatch = new UltimaBatcher2D(GraphicsDevice);
-            GraphicsDevice.DeviceReset += (_, _) => _uiCache.Invalidate();
+            GraphicsDevice.DeviceReset += (_, _) =>
+            {
+                _uiCache.Invalidate();
+                RefreshPresentMode();
+            };
 
             _filter = HandleSdlEvent;
             SDL_SetEventFilter(_filter, IntPtr.Zero);
@@ -331,6 +337,8 @@ namespace ClassicUO
             base.LoadContent();
 
             _gpuDevice = GpuInterop.GetDevice(GraphicsDevice);
+            RefreshPresentMode();
+            Log.Info($"present mode {_presentMode} (vsync {GraphicManager.SynchronizeWithVerticalRetrace}, vsync_mailbox {Settings.GlobalSettings.VsyncMailbox})");
             Log.Info($"SDL3 {GpuInterop.GetSdlRevision()}");
             Log.Trace(_gpuDevice != IntPtr.Zero
                 ? $"SDL_GPU device 0x{_gpuDevice:X}: driver={GpuInterop.GetDriverName(_gpuDevice)} shaders={GpuInterop.GetShaderFormats(_gpuDevice)}"
@@ -843,8 +851,8 @@ namespace ClassicUO
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
             // present on change (evloop-2, baked in after quiet-1115) runs wherever the event loop and the display-rate cap both
-            // run; an fps cap, an inactive or minimized window, the legacy loop and vsync on (unless vsync_present_on_change)
-            // keep their own cadence below
+            // run; an fps cap, an inactive or minimized window, the legacy loop and vsync on (unless vsync_present_on_change or
+            // mailbox mode) keep their own cadence below
             _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive;
 
             if (_presentOnChange)
@@ -925,7 +933,7 @@ namespace ClassicUO
             {
                 bool vsync = GraphicManager.SynchronizeWithVerticalRetrace;
                 bool engaged = _presentOnChange && vsync;
-                VsyncPresentCheck.Update(Stopwatch.GetTimestamp(), Settings.GlobalSettings.VsyncPresentOnChange, vsync, engaged, _displayHz, _displayPeriod);
+                VsyncPresentCheck.Update(Stopwatch.GetTimestamp(), Settings.GlobalSettings.VsyncPresentOnChange, vsync, _presentMode == PresentModeKind.Mailbox, engaged, _displayHz, _displayPeriod);
                 // engaged, the old vsync path drew every tick (it is engaged only when not minimized)
                 VsyncPresentCheck.Decision(engaged || !_suppressedDraw, !_suppressedDraw, displayDue);
             }

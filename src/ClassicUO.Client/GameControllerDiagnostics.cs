@@ -25,18 +25,9 @@ namespace ClassicUO
             SDL_GetWindowSizeInPixels(Window.Handle, out int pw, out int ph);
             var mode = (SDL_DisplayMode*)SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(Window.Handle));
             var pp = GraphicsDevice.PresentationParameters;
-            string present = "unavailable (non SDL_GPU backend)";
-            if (_gpuDevice != IntPtr.Zero)
-            {
-                // SDL has no public effective-mode getter. Infer using the committed FNA3D interval conversion and
-                // runtime capability query, explicitly marked inferred rather than pretending to inspect native state.
-                bool immediate = pp.PresentationInterval == Microsoft.Xna.Framework.Graphics.PresentInterval.Immediate;
-                var requested = immediate ? SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_IMMEDIATE :
-                    SDL_GetHintBoolean("FNA3D_VULKAN_FORCE_MAILBOX_VSYNC", false) ? SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_MAILBOX : SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_VSYNC;
-                var effective = SDL_WindowSupportsGPUPresentMode(_gpuDevice, Window.Handle, requested) ? requested : SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_VSYNC;
-                present = $"requested={requested} effective_inferred={effective}";
-            }
-            return $"display renderer={RendererStartup.Summary} world={Settings.GlobalSettings.WorldRenderer} FNA3D={GpuInterop.GetFna3dDriverName(GraphicsDevice)} SDL_GPU={GpuInterop.GetDriverName(_gpuDevice)} present={present} interval={pp.PresentationInterval} vsync={Settings.GlobalSettings.VSync} fps_limit={Settings.GlobalSettings.FPS} loop={_tickMode} present_at_display_rate={Settings.GlobalSettings.PresentAtDisplayRate} present_on_change={_presentOnChange} vsync_present_on_change={Settings.GlobalSettings.VsyncPresentOnChange} event_loop_idle_wait={Settings.GlobalSettings.EventLoopIdleWait} present_cap_active={_displayCapActive} focus={IsActive} window={w}x{h} window_pixels={pw}x{ph} backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight} world_target={_renderTargets.WorldRenderTarget?.Width}x{_renderTargets.WorldRenderTarget?.Height} display_scale={SDL_GetWindowDisplayScale(Window.Handle)} dpi_scale={DpiScale} refresh_hz={(mode == null ? 0 : mode->refresh_rate)}";
+            // the mode in force: SDL has no getter for it, so RefreshPresentMode repeats FNA3D's choice on the inputs FNA3D read
+            // at the last device creation or reset (the hint and the window's supported modes); D3D11/OpenGL: Vsync or Immediate
+            return $"display renderer={RendererStartup.Summary} world={Settings.GlobalSettings.WorldRenderer} FNA3D={GpuInterop.GetFna3dDriverName(GraphicsDevice)} SDL_GPU={GpuInterop.GetDriverName(_gpuDevice)} present={_presentMode} interval={pp.PresentationInterval} vsync={Settings.GlobalSettings.VSync} fps_limit={Settings.GlobalSettings.FPS} loop={_tickMode} present_at_display_rate={Settings.GlobalSettings.PresentAtDisplayRate} present_on_change={_presentOnChange} vsync_present_on_change={Settings.GlobalSettings.VsyncPresentOnChange} vsync_mailbox={Settings.GlobalSettings.VsyncMailbox} event_loop_idle_wait={Settings.GlobalSettings.EventLoopIdleWait} present_cap_active={_displayCapActive} focus={IsActive} window={w}x{h} window_pixels={pw}x{ph} backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight} world_target={_renderTargets.WorldRenderTarget?.Width}x{_renderTargets.WorldRenderTarget?.Height} display_scale={SDL_GetWindowDisplayScale(Window.Handle)} dpi_scale={DpiScale} refresh_hz={(mode == null ? 0 : mode->refresh_rate)}";
         }
     }
 }

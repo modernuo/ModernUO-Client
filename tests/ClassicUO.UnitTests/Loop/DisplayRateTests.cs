@@ -70,7 +70,7 @@ public class DisplayRateTests
     [InlineData(true, 0, true, false, false)]
     [InlineData(true, 0, false, true, false)]
     public void PolicyHonorsSwitchAndExistingCaps(bool on, int fps, bool vsync, bool inactive, bool expected)
-        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, inactive, false));
+        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, false, inactive, false));
 
     // vsync_present_on_change: off, vsync keeps its own cadence; on, vsync runs the schedule like vsync off, and the other caps
     // (present_at_display_rate off, an fps cap, an inactive window) still win.
@@ -82,7 +82,71 @@ public class DisplayRateTests
     [InlineData(true, 60, true, false, true, false)]
     [InlineData(true, 0, true, true, true, false)]
     public void VsyncPresentOnChangeEngagesTheScheduleWithVsync(bool on, int fps, bool vsync, bool inactive, bool vsyncSwitch, bool expected)
-        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, inactive, vsyncSwitch));
+        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, false, inactive, vsyncSwitch));
+
+    // vsync_mailbox: in mailbox mode Present does not block, so the schedule runs as with vsync off, also with
+    // present_at_display_rate off (no uncapped drawing) and without vsync_present_on_change; an fps cap and an inactive window
+    // still win.
+    [Theory]
+    [InlineData(true, 0, false, false, true)]
+    [InlineData(false, 0, false, false, true)]
+    [InlineData(true, 0, false, true, true)]
+    [InlineData(true, 60, false, false, false)]
+    [InlineData(false, 60, false, false, false)]
+    [InlineData(true, 0, true, false, false)]
+    [InlineData(false, 0, true, true, false)]
+    public void MailboxEngagesTheScheduleWithVsync(bool on, int fps, bool inactive, bool vsyncSwitch, bool expected)
+        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, true, true, inactive, vsyncSwitch));
+
+    // Normal vsync (mailbox false) is the switch-off behaviour: unchanged.
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public void NormalVsyncKeepsItsCadence(bool on, bool expected)
+        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, 0, true, false, false, false));
+
+    [Fact]
+    public void VsyncMailboxIsOffByDefaultAndRoundTrips()
+    {
+        Assert.False(new Settings().VsyncMailbox);
+        Assert.True(JsonSerializer.Deserialize<Settings>("{\"vsync_mailbox\":true}").VsyncMailbox);
+        Assert.Contains("\"vsync_mailbox\":false", JsonSerializer.Serialize(new Settings()));
+    }
+
+    // FNA3D's choice (XNAToSDL_PresentMode) by driver: SDL_GPU honours the hint where the window supports mailbox, else vsync;
+    // D3D11/OpenGL (Legacy fallback) have no mailbox.
+    [Theory]
+    // SDL_GPU, vsync on
+    [InlineData(true, true, true, true, true, (int)PresentModeKind.Mailbox)]
+    [InlineData(true, true, true, false, true, (int)PresentModeKind.Vsync)]
+    [InlineData(true, true, false, true, true, (int)PresentModeKind.Vsync)]
+    // SDL_GPU, vsync off: immediate where supported, else vsync
+    [InlineData(false, true, true, true, true, (int)PresentModeKind.Immediate)]
+    [InlineData(false, true, false, false, false, (int)PresentModeKind.Vsync)]
+    // D3D11/OpenGL: the hint and SDL_GPU support do not apply
+    [InlineData(true, false, true, true, true, (int)PresentModeKind.Vsync)]
+    [InlineData(false, false, true, true, false, (int)PresentModeKind.Immediate)]
+    public void PresentModeFollowsFna3dChoice(bool vsync, bool sdlGpu, bool hint, bool mailboxSupported, bool immediateSupported, int expected)
+        => Assert.Equal((PresentModeKind)expected, PresentModeRule.Choose(vsync, sdlGpu, hint, mailboxSupported, immediateSupported));
+
+    // Players see "VSync (True Triple Buffering)" only while mailbox is in force; "mailbox" stays in logs.
+    [Theory]
+    [InlineData((int)PresentModeKind.Mailbox, "(True Triple Buffering)")]
+    [InlineData((int)PresentModeKind.Vsync, "")]
+    [InlineData((int)PresentModeKind.Immediate, "")]
+    public void OptionsShowTripleBufferingOnlyForMailbox(int mode, string expected)
+        => Assert.Equal(expected, PresentModeRule.OptionsSuffix((PresentModeKind)mode));
+
+    // The switch only matters through the mode: Mailbox engages the schedule, the Vsync fallback keeps the old cadence.
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void ScheduleFollowsTheChosenMode(bool switchOn, bool mailboxSupported, bool expected)
+    {
+        var mode = PresentModeRule.Choose(true, true, switchOn, mailboxSupported, true);
+        Assert.Equal(expected, DisplayRateSchedule.Enabled(true, 0, true, mode == PresentModeKind.Mailbox, false, false));
+    }
 
     [Fact]
     public void VsyncPresentOnChangeIsOffByDefaultAndRoundTrips()
