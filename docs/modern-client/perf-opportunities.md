@@ -8,10 +8,11 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 
 | What | Where | Estimate | Status |
 |---|---|---|---|
-| World text list keeps expired texts linked (ls_z1: 1988 nodes, 0 drawn; 8000 node visits per frame in 3 forward walks and the backward draw walk) | TextRenderer.cs ProcessWorldText/Draw, EntityTextContainer.cs | `text_prune_expired` (bg/text-walk, default off, checker clean) cuts walks to ~3 nodes at ls_z1; timing parked | open: timing |
-| UIManager.Update sorts and recursively updates every control each frame | UIManager.cs:335, Control.cs:259 | update only dirty controls, hit-test cache | open |
+| World text `Collides` is quadratic in live owned texts | TextRenderer.cs ProcessWorldText(true) | a uniform grid gives the same boolean; ~0.05-0.1 ms/frame only in text-spam scenes (lswalk ~450 live texts), ~0 in normal play (handoffs/text-fold.md) | open, low value |
+| Idle loop: music short of buffers is polled at 16 ms (busy_by=Music ~2.6 waits/s with `event_loop_idle_wait`) | loop-idle LoopDue (music source) | a wake from the audio side instead of polling; fewer idle wakes | open |
+| World map gump open keeps the 16 ms loop cadence | GameScene.NoteLoopDue | a load-pending flag + the 250 ms query deadline lets an open world map idle | open |
+| Remaining 29-74 B/frame in infobar, netstats, status and options gumps | gump Update paths (probably string formatting) | allocation only | open |
 | UI pass walk + vertex generation (~50 us with static UI) | batcher UI pass | needs dirty tracking; draw-time side effects (`HealthBarGump`, `ContainerGump` set `SelectedObject`) block it | open |
-| `HandleKeyboardInput` walks every gump every frame | UIManager | CPU | open |
 | Container/paperdoll item art decodes on the main thread when a gump first opens | request in `WorldWriter.PlaceInContainer` | ~20-50 us per sprite, first-open hitch | open |
 | `HealthLinesManager` with `ShowMobilesHP` on still walks every mobile | HealthLinesManager.cs | CPU | open (`HitsTexture` hoisted, 705e4039b) |
 | anim_due: per-graphic due for animated statics (now one shared due) | present_on_change_anim_due | fewer idle presents near animated statics | open (evloop-4 report) |
@@ -179,3 +180,5 @@ Source: cuo-poc-state audits/perf-audit-1111/out.md. Savings are provisional (ex
 - ECS reads: tile-head (1150d9b3a), `EcsRead` (02c0ef387), ecs-hygiene (66cf4b8e7), linked-object (eb0f70ed0), perf-6..12 (picker/texmap, paperdoll `WornView` b221d00eb, `MobileInputs` by ref, hue frame inputs, worn cache once per mobile, per-corpse layer tables, one record read per mobile), perf-13-steps (9bd1ac059; door and corpse scans), perf-cpu-1109 (456bb0606; `ItemTable` held flag, `HealthLinesManager` target walk), legacy-sprites-items (880c138ce direct art draw, b607aa19a `GatherFrame`/`ItemOffsets.ReadRow`, 106a6ff8b `SpritePickTable` no zero-fill; merged 618c63d55).
 - Measured and rejected: static PGO and `OptimizationPreference=Speed` (AOT gap ~0.03 ms/frame inside native FNA calls; PGO opt-in via `-p:CuoMibcPath=`), `x86-64-v3` ISA (no difference), B9 batch sorting, flat animation pick index (up to ~12 MB per client), UI gump render cache #1889, legacy_item_draw_cache.
 - Runtime zlib: the client's own zlib (native zlib.dll/libz P/Invoke plus a managed 32-bit port) is replaced by the .NET 11 `ZLibDecoder` (`ZlibInflater`, a reused per-thread decoder, 0 B per call; 5685fffa2, d26514e96). Only the 0xD8 house and 0xDD gump handlers used it at run time. No timing claim.
+- World text (2026-11-19): expired texts pruned and the list tail kept, both baked in (1fd26ed45; quiet-1118 ls_z1 frame -9 % on both renderers). UI walks measured (1e4fa7f30): UIManager.Update sort is already gated by `_needSort`, `HandleKeyboardInput` visits 0 controls while a control holds focus, 12 gumps cost 0.035-0.075 ms/frame: closed, nothing to do.
+- Gump closures (2026-11-19): every capturing lambda in AddToRenderLists replaced by typed GumpCommands (a1bfb21d1, 6ea53b00b; skills gump 5840 -> ~150 B/frame, Options gump 7.9 KB -> 44 B/frame); GumpClosureGuardTests keeps them out.
