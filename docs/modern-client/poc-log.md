@@ -7989,3 +7989,31 @@ Verification jobs (counts only, machine busy): gate bench-000915, counts-g bench
 branch bench-000918 (measure/vsync-mailbox). Results: pending at the time of writing (see the agent report / handoff).
 Tearing cannot be measured by the bench. Parked: measure/vsync-mailbox/job-timing-{g,l}-PARKED.sh (CPU ms/s, ping RTT: vsync
 vs mbox vs anim, three rounds, quiet/busy/walk). Memory: none. Cost: two Stopwatch reads per frame for the build time.
+
+## 2026-11-19 quiet-1119: mailbox, vsync present on change and idle wait timed; all three default on (31300325f)
+
+Owner-authorized quiet pass on a NativeAOT build of e444a2442 (jobs pinned through the runner, checkers off, fps 0, 143.86 Hz,
+three rounds, spots quiet / busy (largescene lock) / walk, round 2 reversed). Medians across rounds; CPU in ms/s, ping RTT p50 ms.
+
+| Pair (jobs) | Spot | Gpu | Legacy |
+|---|---|---|---|
+| vsync -> mbox (919/920) | quiet | CPU 73-91 -> 9-17, ping 5.9 -> 0.12 | CPU 69-78 -> 12-22, ping 5.9 -> 0.12 |
+| | walk | CPU 75-84 -> 25-37, ping 5.9-7.5 -> 0.12 | CPU 70-83 -> 31-37, ping 6.0-7.5 -> 0.12 |
+| | busy | CPU 234-244 -> 231-250 (same), ping 6.9 -> 0.12-0.15 | CPU 351-365 -> 334-353, ping 6.9 -> 0.11-0.12 |
+| vsync -> vpoc (921/922) | quiet | CPU 55-84 -> 12-19, ping 5.9 -> 0.11-0.12 | CPU 67-83 -> 9-16, ping 5.9-8.0 -> 0.11-0.12 |
+| | busy | CPU 233-251 -> 228-239, ping 6.9 -> 0.12-0.15 | CPU 359-372 -> 340-398, ping 6.9 -> 0.11-0.15 |
+| idle wait off -> on (923/924) | quiet | loops/s 63 -> 7; CPU 12-22 -> 3-9; ping 0.11-0.13 -> 0.13-0.14 | loops/s 63 -> 7; CPU 9-20 -> 9-16; ping 0.12 -> 0.13-0.15 |
+| | busy | unchanged | unchanged |
+
+Mailbox matches vsync off (anim) in every spot: idle 2 presents/s, busy at the display-rate schedule (133/s on both arms).
+Normal vsync presents 144/s everywhere and its ping waits for the vblank. The idle wait costs ~10-20 us of ping p50 in the
+quiet spot (a wait ends on the socket, then the frame); within the round-to-round spread. Alloc/frame unchanged.
+
+Decision (owner: VSync on = mailbox if able; the others neutral-or-better): `vsync_mailbox`, `vsync_present_on_change` and
+`event_loop_idle_wait` default on (31300325f; `event_loop_idle_max_wait_ms` stays 250). A saved settings.json that names a key keeps
+its value. Gate after the flip: bench-000927 PASS (0 px; bench-000926 failed only its normal-vsync phases, which expected a present every vblank; the gate scene now sets `vsyncpresent off` there). Old paths and switches stay until the flip has been default on for a while.
+
+Codec (due-diligence item 4 of the zstd pack revision, bench-000925, quiet, pinned, two runs): per unit, BCL zstd 19 vs Brotli q5:
+region 1.00 vs 2.45 ms, art chunk 0.55 vs 1.83 ms, anim chunk 0.26 vs 0.98 ms, art page 3.7 vs 13.4 ms, gump record (274 KB)
+0.23 vs 0.57 ms (q9), small raw gump record (7 KB) zstd 19 10.7 us (zstd 9 7.8 us) vs copy 0.1 us. zstd 19 is smaller than
+Brotli as built on every set. Confirms the busy-machine ranking.
