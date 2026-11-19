@@ -629,7 +629,6 @@ namespace ClassicUO.Game.Scenes
             }
 
             PickSkip.BeginFill(UIManager.IsMouseOverWorld);
-            ItemOffsets.BeginFrame();
             PickBox.BeginFill();
 
             // T6a: the tile lists exactly as this frame's walk (both renderers) is about to read them
