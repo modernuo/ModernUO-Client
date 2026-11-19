@@ -15,7 +15,12 @@ namespace ClassicUO
         public static string[] Args;
         public static bool Debug;
         public static bool IsHighDPI;
+        /// <summary>Frames drawn and presented per second (the measurement; diagnostics and the debug overlay).</summary>
         public static uint CurrentRefreshRate;
+        /// <summary>The player-facing frames/s: the display rate while present on change runs (FpsDisplay.Shown).</summary>
+        public static uint ShownRefreshRate;
+        /// <summary>The last frame's build time in ms (Draw start to Present).</summary>
+        public static double LastFrameBuildMs;
         public static uint CurrentLoopRate;
         public static bool SkipLoginScreen;
         public static bool NoServerPing;

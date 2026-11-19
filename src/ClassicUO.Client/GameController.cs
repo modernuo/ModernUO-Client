@@ -34,6 +34,7 @@ namespace ClassicUO
         private bool _ignoreNextTextInput;
         private readonly float[] _intervalFixedUpdate = new float[2];
         private double _totalElapsed, _currentFpsTime;
+        private long _drawStartTs;
         private uint _totalFrames;
         private UltimaBatcher2D _uoSpriteBatch;
         private RenderTargets _renderTargets = new();
@@ -834,6 +835,7 @@ namespace ClassicUO
             {
                 CUOEnviroment.CurrentRefreshRate = (uint)(_totalFrames * 1000.0 / _currentFpsTime);
                 CUOEnviroment.CurrentLoopRate = (uint)(_totalUpdates * 1000.0 / _currentFpsTime);
+                CUOEnviroment.ShownRefreshRate = FpsDisplay.Shown(CUOEnviroment.CurrentRefreshRate, _displayCapActive, _displayHz, Settings.GlobalSettings.FPS);
 
                 _totalFrames = 0;
                 _totalUpdates = 0;
@@ -1072,6 +1074,7 @@ namespace ClassicUO
 
         protected override void Draw(GameTime gameTime)
         {
+            _drawStartTs = Stopwatch.GetTimestamp();
             if (LoopStats.On) LoopStats.NoteDraw();
             BeginPresentedChange();
             VisualDue.BeginDraw();
@@ -1198,6 +1201,8 @@ namespace ClassicUO
 
         protected override void EndDraw()
         {
+            // the frame build time (Draw to Present, without the present) for the debug overlay's possible frames/s
+            CUOEnviroment.LastFrameBuildMs = (Stopwatch.GetTimestamp() - _drawStartTs) * 1000.0 / Stopwatch.Frequency;
 #if CUO_DEVTOOLS
             long presentStart = VsyncPresentCheck.On ? Stopwatch.GetTimestamp() : 0;
 #endif
