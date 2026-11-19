@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using System;
+using ClassicUO.Utility.Logging;
+
 namespace ClassicUO.Loop
 {
     /// <summary>The event loop's wait, per OS.</summary>
@@ -33,13 +36,28 @@ namespace ClassicUO.Loop
             return LoopWaiterKind.None;
         }
 
-        /// <summary>Creates (and probes) the waiter; <paramref name="window"/> is the SDL window (Linux reads its display).</summary>
-        public static LoopWaiter Create(LoopWaiterKind kind, nint window) => kind switch
+        /// <summary>
+        /// Creates (and probes) the waiter; <paramref name="window"/> is the SDL window (Linux reads its display). Null when
+        /// there is none or it could not be created (a native library that does not load): the legacy loop runs.
+        /// </summary>
+        public static LoopWaiter Create(LoopWaiterKind kind, nint window)
         {
-            LoopWaiterKind.Win32 => new Win32LoopWaiter(),
-            LoopWaiterKind.LinuxEpoll => new LinuxEpollLoopWaiter(window),
-            _ => null
-        };
+            try
+            {
+                return kind switch
+                {
+                    LoopWaiterKind.Win32 => new Win32LoopWaiter(),
+                    LoopWaiterKind.LinuxEpoll => new LinuxEpollLoopWaiter(window),
+                    _ => null
+                };
+            }
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+            {
+                Log.Warn($"event loop: {kind} waiter unavailable ({e.Message}); using the legacy loop");
+
+                return null;
+            }
+        }
 
         /// <summary>Why the legacy loop runs when there is no waiter (for the log).</summary>
         public static string NoWaiterReason(bool isLinux) => isLinux ? "event_loop_linux is off" : "no event loop on this OS";
