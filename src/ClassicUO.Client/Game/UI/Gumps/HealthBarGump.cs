@@ -1224,23 +1224,7 @@ namespace ClassicUO.Game.UI.Gumps
                 float layerDepth = layerDepthRef;
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(0, false, Alpha);
                 renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw
-                        (
-                            LineColor,
-                            new Rectangle
-                            (
-                                x,
-                                y,
-                                LineWidth,
-                                Height
-                            ),
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
+                    GumpCommand.SpriteStretched(LineColor, new Rectangle(x, y, LineWidth, Height), hueVector, layerDepth)
                 );
 
                 return true;

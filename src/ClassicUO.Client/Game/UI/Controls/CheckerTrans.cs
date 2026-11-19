@@ -82,27 +82,7 @@ namespace ClassicUO.Game.UI.Controls
 
             //batcher.SetStencil(_checkerStencil.Value);
 
-            renderLists.AddGumpNoAtlas
-            (
-                (batcher) =>
-                {
-                    batcher.Draw
-                    (
-                        SolidColorTextureCache.GetTexture(Color.Black),
-                        new Rectangle
-                        (
-                            x,
-                            y,
-                            Width,
-                            Height
-                        ),
-                        hueVector,
-                        layerDepth
-                    );
-
-                    return true;
-                }
-            );
+            renderLists.AddGumpNoAtlas(GumpCommand.SpriteStretched(SolidColorTextureCache.GetTexture(Color.Black), new Rectangle(x, y, Width, Height), hueVector, layerDepth));
 
             
 

@@ -67,20 +67,7 @@ namespace ClassicUO.Game.UI.Controls
             if (texture != null)
             {
                 var sourceRectangle = artInfo.UV;
-                renderLists.AddGumpWithAtlas
-                (
-                    (batcher) =>
-                    {
-                        batcher.Draw(
-                            texture,
-                            new Rectangle(x, y, Width, Height),
-                            sourceRectangle,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, new Rectangle(x, y, Width, Height), sourceRectangle, hueVector, layerDepth));
             }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
