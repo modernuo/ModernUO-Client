@@ -7690,3 +7690,11 @@ Lead: `TextRenderer.ProcessWorldText` costs 0.19-0.31 ms/frame on Legacy ls_z1 w
 - **text_skip_expired (retired, restructure step 5).** It skipped the text layout (`UpdateTextCoordsV`) of entities whose texts all expired (W5, 8f28491f3; now `TextAllExpired` in `UpdateTextServerEntities`). It never touched the world text list, so prune does not overlap or duplicate it: that one saves per-entity layout, this one list walks.
 - **Tests.** TextRendererPruneTests (6, both switch states, checker on); text/counter/settings filter 67 pass. Timing parked: measure/text-walk/job-timing-PARKED.sh (base/tail/prune/both, Legacy and Gpu).
 - **Merge.** Rebased onto 8f37cafb5 (code commit had no conflicts).
+
+## 2026-11-18 bake-text (bg/bake-text)
+
+The owner baked in both world-text switches after quiet-1118 (bench-000883/884: both on = best or tied on every spot, both renderers).
+
+- **Removed.** Settings `text_tail_cache` and `text_prune_expired`; `TextRenderer.PruneOn` / `TailCacheOn`, the `CUO_TEXT_PRUNE` / `CUO_TEXT_TAIL` overrides, both checkers (`CUO_TEXT_PRUNE_CHECK`, `CUO_TEXT_ORDER_CHECK`) with their test hooks and summary logs, and the off paths (full forward walk without the kept tail, no prune). The prune and the kept tail always run; `TextObject.LinkVersion` stays (it validates the tail). The world-text FrameStats counters stay (they never depended on the checkers). Both keys are in `RemovedSwitchSettingsTests`.
+- **Numbers (quiet-1118, both on vs both off).** Legacy ls_z1 -9.1 %, lswalk -4.5 %; Gpu ls_z1 -9.7 %, lswalk -8.4 %. The tipref run showed the earlier Legacy ls_z1 regression (pre vs ref) did not reproduce quietly (-2.4 %), so no bisect.
+- **Tests.** TextRendererPruneTests and TextRendererTailTests run on the single path (switch-off and checker variants dropped).

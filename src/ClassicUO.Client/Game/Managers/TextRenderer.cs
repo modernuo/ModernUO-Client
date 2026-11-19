@@ -23,103 +23,15 @@ namespace ClassicUO.Game.Managers
         protected TextObject FirstNode;
         protected TextObject DrawPointer;
 
-        // text_tail_cache: the last node reached from FirstNode through DRight, valid while no link changed since it was
+        // the last node reached from FirstNode through DRight, valid while no link changed since it was
         // taken (TextObject.LinkVersion)
         private TextObject _tail;
         private uint _tailVersion;
         private bool _tailValid;
 
-#if CUO_DEVTOOLS
-        // the gate's override of the setting (CUO_TEXT_TAIL=1|0) and the checker
-        private static readonly bool? s_env = Environment.GetEnvironmentVariable("CUO_TEXT_TAIL") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-
-        private static readonly bool s_check = Environment.GetEnvironmentVariable("CUO_TEXT_ORDER_CHECK") == "1";
-
-        private static readonly bool? s_pruneEnv = Environment.GetEnvironmentVariable("CUO_TEXT_PRUNE") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-
-        private static readonly bool s_pruneCheck = Environment.GetEnvironmentVariable("CUO_TEXT_PRUNE_CHECK") == "1";
-
-        /// <summary>Tests: the prune checker for every renderer (null: <c>CUO_TEXT_PRUNE_CHECK=1</c>).</summary>
-        internal static bool? PruneCheckOverride;
-
-        /// <summary>Prune checker counts: prunes compared, differences found, texts unlinked.</summary>
-        public static long PruneChecks, PruneMismatches, Pruned;
-
-        /// <summary>Tests: sees each prune mismatch line.</summary>
-        internal static Action<string> PruneMismatchObserver;
-
-        private readonly List<TextObject> _pruneShadow = new List<TextObject>();
-        private uint _pruneNextLog;
-
-        /// <summary>Tests: the checker for every renderer (null: <c>CUO_TEXT_ORDER_CHECK=1</c>).</summary>
-        internal static bool? CheckOverride;
-
-        /// <summary>Checker counts over the session: uses compared with the full walk, differences found.</summary>
-        public static long Checks, Mismatches;
-
-        /// <summary>Tests: sees each mismatch line.</summary>
-        internal static Action<string> MismatchObserver;
-
-        private uint _nextLog;
-#endif
-
-        /// <summary>Tests: the switch (null: the setting).</summary>
-        internal static bool? OverrideForTests;
-
-        // text_prune_expired: the earliest Time of a linked text after the last prune (nothing is expired while Time.Ticks <=
+        // the earliest Time of a linked text after the last prune (nothing is expired while Time.Ticks <=
         // it); 0 = walk at the next Update (a text was added)
         private long _pruneAt;
-
-        /// <summary>Tests: the prune switch (null: the setting).</summary>
-        internal static bool? PruneOverrideForTests;
-
-        public static bool PruneOn
-        {
-            get
-            {
-                if (PruneOverrideForTests.HasValue)
-                {
-                    return PruneOverrideForTests.Value;
-                }
-
-#if CUO_DEVTOOLS
-                if (s_pruneEnv.HasValue)
-                {
-                    return s_pruneEnv.Value;
-                }
-#endif
-                return Settings.GlobalSettings != null && Settings.GlobalSettings.TextPruneExpired;
-            }
-        }
-
-        public static bool TailCacheOn
-        {
-            get
-            {
-                if (OverrideForTests.HasValue)
-                {
-                    return OverrideForTests.Value;
-                }
-
-#if CUO_DEVTOOLS
-                if (s_env.HasValue)
-                {
-                    return s_env.Value;
-                }
-#endif
-                return Settings.GlobalSettings != null && Settings.GlobalSettings.TextTailCache;
-            }
-        }
 
         public override void Destroy()
         {
@@ -128,15 +40,12 @@ namespace ClassicUO.Game.Managers
 
         public virtual void Update()
         {
-            if (PruneOn)
-            {
-                PruneExpired();
-            }
+            PruneExpired();
 
             ProcessWorldText(false);
         }
 
-        // text_prune_expired: unlink the texts the draw pass would skip for being expired. Time never moves after a text is added
+        // unlink the texts the draw pass would skip for being expired. Time never moves after a text is added
         // (the Time.Ticks it expires at is set before AddMessage), so an expired one stays expired; the live ones keep their order.
         private void PruneExpired()
         {
@@ -147,14 +56,6 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-#if CUO_DEVTOOLS
-            bool check = PruneCheckOverride ?? s_pruneCheck;
-
-            if (check)
-            {
-                CollectLive(_pruneShadow, now);
-            }
-#endif
             long earliest = long.MaxValue;
             TextObject t = FirstNode.DRight;
 
@@ -165,9 +66,6 @@ namespace ClassicUO.Game.Managers
                 if (t.Time < now)
                 {
                     t.UnlinkD();
-#if CUO_DEVTOOLS
-                    Pruned++;
-#endif
                 }
                 else if (t.Time < earliest)
                 {
@@ -178,88 +76,7 @@ namespace ClassicUO.Game.Managers
             }
 
             _pruneAt = earliest;
-#if CUO_DEVTOOLS
-            if (check)
-            {
-                CheckPrune(now);
-            }
-#endif
         }
-
-#if CUO_DEVTOOLS
-        private void CollectLive(List<TextObject> into, long now)
-        {
-            into.Clear();
-
-            for (TextObject t = FirstNode.DRight; t != null; t = t.DRight)
-            {
-                if (t.Time >= now)
-                {
-                    into.Add(t);
-                }
-            }
-        }
-
-        // CUO_TEXT_PRUNE_CHECK: the live texts, in link order, are the same before and after the prune, and no expired one is left
-        private void CheckPrune(long now)
-        {
-            PruneChecks++;
-            int i = 0;
-            int left = 0;
-            bool differs = false;
-
-            for (TextObject t = FirstNode.DRight; t != null; t = t.DRight)
-            {
-                if (t.Time < now)
-                {
-                    left++;
-                }
-                else if (i >= _pruneShadow.Count || !ReferenceEquals(_pruneShadow[i], t))
-                {
-                    if (!differs)
-                    {
-                        PruneMismatch($"live text #{i} differs after the prune (before {Describe(i < _pruneShadow.Count ? _pruneShadow[i] : null)}, after {Describe(t)})");
-                    }
-
-                    differs = true;
-                    i++;
-                }
-                else
-                {
-                    i++;
-                }
-            }
-
-            if (!differs && i != _pruneShadow.Count)
-            {
-                PruneMismatch($"{_pruneShadow.Count} live texts before the prune, {i} after");
-            }
-
-            if (left != 0)
-            {
-                PruneMismatch($"{left} expired texts still linked after the prune");
-            }
-
-            uint tick = (uint)ClassicUO.Time.Ticks;
-
-            if (tick >= _pruneNextLog)
-            {
-                _pruneNextLog = tick + 5000;
-                Log.Info($"[text-prune-check] text_prune_expired={(PruneOn ? "on" : "off")}, checks {PruneChecks}, mismatches {PruneMismatches}, pruned {Pruned}");
-            }
-        }
-
-        private static void PruneMismatch(string what)
-        {
-            PruneMismatches++;
-            PruneMismatchObserver?.Invoke(what);
-
-            if (PruneMismatches <= 20)
-            {
-                Log.Warn($"[text-prune-check] mismatch: {what}");
-            }
-        }
-#endif
 
         /// <summary>The last node of the list; the cached one while no link changed since it was taken.</summary>
         internal TextObject Tail
@@ -418,38 +235,8 @@ namespace ClassicUO.Game.Managers
             }
             else
             {
-                bool cache = TailCacheOn;
-#if CUO_DEVTOOLS
-                bool check = CheckOverride ?? s_check;
-
-                if (check)
-                {
-                    TextObject kept = _tailValid && _tailVersion == LinkVersion ? _tail : null;
-                    TextObject walked = WalkToTailBounded();
-
-                    if (walked == null)
-                    {
-                        // a DRight cycle: report it and leave the pass without walking (the unbounded walk would not end)
-                        Checks++;
-                        Mismatch("link order: forward walk does not end (cycle)");
-                        _tailValid = false;
-                        DrawPointer = FirstNode;
-                        return;
-                    }
-
-                    CheckOrder(kept, walked, cache);
-                    _tail = walked;
-                    _tailVersion = LinkVersion;
-                    _tailValid = true;
-                    DrawPointer = cache ? Tail : walked;
-                    return;
-                }
-#endif
-                if (cache)
-                {
-                    DrawPointer = Tail;
-                    return;
-                }
+                DrawPointer = Tail;
+                return;
             }
 
             for (DrawPointer = FirstNode; DrawPointer != null; DrawPointer = DrawPointer.DRight)
@@ -483,111 +270,11 @@ namespace ClassicUO.Game.Managers
             if (doit)
             {
                 // the full walk just reached the real tail: refresh the kept one from it
-#if CUO_DEVTOOLS
-                if (CheckOverride ?? s_check)
-                {
-                    CheckOrder(_tailValid && _tailVersion == LinkVersion ? _tail : null, DrawPointer, TailCacheOn);
-                }
-#endif
                 _tail = DrawPointer;
                 _tailVersion = LinkVersion;
                 _tailValid = true;
             }
         }
-
-#if CUO_DEVTOOLS
-        // the checker's walk: null when it passes a million nodes (a cycle)
-        private TextObject WalkToTailBounded()
-        {
-            TextObject t = FirstNode;
-
-            for (int n = 0; t.DRight != null; n++)
-            {
-                if (n > 1_000_000)
-                {
-                    return null;
-                }
-
-                t = t.DRight;
-            }
-
-            return t;
-        }
-
-        // CUO_TEXT_ORDER_CHECK. kept is the tail kept from earlier uses (null: none valid, nothing to
-        // compare); walked is the full walk's. The link order is checked in both directions.
-        private void CheckOrder(TextObject kept, TextObject walked, bool cache)
-        {
-            Checks++;
-
-            if (kept != null && !ReferenceEquals(kept, walked))
-            {
-                Mismatch($"kept tail differs from the walked tail (kept {Describe(kept)}, walked {Describe(walked)})");
-            }
-
-            int forward = 0;
-            TextObject last = FirstNode;
-
-            for (TextObject t = FirstNode; t != null; t = t.DRight)
-            {
-                forward++;
-                last = t;
-
-                if (t.DRight != null && !ReferenceEquals(t.DRight.DLeft, t))
-                {
-                    Mismatch($"link order: {Describe(t.DRight)}.DLeft is not its DRight owner");
-                }
-
-                if (forward > 1_000_000)
-                {
-                    Mismatch("link order: forward walk does not end (cycle)");
-
-                    return;
-                }
-            }
-
-            if (!ReferenceEquals(last, walked))
-            {
-                Mismatch("walked tail is not the forward walk's last node");
-            }
-
-            int backward = 0;
-
-            for (TextObject t = walked; t != null && backward <= forward; t = t.DLeft)
-            {
-                backward++;
-            }
-
-            if (backward != forward)
-            {
-                Mismatch($"link order: {forward} nodes forward from the head, {backward} backward from the tail");
-            }
-
-            uint now = (uint)ClassicUO.Time.Ticks;
-
-            if (now >= _nextLog)
-            {
-                _nextLog = now + 5000;
-                Log.Info($"[text-order-check] text_tail_cache={(cache ? "on" : "off")}, checks {Checks}, mismatches {Mismatches}");
-            }
-        }
-
-        private static string Describe(TextObject o)
-        {
-            return o == null ? "null" : $"#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o)}";
-        }
-
-        private static void Mismatch(string what)
-        {
-            Mismatches++;
-            MismatchObserver?.Invoke(what);
-
-            if (Mismatches <= 20)
-            {
-                Log.Warn($"[text-order-check] mismatch: {what}");
-            }
-        }
-#endif
 
         // visual-due tracking (evloop-4): a drawn text disappears once Time.Ticks passes its Time and, with text_fading,
         // fades every frame over its last second (CalculateAlpha)
