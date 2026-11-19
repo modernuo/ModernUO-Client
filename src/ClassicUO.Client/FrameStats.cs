@@ -196,6 +196,19 @@ namespace ClassicUO
         GlyphQuadsReused,
         GlyphQuads,
         PrepareRuns,
+        // text-walk (CUO_DEVTOOLS only): the world text list as TextRenderer.Draw walks it: nodes, live ones (unexpired, with
+        // content), expired ones, ones with no content (destroyed or empty text), ones drawn, and nodes the forward walks
+        // (Update, ProcessWorldText(true), Draw) visited in the frame
+        TextNodes,
+        TextLive,
+        TextExpired,
+        TextNoContent,
+        TextDrawn,
+        TextFwdNodes,
+        // of the expired ones: owned by a mobile, by an item, by anything else (static, land, none)
+        TextExpMobile,
+        TextExpItem,
+        TextExpOther,
         Count
     }
 
@@ -259,7 +272,9 @@ namespace ClassicUO
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
             "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits",
             "fill_list_full_runs", "fill_list_reuse_hits", "gumps_walked", "gumps_replayed", "ui_vertices_generated",
-            "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs" };
+            "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs",
+            "text_nodes", "text_live", "text_expired", "text_nocontent", "text_drawn", "text_fwd_nodes",
+            "text_exp_mobile", "text_exp_item", "text_exp_other" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
