@@ -7774,3 +7774,30 @@ Not fixed (same pattern, other gumps): lambdas still in ButtonTileArt, ColorBox,
 CreditsGump, DebugGump, GridLootGump, InfoBarGump, MacroButtonGump, MapGump, MarkersManager, MenuGump, MiniMapGump, ModernBookGump, NetworkStatsGump, OptionsGump, ResizableJournal, ShopGump,
 SkillGumpAdvanced, UseSpellButtonGump; each is a per-frame closure while that gump is shown.
 Legacy ~2x Control.Update visits vs Gpu: not explained; same gump set in both runs (identical gump lists), Control.Update has no renderer branch, and the Gpu window itself is bimodal (p50 950 vs mean 1370), so a gump content count that varies by timing (skill list or item rows built lazily) is the likely cause, not a Legacy-only walk.
+
+## 2026-11-19 alloc-gump-2 (bg/alloc-gump-2): the remaining capturing lambdas in AddToRenderLists
+
+Base a1bfb21d1 (bg/alloc-gump merged). Same mechanical swap for every remaining AddToRenderLists override whose lambda captured parameters or locals (a display class allocated per call):
+- Controls (d69b24b04): ButtonTileArt, ColorBox, ClickableColorBox, ColorPickerBox, ContextMenu (box, item), NiceButton: typed commands (SpriteAt, SpriteStretched, Outline, Text). HSliderBar, ScissorControl and both
+  Combobox clip passes: Deferred on the control; Combobox reuses one child RenderLists per control instead of a new one per draw.
+- Gumps (543cb15a1): Chat, CounterBar items, Credits, Debug, GridLoot (+ items), InfoBar, Login password box, MacroButton, Map, MarkersManager, Menu, MiniMap, ModernBook, NetworkStats, Options (+ InputField),
+  ResizableJournal, Shop (items, bars, pics), SkillGumpAdvanced, UseSpellButton. Simple draws are typed commands, larger bodies are Deferred on the gump with a reused child RenderLists where the old lambda built one.
+- Guard (a4f99d0b6): `GumpClosureGuardTests` reads the IL locals of every Control's AddToRenderLists and fails on a compiler display class of the declaring type; Allowed is empty. ContainerGump was already clean.
+- Driver (separate commit): `open journal|minimap|infobar|counter|netstats` for the scenes.
+No switch or checker: plain allocation removal with identical draw calls and order. Skipped: none; the 39 flagged methods are all converted.
+
+Alloc probe (measure/alloc-gump-2/bisect.txt, bench-000909; base = a1bfb21d1 + the driver commit, new = head; B/frame, cumulative gumps, GPU / Legacy, one run each):
+| window | base GPU | new GPU | base Legacy | new Legacy |
+| minimap | 116 | 100 | 104 | 0 |
+| infobar | 397 | 59 | 342 | 74 |
+| netstats | 514 | 29 | 458 | 29 |
+| health bars | 454 | 9 | 428 | 44 |
+| status | 532 | 44 | 444 | 24 |
+| options (video page) | 7985 | 44 | 7899 | 60 |
+| options page 1 | 7927 | 44 | 7886 | 31 |
+| options + dropdown | 8787 | 44 | 8742 | 44 |
+Backpack, bag and journal were near 0 in both arms (the earlier merge already covered them; windows show 0-1000 B noise from other sources). The Options gump was the big one (about 7.9 KB/frame).
+Pixel gate (bench-000910, 4 runs per renderer): composite shots 0 differing pixels in all but sporadic 470-1200 pixel blips that appear equally base-vs-base; the separate ui layer differs by ~290 (GPU) / ~50 (Legacy) px in
+every pair including base vs base (clock/ping/minimap dots), so no difference attributable to the change. Not covered by the driver: GridLoot, Chat, Shop, Map, MenuGump, ModernBook, Macro buttons, Login.
+Found, not fixed: opening the CounterBarGump crashes (InvalidOperationException from UltimaBatcher.ClipEnd on an empty stack in ScissorControl) on base and new alike; the clip begin returns false for the 0-size scissor
+and ClipEnd still runs. Left out of the scenes. Builds in both variants; 4122 unit tests pass (6 skipped).
