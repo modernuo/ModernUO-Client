@@ -32,6 +32,26 @@ public sealed class BakeJob : Job
     /// <summary>ClassicUO's alpha for tiledata Translucent statics (ProcessAlpha: CalculateAlpha(ref AlphaHue, 178)).</summary>
     public const byte TranslucentAlpha = 178;
 
+    /// <summary>Above this many instances, a returned job drops its grown arrays (M4): a dense block grew them to
+    /// 2 x its need and they stayed with the job for the session; 2048 keeps them below the LOH (64 KiB of instances).</summary>
+    public const int TrimAboveInstances = 2048;
+
+    /// <summary>Shrinks the arrays a dense block grew back to their initial sizes (ChunkStore.ReturnJob).</summary>
+    public void TrimGrown()
+    {
+        if (Instances.Length > TrimAboveInstances)
+        {
+            Instances = new SpriteInstance[256];
+            Keys = new uint[256];
+            _keys = new long[256];
+            TrimmedJobs++;
+        }
+        if (Translucent.Length > TrimAboveInstances) Translucent = new int[16];
+    }
+
+    /// <summary>Jobs whose grown arrays <see cref="TrimGrown"/> dropped (counter).</summary>
+    public static int TrimmedJobs;
+
     // scratch
     long[] _keys = new long[256];
     readonly bool[] _stretched = new bool[64];
