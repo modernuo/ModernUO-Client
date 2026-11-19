@@ -36,6 +36,10 @@
     <None Include="..\..\external\osx\libFNA3D.0.dylib;..\..\external\osx\libSDL3.0.dylib" Condition="$([MSBuild]::IsOSPlatform('OSX'))" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\external\x64\zlib.dll" Condition="$([MSBuild]::IsOSPlatform('Windows'))" Link="zlib.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- The converter's audio importer (it depends only on ClassicUO.IO and Uo.Pack), run on synthetic MUL files. -->
   <ItemGroup>
     <Compile Include="..\..\tools\Uo.Converter\AudioImport.cs" Link="Assets\AudioImport.cs" />
