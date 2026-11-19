@@ -13,7 +13,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
     // outside the box the largest static art can reach from the anchor. The box must hold every pixel the full test can hit:
     // the picker's OrigW x OrigH mask at the anchor minus the art entry's stored offset ((OrigW >> 1) - 22, OrigH - 44), or
     // minus 0, 0 while the entry is unset; for an item also that mask 5 px up and left (a stack's copy).
-    [Collection(nameof(PickBoxTests))]
+    [Collection(nameof(PickSkipTests))] // shares SelectedObject.TranslatedMousePositionByViewport with PickSkipTests: never in parallel
     public sealed class PickBoxTests : IDisposable
     {
         public PickBoxTests()
