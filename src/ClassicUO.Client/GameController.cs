@@ -190,6 +190,9 @@ namespace ClassicUO
             long start = Stopwatch.GetTimestamp();
             var reason = _waiter.Wait(wait);
             long end = Stopwatch.GetTimestamp();
+#if CUO_DEVTOOLS
+            if (VsyncPresentCheck.On) VsyncPresentCheck.Wait();
+#endif
             double waited = (end - start) * 1000.0 / Stopwatch.Frequency;
             bool timed = reason == WakeReason.Timer;
             bool late = timed && LateWakeMonitor.IsLate(waited - wait);
@@ -760,7 +763,8 @@ namespace ClassicUO
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
             // present on change (evloop-2, baked in after quiet-1115) runs wherever the event loop and the display-rate cap both
-            // run; vsync on, an fps cap, an inactive or minimized window, or the legacy loop keep their own cadence below
+            // run; an fps cap, an inactive or minimized window, the legacy loop and vsync on (unless vsync_present_on_change)
+            // keep their own cadence below
             _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive;
 
             if (_presentOnChange)
@@ -833,6 +837,14 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
             // Shadow the original draw decision on the same loop input, including the original cap/minimized policies.
             if (PresentCapCheck.On) PresentCapCheck.OldDecision(!_suppressedDraw || _displayCapActive);
+            if (VsyncPresentCheck.On)
+            {
+                bool vsync = GraphicManager.SynchronizeWithVerticalRetrace;
+                bool engaged = _presentOnChange && vsync;
+                VsyncPresentCheck.Update(Stopwatch.GetTimestamp(), Settings.GlobalSettings.VsyncPresentOnChange, vsync, engaged, _displayHz, _displayPeriod);
+                // engaged, the old vsync path drew every tick (it is engaged only when not minimized)
+                VsyncPresentCheck.Decision(engaged || !_suppressedDraw, !_suppressedDraw, displayDue);
+            }
 #endif
             UO.GameCursor?.Update();
             Audio?.Update();
@@ -1092,6 +1104,9 @@ namespace ClassicUO
 
         protected override void EndDraw()
         {
+#if CUO_DEVTOOLS
+            long presentStart = VsyncPresentCheck.On ? Stopwatch.GetTimestamp() : 0;
+#endif
             if (DevBench.FrameStats)
             {
                 FrameStats.BeforeEndDraw();
@@ -1109,6 +1124,7 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
             PresentedFrameCount++;
             if (PresentCapCheck.On) PresentCapCheck.Present(Stopwatch.GetTimestamp());
+            if (VsyncPresentCheck.On) VsyncPresentCheck.Present(presentStart, Stopwatch.GetTimestamp());
 #endif
 
             if (LoopStats.On)
