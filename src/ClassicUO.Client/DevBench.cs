@@ -1798,7 +1798,7 @@ namespace ClassicUO
                     if (_plan[_planIndex].StartsWith("vsync:"))
                     {
                         game.SetVSync(_plan[_planIndex] == "vsync:on");
-                        Log.Info($"[bench] vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, present interval {game.GraphicsDevice.PresentationParameters.PresentationInterval}");
+                        Log.Info($"[bench] vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, present interval {game.GraphicsDevice.PresentationParameters.PresentationInterval}, present mode {game.PresentMode}");
                         _planIndex++;
                         _stepAt = now + sec * 2;
 

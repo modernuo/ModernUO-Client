@@ -15,13 +15,15 @@ namespace ClassicUO.Game.UI.Gumps
 {
     internal class DebugGump : Gump, IGumpDeferredDraw
     {
-        private const string DEBUG_STRING_0 = "- Presented FPS: {0} (Min={1}, Max={2}), Zoom: {3:0.00}, Total Objs: {4}\n";
+        // the player-facing rate, then the measurement: frames drawn per second, and the rate the last frame's build time allows
+        private const string DEBUG_STRING_0 = "- FPS: {0} (drawn {1}/s, possible {2}/s, frame build {3:0.00} ms), Zoom: {4:0.00}, Total Objs: {5}\n";
         private const string DEBUG_STRING_1 = "- Mobiles: {0}   Items: {1}   Statics: {2}   Multi: {3}   Lands: {4}   Effects: {5}\n";
         private const string DEBUG_STRING_2 = "- CharPos: {0}\n- Mouse: {1}\n- InGamePos: {2}\n";
         private const string DEBUG_STRING_3 = "- Selected: {0}\n";
 
-        private const string DEBUG_STRING_SMALL = "Presented FPS: {0}\nZoom: {1:0.00}";
-        private const string DEBUG_STRING_SMALL_NO_ZOOM = "Presented FPS: {0}";
+        // the player-facing counter: the display rate while present on change runs (FpsDisplay.Shown), never the idle draw rate
+        private const string DEBUG_STRING_SMALL = "FPS: {0}\nZoom: {1:0.00}";
+        private const string DEBUG_STRING_SMALL_NO_ZOOM = "FPS: {0}";
         private static Point _last_position = new Point(-1, -1);
 
         private uint _timeToUpdate;
@@ -96,9 +98,10 @@ namespace ClassicUO.Game.UI.Gumps
                     sb.Append
                     (string.Format(
                          DEBUG_STRING_0,
+                         CUOEnviroment.ShownRefreshRate,
                          CUOEnviroment.CurrentRefreshRate,
-                         0,
-                         0,
+                         ClassicUO.Loop.FpsDisplay.Possible(CUOEnviroment.LastFrameBuildMs),
+                         CUOEnviroment.LastFrameBuildMs,
                          !World.InGame ? 1f : scene.Camera.Zoom,
                          scene.RenderedObjectsCount
                          )
@@ -144,11 +147,11 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (scene != null && cameraZoomIndex != 5)
                     {
-                        sb.Append(string.Format(DEBUG_STRING_SMALL, CUOEnviroment.CurrentRefreshRate, !World.InGame ? 1f : scene.Camera.Zoom));
+                        sb.Append(string.Format(DEBUG_STRING_SMALL, CUOEnviroment.ShownRefreshRate, !World.InGame ? 1f : scene.Camera.Zoom));
                     }
                     else
                     {
-                        sb.Append(string.Format(DEBUG_STRING_SMALL_NO_ZOOM, CUOEnviroment.CurrentRefreshRate));
+                        sb.Append(string.Format(DEBUG_STRING_SMALL_NO_ZOOM, CUOEnviroment.ShownRefreshRate));
                     }
                 }
 
