@@ -8,7 +8,6 @@ Columns: change (commit), cost, what it buys, revisit idea. "After-T9 pass" mean
 
 | Change | Cost | Buys | Revisit |
 |---|---|---|---|
-| Legacy loop sleeps on skipped frames (7c63594da in bf9d58a7a) | legacy loop only (non-Windows, late-wake backoff), uncapped with vsync off: ping RTT p50 0.14 -> 3.0 ms (bench-000905) | CPU one full core (~104,000 loops/s) -> under 10 % (~655 loops/s) | a network wake for the legacy loop (as the event loop has); owner review |
 | Gradual ECS dual-path cost (quiet-1108, tip 957237f06 vs b 34fec0e52) | Gpu large scene frame +0.07-0.14 ms p50 (+6-8 %), mostly world_prepare (+7-9 %), small scenes equal. Legacy world_prepare +0.05-0.27 ms, update +0.004-0.03 ms, frame equal or better; scene_draw_ui +0.04, fx text +0.024 at `ls_z25`. Two bisect passes: steps of +0.02-0.05 ms, no single culprit | ECS conversion running beside the old paths | re-measure after T9 (owner, 2026-11-08) |
 | Legacy world_prepare regression (3b2d360e5, de26150aa) | ~0.65 ms (+20 %) at the large spot remains (3.96 vs 3.29 ms NativeAOT), spread over many small additions to the shared tile walk; Legacy world draw +0.25 ms | - | a Legacy-only walk (~450 duplicated lines), with the Legacy-on-ECS project |
 | `world_tile_index` default on (d54ab5109) | Legacy world_prepare +4-6 % at ls_z1 (bench-000416..421); Gpu and Legacy frame neutral | items, mobiles, effects only in the ECS-maintained tile index | after-T9 pass; Legacy walk's merge of list and index |

@@ -4,9 +4,15 @@ Open owner decisions, decisions already made, and queued work. History (what mer
 
 ## 1. Needs you
 
+- **Wave 2026-11-19b (details in poc-log):**
+  1. **Linux and macOS event loops** (`event_loop_linux` epoll, `event_loop_macos` kqueue; default off; one `LoopWaiterFactory`): built and unit-tested here, never run on Linux/macOS. Owner runs `cuo-poc-state/manual-tests/loop-linux.md` and `loop-macos.md` and sends back the log lines; the switches go default on after that. Watch for a `DllNotFoundException` on the client's own SDL3 imports (existing code, untested off Windows).
+  2. **VSync = mailbox where supported** (`vsync_mailbox`, default off until the quiet timing; Options shows "VSync (True Triple Buffering)"), VSync on for new settings files, FPS counter shows the display rate (debug overlay: drawn and possible rate), an fps cap above the refresh is held to it under mailbox. Metal and FNA3D's D3D11/OpenGL drivers keep normal vsync. Busy-machine counts bench-000916/917: idle 2 presents/s, CPU ~6 vs ~97 ms/s, ping ~0.15 vs ~6 ms against normal vsync.
+  3. **Codec:** IGzip not used in the client; zstd pack revision scheduled after the allocation audit (see perf-opportunities, igzip evaluation), with a due-diligence list in the coordinator handoff; WASM is not a criterion.
+  4. **Follow-ups:** battery-saver option (sleep instead of spin when waits are untrusted), VRR refresh-minus-N cap idea, io_uring ring receive on Linux (epoll stays the fallback), `CUO_EVENT_LOOP_LINUX` dev override (only macOS has one).
+
 - **Wave 2026-11-19 (owner away; details in poc-log):**
-  1. **Legacy loop ping vs CPU (merged bf9d58a7a):** off Windows (and during a late-wake backoff) the legacy loop spun a full core on frames the display-rate schedule skips. It now sleeps 1 ms as its fps-cap path does: CPU one core -> under 10 %, ping RTT p50 0.14 -> 3.0 ms in that loop only (bench-000905). *Default:* keep the sleep; a network wake for the legacy loop is the follow-up. Say if you prefer the spin back.
-  2. **Quiet timing to queue (ask before running):** `measure/vsync-poc/job-timing-{g,l}-PARKED.sh` (`vsync_present_on_change`, ~19 min each) and `measure/loop-idle/job-timing-{g,l}-PARKED.sh` (`event_loop_idle_wait`, ~20 min each), all with `--timeout 2400`. Busy-machine counts: vsync on idle 144 -> 2 presents/s, CPU 78 -> 8 ms/s, ping 6 -> 0.12 ms; idle wakes 63 -> ~8/s. Then: both default on (and later baked in)? *Default:* yes if the timing shows no regression.
+  1. **Legacy loop ping vs CPU:** decided (owner, 2026-11-19): the legacy loop spins again (2ff7d0fb2); the CPU fix on every OS is the event loop's OS wait (Linux epoll, macOS kqueue, merged default off).
+  2. **Quiet timing to queue (owner authorized 2026-11-19 for this round):** `measure/vsync-poc/job-timing-{g,l}-PARKED.sh` (`vsync_present_on_change`, ~19 min each) and `measure/loop-idle/job-timing-{g,l}-PARKED.sh` (`event_loop_idle_wait`, ~20 min each), all with `--timeout 2400`. Busy-machine counts: vsync on idle 144 -> 2 presents/s, CPU 78 -> 8 ms/s, ping 6 -> 0.12 ms; idle wakes 63 -> ~8/s. Then: both default on (and later baked in)? *Default:* yes if the timing shows no regression.
   3. **`event_loop_idle_max_wait_ms` default 250 ms** (the longest an idle loop sleeps when no deadline is known). *Default:* 250; the checker found no late deadline in any window.
   4. **Counter bar gump crash** (pre-existing, found 2026-11-19): fixed (e8d36c408: a ScissorControl begin that pushed no scissor no longer gets a ClipEnd; bench-000912). Nothing to decide.
 
