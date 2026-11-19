@@ -247,7 +247,7 @@ namespace ClassicUO.Game.UI.Gumps
                     batcher.ClipEnd();
                 }
             }
-            else if (_mapTexture != null && !_mapTexture.IsDisposed)
+            else if (_mapTexture.Texture is { IsDisposed: false } mapTexture)
             {
                 if (batcher.ClipBegin(gX, gY, gWidth, gHeight))
                 {
@@ -275,7 +275,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     batcher.Draw
                     (
-                        _mapTexture,
+                        mapTexture,
                         destRect,
                         srcRect,
                         hueVector,

@@ -403,54 +403,20 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
-        /// <summary>
-        /// Replaces <paramref name="current"/> with a texture made from <paramref name="image"/> (game thread). The old
-        /// texture is disposed first and the image always; an upload failure (a graphics allocation error, say) is logged
-        /// and leaves <paramref name="current"/> null, so Draw skips the map. True when the new texture is in place.
-        /// </summary>
-        internal static bool ReplaceMapTexture<TImage, TTexture>(ref TTexture current, TImage image, Func<TImage, TTexture> create)
-            where TImage : IDisposable
-            where TTexture : class, IDisposable
+        /// <summary>Creates the map texture (game thread); called by <see cref="WorldMapTextureOwner{TTexture}.Adopt"/>,
+        /// which stores it before anything else runs.</summary>
+        private static Texture2D AllocateMapTexture(WorldMapImage image) =>
+            new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height);
+
+        /// <summary>Uploads the pixels into the owned texture (game thread); the owner disposes the texture if this throws.</summary>
+        private static void FillMapTexture(Texture2D texture, WorldMapImage image)
         {
-            using (image)
-            {
-                current?.Dispose();
-                current = null;
+            texture.SetDataPointerEXT(0, null, image.Pixels, image.ByteLength);
 
-                try
-                {
-                    current = create(image);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"error uploading worldmap texture: {ex}");
-                }
-
-                return current != null;
-            }
+            ClassicUO.Renderer.TextureUploads.Changed();
         }
 
-        /// <summary>Creates and fills the map texture (game thread); disposes it itself if the upload throws.</summary>
-        private static Texture2D CreateMapTexture(WorldMapImage image)
-        {
-            var texture = new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height);
-
-            try
-            {
-                texture.SetDataPointerEXT(0, null, image.Pixels, image.ByteLength);
-
-                ClassicUO.Renderer.TextureUploads.Changed();
-            }
-            catch
-            {
-                texture.Dispose();
-
-                throw;
-            }
-
-            Log.Info($"[worldmap] texture {image.Width}x{image.Height} uploaded");
-
-            return texture;
-        }
+        private static readonly Func<WorldMapImage, Texture2D> _allocateMapTexture = AllocateMapTexture;
+        private static readonly Action<Texture2D, WorldMapImage> _fillMapTexture = FillMapTexture;
     }
 }

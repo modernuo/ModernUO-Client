@@ -47,8 +47,8 @@ namespace ClassicUO.Game.UI.Gumps
         private static readonly float[] _zooms = new float[10] { 0.125f, 0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 4f, 6f, 8f };
         private static readonly Color _semiTransparentWhiteForGrid = new Color(255, 255, 255, 56);
         private static Point _last_position = new Point(100, 100);
-        // game thread only: created and disposed in Update/ChangeMap/Dispose, never by the load task
-        private Texture2D _mapTexture;
+        // game thread only: adopted in Update, released in ChangeMap, disposed in Dispose, never touched by the load task
+        private readonly WorldMapTextureOwner<Texture2D> _mapTexture = new WorldMapTextureOwner<Texture2D>();
         private Map.FacetView _map;
 
         private Point _center, _lastScroll, _mouseCenter, _scroll;
@@ -255,9 +255,21 @@ namespace ClassicUO.Game.UI.Gumps
 
             WorldMapImage image = _mapImages.Take();
 
-            if (image != null && ReplaceMapTexture(ref _mapTexture, image, CreateMapTexture))
+            if (image != null)
             {
-                GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
+                int width = image.Width, height = image.Height;
+
+                // the owner has settled (texture kept, or disposed on failure) before anything is logged
+                if (_mapTexture.Adopt(image, _allocateMapTexture, _fillMapTexture, out Exception error))
+                {
+                    Log.Info($"[worldmap] texture {width}x{height} uploaded");
+                    GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
+                }
+                else
+                {
+                    // Draw skips the map until the next load
+                    Log.Error($"error uploading worldmap texture: {error}");
+                }
             }
 
             if (_map.Index != World.MapIndex && !_freeView)
@@ -272,8 +284,7 @@ namespace ClassicUO.Game.UI.Gumps
             _map = new Map.FacetView(index); // no Map (its slot array is not needed here)
 
             // the old facet's image is wrong for the new one; Update uploads the new image when the task posts it
-            _mapTexture?.Dispose();
-            _mapTexture = null;
+            _mapTexture.Release();
 
             // read on the game thread: LoadMap runs on a task, and the race is ECS storage
             bool gargoyle = GameObject.PlayerIsGargoyle(World);
@@ -296,8 +307,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             // a load still running finds the handover closed and drops its image
             _mapImages.Close();
-            _mapTexture?.Dispose();
-            _mapTexture = null;
+            _mapTexture.Dispose();
 
             base.Dispose();
         }

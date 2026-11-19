@@ -151,45 +151,141 @@ namespace ClassicUO.UnitTests.Game
 
         private sealed class FakeTexture : IDisposable
         {
+            private static int _live;
             public int DisposeCount;
 
-            public void Dispose() => DisposeCount++;
+            public FakeTexture() => Interlocked.Increment(ref _live);
+
+            public static int Live => Volatile.Read(ref _live);
+
+            public void Dispose()
+            {
+                if (++DisposeCount == 1)
+                {
+                    Interlocked.Decrement(ref _live);
+                }
+            }
+        }
+
+        private static readonly Action<FakeTexture, FakeImage> NoFill = (_, _) => { };
+
+        [Fact]
+        public void Owner_Adopt_Keeps_The_New_Texture_And_Frees_The_Old_One_And_The_Image()
+        {
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            var first = new FakeImage();
+
+            owner.Adopt(first, _ => new FakeTexture(), NoFill, out Exception error).Should().BeTrue();
+            error.Should().BeNull();
+            FakeTexture old = owner.Texture;
+            old.Should().NotBeNull();
+            first.DisposeCount.Should().Be(1);
+
+            var second = new FakeImage();
+            FakeTexture filled = null;
+            owner.Adopt(second, _ => new FakeTexture(), (t, _) => filled = t, out error).Should().BeTrue();
+
+            owner.Texture.Should().NotBeSameAs(old).And.BeSameAs(filled, "fill runs on the texture the owner holds");
+            old.DisposeCount.Should().Be(1);
+            owner.Texture.DisposeCount.Should().Be(0);
+            second.DisposeCount.Should().Be(1);
+
+            owner.Dispose();
         }
 
         [Fact]
-        public void ReplaceMapTexture_Swaps_The_Texture_And_Frees_The_Image()
+        public void Owner_A_Throwing_Allocate_Leaves_No_Texture_And_Returns_The_Error()
         {
-            var old = new FakeTexture();
-            var made = new FakeTexture();
-            FakeTexture current = old;
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _).Should().BeTrue();
+            FakeTexture old = owner.Texture;
             var image = new FakeImage();
+            var boom = new InvalidOperationException("no device memory");
 
-            WorldMapGump.ReplaceMapTexture(ref current, image, _ => made).Should().BeTrue();
+            owner.Adopt<FakeImage>(image, _ => throw boom, NoFill, out Exception error).Should().BeFalse();
 
-            current.Should().BeSameAs(made);
-            old.DisposeCount.Should().Be(1);
-            made.DisposeCount.Should().Be(0);
+            error.Should().BeSameAs(boom);
+            owner.Texture.Should().BeNull("Draw skips a null texture");
+            old.DisposeCount.Should().Be(1, "the old texture is disposed before the new one is made");
             image.DisposeCount.Should().Be(1);
         }
 
         [Fact]
-        public void ReplaceMapTexture_A_Failed_Upload_Is_Logged_And_Leaves_No_Texture()
+        public void Owner_A_Throwing_Fill_Disposes_The_Texture_It_Already_Owns()
         {
-            var old = new FakeTexture();
-            FakeTexture current = old;
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            FakeTexture made = null;
             var image = new FakeImage();
 
-            WorldMapGump.ReplaceMapTexture<FakeImage, FakeTexture>(ref current, image, _ => throw new InvalidOperationException("upload failed"))
-                .Should().BeFalse("the caller prints 'loaded' only on success");
+            owner.Adopt(image, _ => made = new FakeTexture(), (_, _) => throw new InvalidOperationException("upload failed"), out Exception error)
+                .Should().BeFalse();
 
-            current.Should().BeNull("Draw skips a null texture");
-            old.DisposeCount.Should().Be(1);
+            error.Should().BeOfType<InvalidOperationException>();
+            owner.Texture.Should().BeNull();
+            made.DisposeCount.Should().Be(1, "a texture created before a later step threw must not leak");
             image.DisposeCount.Should().Be(1);
+        }
 
-            var image2 = new FakeImage();
-            WorldMapGump.ReplaceMapTexture<FakeImage, FakeTexture>(ref current, image2, _ => null).Should().BeFalse();
-            current.Should().BeNull();
-            image2.DisposeCount.Should().Be(1);
+        [Fact]
+        public void Owner_A_Null_Texture_Is_A_Failure_Without_An_Error()
+        {
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            var image = new FakeImage();
+
+            owner.Adopt(image, _ => null, NoFill, out Exception error).Should().BeFalse();
+
+            error.Should().BeNull();
+            owner.Texture.Should().BeNull();
+            image.DisposeCount.Should().Be(1);
+        }
+
+        [Fact]
+        public void Owner_Release_And_Dispose_Free_The_Texture_And_A_Disposed_Owner_Creates_Nothing()
+        {
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _);
+            FakeTexture first = owner.Texture;
+
+            owner.Release();
+            owner.Texture.Should().BeNull();
+            first.DisposeCount.Should().Be(1);
+
+            owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _).Should().BeTrue();
+            FakeTexture second = owner.Texture;
+            owner.Dispose();
+            second.DisposeCount.Should().Be(1);
+            owner.Dispose();
+            second.DisposeCount.Should().Be(1, "dispose is idempotent");
+
+            var late = new FakeImage();
+            bool allocated = false;
+            owner.Adopt(late, _ => { allocated = true; return new FakeTexture(); }, NoFill, out _).Should().BeFalse();
+            allocated.Should().BeFalse("a closed gump uploads nothing");
+            late.DisposeCount.Should().Be(1);
+            owner.Texture.Should().BeNull();
+        }
+
+        [Fact]
+        public void Owner_Leaves_No_Live_Texture_Across_Mixed_Successes_And_Failures()
+        {
+            int before = FakeTexture.Live;
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+
+            for (int i = 0; i < 60; i++)
+            {
+                switch (i % 4)
+                {
+                    case 0: owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _); break;
+                    case 1: owner.Adopt(new FakeImage(), _ => new FakeTexture(), (_, _) => throw new InvalidOperationException(), out _); break;
+                    case 2: owner.Adopt<FakeImage>(new FakeImage(), _ => throw new InvalidOperationException(), NoFill, out _); break;
+                    default: owner.Release(); break;
+                }
+
+                (FakeTexture.Live - before).Should().BeLessThanOrEqualTo(1, "the owner holds at most one texture");
+            }
+
+            owner.Dispose();
+            (FakeTexture.Live - before).Should().Be(0);
         }
 
         /// <summary>The decoder is FNA3D's stb_image; skipped where the native library can't be loaded.</summary>
