@@ -293,24 +293,13 @@ namespace ClassicUO.Game.Scenes
             _offsetY = offsetY;
         }
 
-#if CUO_DEVTOOLS
-        /// <summary>CUO_FILL_DIAMOND_CHECK: land and static override calls so far.</summary>
-        internal static int OverrideCalls;
-#endif
-
         public void LandOverride(int x, int y, byte alpha, bool hidden, ushort highlightHue, bool forceShow = false)
         {
-#if CUO_DEVTOOLS
-            OverrideCalls++;
-#endif
             _world.SetLandOverride(x, y, alpha, hidden, highlightHue, forceShow);
         }
 
         public void StaticOverride(int x, int y, int z, ushort graphic, byte alpha, bool hidden, ushort highlightHue, bool forceShow = false)
         {
-#if CUO_DEVTOOLS
-            OverrideCalls++;
-#endif
             _world.SetStaticOverride(x, y, z, graphic, alpha, hidden, highlightHue, forceShow);
         }
 
