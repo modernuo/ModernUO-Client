@@ -402,6 +402,24 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        /// <summary>event_loop_idle_wait: ms until Update must feed the playing music (UOMusic.MsUntilUpdateNeeded).</summary>
+        public double MsUntilMusicUpdate()
+        {
+            double ms = double.PositiveInfinity;
+
+            for (int i = 0; i < 2; i++)
+            {
+                if (_currentMusic[i] != null)
+                {
+                    ms = Math.Min(ms, _currentMusic[i].MsUntilUpdateNeeded());
+                }
+            }
+
+            return ms;
+        }
+
+        public bool MusicStarved => _currentMusic[0] is { Starved: true } || _currentMusic[1] is { Starved: true };
+
         public UOMusic GetCurrentMusic()
         {
             for (int i = 0; i < 2; i++)

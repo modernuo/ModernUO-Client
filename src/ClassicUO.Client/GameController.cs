@@ -99,6 +99,9 @@ namespace ClassicUO
         // ---- event loop (evloop-1 arm A; baked in after quiet-1115) ----
 #if CUO_DEVTOOLS
         private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
+        // CUO_LOOP_LEGACY=1: the legacy loop on Windows too, so its paths can be measured (they run off Windows and during a
+        // late-wake backoff)
+        private static readonly bool _forceLegacyLoop = Environment.GetEnvironmentVariable("CUO_LOOP_LEGACY") == "1";
 #endif
 
         private LoopWaiter _waiter;
@@ -108,6 +111,7 @@ namespace ClassicUO
         private double _tickInterval;
         private bool _tickDrawSkipped;
         private long _updateStartTs, _lastDrainTs;
+        private bool _queuedRan;
 
         private LoopMode DecideLoopMode()
         {
@@ -128,6 +132,9 @@ namespace ClassicUO
             }
 
             var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+#if CUO_DEVTOOLS
+            if (_forceLegacyLoop) mode = LoopMode.Legacy;
+#endif
 
             if (mode != _loggedMode)
             {
@@ -152,10 +159,51 @@ namespace ClassicUO
 
             if (Scene is GameScene gameScene && UO.World is { InGame: true })
             {
-                ms = Math.Min(ms, LoopTiming.MsUntilPing(_presentOnChange, gameScene.PingDueTick, Time.Ticks, msSinceUpdate));
+                // event_loop_idle_wait: the scene sends the ping from Update when the loop does not, so its deadline is a timer too
+                ms = Math.Min(ms, LoopTiming.MsUntilPing(_presentOnChange || Settings.GlobalSettings.EventLoopIdleWait, gameScene.PingDueTick, Time.Ticks, msSinceUpdate));
             }
 
             return ms;
+        }
+
+        // event_loop_idle_wait: the non-visual work Update polls, gathered right before the wait (LoopDue)
+        private void CollectLoopDue()
+        {
+            LoopDue.Begin();
+
+            if (Scene is GameScene gs && gs.IsLoaded && !gs.IsDestroyed)
+            {
+                gs.NoteLoopDue();
+            }
+            else
+            {
+                LoopDue.Now(LoopDueSource.NotInGame);
+            }
+
+            double music = Audio?.MsUntilMusicUpdate() ?? double.PositiveInfinity;
+
+            if (music <= 0)
+            {
+                LoopDue.Now(LoopDueSource.Music);
+            }
+            else if (!double.IsPositiveInfinity(music))
+            {
+                LoopDue.At(Time.Ticks + (long)music, LoopDueSource.Music);
+            }
+
+            if ((UO.Arts?.PendingDecodes ?? 0) != 0 || (UO.Texmaps?.PendingDecodes ?? 0) != 0 || (UO.Gumps?.PendingDecodes ?? 0) != 0
+                || (UO.Animations?.PendingDirections ?? 0) != 0)
+            {
+                LoopDue.Now(LoopDueSource.Assets);
+            }
+
+            if (DevBench.Enabled)
+            {
+                LoopDue.Now(LoopDueSource.Driver);
+            }
+#if CUO_DEVTOOLS
+            UO.World?.Ecs?.Driver?.NoteLoopDue();
+#endif
         }
 
         // The wait between frames: at the end of a tick that does not draw (Update) or after the present (EndDraw).
@@ -170,12 +218,33 @@ namespace ClassicUO
 
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
             double maxWait = Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            double timers = MsUntilNextTimer(since);
+            bool idleWait = Settings.GlobalSettings.EventLoopIdleWait, busy = false, byDue = false;
+
+            if (idleWait)
+            {
+                CollectLoopDue();
+                double due = LoopTiming.MsUntilLoopDue(LoopDue.NextTick, Time.Ticks, since, out bool stale);
+                busy = stale || LoopDue.Busy != LoopDueSource.None;
+                maxWait = LoopTiming.MaxWaitMs(true, busy, Settings.GlobalSettings.EventLoopMaxWaitMs, Settings.GlobalSettings.EventLoopIdleMaxWaitMs);
+                byDue = due < timers && due < maxWait;
+                timers = Math.Min(timers, due);
+            }
+
             // the event loop with the display-rate cap always presents on change (Update), so the grid's own deadline is not needed
             double wait = LoopTiming.WaitMs(
                 _presentOnChange ? MsUntilPresentOnChange() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
-                MsUntilNextTimer(since),
+                timers,
                 maxWait
             );
+#if CUO_DEVTOOLS
+            if (LoopIdleCheck.On)
+            {
+                LoopIdleCheck.Wait(Stopwatch.GetTimestamp(), Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs), _queuedRan, wait, busy,
+                    idleWait ? LoopDue.Busy : LoopDueSource.None, byDue && wait >= timers - LoopTiming.DrawSlackMs, wait >= maxWait, LoopDue.NextTick, LoopDue.NextSource);
+                LoopIdleCheck.Woke(false);
+            }
+#endif
 
             if (wait <= 0)
             {
@@ -190,6 +259,9 @@ namespace ClassicUO
             long start = Stopwatch.GetTimestamp();
             var reason = _waiter.Wait(wait);
             long end = Stopwatch.GetTimestamp();
+#if CUO_DEVTOOLS
+            if (LoopIdleCheck.On) LoopIdleCheck.Woke(reason == WakeReason.Timer);
+#endif
 #if CUO_DEVTOOLS
             if (VsyncPresentCheck.On) VsyncPresentCheck.Wait();
 #endif
@@ -644,6 +716,14 @@ namespace ClassicUO
                 LoopStats.NoteTick();
                 LoopStats.NoteUpdateStart(SDL_GetTicksNS());
             }
+#if CUO_DEVTOOLS
+            if (LoopIdleCheck.On)
+            {
+                LoopIdleCheck.UpdateStart(_updateStartTs, (uint)gameTime.TotalGameTime.TotalMilliseconds, Settings.GlobalSettings.EventLoopIdleWait,
+                    Settings.GlobalSettings.EventLoopIdleWait && _tickMode == LoopMode.Event, Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs),
+                    Audio?.MusicStarved ?? false);
+            }
+#endif
 
             if (Profiler.InContext(Profiler.ProfilerContext.OUT_OF_CONTEXT))
             {
@@ -800,6 +880,12 @@ namespace ClassicUO
                 {
                     _suppressedDraw = true;
                     SuppressDraw();
+
+                    // the event loop waits in EventLoopWait; the legacy loop sleeps as on its fps-cap path, or it spins
+                    if (_tickMode == LoopMode.Legacy && !gameTime.IsRunningSlowly)
+                    {
+                        LegacySleep(idleSleepMs);
+                    }
                 }
             }
             else if (x <= 0)
@@ -856,7 +942,9 @@ namespace ClassicUO
 
 
             // every due action: one Update per frame or wake, not one per ~1 ms
-            if (_queuedActions.RunDue(Time.Ticks) > 0)
+            _queuedRan = _queuedActions.RunDue(Time.Ticks) > 0;
+
+            if (_queuedRan)
             {
                 _changePending = true;
             }

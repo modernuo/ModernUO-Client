@@ -18,6 +18,11 @@ namespace ClassicUO.Game.Managers
             _world = world;
         }
 
+        /// <summary>event_loop_idle_wait: a queued use runs in the first Update with Time.Ticks past <see cref="Timer"/>.</summary>
+        public bool HasQueued => _actions.Count != 0;
+
+        public long Timer => _timer;
+
         public void Update()
         {
             if (_timer < Time.Ticks)

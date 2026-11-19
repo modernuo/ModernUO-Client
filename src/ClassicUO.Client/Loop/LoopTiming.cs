@@ -172,6 +172,27 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
+        /// event_loop_idle_wait: the longest wait. Off, or while something polls every Update (<paramref name="busy"/>), the
+        /// event_loop_max_wait_ms cadence; on and idle, event_loop_idle_max_wait_ms (never shorter than the cadence).
+        /// </summary>
+        public static double MaxWaitMs(bool idleWait, bool busy, int maxWaitMs, int idleMaxWaitMs)
+            => Math.Max(1, idleWait && !busy ? Math.Max(maxWaitMs, idleMaxWaitMs) : maxWaitMs);
+
+        /// <summary>
+        /// event_loop_idle_wait: ms from now until the earliest <see cref="LoopDue"/> deadline (infinity: none). A deadline
+        /// that had already passed at the Update start was not served by that Update (its work waits on something else), so
+        /// it is <paramref name="stale"/>: waking for it would spin, so the caller keeps the event_loop_max_wait_ms cadence
+        /// instead, as before the switch.
+        /// </summary>
+        public static double MsUntilLoopDue(long dueTick, uint ticksAtUpdate, double msSinceUpdate, out bool stale)
+        {
+            bool has = dueTick != long.MaxValue;
+            stale = has && dueTick + 1 <= ticksAtUpdate;
+
+            return MsUntilTick(has && !stale, dueTick, ticksAtUpdate, msSinceUpdate);
+        }
+
+        /// <summary>
         /// Milliseconds from now until a game-time due tick (the client fires a due action once Time.Ticks is past it, i.e. at
         /// due + 1), given the game time at the Update start and the time since. Infinity when there is none.
         /// </summary>
