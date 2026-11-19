@@ -248,6 +248,7 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `compatibility` (or `legacy`) |
+| `event_loop_macos` | `false` | macOS: wait between frames in SDL's Cocoa wait, ended by a kqueue over the socket and the cross-thread wake, instead of the legacy loop. Windows always uses its event loop and ignores the key |
 
 ## Environment variables
 
@@ -268,6 +269,8 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_MEM_LOG=<seconds>` | Dev. Log the GC heap every N seconds |
 | `CUO_NET_TRACE=1` | Track per-frame network parse cost |
 | `CUO_FRAMESTATS=1` | Dev. Per-phase frame timings every 5 s (see DevBench) |
+| `CUO_EVENT_LOOP_MACOS=1\|0` | Dev. Override `event_loop_macos` |
+| `CUO_LOOP_STATS=1`, `CUO_LOOP_STATS_SEC=<s>` | Dev. Log a `[loop]` line (mode, ticks, draws, waits, wake reasons, late waits, process CPU ms/s) every 5 s or `<s>` |
 
 DevBench variables are in the next section.
 
