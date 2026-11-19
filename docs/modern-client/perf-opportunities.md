@@ -8,6 +8,7 @@ Open items only, one line each: what, where, estimated benefit, status. Done ite
 
 | What | Where | Estimate | Status |
 |---|---|---|---|
+| World text list keeps expired texts linked (ls_z1: 1988 nodes, 0 drawn; 8000 node visits per frame in 3 forward walks and the backward draw walk) | TextRenderer.cs ProcessWorldText/Draw, EntityTextContainer.cs | `text_prune_expired` (bg/text-walk, default off, checker clean) cuts walks to ~3 nodes at ls_z1; timing parked | open: timing |
 | UIManager.Update sorts and recursively updates every control each frame | UIManager.cs:335, Control.cs:259 | update only dirty controls, hit-test cache | open |
 | UI pass walk + vertex generation (~50 us with static UI) | batcher UI pass | needs dirty tracking; draw-time side effects (`HealthBarGump`, `ContainerGump` set `SelectedObject`) block it | open |
 | `HandleKeyboardInput` walks every gump every frame | UIManager | CPU | open |
