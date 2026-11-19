@@ -214,6 +214,12 @@ namespace ClassicUO.Renderer.Animations
                     // anim_atlas_lru: an evicted direction loads again through the async first-sight path
                     _lru.OnReload(evictedAt, AtlasPageClock.NowMs);
                     sprites = LoadDirection(id, action, dir, sync, evicted: true);
+
+                    if (_pendingSprites.Contains(sprites))
+                    {
+                        _lru.AsyncReloads++;
+                        _pendingReloads.Add(sprites);
+                    }
 #if CUO_DEVTOOLS
                     if (LruCheck)
                     {
@@ -232,12 +238,19 @@ namespace ClassicUO.Renderer.Animations
                 // masks now, so decode here and supersede the job; Complete drops its result without uploading
                 var loaded = LoadDirection(id, action, dir, true);
                 _pendingSprites.Remove(sprites);
+                _pendingReloads.Remove(sprites);
                 sprites = loaded;
             }
 
             if (_lru != null && sprites.Length != 0)
             {
                 TouchPages(sprites);
+
+                if (_pendingReloads.Count != 0 && _blinkMs != AtlasPageClock.NowMs && _pendingReloads.Contains(sprites))
+                {
+                    _blinkMs = AtlasPageClock.NowMs;
+                    _lru.BlinkFrames++;
+                }
             }
 
             return sprites;
@@ -403,6 +416,9 @@ namespace ClassicUO.Renderer.Animations
         private long[] _lruUse = Array.Empty<long>();
         private int[] _lruVictims = Array.Empty<int>();
         private long _lruLogAt, _lruLogged = -1;
+        // evicted directions reloading on a worker (no texture yet), for the blink counters
+        private readonly HashSet<SpriteInfo[]> _pendingReloads = new HashSet<SpriteInfo[]>(ReferenceEqualityComparer.Instance);
+        private long _blinkMs = -1;
 
         /// <summary>Bumped when a page is freed: cached draws that hold atlas textures (MobileFrameCache's Legacy replay) are
         /// stale.</summary>
@@ -543,7 +559,7 @@ namespace ClassicUO.Renderer.Animations
 
         private void LogLru(long nowMs)
         {
-            long changes = _lru.EvictedPages + _lru.Reloads + _lru.Grows + _lru.Shrinks;
+            long changes = _lru.EvictedPages + _lru.Reloads + _lru.Grows + _lru.Shrinks + _lru.BlinkFrames;
             bool check = false;
 #if CUO_DEVTOOLS
             check = LruCheck;
@@ -559,7 +575,7 @@ namespace ClassicUO.Renderer.Animations
             long mib = _atlas.PageBytes >> 20;
             Log.Info(
                 $"[anim-lru] pages {pages} ({pages * mib} MiB), budget {_lru.BudgetPages} (low {_lru.LowWater}, floor {_lru.FloorPages}, ceiling {_lru.CeilingPages}; page {mib} MiB), " +
-                $"evicted {_lru.EvictedPages} pages / {_lru.EvictedDirections} directions, reloads {_lru.Reloads} (thrash {_lru.ThrashReloads}), grows {_lru.Grows}, shrinks {_lru.Shrinks}"
+                $"evicted {_lru.EvictedPages} pages / {_lru.EvictedDirections} directions, reloads {_lru.Reloads} (thrash {_lru.ThrashReloads}, async {_lru.AsyncReloads}, blink frames {_lru.BlinkFrames}), grows {_lru.Grows}, shrinks {_lru.Shrinks}"
             );
 #if CUO_DEVTOOLS
             if (check)
@@ -682,6 +698,8 @@ namespace ClassicUO.Renderer.Animations
 
             Interlocked.Decrement(ref _pendingJobs);
 
+            _pendingReloads.Remove(job.Sprites);
+
             if (!_pendingSprites.Remove(job.Sprites))
             {
                 // superseded by a sync load of the same direction (already uploaded, with its masks): drop the result
@@ -722,6 +740,7 @@ namespace ClassicUO.Renderer.Animations
             Interlocked.Decrement(ref _pendingJobs);
             job.Buffers.ReturnAll();
             _pendingSprites.Remove(job.Sprites);
+            _pendingReloads.Remove(job.Sprites);
             ForgetCached(job);
         }
 

@@ -87,6 +87,11 @@ namespace ClassicUO.Renderer.Animations
 
         public long Reloads, ThrashReloads, Grows, Shrinks, EvictedPages, EvictedDirections;
 
+        /// <summary>Reloads that went to a worker (the direction has no texture until the upload: a possible blink), and
+        /// frames in which at least one such direction was asked for before its upload landed (an upper bound on visible
+        /// blinks: dimension queries count too).</summary>
+        public long AsyncReloads, BlinkFrames;
+
         private long _lastThrashMs, _lastResizeMs;
         private bool _started;
 
