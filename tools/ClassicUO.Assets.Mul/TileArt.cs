@@ -59,8 +59,7 @@ public sealed class TileArtLoader : UOFileLoader
             _file.Seek(entry.Offset, SeekOrigin.Begin);
             _file.Read(bufSpan);
 
-            var result = ZLib.Decompress(bufSpan, dbufSpan);
-            if (result != ZLib.ZLibError.Ok)
+            if (!ZlibInflater.TryDecompress(bufSpan, dbufSpan, out _))
             {
                 return false;
             }

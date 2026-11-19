@@ -63,7 +63,7 @@ namespace ClassicUO.Assets
                 if (entry.CompressionFlag >= CompressionType.Zlib)
                 {
                     var dbuf = new byte[entry.DecompressedLength];
-                    var result = ZLib.Decompress(buf, dbuf);
+                    ZlibInflater.TryDecompress(buf, dbuf, out _);
                     reader = new StackDataReader(dbuf);
                 }
 

@@ -257,8 +257,7 @@ namespace ClassicUO.Assets
             if (entry.CompressionFlag >= CompressionType.Zlib)
             {
                 var dbuf = new byte[entry.DecompressedLength];
-                var result = ClassicUO.Utility.ZLib.Decompress(reader.Buffer.Slice(reader.Position), dbuf);
-                if (result != Utility.ZLib.ZLibError.Ok)
+                if (!ClassicUO.Utility.ZlibInflater.TryDecompress(reader.Buffer.Slice(reader.Position), dbuf, out _))
                 {
                     return default;
                 }
@@ -345,8 +344,7 @@ namespace ClassicUO.Assets
             if (entry.CompressionFlag >= CompressionType.Zlib)
             {
                 var dbuf = new byte[entry.DecompressedLength];
-                var result = ClassicUO.Utility.ZLib.Decompress(reader.Buffer.Slice(reader.Position), dbuf);
-                if (result != Utility.ZLib.ZLibError.Ok)
+                if (!ClassicUO.Utility.ZlibInflater.TryDecompress(reader.Buffer.Slice(reader.Position), dbuf, out _))
                 {
                     return null;
                 }
