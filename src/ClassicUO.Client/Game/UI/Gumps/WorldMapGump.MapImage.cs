@@ -136,7 +136,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         private unsafe void LoadMap(int mapIndex, bool gargoyle, int load)
         {
-            if (mapIndex < 0 || mapIndex > MapLoader.MAPS_COUNT)
+            if (mapIndex < 0 || mapIndex >= MapLoader.MAPS_COUNT)
             {
                 return;
             }

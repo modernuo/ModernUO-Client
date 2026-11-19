@@ -34,11 +34,6 @@ namespace ClassicUO.Game.UI.Gumps
 {
     internal partial class WorldMapGump
     {
-        private bool ParseBool(string boolStr)
-        {
-            return bool.TryParse(boolStr, out bool value) && value;
-        }
-
         private void BuildGump()
         {
             BuildContextMenu();
@@ -129,7 +124,24 @@ namespace ClassicUO.Game.UI.Gumps
 
             _options["reset_map_cache"] = new ContextMenuItemEntry(ResGumps.ResetMapsCache, () =>
             {
-                Directory.GetFiles(_mapsCachePath, "*.png").ForEach(s => File.Delete(s));
+                // no cache folder yet, or a PNG another instance has open (Windows): log and go on
+                try
+                {
+                    foreach (string file in Directory.GetFiles(_mapsCachePath, "*.png"))
+                    {
+                        try
+                        {
+                            File.Delete(file);
+                        }
+                        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                        {
+                            Log.Warn($"world map cache: could not delete {file}: {e.Message}");
+                        }
+                    }
+                }
+                catch (DirectoryNotFoundException)
+                {
+                }
             }, false);
         }
 
@@ -350,13 +362,6 @@ namespace ClassicUO.Game.UI.Gumps
 
                     break;
             }
-        }
-
-        private bool GetOptionValue(string key)
-        {
-            _options.TryGetValue(key, out ContextMenuItemEntry v);
-
-            return v != null && v.IsSelected;
         }
 
         public void SetOptionValue(string key, bool v)

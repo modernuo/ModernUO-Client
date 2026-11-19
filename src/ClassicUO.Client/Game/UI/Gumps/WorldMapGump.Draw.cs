@@ -233,11 +233,6 @@ namespace ClassicUO.Game.UI.Gumps
                 if (batcher.ClipBegin(gX, gY, gWidth, gHeight))
                 {
                     var str = "Please wait, I'm making the map file...".AsSpan();
-                    //str = str[..(str.Length - (int)_mapLoadingTime % 3)];
-
-                    //if (Time.Ticks > _mapLoadingTime)
-                    //    _mapLoadingTime = Time.Ticks + 1000;
-
                     var strSize = Fonts.Bold.MeasureString(str);
                     var pos = strSize * -0.5f;
                     pos.X += gX + halfWidth;

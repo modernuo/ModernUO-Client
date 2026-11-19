@@ -85,7 +85,6 @@ namespace ClassicUO.Game.UI.Gumps
         private WMapMarker _gotoMarker;
 
         private int _mapLoading;
-        private uint _mapLoadingTime;
         private Task _loadingTask;
         private readonly MapImageHandover<WorldMapImage> _mapImages = new MapImageHandover<WorldMapImage>();
 
@@ -181,7 +180,8 @@ namespace ClassicUO.Game.UI.Gumps
 
             World.WMapManager.SetEnable(_showPartyMembers);
 
-            _zoomIndex = ProfileManager.CurrentProfile.WorldMapZoomIndex;
+            // a hand-edited profile must not index past the zoom table
+            _zoomIndex = Math.Clamp(ProfileManager.CurrentProfile.WorldMapZoomIndex, 0, _zooms.Length - 1);
 
             _showCoordinates = ProfileManager.CurrentProfile.WorldMapShowCoordinates;
             _showSextantCoordinates = ProfileManager.CurrentProfile.WorldMapShowSextantCoordinates;
@@ -214,6 +214,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             ProfileManager.CurrentProfile.WorldMapWidth = Width;
             ProfileManager.CurrentProfile.WorldMapHeight = Height;
+            ProfileManager.CurrentProfile.WorldMapFont = _markerFontIndex;
 
             ProfileManager.CurrentProfile.WorldMapFlipMap = _flipMap;
             ProfileManager.CurrentProfile.WorldMapTopMost = TopMost;
