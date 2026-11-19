@@ -38,7 +38,15 @@ namespace ClassicUO.UnitTests.Ecs
             "gpu_prepare_item_cache",
             "gpu_prepare_item_cache_mixed",
             "gpu_prepare_item_cache_effects",
-            "text_skip_expired"
+            "text_skip_expired",
+            // baked in after quiet-1115 (render wave)
+            "world_fill_diamond",
+            "pick_early_reject",
+            "item_offset_flag",
+            "render_view_reuse",
+            "upload_skip_unchanged",
+            "ui_render_cache",
+            "item_pool"
         };
 
         [Fact]
