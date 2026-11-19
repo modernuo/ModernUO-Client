@@ -17,11 +17,11 @@ namespace ClassicUO.Loop
         public void Add(uint dueTick, Action fn) => _items.Add((dueTick, fn));
 
         /// <summary>
-        /// Runs the actions whose due tick is before <paramref name="now"/>, newest first. With <paramref name="drainAll"/> false
-        /// only the first one found runs (the legacy loop: one per Update, which was ~1,000 a second); the event loop runs one
-        /// Update per frame or wake, so it runs every due one. An action queued by a running action waits for the next call.
+        /// Runs every action whose due tick is before <paramref name="now"/>, newest first (the event loop runs one Update per
+        /// frame or wake, not ~1,000 a second, so one action per Update would fall behind). An action queued by a running
+        /// action waits for the next call.
         /// </summary>
-        public int RunDue(uint now, bool drainAll)
+        public int RunDue(uint now)
         {
             int ran = 0;
 
@@ -39,11 +39,6 @@ namespace ClassicUO.Loop
                     fn();
                     _items.RemoveAt(i); // anything fn queued went after i, so i is still this action
                     ran++;
-
-                    if (!drainAll)
-                    {
-                        break;
-                    }
                 }
             }
 

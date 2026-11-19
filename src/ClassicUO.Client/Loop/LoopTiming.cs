@@ -7,9 +7,12 @@ namespace ClassicUO.Loop
     /// <summary>How the main loop spends the time between frames.</summary>
     internal enum LoopMode
     {
-        /// <summary>The original loop: skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.</summary>
+        /// <summary>
+        /// The original loop, the fallback where the event loop cannot run (not Windows, no working waiter, late-wake
+        /// backoff): skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.
+        /// </summary>
         Legacy,
-        /// <summary>event_loop: one wait for the socket, window messages, a wake and the next deadline.</summary>
+        /// <summary>event loop: one wait for the socket, window messages, a wake and the next deadline.</summary>
         Event
     }
 
@@ -20,12 +23,12 @@ namespace ClassicUO.Loop
         public const double DrawSlackMs = 0.5;
 
         /// <summary>
-        /// The loop mode for this iteration. The event loop needs the switch, Windows (its wait is
-        /// MsgWaitForMultipleObjectsEx), a working waiter, and no late-wake backoff in force; otherwise the legacy loop runs.
+        /// The loop mode for this iteration. The event loop needs Windows (its wait is MsgWaitForMultipleObjectsEx), a working
+        /// waiter, and no late-wake backoff in force; otherwise the legacy loop runs.
         /// </summary>
-        public static LoopMode Decide(bool switchOn, bool isWindows, bool waiterReady, bool lateWakeSuspended)
+        public static LoopMode Decide(bool isWindows, bool waiterReady, bool lateWakeSuspended)
         {
-            if (!switchOn || !isWindows || !waiterReady || lateWakeSuspended)
+            if (!isWindows || !waiterReady || lateWakeSuspended)
             {
                 return LoopMode.Legacy;
             }
@@ -86,48 +89,34 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
-        /// present_on_change: ms until the next present, measured from now, rate-limited from the last present instead of a
-        /// fixed grid. A pending change (a net, input or wake, a due timer, motion or effects) presents one display interval
-        /// after the last present, or at once if that much time has passed; with no change the screen is redrawn after
-        /// <paramref name="idleRedrawMs"/> (never sooner than the interval) for the discrete animations the loop does not track.
-        /// <paramref name="msSinceLastPresent"/> is infinity before the first present.
-        /// </summary>
-        public static double MsUntilPresent(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs)
-        {
-            double target = changePending ? intervalMs : Math.Max(intervalMs, idleRedrawMs);
-
-            return Math.Max(0, target - msSinceLastPresent);
-        }
-
-        /// <summary>
-        /// present_on_change_anim_due: as <see cref="MsUntilPresent(bool, double, double, double)"/>, but with no change pending
-        /// the next present is when the next visual change is due (<paramref name="msUntilVisualDue"/>, from now: an animation
+        /// Present on change (evloop-2/4): ms until the next present, measured from now, rate-limited from the last present
+        /// instead of a fixed grid. A pending change (a net, input or wake, a due timer, motion, a continuous visual source)
+        /// presents one display interval after the last present, or at once if that much time has passed. With no change the
+        /// next present is when the next visual change is due (<paramref name="msUntilVisualDue"/>, from now: an animation
         /// frame, an idle animation, a text expiry; infinity when nothing is scheduled), never sooner than one interval after
-        /// the last present. The fixed idle redraw period is not used. A safety net presents at least every
-        /// <see cref="AnimDueSafetyNetMs"/> when nothing is due, so a change no source reports stays on screen at most that long.
+        /// the last present. A safety net presents at least every <see cref="AnimDueSafetyNetMs"/> when nothing is due, so a
+        /// change no source reports stays on screen at most that long. <paramref name="msSinceLastPresent"/> is infinity before
+        /// the first present.
         /// </summary>
-        public static double MsUntilPresentAnimDue(bool changePending, double msSinceLastPresent, double intervalMs, double msUntilVisualDue)
+        public static double MsUntilPresent(bool changePending, double msSinceLastPresent, double intervalMs, double msUntilVisualDue)
         {
             double limit = Math.Max(0, intervalMs - msSinceLastPresent);
 
             return changePending ? limit : Math.Max(limit, Math.Min(msUntilVisualDue, AnimDueSafetyNetMs - msSinceLastPresent));
         }
 
-        /// <summary>present_on_change_anim_due: the longest time between two presents (owner default ~1 s).</summary>
+        /// <summary>Present on change: the longest time between two presents (owner default ~1 s).</summary>
         public const double AnimDueSafetyNetMs = 1000;
 
         /// <summary>
-        /// present_on_change, both idle policies: <see cref="MsUntilPresentAnimDue"/> when <paramref name="animDue"/> is on,
-        /// else the fixed idle redraw period.
+        /// Whether this Update collects the next visual change (<see cref="VisualDue.Tracking"/>): only where present on change
+        /// reads it, the event loop with the display-rate cap (fps 0, vsync off, window active). The cap state is the previous
+        /// Update's (it is decided after the walks that report); a mode change catches up one Update later.
         /// </summary>
-        public static double MsUntilPresent(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs,
-            bool animDue, double msUntilVisualDue)
-            => animDue
-                ? MsUntilPresentAnimDue(changePending, msSinceLastPresent, intervalMs, msUntilVisualDue)
-                : MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs);
+        public static bool TracksVisualDue(LoopMode mode, bool displayCapActive) => mode == LoopMode.Event && displayCapActive;
 
         /// <summary>
-        /// present_on_change_anim_due: whether the visual change the previous Update scheduled has come due by this Update's game
+        /// Present on change: whether the visual change the previous Update scheduled has come due by this Update's game
         /// time (sources advance once <c>Time.Ticks</c> is past their due tick, as <see cref="MsUntilTick"/> counts).
         /// <see cref="long.MaxValue"/> = nothing was scheduled.
         /// </summary>
@@ -166,14 +155,9 @@ namespace ClassicUO.Loop
             return true;
         }
 
-        /// <summary>present_on_change: whether this iteration draws (within <see cref="DrawSlackMs"/> of the deadline).</summary>
-        public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs)
-            => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs) <= DrawSlackMs;
-
-        /// <summary>present_on_change, both idle policies (<paramref name="animDue"/>: present_on_change_anim_due).</summary>
-        public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double idleRedrawMs,
-            bool animDue, double msUntilVisualDue)
-            => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, idleRedrawMs, animDue, msUntilVisualDue) <= DrawSlackMs;
+        /// <summary>Present on change: whether this iteration draws (within <see cref="DrawSlackMs"/> of the deadline).</summary>
+        public static bool PresentDue(bool changePending, double msSinceLastPresent, double intervalMs, double msUntilVisualDue)
+            => MsUntilPresent(changePending, msSinceLastPresent, intervalMs, msUntilVisualDue) <= DrawSlackMs;
 
         /// <summary>
         /// The wait for this iteration, in ms: the earliest of the next draw, the next timer (both from now) and the cap (the
@@ -202,7 +186,7 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>
-        /// present_on_change: the ping's game-time deadline is a timer of its own. Without it the Update that crosses the
+        /// present-on-change: the ping's game-time deadline is a timer of its own. Without it the Update that crosses the
         /// deadline is the one after the longest wait, i.e. the one that draws at the next display interval, so the reply
         /// arrived during that Draw and was read after Present (busy Legacy ping 2.6 ms against 0.4 ms with the grid,
         /// bench-000801/000805). Waking at the deadline sends the ping from an Update that does not draw; the reply then ends
@@ -219,7 +203,7 @@ namespace ClassicUO.Loop
         public const double PingHoldMaxMs = 50;
 
         /// <summary>
-        /// present_on_change: whether a due ping is held until right after the next Present instead of sent now. The ping timer
+        /// present-on-change: whether a due ping is held until right after the next Present instead of sent now. The ping timer
         /// and the present grid drift slowly against each other, so a ping sent just before a draw had its reply wait out the
         /// Draw and Present on the single-threaded loop (~40% of pings, in streaks, bench-000843); the spin loop never did,
         /// since it sends from the Update right after a present. Held when this iteration draws or the next present is within

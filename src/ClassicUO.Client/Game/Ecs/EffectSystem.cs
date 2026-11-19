@@ -155,7 +155,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// present_on_change_anim_due (evloop-5): an effect's next visual change after its update. A moving effect moves every
+        /// visual-due tracking (evloop-5): an effect's next visual change after its update. A moving effect moves every
         /// frame; a drag effect steps every 20 ms (at <c>MoveTime</c>); a fixed or lightning effect changes at its next frame
         /// (<c>NextChange</c>, only when it has more than one frame) and disappears after its duration; lightning shows a step
         /// one update after it advanced it. A fixed effect that

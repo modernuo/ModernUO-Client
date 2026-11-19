@@ -518,7 +518,7 @@ namespace ClassicUO.Game.UI.Gumps.Login
                 _nextArrow0.ButtonGraphicNormal = _nextArrow0.ButtonGraphicNormal == _buttonNormal ? _buttonOver : _buttonNormal;
             }
 
-            // present_on_change_anim_due: the next timed change
+            // visual-due tracking: the next timed change
             ClassicUO.Loop.VisualDue.At((long)_time, ClassicUO.Loop.VisualSource.Gump);
 
             if (_passwordFake.HasKeyboardFocus)

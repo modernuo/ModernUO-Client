@@ -98,7 +98,7 @@ namespace ClassicUO.Game.UI.Gumps
                 _timeMS = (long)Time.Ticks + 500;
             }
 
-            // present_on_change_anim_due: the next timed change
+            // visual-due tracking: the next timed change
             ClassicUO.Loop.VisualDue.At(_timeMS, ClassicUO.Loop.VisualSource.Gump);
         }
 

@@ -577,7 +577,7 @@ namespace ClassicUO.Game
             _mobileClockStarted = true;
             _dueMobiles.Clear();
             long t0 = WorldEcs.MobileUpdateStats ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
-            Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles);
+            Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles, ClassicUO.Loop.VisualDue.Tracking);
 
             if (t0 != 0)
             {
@@ -624,7 +624,10 @@ namespace ClassicUO.Game
                 }
             }
 
-            NoteVisualTick(Ecs.Clock.NextVisualTick, ClassicUO.Loop.VisualSource.MobileAnim);
+            if (ClassicUO.Loop.VisualDue.Tracking)
+            {
+                NoteVisualTick(Ecs.Clock.NextVisualTick, ClassicUO.Loop.VisualSource.MobileAnim);
+            }
 
             if (AnimFrameCount.UseTables)
             {
@@ -662,7 +665,7 @@ namespace ClassicUO.Game
             }
         }
 
-        // present_on_change_anim_due (evloop-4): a due mobile's next visual change after its update this frame
+        // visual-due tracking (evloop-4): a due mobile's next visual change after its update this frame
         private static void NoteMobileVisual(Mobile mob)
         {
             if (!mob.IsDestroyed && mob.TryRecord(out Friflo.Engine.ECS.Entity e))

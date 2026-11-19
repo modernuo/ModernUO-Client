@@ -118,6 +118,7 @@ namespace ClassicUO.Game.Managers
 
             int mouseX = Mouse.Position.X;
             int mouseY = Mouse.Position.Y;
+            bool trackVisual = Loop.VisualDue.Tracking;
 
             for (TextObject o = DrawPointer; o != null; o = o.DLeft)
             {
@@ -126,7 +127,10 @@ namespace ClassicUO.Game.Managers
                     continue;
                 }
 
-                NoteVisualDue(o);
+                if (trackVisual)
+                {
+                    NoteVisualDue(o);
+                }
 
                 ushort hue = 0;
 
@@ -370,7 +374,7 @@ namespace ClassicUO.Game.Managers
         }
 #endif
 
-        // present_on_change_anim_due (evloop-4): a drawn text disappears once Time.Ticks passes its Time and, with text_fading,
+        // visual-due tracking (evloop-4): a drawn text disappears once Time.Ticks passes its Time and, with text_fading,
         // fades every frame over its last second (CalculateAlpha)
         private static void NoteVisualDue(TextObject o)
         {

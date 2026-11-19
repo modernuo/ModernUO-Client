@@ -1,58 +1,28 @@
-using System.Diagnostics;
-using System.Text.Json;
-using ClassicUO.Configuration;
 using ClassicUO.Loop;
 using FluentAssertions;
 using Xunit;
 
 namespace ClassicUO.UnitTests.Loop
 {
-    // evloop-2: present_on_change's scheduling (rate-limited from the last present) against the display grid it replaces.
+    // evloop-2: present on change's scheduling (rate-limited from the last present) against the display grid, which still runs
+    // where present on change does not (the legacy loop's fallback with the display-rate cap).
     public class PresentOnChangeTests
     {
         private const double Interval = 1000.0 / 60;
 
         [Fact]
-        public void Setting_Is_Off_By_Default_And_Round_Trips()
-        {
-            var s = new Settings();
-            s.PresentOnChange.Should().BeFalse();
-            s.EventLoopIdleRedrawMs.Should().Be(0, "0 = idle frames at the display interval (no visual change)");
-
-            var r = JsonSerializer.Deserialize<Settings>("{\"present_on_change\":true,\"event_loop_idle_redraw_ms\":100}");
-            r.PresentOnChange.Should().BeTrue();
-            r.EventLoopIdleRedrawMs.Should().Be(100);
-        }
-
-        [Fact]
         public void A_Change_After_An_Idle_Interval_Presents_At_Once()
         {
-            LoopTiming.MsUntilPresent(true, 40, Interval, 50).Should().Be(0);
-            LoopTiming.PresentDue(true, 40, Interval, 50).Should().BeTrue();
+            LoopTiming.MsUntilPresent(true, 40, Interval, double.PositiveInfinity).Should().Be(0);
+            LoopTiming.PresentDue(true, 40, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
         [Fact]
         public void A_Change_Soon_After_A_Present_Waits_For_The_Interval()
         {
-            LoopTiming.MsUntilPresent(true, 5, Interval, 50).Should().BeApproximately(Interval - 5, 1e-9);
-            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs - 0.01, Interval, 50).Should().BeFalse();
-            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs + 0.01, Interval, 50).Should().BeTrue();
-        }
-
-        [Fact]
-        public void No_Change_Redraws_After_The_Idle_Period_Never_Faster_Than_The_Interval()
-        {
-            LoopTiming.MsUntilPresent(false, 20, Interval, 50).Should().Be(30);
-            LoopTiming.PresentDue(false, 20, Interval, 50).Should().BeFalse();
-            LoopTiming.PresentDue(false, 50, Interval, 50).Should().BeTrue();
-            LoopTiming.MsUntilPresent(false, 5, Interval, 1).Should().BeApproximately(Interval - 5, 1e-9);
-        }
-
-        [Fact]
-        public void Default_Idle_Redraw_Zero_Means_The_Display_Interval()
-        {
-            LoopTiming.MsUntilPresent(false, 5, Interval, 0).Should().BeApproximately(Interval - 5, 1e-9);
-            LoopTiming.PresentDue(false, Interval, Interval, 0).Should().BeTrue();
+            LoopTiming.MsUntilPresent(true, 5, Interval, double.PositiveInfinity).Should().BeApproximately(Interval - 5, 1e-9);
+            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs - 0.01, Interval, double.PositiveInfinity).Should().BeFalse();
+            LoopTiming.PresentDue(true, Interval - LoopTiming.DrawSlackMs + 0.01, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
         [Fact]
@@ -83,12 +53,12 @@ namespace ClassicUO.UnitTests.Loop
             LoopTiming.DrainChanged(ref partial, 100, 0, 0, false, false, out _).Should().BeFalse();
         }
 
-        // evloop-3: with the switch on the loop wakes for the ping deadline (the ping goes out from an Update that does not draw);
-        // off it does not track it, as before
+        // evloop-3: while present on change runs the loop wakes for the ping deadline (the ping goes out from an Update that does
+        // not draw); in the other cadences it does not track it, as before
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
-        public void The_Ping_Deadline_Is_A_Timer_Only_With_The_Switch_On(bool on)
+        public void The_Ping_Deadline_Is_A_Timer_Only_While_Present_On_Change_Runs(bool on)
         {
             // Time.Ticks > due sends it, i.e. at due + 1: 1000 + 1 - 995 - 2 ms since the Update = 4 ms
             double ms = LoopTiming.MsUntilPing(on, 1000, 995, 2);
@@ -127,7 +97,7 @@ namespace ClassicUO.UnitTests.Loop
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
-        public void The_Ping_Is_Never_Held_With_The_Switch_Off(bool drawsNow)
+        public void The_Ping_Is_Never_Held_Outside_Present_On_Change(bool drawsNow)
         {
             LoopTiming.HoldPingForPresent(false, drawsNow, 0, 0).Should().BeFalse();
         }
@@ -152,15 +122,16 @@ namespace ClassicUO.UnitTests.Loop
         [Fact]
         public void The_First_Present_Is_Due_At_Once()
         {
-            LoopTiming.PresentDue(false, double.PositiveInfinity, Interval, 50).Should().BeTrue();
+            LoopTiming.PresentDue(false, double.PositiveInfinity, Interval, double.PositiveInfinity).Should().BeTrue();
         }
 
-        // Both switch states on one timeline: idle, then one packet 100.301 ms in. Off (the grid) presents at the next display
-        // slot; on presents at once. A burst of changes afterwards stays at the display rate in both.
+        // Both schedules on one timeline: idle, then one packet 100.301 ms in. The grid (the legacy loop's display-rate cap)
+        // presents at the next display slot; present on change presents at once. A burst of changes afterwards stays at the
+        // display rate in both.
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
-        public void Idle_Then_Event_Latency_And_Busy_Rate_In_Both_Switch_States(bool presentOnChange)
+        public void Idle_Then_Event_Latency_And_Busy_Rate_Grid_And_Present_On_Change(bool presentOnChange)
         {
             const long f = 1_000_000; // 1 µs ticks
             long period = DisplayRateSchedule.PeriodTicks(60, f);
@@ -182,7 +153,7 @@ namespace ClassicUO.UnitTests.Loop
                 if (presentOnChange)
                 {
                     double since = lastPresent == 0 ? double.PositiveInfinity : (t - lastPresent) / 1000.0;
-                    due = LoopTiming.PresentDue(change, since, period / 1000.0, 1000); // idle redraw out of the way
+                    due = LoopTiming.PresentDue(change, since, period / 1000.0, double.PositiveInfinity); // nothing animates
                 }
                 else
                 {
@@ -225,42 +196,5 @@ namespace ClassicUO.UnitTests.Loop
             // busy: about 60 presents/s in both (200 ms → 12)
             presents.Should().BeInRange(11, 13);
         }
-
-#if CUO_DEVTOOLS
-        [Fact]
-        public void Checker_Flags_Gaps_Under_The_Interval_Less_The_Slack()
-        {
-            long f = Stopwatch.Frequency;
-            long period = f / 60;
-            long slack = (long)((LoopTiming.DrawSlackMs + 0.1) * f / 1000.0);
-            PresentChangeCheck.UnderGap(period - slack, period, f).Should().BeFalse();
-            PresentChangeCheck.UnderGap(period - slack - 1, period, f).Should().BeTrue();
-        }
-
-        [Fact]
-        public void Checker_Counts_A_Draw_Later_Than_The_Grid_And_A_Short_Draw_Gap()
-        {
-            long f = Stopwatch.Frequency;
-            long period = f / 60;
-            long t = 10 * f;
-            PresentChangeCheck.Tick(t, false, false, false, false, period); // reset
-            PresentChangeCheck.Tick(t + 1, true, false, false, false, period);
-            long later0 = PresentChangeCheck.Later, mism0 = PresentChangeCheck.Mismatches;
-
-            PresentChangeCheck.Tick(t + 2, true, true, false, true, period); // change pending, grid due, new holds
-            PresentChangeCheck.Tick(t + 2 + f / 100, true, false, true, true, period); // new draws 10 ms later
-            PresentChangeCheck.Later.Should().Be(later0 + 1);
-            PresentChangeCheck.Mismatches.Should().Be(mism0);
-
-            // presents closer than the interval (draw time varies) are not a mismatch; draws closer than it are
-            PresentChangeCheck.Present(t + f / 50);
-            PresentChangeCheck.Present(t + f / 50 + period / 2);
-            PresentChangeCheck.Mismatches.Should().Be(mism0);
-            PresentChangeCheck.Tick(t + 2 + f / 100 + period / 2, true, false, true, true, period);
-            PresentChangeCheck.Mismatches.Should().Be(mism0 + 1);
-            PresentChangeCheck.Tick(t + 2 + f / 100 + period / 2 + period, true, false, true, true, period);
-            PresentChangeCheck.Mismatches.Should().Be(mism0 + 1);
-        }
-#endif
     }
 }

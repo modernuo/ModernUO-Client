@@ -96,20 +96,9 @@ namespace ClassicUO
             _queuedActions.Add(Time.Ticks + time, action);
         }
 
-        // ---- event_loop (evloop-1 arm A) ----
+        // ---- event loop (evloop-1 arm A; baked in after quiet-1115) ----
 #if CUO_DEVTOOLS
-        // the jobs' override of the settings (CUO_EVENT_LOOP=1|0, CUO_EVENT_LOOP_MAX_WAIT_MS)
-        private static readonly bool? _eventLoopEnv = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-        private static readonly int _eventLoopMaxWaitEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MAX_WAIT_MS"), out var mw) && mw > 0 ? mw : 0;
         private static readonly int _fpsEnv = int.TryParse(Environment.GetEnvironmentVariable("CUO_FPS"), out var fe) && fe > 0 ? fe : 0;
-#else
-        private static readonly bool? _eventLoopEnv = null;
-        private const int _eventLoopMaxWaitEnv = 0;
 #endif
 
         private LoopWaiter _waiter;
@@ -120,13 +109,9 @@ namespace ClassicUO
         private bool _tickDrawSkipped;
         private long _updateStartTs, _lastDrainTs;
 
-        private static bool EventLoopSwitch => _eventLoopEnv ?? Settings.GlobalSettings.EventLoop;
-
         private LoopMode DecideLoopMode()
         {
-            bool on = EventLoopSwitch;
-
-            if (on && !_waiterTried && OperatingSystem.IsWindows())
+            if (!_waiterTried && OperatingSystem.IsWindows())
             {
                 _waiterTried = true;
                 _waiter = new Win32LoopWaiter();
@@ -139,15 +124,15 @@ namespace ClassicUO
 
             if (_waiter != null && _waiter.Ready && _lateWake.Sample(Environment.TickCount64))
             {
-                Log.Warn($"event_loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
+                Log.Warn($"event loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
             }
 
-            var mode = LoopTiming.Decide(on, OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+            var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
 
             if (mode != _loggedMode)
             {
                 _loggedMode = mode;
-                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : on ? " (event_loop on, not available)" : "")}");
+                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : " (event loop not available)")}");
                 LoopStats.Mode = mode == LoopMode.Event ? "event" : "legacy";
             }
 
@@ -178,16 +163,16 @@ namespace ClassicUO
         {
             if (_presentOnChange)
             {
-                // present_on_change: a reply that arrived during Update, Draw or Present is read now, not after the wait
+                // present-on-change: a reply that arrived during Update, Draw or Present is read now, not after the wait
                 EventDrain();
                 RefreshChange();
             }
 
             double since = Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds;
-            double maxWait = _eventLoopMaxWaitEnv > 0 ? _eventLoopMaxWaitEnv : Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            double maxWait = Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs);
+            // the event loop with the display-rate cap always presents on change (Update), so the grid's own deadline is not needed
             double wait = LoopTiming.WaitMs(
-                _presentOnChange ? MsUntilPresentOnChange()
-                : _displayCapActive ? MsUntilDisplayDraw() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
+                _presentOnChange ? MsUntilPresentOnChange() : LoopTiming.MsUntilDraw(_tickDrawSkipped, _tickInterval, _totalElapsed, since),
                 MsUntilNextTimer(since),
                 maxWait
             );
@@ -215,11 +200,10 @@ namespace ClassicUO
             }
             else if (reason != WakeReason.Wake)
             {
-                // present_on_change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
+                // present-on-change: every net or input wake (and a failed wait) counts as a change (conservative). A Wake is a
                 // queued send (NetClient.SendQueuedWake): it changes nothing on screen, and counting it drew a frame right after
                 // every ping, so the reply landed during that Draw and waited a whole interval (bench-000791).
                 _changePending = true;
-                _changeWhy |= ChangeReason.Wake;
             }
 
             FrameStats.Inc(FrameCounter.LoopWaits);
@@ -666,7 +650,7 @@ namespace ClassicUO
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
             VisualDue.BeginUpdate();
-            VisualDue.Tracking = AnimDueTracking;
+            VisualDue.Tracking = LoopTiming.TracksVisualDue(_tickMode, _displayCapActive);
             Time.Frame++;
             _totalUpdates++;
             // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
@@ -775,18 +759,14 @@ namespace ClassicUO
             _tickInterval = x;
             _tickDrawSkipped = minimized;
             bool displayDue = DisplayDrawDue(inactive, minimized);
-            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive && PresentOnChangeSwitch;
+            // present on change (evloop-2, baked in after quiet-1115) runs wherever the event loop and the display-rate cap both
+            // run; vsync on, an fps cap, an inactive or minimized window, or the legacy loop keep their own cadence below
+            _presentOnChange = _tickMode == LoopMode.Event && _displayCapActive;
 
             if (_presentOnChange)
             {
-                displayDue = PresentOnChangeDue(displayDue);
+                displayDue = PresentOnChangeDue();
             }
-#if CUO_DEVTOOLS
-            else if (PresentChangeCheck.On)
-            {
-                PresentChangeCheck.Tick(Stopwatch.GetTimestamp(), false, displayDue, displayDue, false, _displayPeriod);
-            }
-#endif
 
             _displayDrawDue = displayDue;
             ServicePing(displayDue);
@@ -863,16 +843,15 @@ namespace ClassicUO
             }
 
 
-            // event_loop on: every due action (one Update per frame or wake); off: one per Update, as before
-            if (_queuedActions.RunDue(Time.Ticks, drainAll: EventLoopSwitch) > 0)
+            // every due action: one Update per frame or wake, not one per ~1 ms
+            if (_queuedActions.RunDue(Time.Ticks) > 0)
             {
                 _changePending = true;
-                _changeWhy |= ChangeReason.Actions;
             }
 
             base.Update(gameTime);
 
-            // event_loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
+            // event loop: scene/UI/actions can queue sends after the packet phase. Flush before drawing or waiting.
             if (_tickMode == LoopMode.Event)
             {
                 int flushGeneration = NetClient.Socket.ConnectionGeneration;
@@ -880,9 +859,8 @@ namespace ClassicUO
 
                 if (NetClient.Socket.ConnectionGeneration != flushGeneration)
                 {
-                    // present_on_change: a failed send ended the connection
+                    // present-on-change: a failed send ended the connection
                     _changePending = true;
-                    _changeWhy |= ChangeReason.Connection;
                 }
             }
 
@@ -899,7 +877,7 @@ namespace ClassicUO
 
         private bool _pingAfterPresent;
 
-        // present_on_change: the ping goes out from here, after the draw decision, so one due just before a present is held
+        // present-on-change: the ping goes out from here, after the draw decision, so one due just before a present is held
         // until right after it (LoopTiming.HoldPingForPresent). Off: GameScene.Update sends it, as before.
         private void ServicePing(bool drawsNow)
         {
@@ -948,7 +926,6 @@ namespace ClassicUO
             if (NetClient.Socket.ConnectionGeneration != generation)
             {
                 _changePending = true;
-                _changeWhy |= ChangeReason.Connection;
             }
         }
 
@@ -1215,11 +1192,10 @@ namespace ClassicUO
 
         private bool HandleSdlEvent(IntPtr userData, SDL_Event* sdlEvent)
         {
-            // present_on_change: any window, input or device event may change the screen (not the poll sentinel or user events)
+            // present-on-change: any window, input or device event may change the screen (not the poll sentinel or user events)
             if (sdlEvent->type >= 0x100 && sdlEvent->type < 0x7F00)
             {
                 _changePending = true;
-                _changeWhy |= ChangeReason.SdlEvent;
             }
 
             if (LoopStats.On)

@@ -46,7 +46,12 @@ namespace ClassicUO.UnitTests.Ecs
             "render_view_reuse",
             "upload_skip_unchanged",
             "ui_render_cache",
-            "item_pool"
+            "item_pool",
+            // baked in after quiet-1115 (event loop)
+            "event_loop",
+            "present_on_change",
+            "present_on_change_anim_due",
+            "event_loop_idle_redraw_ms"
         };
 
         [Fact]

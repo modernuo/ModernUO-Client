@@ -162,7 +162,7 @@ namespace ClassicUO.Game
 
                     Log.Info($"[ECS] driver> {line}");
 
-                    // present_on_change_anim_due: a script line stands in for input (it opens and closes gumps, spawns and
+                    // present on change: a script line stands in for input (it opens and closes gumps, spawns and
                     // clears effects, moves the cursor), so the frame after it is drawn like the frame after an input event
                     ClassicUO.Loop.VisualDue.Now(ClassicUO.Loop.VisualSource.Driver);
 
@@ -1012,44 +1012,16 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // fps <n>: the frame cap (the driver starts uncapped with -fps 0); eventloop on|off: the event_loop setting (an
-                // env CUO_EVENT_LOOP still wins). Both for the evloop-1 counts jobs, which compare the loops in one session.
+                // fps <n>: the frame cap (the driver starts uncapped with -fps 0)
                 case "fps" when args.Length > 0 && int.TryParse(args[0], out int fpsCap):
                     Client.Game.SetRefreshRate(fpsCap);
                     Log.Info($"[ECS] driver: fps cap {fpsCap}");
 
                     return true;
 
-                case "eventloop" when args.Length > 0:
-                    Settings.GlobalSettings.EventLoop = args[0] == "on";
-                    Log.Info($"[ECS] driver: event_loop {args[0]}");
-
-                    return true;
-
                 case "presentcap" when args.Length > 0:
                     Settings.GlobalSettings.PresentAtDisplayRate = args[0] == "on";
                     Log.Info($"[ECS] driver: present_at_display_rate {args[0]}");
-
-                    return true;
-
-                // idleredraw <ms>: event_loop_idle_redraw_ms (0 = the display interval)
-                case "idleredraw" when args.Length > 0 && int.TryParse(args[0], out int idleMs):
-                    Settings.GlobalSettings.EventLoopIdleRedrawMs = idleMs;
-                    Log.Info($"[ECS] driver: event_loop_idle_redraw_ms {idleMs}");
-
-                    return true;
-
-                // presentchange on|off: present_on_change (evloop-2 counts jobs compare it with the grid in one session)
-                case "presentchange" when args.Length > 0:
-                    Settings.GlobalSettings.PresentOnChange = args[0] == "on";
-                    Log.Info($"[ECS] driver: present_on_change {args[0]}");
-
-                    return true;
-
-                // animdue on|off: present_on_change_anim_due (evloop-4 counts jobs compare it with the idle redraw in one session)
-                case "animdue" when args.Length > 0:
-                    Settings.GlobalSettings.PresentOnChangeAnimDue = args[0] == "on";
-                    Log.Info($"[ECS] driver: present_on_change_anim_due {args[0]}");
 
                     return true;
 

@@ -13,21 +13,20 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Loop
 {
-    // evloop-1: the event loop's decisions (mode, frame cap, deadlines, drain caps), the queued actions in both switch states,
+    // evloop-1: the event loop's decisions (mode, frame cap, deadlines, drain caps), the queued actions,
     // the late-wake backoff, and the Windows waiter (sticky wake, timer, socket readiness).
     public class EventLoopTests
     {
         // ---- mode decision (fallbacks) ----
 
         [Theory]
-        [InlineData(false, true, true, false, 0)] // switch off
-        [InlineData(true, false, true, false, 0)] // not Windows
-        [InlineData(true, true, false, false, 0)] // waiter missing or its probe failed
-        [InlineData(true, true, true, true, 0)] // late-wake backoff in force
-        [InlineData(true, true, true, false, 1)]
-        public void Decide_Falls_Back_To_Legacy_Unless_Everything_Is_Ready(bool on, bool windows, bool ready, bool suspended, int expected)
+        [InlineData(false, true, false, 0)] // not Windows
+        [InlineData(true, false, false, 0)] // waiter missing or its probe failed
+        [InlineData(true, true, true, 0)] // late-wake backoff in force
+        [InlineData(true, true, false, 1)]
+        public void Decide_Falls_Back_To_Legacy_Unless_Everything_Is_Ready(bool windows, bool ready, bool suspended, int expected)
         {
-            LoopTiming.Decide(on, windows, ready, suspended).Should().Be((LoopMode)expected);
+            LoopTiming.Decide(windows, ready, suspended).Should().Be((LoopMode)expected);
         }
 
         // ---- frame cap ----
@@ -127,13 +126,12 @@ namespace ClassicUO.UnitTests.Loop
             LoopTiming.ScaleCap(1000, double.NaN).Should().Be(1000);
         }
 
-        // ---- queued actions (both switch states) ----
+        // ---- queued actions ----
 
-        [Theory]
-        [InlineData(false, 1)] // legacy: one due action per Update
-        [InlineData(true, 3)] // event loop: every due one
-        public void Queued_Actions_Run_One_Or_All_Due(bool drainAll, int expected)
+        [Fact]
+        public void Queued_Actions_Run_Every_Due_One()
         {
+            const int expected = 3;
             var q = new QueuedActions();
             var ran = new List<int>();
             q.Add(10, () => ran.Add(1));
@@ -141,24 +139,13 @@ namespace ClassicUO.UnitTests.Loop
             q.Add(30, () => ran.Add(3));
             q.Add(500, () => ran.Add(4));
 
-            q.RunDue(100, drainAll).Should().Be(expected);
-            ran.Should().HaveCount(expected);
-            ran.Should().NotContain(4);
+            q.RunDue(100).Should().Be(expected);
+            ran.Should().Equal(3, 2, 1); // newest first, as the old loop
             q.Count.Should().Be(4 - expected);
-
-            if (!drainAll)
-            {
-                ran.Should().Equal(3); // newest first, as the old loop
-                q.RunDue(100, false);
-                q.RunDue(100, false);
-                ran.Should().Equal(3, 2, 1);
-            }
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Queued_Action_Queued_By_A_Running_One_Waits_For_The_Next_Call(bool drainAll)
+        [Fact]
+        public void Queued_Action_Queued_By_A_Running_One_Waits_For_The_Next_Call()
         {
             var q = new QueuedActions();
             var ran = new List<string>();
@@ -168,11 +155,11 @@ namespace ClassicUO.UnitTests.Loop
                 q.Add(0, () => ran.Add("b"));
             });
 
-            q.RunDue(100, drainAll);
+            q.RunDue(100);
             ran.Should().Equal("a");
             q.Count.Should().Be(1);
 
-            q.RunDue(100, drainAll);
+            q.RunDue(100);
             ran.Should().Equal("a", "b");
             q.Count.Should().Be(0);
         }
@@ -188,8 +175,8 @@ namespace ClassicUO.UnitTests.Loop
             q.TryEarliest(out var due).Should().BeTrue();
             due.Should().Be(200);
 
-            q.RunDue(200, true).Should().Be(0, "an action runs once the time is past its due tick");
-            q.RunDue(201, true).Should().Be(1);
+            q.RunDue(200).Should().Be(0, "an action runs once the time is past its due tick");
+            q.RunDue(201).Should().Be(1);
             q.TryEarliest(out due).Should().BeTrue();
             due.Should().Be(300);
         }

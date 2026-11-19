@@ -618,8 +618,8 @@ namespace ClassicUO
 
         private static bool _sessionAfterReport;
 
-        // event_loop: the loop's waits since the last present, each up to the time it asked for (an oversleep stays in the
-        // frame). With present_on_change an idle frame follows a long wait on purpose; counted, every such frame was a "slow
+        // event loop: the loop's waits since the last present, each up to the time it asked for (an oversleep stays in the
+        // frame). With present-on-change an idle frame follows a long wait on purpose; counted, every such frame was a "slow
         // frame" and its log line allocated on every present (evloop-4 alloc-g/alloc-l, switch on)
         private static long _sessionWaitTicks;
 

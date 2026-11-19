@@ -64,7 +64,7 @@ namespace ClassicUO.Game.Managers
         /// <summary>Whether any static graphic animates.</summary>
         internal bool HasAnimations => _staticInfos.Length != 0;
 
-        /// <summary>present_on_change_anim_due: the earliest graphic's next frame (it advances once Time.Ticks is past it).</summary>
+        /// <summary>visual-due tracking: the earliest graphic's next frame (it advances once Time.Ticks is past it).</summary>
         internal uint NextChange => _processTime;
 
         public unsafe void Process()

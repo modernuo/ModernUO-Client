@@ -43,7 +43,7 @@ namespace ClassicUO.Loop
 
             if (_netEvent == 0 || _wakeEvent == 0)
             {
-                Log.Warn("event_loop: could not create the wait events; using the legacy loop");
+                Log.Warn("event loop: could not create the wait events; using the legacy loop");
 
                 return;
             }
@@ -72,7 +72,7 @@ namespace ClassicUO.Loop
 
             lateMs /= n;
             bool ok = lateMs <= LateWakeMonitor.LateThresholdMs;
-            Log.Info($"event_loop: wait probe {(ok ? "ok" : "too late")} ({Name}, 1 ms waits {lateMs:0.000} ms late on average)");
+            Log.Info($"event loop: wait probe {(ok ? "ok" : "too late")} ({Name}, 1 ms waits {lateMs:0.000} ms late on average)");
 
             return ok;
         }
@@ -160,7 +160,7 @@ namespace ClassicUO.Loop
             {
                 // the loop carries on without sleeping this time; logged once so it cannot flood
                 _loggedWaitFailure = true;
-                Log.Error($"event_loop: MsgWaitForMultipleObjectsEx returned 0x{result:X} (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+                Log.Error($"event loop: MsgWaitForMultipleObjectsEx returned 0x{result:X} (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
             }
 
             return WakeReason.Failed;

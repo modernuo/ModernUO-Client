@@ -319,7 +319,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (_lastChangeTime != 0 && Time.Ticks - _lastChangeTime < HIGHLIGHT_AMOUNT_CHANGED_DURATION)
                 {
-                    // present_on_change_anim_due: the change highlight fades at each poll
+                    // visual-due tracking: the change highlight fades at each poll
                     ClassicUO.Loop.VisualDue.At(_time, ClassicUO.Loop.VisualSource.Gump);
                 }
 

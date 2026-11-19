@@ -148,47 +148,14 @@ namespace ClassicUO.Configuration
         // sleep. Not measured yet, so default off.
         [JsonPropertyName("throttle_update_when_inactive")] public bool ThrottleUpdateWhenInactive { get; set; }
 
-        // evloop-1 arm A (Windows): between frames the main loop waits once, with MsgWaitForMultipleObjectsEx, for the socket
-        // (WSAEventSelect), window messages, a wake, or a high-resolution timer at the next deadline (draw, queued action,
-        // player step, or event_loop_max_wait_ms), instead of skipping the draw and sleeping 1 ms. Falls back to the legacy loop
-        // off Windows, when the wait probe fails, and while late wakes back it off. Not an ECS path: no CUO_*_CHECK checker;
-        // CUO_LOOP_STATS=1 measures both loops. Read every frame (CUO_EVENT_LOOP=1|0 overrides it in developer builds).
-        // Default off.
-        [JsonPropertyName("event_loop")] public bool EventLoop { get; set; }
-
         // M1: uncapped, vsync off, without inactive FPS reduction: skip Draw and Present until the display's next deadline.
         // Explicit FPS caps and inactive/minimized policies keep precedence. Unknown refresh uses the original path.
         [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; } = true;
 
-        // event_loop: the longest wait without an Update, for timers the loop does not track (plugin ticks, macros, audio
-        // streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients
-        // (CUO_EVENT_LOOP_MAX_WAIT_MS overrides it in developer builds).
+        // The event loop (GameController.EventLoopWait, Windows) waits between frames for the socket, window messages, a wake
+        // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (plugin ticks,
+        // macros, audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.
         [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
-
-        // evloop-2: with event_loop and the display-rate cap active, present when something may have changed instead of on a
-        // fixed display grid, rate-limited from the last present: a net, input or wake, a due timer, mobile/boat motion or
-        // effects present one display interval after the last present, or at once when the screen has been idle that long.
-        // With no change the screen is redrawn every event_loop_idle_redraw_ms for the discrete animations the loop does not
-        // track. The socket is also drained and dispatched (and sends flushed) right after Present, before the wait, so a reply
-        // that arrives during Draw is handled without a wake and a new Update (never between Draw and Present, where a handler
-        // could change the scene). CUO_PRESENT_CHANGE_CHECK=1 shadows the grid.
-        // Default off.
-        [JsonPropertyName("present_on_change")] public bool PresentOnChange { get; set; }
-
-        // present_on_change: the redraw period (ms) when nothing tracked changed. 0 (default) = the display interval: idle frames
-        // at display rate as with the grid, so no visual change; a packet then waits for the next interval from the last draw.
-        // A longer period (opt-in, e.g. 50 ms, the shortest discrete animation cadence, ITEM_EFFECT_ANIMATION_DELAY) leaves
-        // room to present an idle-time packet at once, at the cost of idle animations at that rate. Never shorter than the
-        // display interval.
-        [JsonPropertyName("event_loop_idle_redraw_ms")] public int EventLoopIdleRedrawMs { get; set; }
-
-        // evloop-4: with present_on_change, an idle frame is drawn when the next visual change is due (an animation frame, an
-        // idle animation, a text expiry, collected during Update; sources that change every frame present at display rate
-        // while active) instead of every event_loop_idle_redraw_ms, which is then unused. With nothing animating no idle frame
-        // is drawn; packets and input still present at once (rate-limited from the last present). Only meaningful with
-        // present_on_change. CUO_ANIM_DUE_CHECK=1 keeps drawing at display rate and compares every frame the signal would have
-        // skipped with the last frame it would have presented. Default off.
-        [JsonPropertyName("present_on_change_anim_due")] public bool PresentOnChangeAnimDue { get; set; }
 
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a

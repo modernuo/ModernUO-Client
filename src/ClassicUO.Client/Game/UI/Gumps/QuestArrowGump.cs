@@ -174,7 +174,7 @@ namespace ClassicUO.Game.UI.Gumps
                 _needHue = !_needHue;
             }
 
-            // present_on_change_anim_due: the next timed change
+            // visual-due tracking: the next timed change
             ClassicUO.Loop.VisualDue.At((long)_timer, ClassicUO.Loop.VisualSource.Gump);
 
             _arrow.Hue = (ushort) (_needHue ? 0 : 0x21);
