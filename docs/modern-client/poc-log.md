@@ -7810,8 +7810,15 @@ wait was capped at `event_loop_max_wait_ms` (16) for work Update polls that the 
   At the busy spot presents run at the display rate either way, so the switch changes nothing there. Checker: 0 late_due,
   0 untracked_send, 0 music_underrun in every window; at the quiet spot about 2.7 waits/s were held at 16 ms by a polling
   source (gate-2 with busy_by attributes them).
-- **Pending:** bench-000904 (counts Legacy), bench-000905 (legacy loop before/after B), bench-000906 (gate-2 with busy_by):
-  results in the handoff (cuo-poc-state/handoffs/loop-idle.md).
+- **Legacy counts** bench-000904: quiet spot, switch off -> on, vsync off 63.0 -> 7.3 loops/s, vsync on + vsync_present_on_change
+  62.9 -> 7.2; presents unchanged (2.0/s); alloc/frame same or lower.
+- **Legacy cap spin (B)** bench-000905, `CUO_LOOP_LEGACY=1`, vsync off, fps 0, quiet spot, base 8b822c0ba vs fix: loops/s
+  104,032 -> 656 (Gpu), 104,791 -> 655 (Legacy); cpu ms/s 1016 -> 78 / 94 (one core -> under 10 %). Presents 143.8/s both. Cost:
+  ping RTT p50 0.14 -> 3.0 ms, since the skipped frame now sleeps 1 ms like the legacy fps-cap path (the legacy loop has no network
+  wake). Accepted cost, listed for the owner (owner-review).
+- **Gate-2** bench-000906: `LOOP-IDLE GATE PASS`; idle 7.6-10.4 updates/s with the switch on (64.3 off), late_due 0, untracked_send 0,
+  music_underrun 0. busy_by: the waits still held at 16 ms come from Music (about 13 per 5 s window: music short of buffers is
+  polled) and the session driver (test scenes only).
 - **Tests.** ClassicUO.UnitTests 4148 pass / 6 skipped. LoopIdleTests (switch default, max wait in both states, LoopDue deadlines and stale ones, idle wait off/on, music
   without a stream), LoopIdleCheckTests. Client builds with and without CuoDevTools.
 - **Parked timing.** measure/loop-idle/job-timing-{g,l}-PARKED.sh: CPU ms/s, loops/s and ping RTT, switch off vs on with vsync
