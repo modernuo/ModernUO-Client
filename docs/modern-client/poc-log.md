@@ -7698,3 +7698,12 @@ The owner baked in both world-text switches after quiet-1118 (bench-000883/884: 
 - **Removed.** Settings `text_tail_cache` and `text_prune_expired`; `TextRenderer.PruneOn` / `TailCacheOn`, the `CUO_TEXT_PRUNE` / `CUO_TEXT_TAIL` overrides, both checkers (`CUO_TEXT_PRUNE_CHECK`, `CUO_TEXT_ORDER_CHECK`) with their test hooks and summary logs, and the off paths (full forward walk without the kept tail, no prune). The prune and the kept tail always run; `TextObject.LinkVersion` stays (it validates the tail). The world-text FrameStats counters stay (they never depended on the checkers). Both keys are in `RemovedSwitchSettingsTests`.
 - **Numbers (quiet-1118, both on vs both off).** Legacy ls_z1 -9.1 %, lswalk -4.5 %; Gpu ls_z1 -9.7 %, lswalk -8.4 %. The tipref run showed the earlier Legacy ls_z1 regression (pre vs ref) did not reproduce quietly (-2.4 %), so no bisect.
 - **Tests.** TextRendererPruneTests and TextRendererTailTests run on the single path (switch-off and checker variants dropped).
+
+## 2026-11-19 ui-walks (bg/ui-walks): UI walk counts; no change made
+
+Added FrameStats counters `ui_update_visits`, `ui_keyboard_visits`, `ui_hit_visits`, `ui_draw_visits`. Gump-heavy driver scene (12 gumps: paperdoll,
+backpack + nested bag, spellbook, status, skills, buffs, combat book, health bar; measure/ui-walks/ui-heavy.txt, jobs bench-000885/886, both renderers):
+about 950-1900 Control.Update visits, 353 draw visits, ~20 hit visits, 0 keyboard visits per frame; ui_update 0.035 ms avg (GPU), 0.075 ms (Legacy).
+The sort is already gated by `_needSort`, the keyboard walk only runs while no control holds focus (0 here), hit test stops early. Too few to matter
+(~0.2 % of a frame): the dirty-control skip is designed (handoffs/ui-walks.md) but not implemented. Side finding: the heavy scene allocates a constant
+5840 B/frame in ui_cache_record (0 B with the 4 base gumps); source not yet bisected.
