@@ -7,7 +7,7 @@ namespace ClassicUO.Loop
 {
     /// <summary>
     /// The event loop's wait between frames. Arm A (<see cref="Win32LoopWaiter"/>) waits on the socket's own readiness event and
-    /// drains inline. Phase-2 arms plug in here: a receive thread (arm B) or a ring receive (arm C) would read in
+    /// drains inline; <see cref="MacLoopWaiter"/> does the same on macOS through SDL's Cocoa wait and a kqueue. Phase-2 arms plug in here: a receive thread (arm B) or a ring receive (arm C) would read in
     /// <see cref="BindNet"/>'s place and call <see cref="Wake"/> when data is ready.
     /// </summary>
     internal abstract class LoopWaiter : IDisposable
@@ -43,5 +43,18 @@ namespace ClassicUO.Loop
         public virtual int NetSignaled => -1;
 
         public abstract void Dispose();
+
+        /// <summary>The waiter for this OS, or null where the event loop has none (the legacy loop runs).</summary>
+        public static LoopWaiter Create(bool macOSSwitch) => Choose(OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), macOSSwitch) switch
+        {
+            WaiterKind.Win32 => new Win32LoopWaiter(),
+            WaiterKind.MacOS => new MacLoopWaiter(),
+            _ => null
+        };
+
+        internal enum WaiterKind { None, Win32, MacOS }
+
+        internal static WaiterKind Choose(bool windows, bool macOS, bool macOSSwitch)
+            => windows ? WaiterKind.Win32 : macOS && macOSSwitch ? WaiterKind.MacOS : WaiterKind.None;
     }
 }

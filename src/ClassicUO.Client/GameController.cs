@@ -106,6 +106,22 @@ namespace ClassicUO
 
         private LoopWaiter _waiter;
         private bool _waiterTried;
+
+        private static bool EventLoopMacOS
+        {
+            get
+            {
+#if CUO_DEVTOOLS
+                string env = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MACOS");
+
+                if (env == "1" || env == "0")
+                {
+                    return env == "1";
+                }
+#endif
+                return Settings.GlobalSettings.EventLoopMacOS;
+            }
+        }
         private readonly LateWakeMonitor _lateWake = new LateWakeMonitor();
         private LoopMode _tickMode, _loggedMode = (LoopMode)(-1);
         private double _tickInterval;
@@ -115,12 +131,12 @@ namespace ClassicUO
 
         private LoopMode DecideLoopMode()
         {
-            if (!_waiterTried && OperatingSystem.IsWindows())
+            if (!_waiterTried)
             {
                 _waiterTried = true;
-                _waiter = new Win32LoopWaiter();
+                _waiter = LoopWaiter.Create(EventLoopMacOS);
 
-                if (_waiter.Ready)
+                if (_waiter != null && _waiter.Ready)
                 {
                     Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
                 }
@@ -131,7 +147,7 @@ namespace ClassicUO
                 Log.Warn($"event loop: waits keep returning late; legacy loop for {_lateWake.CurrentBackoffMs} ms (backoff #{_lateWake.TotalBackoffs})");
             }
 
-            var mode = LoopTiming.Decide(OperatingSystem.IsWindows(), _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
+            var mode = LoopTiming.Decide(_waiter != null, _waiter?.Ready ?? false, _lateWake.IsSuspended(Environment.TickCount64));
 #if CUO_DEVTOOLS
             if (_forceLegacyLoop) mode = LoopMode.Legacy;
 #endif

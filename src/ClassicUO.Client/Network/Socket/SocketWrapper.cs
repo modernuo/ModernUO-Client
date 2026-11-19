@@ -34,6 +34,14 @@ abstract class SocketWrapper : IDisposable
     /// </summary>
     public virtual bool TryEventSelect(IntPtr evt) => false;
 
+    /// <summary>event loop (macOS): the connected socket's file descriptor, for the wait's kqueue. False when not connected.</summary>
+    public virtual bool TryGetFd(out nint fd)
+    {
+        fd = -1;
+
+        return false;
+    }
+
     public abstract void Disconnect();
 
     public abstract void Dispose();

@@ -126,6 +126,35 @@ sealed class TcpSocketWrapper : SocketWrapper
         return true;
     }
 
+    public override bool TryGetFd(out nint fd)
+    {
+        fd = -1;
+
+        if (OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        var client = _socket?.Client;
+
+        if (client == null || !client.Connected)
+        {
+            return false;
+        }
+
+        try
+        {
+            // on Unix the handle is the file descriptor; the socket stays blocking, and the kqueue only watches it
+            fd = client.Handle;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+
+        return fd >= 0;
+    }
+
     public override int Available
     {
         get
