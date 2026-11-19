@@ -101,6 +101,68 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>
+        /// <see cref="EnsureCapacity(int)"/> for a layer just <see cref="Reset"/> (its sprites are discarded, not copied): the
+        /// arrays and the vertex buffer are exchanged for a <paramref name="pool"/> set of the same size EnsureCapacity would
+        /// grow to, and the old set goes to the pool. Without a pool it grows in place.
+        /// </summary>
+        public void EnsureCapacity(int minCapacity, MeshLayerPool pool)
+        {
+            if (minCapacity <= Vertices.Length)
+                return;
+
+            if (pool == null)
+            {
+                EnsureCapacity(minCapacity);
+
+                return;
+            }
+
+            int newSize = Vertices.Length;
+            while (newSize < minCapacity)
+                newSize *= 2;
+
+            Exchange(pool, newSize);
+        }
+
+        /// <summary>
+        /// <see cref="SoftReset()"/>, then a layer above <paramref name="keepCapacity"/> sprites hands its arrays and vertex buffer
+        /// to <paramref name="pool"/> for a set of <paramref name="keepCapacity"/> (meshlayer-growth: a pooled chunk no longer
+        /// keeps the arrays of the busiest chunk it ever held).
+        /// </summary>
+        public void SoftReset(MeshLayerPool pool, int keepCapacity)
+        {
+            SoftReset();
+
+            if (pool != null && Vertices.Length > keepCapacity)
+            {
+                Exchange(pool, keepCapacity);
+            }
+        }
+
+        // swaps this layer's set (arrays and vertex buffer) with a pooled set of exactly `size` sprites, or a new one
+        private void Exchange(MeshLayerPool pool, int size)
+        {
+            MeshLayerPool.Set set = pool.Take(size) ?? MeshLayerPool.Set.Create(size);
+
+            (Vertices, set.Vertices) = (set.Vertices, Vertices);
+            (Textures, set.Textures) = (set.Textures, Textures);
+            (Visible, set.Visible) = (set.Visible, Visible);
+            (_hueKeys, set.HueKeys) = (set.HueKeys, _hueKeys);
+            (_visBits, set.VisBits) = (set.VisBits, _visBits);
+            (_prevVisible, set.PrevVisible) = (set.PrevVisible, _prevVisible);
+            (_prevVisBits, set.PrevVisBits) = (set.PrevVisBits, _prevVisBits);
+            (_visibleIndexData, set.IndexData) = (set.IndexData, _visibleIndexData);
+            (VertexBuffer, set.VertexBuffer) = (set.VertexBuffer, VertexBuffer);
+
+            // the new arrays hold no sprites this layer knows of: the next BuildVisibleIndices rebuilds
+            _visibilityDirty = true;
+            _alphaDirty = false;
+            _alphaDirtyCount = 0;
+
+            pool.Return(set);
+        }
+
+        /// <summary>
         /// Resets all visibility flags to false. Called each frame before
         /// AddTileToRenderList marks visible sprites.
         /// </summary>

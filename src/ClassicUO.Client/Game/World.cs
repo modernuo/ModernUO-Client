@@ -137,6 +137,10 @@ namespace ClassicUO.Game
         /// kept across <see cref="Clear"/> (relog), released by <see cref="ReleasePools"/>.</summary>
         public Map.ChunkPool ChunkPool { get; }
 
+        /// <summary>Spare chunk mesh layer arrays (MeshLayerPool): a layer grows by trading sets here, and a pooled chunk's
+        /// statics layer goes back to the prefill size. Kept across <see cref="Clear"/>, dropped by <see cref="ReleasePools"/>.</summary>
+        public Renderer.MeshLayerPool MeshPool { get; } = new Renderer.MeshLayerPool();
+
         // the slot array of the last destroyed Map, handed to the next one (a ~3.5 MiB LOH array otherwise per login/facet
         // change). Held only while no Map owns it: RentChunkSlots takes it out, ReturnChunkSlots (Map.Destroy) puts it back.
         private Chunk[] _spareSlots;
@@ -199,6 +203,7 @@ namespace ClassicUO.Game
             }
 
             ChunkPool.Close();
+            MeshPool.Clear();
             MapRecycler.Close();
             _spareSlots = null;
             WarmupDone = false;

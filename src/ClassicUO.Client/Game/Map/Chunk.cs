@@ -158,6 +158,13 @@ namespace ClassicUO.Game.Map
             sb.Append(System.Globalization.CultureInfo.InvariantCulture,
                 $"; mesh MB used {used} chunks {usedHeld / 1048576.0:0.00} (gpu {usedGpu / 1048576.0:0.00}), pooled {pooledHeld / 1048576.0:0.00} (gpu {pooledGpu / 1048576.0:0.00})");
 
+            if (world != null)
+            {
+                var mp = world.MeshPool;
+                sb.Append(System.Globalization.CultureInfo.InvariantCulture,
+                    $", spare sets {mp.SpareSets} {mp.SpareBytes / 1048576.0:0.00} (reused {mp.Reused}, created {mp.Created}, dropped {mp.Dropped})");
+            }
+
             return sb.ToString();
         }
 
@@ -562,7 +569,7 @@ namespace ClassicUO.Game.Map
 
             if (_world.ChunkPool.CanAdd(this))
             {
-                Mesh.SoftClear();
+                Mesh.SoftClear(_world.MeshPool);
                 _world.ChunkPool.Add(this);
             }
             else
@@ -688,7 +695,7 @@ namespace ClassicUO.Game.Map
                 }
             }
 
-            Mesh.SoftClear();
+            Mesh.SoftClear(null); // in-place reload: the chunk stays in use and rebuilds at once, so it keeps its arrays
             Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
