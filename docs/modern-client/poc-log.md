@@ -7729,7 +7729,18 @@ present on change engaged only with vsync off, so vsync drew every tick and bloc
   the world shots on both renderers. The walk-shot check failed on Legacy in this run because the quiet spot is plain
   grass (a 2-tile step left the image byte-identical); the scene now shoots facing east, mid-walk and facing south
   (bench-000891).
-- **Counts** (anim / vsync / vpoc arms, both spots): bench-000888 (Gpu), bench-000889 (Legacy); results in the handoff.
+- **Counts** (anim / vsync / vpoc arms, both spots): bench-000888 (Gpu), bench-000889 (Legacy). 143.86 Hz display; CPU and
+  ping are indicative only (busy machine). vpoc = vsync on with the switch on.
+
+  | Spot, renderer | arm | presents/s | cpu ms/s | ping RTT p50 ms |
+  |---|---|---|---|---|
+  | quiet, Gpu | vsync / vpoc | 143.9 / 2.0 | 78.1 / 7.8 | 5.89 / 0.12 |
+  | quiet, Legacy | vsync / vpoc | 143.9 / 2.0 | 74.9 / 6.2 | 5.97 / 0.13 |
+  | busy, Gpu | vsync / vpoc | 143.9 / 133.1 | 234.2 / 237.5 | 6.94 / 0.13 |
+  | busy, Legacy | vsync / vpoc | 143.9 / 133.0 | 391.9 / 381.1 | 6.94 / 0.16 |
+
+  vpoc matches the vsync-off anim arm (quiet 2.0 presents/s, 9.4 cpu ms/s). Gate-2 bench-000891: `VSYNC-POC GATE PASS` on both
+  renderers.
   bake-evloop's vsync arm (bench-000874/875) had 143.9 presents/s, 140-153 cpu ms/s and ping RTT ~6.9 ms at the quiet spot.
 - **Tests.** DisplayRateTests (Enabled with the switch off and on, setting default and round trip), VsyncPresentCheckTests.
   ClassicUO.UnitTests 4121 pass / 6 skipped. Client builds with and without CuoDevTools.
