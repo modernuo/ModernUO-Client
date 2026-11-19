@@ -184,7 +184,7 @@ namespace ClassicUO.Network
         /// <summary>event loop (Windows): the current socket signals <paramref name="evt"/> when readable or closed.</summary>
         internal bool TryEventSelect(IntPtr evt) => _socket != null && _socket.TryEventSelect(evt);
 
-        /// <summary>event_loop_linux: the connected socket's fd for epoll; false when there is none.</summary>
+        /// <summary>event loop (Linux epoll, macOS kqueue): the connected socket's fd; false when there is none or on Windows.</summary>
         internal bool TryGetPollFd(out int fd)
         {
             fd = -1;

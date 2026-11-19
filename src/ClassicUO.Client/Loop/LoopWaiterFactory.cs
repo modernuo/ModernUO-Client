@@ -13,15 +13,18 @@ namespace ClassicUO.Loop
         /// <summary><see cref="Win32LoopWaiter"/>: MsgWaitForMultipleObjectsEx.</summary>
         Win32,
         /// <summary><see cref="LinuxEpollLoopWaiter"/>: epoll (event_loop_linux).</summary>
-        LinuxEpoll
+        LinuxEpoll,
+        /// <summary><see cref="MacLoopWaiter"/>: SDL's Cocoa wait ended by a kqueue (event_loop_macos).</summary>
+        MacOSKqueue
     }
 
     internal static class LoopWaiterFactory
     {
         /// <summary>
-        /// The waiter for this OS: Windows always has one; Linux has epoll while event_loop_linux is on; elsewhere none yet.
+        /// The waiter for this OS: Windows always has one; Linux has epoll while event_loop_linux is on; macOS has the kqueue
+        /// waiter while event_loop_macos is on; elsewhere none yet.
         /// </summary>
-        public static LoopWaiterKind Choose(bool isWindows, bool isLinux, bool linuxSwitch)
+        public static LoopWaiterKind Choose(bool isWindows, bool isLinux, bool isMacOS, bool linuxSwitch, bool macSwitch)
         {
             if (isWindows)
             {
@@ -31,6 +34,11 @@ namespace ClassicUO.Loop
             if (isLinux && linuxSwitch)
             {
                 return LoopWaiterKind.LinuxEpoll;
+            }
+
+            if (isMacOS && macSwitch)
+            {
+                return LoopWaiterKind.MacOSKqueue;
             }
 
             return LoopWaiterKind.None;
@@ -48,6 +56,7 @@ namespace ClassicUO.Loop
                 {
                     LoopWaiterKind.Win32 => new Win32LoopWaiter(),
                     LoopWaiterKind.LinuxEpoll => new LinuxEpollLoopWaiter(window),
+                    LoopWaiterKind.MacOSKqueue => new MacLoopWaiter(),
                     _ => null
                 };
             }
@@ -60,6 +69,7 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>Why the legacy loop runs when there is no waiter (for the log).</summary>
-        public static string NoWaiterReason(bool isLinux) => isLinux ? "event_loop_linux is off" : "no event loop on this OS";
+        public static string NoWaiterReason(bool isLinux, bool isMacOS)
+            => isLinux ? "event_loop_linux is off" : isMacOS ? "event_loop_macos is off" : "no event loop on this OS";
     }
 }

@@ -40,7 +40,7 @@ namespace ClassicUO.UnitTests.Loop
         [InlineData(false, false, false, (int)LoopWaiterKind.None)]
         public void Factory_Chooses_The_Waiter_Per_OS_And_Switch(bool windows, bool linux, bool linuxSwitch, int expected)
         {
-            LoopWaiterFactory.Choose(windows, linux, linuxSwitch).Should().Be((LoopWaiterKind)expected);
+            LoopWaiterFactory.Choose(windows, linux, false, linuxSwitch, false).Should().Be((LoopWaiterKind)expected);
         }
 
         [Fact]

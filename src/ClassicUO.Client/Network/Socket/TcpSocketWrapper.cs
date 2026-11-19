@@ -126,13 +126,13 @@ sealed class TcpSocketWrapper : SocketWrapper
         return true;
     }
 
-    // event_loop_linux: epoll watches the fd as it is; the reads already go through Poll and a non-blocking Receive, and
-    // sends stay blocking, so the socket's mode is left alone.
+    // Linux epoll and the macOS kqueue watch the fd as it is; the reads already go through Poll and a non-blocking Receive,
+    // and sends stay blocking, so the socket's mode is left alone.
     public override bool TryGetPollFd(out int fd)
     {
         fd = -1;
 
-        if (!OperatingSystem.IsLinux())
+        if (OperatingSystem.IsWindows())
         {
             return false;
         }
@@ -146,6 +146,7 @@ sealed class TcpSocketWrapper : SocketWrapper
 
         try
         {
+            // on Unix the handle is the file descriptor
             fd = (int)client.Handle;
         }
         catch (ObjectDisposedException)

@@ -107,6 +107,23 @@ namespace ClassicUO
         private LoopWaiter _waiter;
         private LoopWaiterKind _waiterKind;
         private bool _waiterTried;
+
+        private static bool EventLoopMacOS
+        {
+            get
+            {
+#if CUO_DEVTOOLS
+                string env = Environment.GetEnvironmentVariable("CUO_EVENT_LOOP_MACOS");
+
+                if (env == "1" || env == "0")
+                {
+                    return env == "1";
+                }
+#endif
+                return Settings.GlobalSettings.EventLoopMacOS;
+            }
+        }
+
         private readonly LateWakeMonitor _lateWake = new LateWakeMonitor();
         private LoopMode _tickMode, _loggedMode = (LoopMode)(-1);
         private double _tickInterval;
@@ -119,7 +136,8 @@ namespace ClassicUO
             if (!_waiterTried)
             {
                 _waiterTried = true;
-                _waiterKind = LoopWaiterFactory.Choose(OperatingSystem.IsWindows(), OperatingSystem.IsLinux(), Settings.GlobalSettings.EventLoopLinux);
+                _waiterKind = LoopWaiterFactory.Choose(OperatingSystem.IsWindows(), OperatingSystem.IsLinux(), OperatingSystem.IsMacOS(),
+                    Settings.GlobalSettings.EventLoopLinux, EventLoopMacOS);
                 _waiter = LoopWaiterFactory.Create(_waiterKind, Window.Handle);
 
                 if (_waiter is { Ready: true })
@@ -141,7 +159,7 @@ namespace ClassicUO
             if (mode != _loggedMode)
             {
                 _loggedMode = mode;
-                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : _waiterKind == LoopWaiterKind.None ? $" ({LoopWaiterFactory.NoWaiterReason(OperatingSystem.IsLinux())})" : " (event loop not available)")}");
+                Log.Info($"main loop: {mode}{(mode == LoopMode.Event ? $" ({_waiter.Name})" : _waiterKind == LoopWaiterKind.None ? $" ({LoopWaiterFactory.NoWaiterReason(OperatingSystem.IsLinux(), OperatingSystem.IsMacOS())})" : " (event loop not available)")}");
                 LoopStats.Mode = mode == LoopMode.Event ? "event" : "legacy";
             }
 
