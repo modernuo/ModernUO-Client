@@ -729,6 +729,8 @@ namespace ClassicUO
 
         private int ParseSlice(ArraySegment<byte> data) => PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
 
+        private uint _poolTrimTick;
+
         protected override void Update(GameTime gameTime)
         {
 #if CUO_DEVTOOLS
@@ -761,6 +763,14 @@ namespace ClassicUO
 
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // the large buffer pool keeps free buffers up to its budget; ones idle for 30 s go back to the GC
+            if (Time.Ticks - _poolTrimTick >= 5000)
+            {
+                _poolTrimTick = Time.Ticks;
+                Uo.Buffers.LargeBufferPool.TrimIdle(30_000);
+            }
+
             VisualDue.BeginUpdate();
             VisualDue.Tracking = LoopTiming.TracksVisualDue(_tickMode, _displayCapActive);
             Time.Frame++;

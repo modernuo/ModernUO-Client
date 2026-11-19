@@ -771,6 +771,10 @@ namespace ClassicUO
                 Log.Info(string.Format(inv, "[gcs] pools +{0:0}s: chunks created {1}, pooled {2}; lands new {3}, pooled {4}; statics new {5}, pooled {6}; statics mesh capacity (sprites:chunks){7}",
                     t, Game.Map.Chunk.TotalCreated, world?.ChunkPool.Count ?? 0, Game.GameObjects.Land.TotalNew, recycler?.PooledLands ?? 0,
                     Game.GameObjects.Static.TotalNew, recycler?.PooledStatics ?? 0, Game.Map.Chunk.DescribeMeshCapacities(world, world?.Map)));
+                var maps = Client.Game?.UO?.FileManager?.Maps;
+                Log.Info(string.Format(inv, "[bufpools] +{0:0}s: {1} | renderedText pooled {2}/{3} miss {4} drop {5} | region prefetch dropped {6} | bake trimmed {7}",
+                    t, Uo.Buffers.PoolStats.Format(), Game.RenderedText.PoolCount, Game.RenderedText.PoolMax,
+                    Game.RenderedText.PoolMisses, Game.RenderedText.PoolDropped, maps?.PendingDropped ?? 0, Uo.Render.BakeJob.TrimmedJobs));
                 _sessionAfterReport = true;
             }
 
