@@ -10,9 +10,10 @@ using Microsoft.Xna.Framework.Graphics;
 namespace ClassicUO.Game.UI.Gumps
 {
     /// <summary>
-    /// A world map image: RGBA8 pixels (R first, rows top to bottom) in native memory owned by this object and freed by
-    /// <see cref="Dispose"/>: decoded by stb_image (<see cref="DecodePng"/>) or adopted from the build
-    /// (<see cref="AdoptNativeMemory"/>). The load task makes it and the game thread uploads and disposes it
+    /// A world map image in native memory owned by this object and freed by <see cref="Dispose"/>, rows top to bottom:
+    /// RGBA8 (<see cref="SurfaceFormat.Color"/>, R first) decoded by stb_image (<see cref="DecodePng"/>) or adopted from
+    /// the build (<see cref="AdoptNativeMemory"/>), or 16-bit <see cref="SurfaceFormat.Bgra5551"/> made from either by
+    /// <see cref="ConvertToBgra5551"/>. The load task makes it and the game thread uploads and disposes it
     /// (<see cref="WorldMapGump.MapImageHandover{T}"/>).
     /// </summary>
     internal sealed unsafe class WorldMapImage : IDisposable
@@ -20,13 +21,81 @@ namespace ClassicUO.Game.UI.Gumps
         private IntPtr _pixels;
         private readonly bool _nativeMemory;
 
-        private WorldMapImage(int width, int height, IntPtr pixels, bool nativeMemory)
+        private WorldMapImage(int width, int height, IntPtr pixels, bool nativeMemory, SurfaceFormat format = SurfaceFormat.Color)
         {
             Width = width;
             Height = height;
             _pixels = pixels;
             _nativeMemory = nativeMemory;
+            Format = format;
         }
+
+        /// <summary>
+        /// worldmap-audit P-8 (owner 2026-11-19): the facet texture is Bgra5551 where the device samples it (half the
+        /// memory: 58.8 MB instead of 117.5 MB on Felucca). Set once at device creation (GameController.LoadContent); false
+        /// keeps RGBA8. The map's radar colours are 5 bits per channel, so only height-shaded pixels change, by at most
+        /// 4/255 per channel (measure/worldmap-audit/p8).
+        /// </summary>
+        public static volatile bool Use16Bit;
+
+        /// <summary>
+        /// Makes the 16-bit copy of an RGBA8 image (any thread) and disposes <paramref name="source"/> on every path: the
+        /// caller hands its ownership over and owns only the result.
+        /// </summary>
+        public static WorldMapImage ConvertToBgra5551(WorldMapImage source)
+        {
+            using (source)
+            {
+                if (source.Format != SurfaceFormat.Color)
+                {
+                    throw new InvalidOperationException($"not an RGBA8 image: {source.Format}");
+                }
+
+                int count = source.Width * source.Height;
+                void* dst = NativeMemory.Alloc((nuint)count, sizeof(ushort));
+
+                try
+                {
+                    Rgba8ToBgra5551(source.Span, new Span<ushort>(dst, count));
+
+                    return new WorldMapImage(source.Width, source.Height, (IntPtr)dst, nativeMemory: true, SurfaceFormat.Bgra5551);
+                }
+                catch
+                {
+                    NativeMemory.Free(dst);
+
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// RGBA8 to Bgra5551 (B in bits 0-4, G 5-9, R 10-14, A bit 15: DXGI B5G5R5A1, SDL_GPU B5G5R5A1, GL BGRA +
+        /// UNSIGNED_SHORT_1_5_5_5_REV): nearest 5-bit level per channel ((v * 31 + 127) / 255, exact for the radar colours'
+        /// 5-bit levels), alpha set from 128 up (the map image's alpha is 0 or 255).
+        /// </summary>
+        public static void Rgba8ToBgra5551(ReadOnlySpan<byte> rgba, Span<ushort> dst)
+        {
+            if (rgba.Length != dst.Length * 4)
+            {
+                throw new ArgumentException("size mismatch");
+            }
+
+            for (int i = 0, j = 0; i < dst.Length; i++, j += 4)
+            {
+                int r = (rgba[j] * 31 + 127) / 255;
+                int g = (rgba[j + 1] * 31 + 127) / 255;
+                int b = (rgba[j + 2] * 31 + 127) / 255;
+                int a = rgba[j + 3] >= 128 ? 0x8000 : 0;
+
+                dst[i] = (ushort)(a | (r << 10) | (g << 5) | b);
+            }
+        }
+
+        /// <summary>RGBA8 (<see cref="SurfaceFormat.Color"/>) or <see cref="SurfaceFormat.Bgra5551"/>.</summary>
+        public SurfaceFormat Format { get; }
+
+        public int BytesPerPixel => Format == SurfaceFormat.Bgra5551 ? 2 : 4;
 
         /// <summary>
         /// Takes ownership of a <see cref="NativeMemory"/> buffer of width*height RGBA pixels (the freshly built map, which
@@ -39,9 +108,10 @@ namespace ClassicUO.Game.UI.Gumps
 
         public int Height { get; }
 
-        public int ByteLength => Width * Height * 4;
+        /// <summary>The pixel bytes, which is also the texture's size made from it (worldmap.texture_bytes).</summary>
+        public int ByteLength => Width * Height * BytesPerPixel;
 
-        /// <summary>The RGBA pixels; zero after <see cref="Dispose"/>.</summary>
+        /// <summary>The pixels; zero after <see cref="Dispose"/>.</summary>
         public IntPtr Pixels => _pixels;
 
         public ReadOnlySpan<byte> Span => _pixels == IntPtr.Zero ? default : new ReadOnlySpan<byte>((void*)_pixels, ByteLength);

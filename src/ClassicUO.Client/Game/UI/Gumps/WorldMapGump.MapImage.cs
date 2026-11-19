@@ -379,6 +379,14 @@ namespace ClassicUO.Game.UI.Gumps
                         image = DecodeMapImage(fileMapPath);
                     }
 
+                    if (image != null && WorldMapImage.Use16Bit)
+                    {
+                        // P-8: converted here, off the game thread; the RGBA image is disposed by the conversion
+                        WorldMapImage rgba = image;
+                        image = null;
+                        image = WorldMapImage.ConvertToBgra5551(rgba);
+                    }
+
                     if (image != null)
                     {
                         // logged before Post: once posted, Update may upload it before this task logs again
@@ -441,7 +449,7 @@ namespace ClassicUO.Game.UI.Gumps
         /// <summary>Creates the map texture (game thread); called by <see cref="WorldMapTextureOwner{TTexture}.Adopt"/>,
         /// which stores it before anything else runs.</summary>
         private static Texture2D AllocateMapTexture(WorldMapImage image) =>
-            new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height);
+            new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height, false, image.Format);
 
         /// <summary>Uploads the pixels into the owned texture (game thread); the owner disposes the texture if this throws.</summary>
         private static void FillMapTexture(Texture2D texture, WorldMapImage image)

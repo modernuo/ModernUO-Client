@@ -300,11 +300,12 @@ namespace ClassicUO.Game.UI.Gumps
             if (image != null)
             {
                 int width = image.Width, height = image.Height;
+                SurfaceFormat format = image.Format;
 
                 // the owner has settled (texture kept, or disposed on failure) before anything is logged
                 if (_mapTexture.Adopt(image, _allocateMapTexture, _fillMapTexture, out Exception error))
                 {
-                    Log.Info($"[worldmap] texture {width}x{height} uploaded");
+                    Log.Info($"[worldmap] texture {width}x{height} {format} uploaded (gump {ScreenCoordinateX},{ScreenCoordinateY} {Width}x{Height})");
                     GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
                 }
                 else

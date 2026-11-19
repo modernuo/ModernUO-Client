@@ -501,5 +501,56 @@ namespace ClassicUO.UnitTests.Game
                 Directory.Delete(dir, true);
             }
         }
+
+        /// <summary>
+        /// worldmap-audit P-8: the facet texture is Bgra5551. Every 5-bit radar level (HuesHelper's table) encodes exactly;
+        /// any other value lands on the nearest level (|error| after the GPU's v*255/31 expansion at most 4), the same
+        /// rounding the p8 evidence used; alpha keeps 0 and 255.
+        /// </summary>
+        [Fact]
+        public void Rgba8_To_Bgra5551_Is_Exact_For_Radar_Levels_And_Nearest_Otherwise()
+        {
+            byte[] radar = { 0x00, 0x08, 0x10, 0x18, 0x20, 0x29, 0x31, 0x39, 0x41, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x73, 0x7B,
+                             0x83, 0x8B, 0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBD, 0xC5, 0xCD, 0xD5, 0xDE, 0xE6, 0xEE, 0xF6, 0xFF };
+
+            for (int level = 0; level < 32; level++)
+            {
+                byte v = radar[level];
+                var dst = new ushort[1];
+                WorldMapImage.Rgba8ToBgra5551(new byte[] { v, v, v, 0xFF }, dst);
+                dst[0].Should().Be((ushort)(0x8000 | (level << 10) | (level << 5) | level));
+            }
+
+            for (int v = 0; v < 256; v++)
+            {
+                var dst = new ushort[1];
+                WorldMapImage.Rgba8ToBgra5551(new byte[] { (byte)v, 0, (byte)(255 - v), 0 }, dst);
+                int r = (dst[0] >> 10) & 31, b = dst[0] & 31;
+                r.Should().Be((int)Math.Round(v * 31 / 255.0, MidpointRounding.ToEven));
+                Math.Abs(Math.Round(r * 255 / 31.0) - v).Should().BeLessThanOrEqualTo(4);
+                Math.Abs(Math.Round(b * 255 / 31.0) - (255 - v)).Should().BeLessThanOrEqualTo(4);
+                (dst[0] & 0x8000).Should().Be(0);
+            }
+        }
+
+        [Fact]
+        public unsafe void ConvertToBgra5551_Halves_The_Image_And_Disposes_The_Source()
+        {
+            const int W = 33, H = 17;
+            byte[] rgba = MapLikePixels(W, H);
+            void* buffer = NativeMemory.Alloc((nuint)rgba.Length);
+            rgba.CopyTo(new Span<byte>(buffer, rgba.Length));
+            WorldMapImage source = WorldMapImage.AdoptNativeMemory(W, H, buffer);
+
+            using WorldMapImage image = WorldMapImage.ConvertToBgra5551(source);
+
+            source.Pixels.Should().Be(IntPtr.Zero, "the conversion consumes its source");
+            image.Format.Should().Be(Microsoft.Xna.Framework.Graphics.SurfaceFormat.Bgra5551);
+            image.ByteLength.Should().Be(W * H * 2);
+
+            var expected = new ushort[W * H];
+            WorldMapImage.Rgba8ToBgra5551(rgba, expected);
+            image.Span.SequenceEqual(MemoryMarshal.AsBytes(expected.AsSpan())).Should().BeTrue();
+        }
     }
 }
