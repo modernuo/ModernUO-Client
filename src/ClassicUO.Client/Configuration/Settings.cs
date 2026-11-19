@@ -162,6 +162,15 @@ namespace ClassicUO.Configuration
         // macros, audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.
         [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
 
+        // loop-idle: the event loop gathers the non-visual work Update polls (LoopDue: use queue, delayed click, music refill,
+        // driver waits, the ping; input held, a macro, pending decodes and OPL requests keep the cadence above) and, when none
+        // of it polls, waits until the next known deadline, at most event_loop_idle_max_wait_ms, instead of at most
+        // event_loop_max_wait_ms. Out of game the cadence above stays. CUO_LOOP_IDLE_CHECK reports deadlines served late. Off:
+        // unchanged.
+        [JsonPropertyName("event_loop_idle_wait")] public bool EventLoopIdleWait { get; set; }
+
+        [JsonPropertyName("event_loop_idle_max_wait_ms")] public int EventLoopIdleMaxWaitMs { get; set; } = 250;
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

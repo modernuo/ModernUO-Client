@@ -638,6 +638,9 @@ namespace ClassicUO.Network
 
             var id = message[0];
             var dropped = false;
+#if CUO_DEVTOOLS
+            if (Loop.LoopIdleCheck.On) Loop.LoopIdleCheck.Send(id);
+#endif
 
             // Encrypt and enqueue as one step (see _sendLock): with two senders (the main thread and another thread) the cipher
             // would otherwise advance in one order and the bytes be queued in another, and the server could not decrypt.

@@ -399,6 +399,11 @@ namespace ClassicUO.Network
             Handler.Add(0xFD, LoginDelay);
         }
 
+        /// <summary>event_loop_idle_wait: OPL requests wait to be sent (SendMegaClilocRequests sends a share per Update).</summary>
+        internal static bool OplPending(World world)
+            => world.ClientFeatures.TooltipsEnabled
+                && (OplRequestQueue.Budget > 0 ? (Handler._oplQueue?.PendingCount ?? 0) != 0 : Handler._oplList.PendingCount != 0);
+
         public static void SendMegaClilocRequests(World world)
         {
             s_oplFramePackets = s_oplFrameSerials = 0;
