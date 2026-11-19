@@ -828,6 +828,13 @@ namespace ClassicUO.Game.UI.Gumps
             int sx = marker.X - _center.X;
             int sy = marker.Y - _center.Y;
 
+            // P-4: most markers of a large set are far off screen; skip them before the projection (the test is conservative:
+            // it only drops markers the bounds test below would drop too)
+            if (MarkerOutsideView(sx, sy, zoom, width, height, Width - 8, Height - 8))
+            {
+                return false;
+            }
+
             Point rot = RotatePoint
             (
                 sx,
@@ -840,10 +847,9 @@ namespace ClassicUO.Game.UI.Gumps
             rot.X += x + width;
             rot.Y += y + height;
 
-            const int DOT_SIZE = 4;
-            const int DOT_SIZE_HALF = DOT_SIZE >> 1;
+            const int DOT_SIZE_HALF = MARKER_DOT_SIZE >> 1;
 
-            if (rot.X < x || rot.X > x + Width - 8 - DOT_SIZE || rot.Y < y || rot.Y > y + Height - 8 - DOT_SIZE)
+            if (!MarkerInView(rot.X, rot.Y, x, y, Width - 8, Height - 8))
             {
                 return false;
             }
@@ -860,15 +866,15 @@ namespace ClassicUO.Game.UI.Gumps
                     (
                         rot.X - DOT_SIZE_HALF,
                         rot.Y - DOT_SIZE_HALF,
-                        DOT_SIZE,
-                        DOT_SIZE
+                        MARKER_DOT_SIZE,
+                        MARKER_DOT_SIZE
                     ),
                     hueVector,
                     layerDepth
                 );
 
-                if (Mouse.Position.X >= rot.X - DOT_SIZE && Mouse.Position.X <= rot.X + DOT_SIZE_HALF &&
-                    Mouse.Position.Y >= rot.Y - DOT_SIZE && Mouse.Position.Y <= rot.Y + DOT_SIZE_HALF)
+                if (Mouse.Position.X >= rot.X - MARKER_DOT_SIZE && Mouse.Position.X <= rot.X + DOT_SIZE_HALF &&
+                    Mouse.Position.Y >= rot.Y - MARKER_DOT_SIZE && Mouse.Position.Y <= rot.Y + DOT_SIZE_HALF)
                 {
                     drawSingleName = true;
                 }
@@ -897,6 +903,31 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             return drawSingleName;
+        }
+
+        private const int MARKER_DOT_SIZE = 4;
+
+        /// <summary>The marker bounds test (gump coordinates of the projected marker against the map area less the dot size).</summary>
+        internal static bool MarkerInView(int rotX, int rotY, int x, int y, int innerWidth, int innerHeight) =>
+            !(rotX < x || rotX > x + innerWidth - MARKER_DOT_SIZE || rotY < y || rotY > y + innerHeight - MARKER_DOT_SIZE);
+
+        /// <summary>
+        /// True only for a marker <see cref="MarkerInView"/> rejects whatever the rotation: the projected offset from the map
+        /// centre (halfWidth, halfHeight) must lie within M = the largest of those bounds per axis, so its length is at most
+        /// M*sqrt(2) before rounding (+0.71) and the unrotated, truncated offset (|sx|*zoom - 1) is at most 1.5*M + 2. One
+        /// more pixel covers float rounding of sx*zoom.
+        /// </summary>
+        internal static bool MarkerOutsideView(int sx, int sy, float zoom, int halfWidth, int halfHeight, int innerWidth, int innerHeight)
+        {
+            int m = Math.Max
+            (
+                Math.Max(halfWidth, innerWidth - MARKER_DOT_SIZE - halfWidth),
+                Math.Max(halfHeight, innerHeight - MARKER_DOT_SIZE - halfHeight)
+            );
+
+            double limit = 1.5 * m + 3;
+
+            return Math.Abs((double) sx) * zoom > limit || Math.Abs((double) sy) * zoom > limit;
         }
 
         private void DrawMarkerString(UltimaBatcher2D batcher, WMapMarker marker, int x, int y, int width, int height, float layerDepth)

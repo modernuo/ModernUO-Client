@@ -87,5 +87,54 @@ namespace ClassicUO.UnitTests.Game
             a.Should().BeFalse();
             b.Should().BeFalse();
         }
+
+        /// <summary>
+        /// worldmap-audit P-4: DrawMarker drops far markers before projecting them. The cull must never drop a marker the
+        /// old bounds test (RotatePoint, then MarkerInView) would draw, flipped or not, at every zoom and gump size; and it
+        /// must actually drop most far markers.
+        /// </summary>
+        [Fact]
+        public void Marker_Cull_Never_Drops_A_Marker_The_Bounds_Test_Keeps()
+        {
+            var rng = new Random(4321);
+            int culled = 0, total = 0;
+
+            foreach (float zoom in new[] { 0.125f, 0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 4f, 6f, 8f })
+            {
+                foreach (int width in new[] { 108, 200, 401, 1000, 2560 })
+                {
+                    foreach (int height in new[] { 108, 333, 768, 1440 })
+                    {
+                        int innerWidth = width - 8, innerHeight = height - 8;
+                        int halfWidth = innerWidth >> 1, halfHeight = innerHeight >> 1;
+                        const int gX = 37, gY = 59;
+                        int reach = (int) (Math.Max(width, height) * 2 / zoom) + 4;
+
+                        for (int i = 0; i < 4000; i++)
+                        {
+                            int sx = rng.Next(-reach, reach + 1), sy = rng.Next(-reach, reach + 1);
+                            bool cull = WorldMapGump.MarkerOutsideView(sx, sy, zoom, halfWidth, halfHeight, innerWidth, innerHeight);
+                            total++;
+
+                            if (!cull)
+                            {
+                                continue;
+                            }
+
+                            culled++;
+
+                            foreach (float angle in new[] { 45f, 0f })
+                            {
+                                Point rot = WorldMapGump.RotatePoint(sx, sy, zoom, 1, angle);
+                                bool inView = WorldMapGump.MarkerInView(rot.X + gX + halfWidth, rot.Y + gY + halfHeight, gX, gY, innerWidth, innerHeight);
+                                inView.Should().BeFalse($"sx {sx} sy {sy} zoom {zoom} size {width}x{height} angle {angle}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            culled.Should().BeGreaterThan(total / 3, "far markers are dropped before the projection");
+        }
     }
 }
