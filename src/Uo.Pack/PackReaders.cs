@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Uo.Buffers;
 
 namespace Uo.Pack;
 
@@ -101,14 +102,14 @@ public static class AtlasPage
             case FileKind.ChunkedBrotli:
             {
                 int hs = StructIo.SizeOf<PageHeader>();
-                var logical = System.Buffers.ArrayPool<byte>.Shared.Rent(hs + chain.Length);
+                var logical = BufferPool.Rent<byte>(hs + chain.Length);
                 try
                 {
                     System.Runtime.InteropServices.MemoryMarshal.Write(logical, in h);
                     chain.CopyTo(logical.AsSpan(hs));
                     ChunkedBrotli.Write(fs, logical.AsSpan(0, hs + chain.Length), chunkBytes);
                 }
-                finally { System.Buffers.ArrayPool<byte>.Shared.Return(logical); }
+                finally { BufferPool.Return(logical); }
                 break;
             }
             default: throw new ArgumentOutOfRangeException(nameof(kind));
@@ -319,17 +320,18 @@ public static class RegionFile
 
     /// <summary>
     /// Writes the logical (Kind=0 layout, header included) bytes of a region file into <paramref name="dest"/> and returns
-    /// their length. <paramref name="dest"/> is reused when big enough, else replaced by a larger array (null = allocate):
-    /// pass a pooled buffer to load regions without per-load allocations or intermediate copies.
+    /// their length. <paramref name="dest"/> is reused when big enough, else replaced by a larger array (null = allocate).
+    /// With <paramref name="pooled"/>, a larger array is rented with BufferPool.RentShared and a replaced one returned
+    /// with ReturnShared (dest must then be null or such a rent), so the caller returns the result with ReturnShared.
     /// </summary>
-    public static int DecompressInto(ReadOnlySpan<byte> fileBytes, ref byte[] dest)
+    public static int DecompressInto(ReadOnlySpan<byte> fileBytes, ref byte[] dest, bool pooled = false)
     {
         int hs = StructIo.SizeOf<FileHeader>();
         ushort kind = ReadKind(fileBytes);
         int total;
         if (kind == FileKind.Raw)
         {
-            Ensure(ref dest, fileBytes.Length, 0);
+            Ensure(ref dest, fileBytes.Length, 0, pooled);
             fileBytes.CopyTo(dest);
             return fileBytes.Length;
         }
@@ -338,14 +340,14 @@ public static class RegionFile
             var body = fileBytes.Slice(hs);
             var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(body);
             total = checked(hs + (int)ch.LogicalBytes);
-            Ensure(ref dest, total, 0);
+            Ensure(ref dest, total, 0, pooled);
             fileBytes.Slice(0, hs).CopyTo(dest);
             ChunkedBrotli.Decode(body, dest.AsSpan(hs, total - hs));
         }
         else if (kind == FileKind.Brotli)
         {
             // the logical file keeps its header so block offsets stay file-relative; the size is not stored, so grow as needed
-            Ensure(ref dest, Math.Max(fileBytes.Length * 8, 1 << 16), 0);
+            Ensure(ref dest, Math.Max(fileBytes.Length * 8, 1 << 16), 0, pooled);
             fileBytes.Slice(0, hs).CopyTo(dest);
             var src = fileBytes.Slice(hs);
             total = hs;
@@ -356,7 +358,7 @@ public static class RegionFile
                 src = src.Slice(consumed);
                 total += written;
                 if (status == System.Buffers.OperationStatus.Done) break;
-                if (status == System.Buffers.OperationStatus.DestinationTooSmall) { Ensure(ref dest, dest.Length + dest.Length / 2, total); continue; }
+                if (status == System.Buffers.OperationStatus.DestinationTooSmall) { Ensure(ref dest, dest.Length + dest.Length / 2, total, pooled); continue; }
                 throw new InvalidDataException($"corrupt region (brotli {status})");
             }
         }
@@ -365,11 +367,12 @@ public static class RegionFile
         return total;
     }
 
-    static void Ensure(ref byte[] buffer, int size, int keep)
+    static void Ensure(ref byte[] buffer, int size, int keep, bool pooled)
     {
         if (buffer != null && buffer.Length >= size) return;
-        var bigger = new byte[size];
+        var bigger = pooled ? BufferPool.RentShared<byte>(size) : new byte[size];
         if (buffer != null && keep > 0) buffer.AsSpan(0, keep).CopyTo(bigger);
+        if (pooled && buffer != null) BufferPool.ReturnShared(buffer);
         buffer = bigger;
     }
 

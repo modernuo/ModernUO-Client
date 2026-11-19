@@ -1336,6 +1336,8 @@ namespace ClassicUO.Game.UI.Gumps
                                         }
                                     }
                                 }
+
+                                maps.ReleaseRegion(region);
                             }
                         }
 
