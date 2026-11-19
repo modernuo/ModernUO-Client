@@ -7874,3 +7874,41 @@ and ClipEnd still runs. Left out of the scenes. Builds in both variants; 4122 un
 Base 6ea53b00b. Opening CounterBarGump crashed with InvalidOperationException (empty stack) from `UltimaBatcher2D.ClipEnd`. Cause: the gump adds a begin `ScissorControl` sized 0x0 until `OnResize`, so `ClipBegin` returns false (also false when nothing is left after clipping) and pushes no scissor, but the end `ScissorControl` still called `ClipEnd`. Pre-existing: the pre-alloc-gump-2 lambda had the same pairing (d69b24b04 did not change it).
 Fix: `ClipPairTracker` counts begins that pushed nothing; the matching end skips `ClipEnd`. Other ClipBegin users (Combobox, HtmlControl, ResizePic, ScrollArea, StbTextBox, LoginGump, MenuGump, ModernBookGump, OptionsGump, ResizableJournal, WorldMapGump) already call ClipEnd only inside `if (ClipBegin)`; HouseCustomizationGump uses ScissorControl and is covered by the same fix. Plain bug fix, no switch.
 Verified (measure/counterbar-crash, bench-000912): `open counter` crashes base on GPU and Legacy, runs to quit on the fix and the counter bar draws (shot read). Unit tests in `ClipPairTrackerTests`; both build variants.
+
+## 2026-11-19 vsync-mailbox (bg/vsync-mailbox): VSync on = mailbox where supported; VSync default on; FPS counter
+
+Base 2ff7d0fb2. Three code commits, each revertible alone:
+- bf171ddfb `vsync_mailbox` (settings.json, default off; owner flips it after quiet timing). The client sets FNA3D's hint
+  `FNA3D_VULKAN_FORCE_MAILBOX_VSYNC` from the switch before the device is created (GameController ctor) and on a runtime change
+  (driver `vsyncmailbox on|off`, then `GraphicsDevice.Reset`). FNA3D reads the hint in `XNAToSDL_PresentMode` at device creation
+  and at every `ResetBackbuffer` (ApplyChanges: vsync toggle, resize), so a runtime VSync toggle gets the right mode. An
+  environment variable of the same name still wins over the switch (SDL hint priority).
+  Which combos get mailbox: FNA3D's SDL_GPU driver only, interval One, window supports MAILBOX. SDL_GPU on Vulkan: when the
+  driver lists VK_PRESENT_MODE_MAILBOX_KHR for the surface (Windows NVIDIA/AMD/Intel usually yes; Linux Mesa usually yes, depends
+  on WSI/compositor); D3D12 backend: always (syncInterval 0 flip-discard without ALLOW_TEARING; not reachable here, our SDL_GPU is
+  Vulkan only); Metal: never (SDL reports VSYNC/IMMEDIATE only) -> normal vsync. Gpu world and forced Legacy on SDL_GPU both
+  present through FNA3D's swapchain, so both get it. Legacy on FNA3D's D3D11 or OpenGL driver (Auto fallback, force_driver):
+  no mailbox, normal vsync.
+  The mode in force: SDL has no getter, so `PresentModeRule.Choose` repeats FNA3D's choice on the same inputs (hint read back
+  with SDL_GetHintBoolean, SDL_WindowSupportsGPUPresentMode) after device creation and every DeviceReset; the diag display line
+  reports `present=Mailbox|Vsync|Immediate` and `vsync_mailbox=` (replaces the old requested/inferred pair); driver `vsync` and
+  `vsyncmailbox` log the mode.
+  Loop: `DisplayRateSchedule.Enabled(on, fps, vsync, mailbox, inactive, vsyncPresentOnChange)`: mailbox runs the display-rate
+  schedule and present on change as vsync off (event loop waits; legacy loop spins on skipped frames as 2ff7d0fb2), also with
+  present_at_display_rate off (owner: no uncapped drawing with mailbox). An fps cap and an inactive window keep precedence.
+  vsync_present_on_change is unaffected (it only matters for normal vsync now). `CUO_VSYNC_PRESENT_CHECK` adds `mailbox=` and
+  resets its window on a mode change; with mailbox it is engaged with the switch off, and its present_block_ms shows Present no
+  longer blocking.
+  Options: the one VSync checkbox stays; while mailbox is in force it reads "VSync (True Triple Buffering)" (owner wording),
+  otherwise plain "VSync". "mailbox" appears only in logs and diagnostics.
+- bcb582b92 VSync on for a new settings.json (owner); an existing file keeps its saved value (Save writes every key). Bench
+  drivers pass `-vsync false`.
+- 1e600f58e FPS counter (owner): the small debug counter shows `FpsDisplay.Shown`: the display rate while the display-rate cap is
+  in force (an fps cap below it: the cap), else the drawn rate. The expanded overlay shows it plus drawn frames/s, the possible
+  rate 1000 / last frame build ms and the build ms (Draw start to Present). `CurrentRefreshRate` stays the measurement.
+Tests: DisplayRateTests (mode x driver x switch, schedule under mailbox, options text, settings defaults), VsyncPresentCheckTests
+(mailbox window), FpsDisplayTests. 4191 pass / 6 skipped; both build variants.
+Verification jobs (counts only, machine busy): gate bench-000915, counts-g bench-000916, counts-l bench-000917, alloc base vs
+branch bench-000918 (measure/vsync-mailbox). Results: pending at the time of writing (see the agent report / handoff).
+Tearing cannot be measured by the bench. Parked: measure/vsync-mailbox/job-timing-{g,l}-PARKED.sh (CPU ms/s, ping RTT: vsync
+vs mbox vs anim, three rounds, quiet/busy/walk). Memory: none. Cost: two Stopwatch reads per frame for the build time.
