@@ -19,7 +19,8 @@ namespace ClassicUO.UnitTests.Game
             ClipPairTracker.Reset();
             ClipPairTracker.Begin(false);
             Assert.False(ClipPairTracker.End());
-            Assert.True(ClipPairTracker.End());
+            // an end with no open begin must not pop
+            Assert.False(ClipPairTracker.End());
         }
 
         [Fact]
@@ -30,6 +31,16 @@ namespace ClassicUO.UnitTests.Game
             ClipPairTracker.Begin(false);
             Assert.False(ClipPairTracker.End());
             Assert.True(ClipPairTracker.End());
+        }
+
+        [Fact]
+        public void NestedPushedInsideFailed()
+        {
+            ClipPairTracker.Reset();
+            ClipPairTracker.Begin(false);
+            ClipPairTracker.Begin(true);
+            Assert.True(ClipPairTracker.End());
+            Assert.False(ClipPairTracker.End());
         }
     }
 }

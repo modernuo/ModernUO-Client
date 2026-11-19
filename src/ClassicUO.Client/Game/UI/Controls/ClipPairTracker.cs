@@ -8,29 +8,34 @@ namespace ClassicUO.Game.UI.Controls
     /// </summary>
     internal static class ClipPairTracker
     {
-        private static int _skipped;
+        // one entry per open begin, innermost last: whether its ClipBegin pushed a scissor. Nested pairs keep their own
+        // result, so a pushed inner pair inside a skipped outer one still pops its scissor. Deeper than the array: assume pushed.
+        private static readonly bool[] _pushed = new bool[32];
+        private static int _depth;
 
         public static void Begin(bool pushed)
         {
-            if (!pushed)
+            if (_depth < _pushed.Length)
             {
-                _skipped++;
+                _pushed[_depth] = pushed;
             }
+
+            _depth++;
         }
 
-        /// <summary>True when the end control should call ClipEnd.</summary>
+        /// <summary>True when the end control should call ClipEnd (false for a skipped begin, or an end with no open begin).</summary>
         public static bool End()
         {
-            if (_skipped > 0)
+            if (_depth == 0)
             {
-                _skipped--;
-
                 return false;
             }
 
-            return true;
+            _depth--;
+
+            return _depth >= _pushed.Length || _pushed[_depth];
         }
 
-        public static void Reset() => _skipped = 0;
+        public static void Reset() => _depth = 0;
     }
 }
