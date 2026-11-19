@@ -228,6 +228,7 @@ namespace ClassicUO.Game.UI.Gumps
             _showMarkers = ProfileManager.CurrentProfile.WorldMapShowMarkers;
             _showMultis = ProfileManager.CurrentProfile.WorldMapShowMultis;
             _showMarkerNames = ProfileManager.CurrentProfile.WorldMapShowMarkersNames;
+            _showMarkerIcons = ProfileManager.CurrentProfile.WorldMapShowMarkerIcons;
 
             _hiddenMarkerFiles = string.IsNullOrEmpty(ProfileManager.CurrentProfile.WorldMapHiddenMarkerFiles) ? new List<string>() : ProfileManager.CurrentProfile.WorldMapHiddenMarkerFiles.Split(',').ToList();
             _hiddenZoneFiles = string.IsNullOrEmpty(ProfileManager.CurrentProfile.WorldMapHiddenZoneFiles) ? new List<string>() : ProfileManager.CurrentProfile.WorldMapHiddenZoneFiles.Split(',').ToList();
@@ -268,6 +269,7 @@ namespace ClassicUO.Game.UI.Gumps
             ProfileManager.CurrentProfile.WorldMapShowMarkers = _showMarkers;
             ProfileManager.CurrentProfile.WorldMapShowMultis = _showMultis;
             ProfileManager.CurrentProfile.WorldMapShowMarkersNames = _showMarkerNames;
+            ProfileManager.CurrentProfile.WorldMapShowMarkerIcons = _showMarkerIcons;
 
             ProfileManager.CurrentProfile.WorldMapHiddenMarkerFiles = string.Join(",", _hiddenMarkerFiles);
             ProfileManager.CurrentProfile.WorldMapHiddenZoneFiles = string.Join(",", _hiddenZoneFiles);
