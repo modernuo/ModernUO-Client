@@ -7869,3 +7869,8 @@ Pixel gate (bench-000910, 4 runs per renderer): composite shots 0 differing pixe
 every pair including base vs base (clock/ping/minimap dots), so no difference attributable to the change. Not covered by the driver: GridLoot, Chat, Shop, Map, MenuGump, ModernBook, Macro buttons, Login.
 Found, not fixed: opening the CounterBarGump crashes (InvalidOperationException from UltimaBatcher.ClipEnd on an empty stack in ScissorControl) on base and new alike; the clip begin returns false for the 0-size scissor
 and ClipEnd still runs. Left out of the scenes. Builds in both variants; 4122 unit tests pass (6 skipped).
+
+## 2026-11-19 counterbar-crash (ScissorControl clip pairing)
+Base 6ea53b00b. Opening CounterBarGump crashed with InvalidOperationException (empty stack) from `UltimaBatcher2D.ClipEnd`. Cause: the gump adds a begin `ScissorControl` sized 0x0 until `OnResize`, so `ClipBegin` returns false (also false when nothing is left after clipping) and pushes no scissor, but the end `ScissorControl` still called `ClipEnd`. Pre-existing: the pre-alloc-gump-2 lambda had the same pairing (d69b24b04 did not change it).
+Fix: `ClipPairTracker` counts begins that pushed nothing; the matching end skips `ClipEnd`. Other ClipBegin users (Combobox, HtmlControl, ResizePic, ScrollArea, StbTextBox, LoginGump, MenuGump, ModernBookGump, OptionsGump, ResizableJournal, WorldMapGump) already call ClipEnd only inside `if (ClipBegin)`; HouseCustomizationGump uses ScissorControl and is covered by the same fix. Plain bug fix, no switch.
+Verified (measure/counterbar-crash, bench-000912): `open counter` crashes base on GPU and Legacy, runs to quit on the fix and the counter bar draws (shot read). Unit tests in `ClipPairTrackerTests`; both build variants.
