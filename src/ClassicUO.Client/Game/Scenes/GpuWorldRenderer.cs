@@ -899,7 +899,6 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            _world.RenderViewReuse = Settings.GlobalSettings.RenderViewReuse;
             _world.UploadSkipUnchanged = Settings.GlobalSettings.UploadSkipUnchanged;
             _world.Prepare(in camera);
 #if CUO_DEVTOOLS
