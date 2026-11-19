@@ -1445,6 +1445,16 @@ namespace ClassicUO.Game.Scenes
                     // visited (a chunk still in the ChunkLoadQueue has no dynamic objects or overrides yet)
                     bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
                     _settle.End(visibleReady);
+#if CUO_DEVTOOLS
+                    if (hold || _settle.Episode != WorldDiscontinuity.None)
+                    {
+                        PopInStats.EndRun();
+                    }
+                    else
+                    {
+                        PopInStats.OnWalkingFrame(visibleReady, gpu.World, _world.Map.DrawPending);
+                    }
+#endif
 
                     if (Map.MapWarmup.CollectPending)
                     {

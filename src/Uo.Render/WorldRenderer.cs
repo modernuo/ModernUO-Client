@@ -140,6 +140,9 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>Last frame: overrides that matched a baked instance, missed (chunk not ready or no such object), dropped
     /// (hash or translucent list full); translucent instances drawn; dynamic instances.</summary>
     public int OverridesApplied, OverridesMissed, OverridesDropped, TranslucentCount, DynamicDrawn;
+    /// <summary>Last frame: dynamic instances drawn as nothing because their art (or Indexed8 anim) page was not resident,
+    /// and their summed quad area in pixels (pop-in diagnostics; counted only on frames with a missing dynamic page).</summary>
+    public int DynamicMissingArt, DynamicMissingAnim, DynamicMissingPixels;
     /// <summary>Last frame: translucent draws split by effect blend (0 = one draw).</summary>
     public int TransRunCount;
     /// <summary>Last frame: instances listed for the circle-of-transparency ring (translucent pass).</summary>
@@ -548,6 +551,7 @@ public sealed unsafe class WorldRenderer : IDisposable
 
         // dynamic: page residency, translucent list, one more chunk-table entry for the reserved range
         DynamicDrawn = _dynCount;
+        DynamicMissingArt = DynamicMissingAnim = DynamicMissingPixels = 0;
         int ownBlend = 0;
         if (_dynCount > 0)
         {
@@ -559,8 +563,16 @@ public sealed unsafe class WorldRenderer : IDisposable
                 ref readonly var d = ref _dynamic[i];
                 if (!touched)
                 {
-                    if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
-                    else Pages.Touch(d.Page, Frame);
+                    if ((d.Flags & SpriteInstance.FlagIndexed) != 0)
+                    {
+                        if (AnimPages != null && !AnimPages.IsResident(d.Page - Pack.AnimPageBase)) { DynamicMissingAnim++; DynamicMissingPixels += d.Width * d.Height; }
+                        AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
+                    }
+                    else
+                    {
+                        if (!Pages.IsResident(d.Page)) { DynamicMissingArt++; DynamicMissingPixels += d.Width * d.Height; }
+                        Pages.Touch(d.Page, Frame);
+                    }
                 }
                 if (d.Alpha == 0) continue;
                 // translucent, or opaque with a circle-of-transparency ring to blend (the shader discards the rest)

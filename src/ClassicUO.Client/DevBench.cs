@@ -13,7 +13,8 @@ namespace ClassicUO
     //   CUO_BENCH_GO="x y"  once in game, [go there, zoom 1, then measure
     //   CUO_FRAMESTATS=1    uncap the frame rate, force inactive throttling off, log per-phase timings every 5 s (FrameStats)
     //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;name:ltravel;name:glide;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
-    //     bodies: swap the player to a new body every 50 ms; ltravel: client-only teleports between towns every 2 s;
+    //     bodies: swap the player to a new body every 50 ms; equip: the player's first equipped item takes a new wearable
+    //     look every 500 ms (local; pop-in counters [popin], CUO_POPIN_SHOTS=dir[|pairs]); ltravel: client-only teleports between towns every 2 s;
     //     glide: client-only travel east from Britain at 25 tiles/s (ltravel/glide need no staff account)
     //     lswalk: [go 5156 2150, then walk the large-scale scene's lane (5141..5171, y 2150) end to end (tools/large-scale)
     //     bwalk: [go 1495 1528, then walk to 1495 1542 and back (a region edge, two chunk edges, a z 40 -> 30 slope),
@@ -75,6 +76,13 @@ namespace ClassicUO
         private static int _planIndex, _travelIndex, _windowsAtStart;
         private static ushort _ghostRestore, _bodyRestore;
         private static int _bodyNext, _bodiesShown, _glideX, _bwalkLegs, _bwalkDenies = -1;
+        private static int _equipNext, _equipShown;
+        // the equip mode's wearables (chest armour, robes, cloaks, shirts, legs, boots, helms): distinct equipment animations
+        private static readonly ushort[] _equipGraphics =
+        {
+            0x1415, 0x13BF, 0x13CC, 0x13DB, 0x13EC, 0x144F, 0x1F03, 0x1515, 0x1F7B, 0x1EFD, 0x1F9F, 0x1541,
+            0x153B, 0x1F01, 0x1516, 0x1537, 0x152E, 0x1539, 0x1711, 0x170B, 0x1412, 0x1408, 0x140A, 0x13BB
+        };
 
         // cumulative world settle counters (WorldSettleGate): unsettled frames presented, frames held, hold durations
         private static void LogSettle(Game.Scenes.GameScene gs, string where)
@@ -82,6 +90,7 @@ namespace ClassicUO
             if (gs != null)
             {
                 Log.Info($"[settle] {where}: hold {(gs.Settle.HoldEnabled ? "on" : "off")}; {gs.Settle.Stats}");
+                Log.Info($"[popin] {where}: {Game.Scenes.PopInStats.Summary()}");
                 var db = Renderer.DecodeBudget.Shared;
                 Log.Info($"[decode-budget] {where}: peak in flight since the last line {db.TakeLogPeak() >> 10} KiB (all-time {db.PeakBytes >> 10}), cap {db.CapBytes >> 10} KiB, waiting {db.Waiting}");
             }
@@ -1687,6 +1696,29 @@ namespace ClassicUO
 
                     _travelAt = now + sec / 20;
                 }
+                else if (mode == "equip" && now >= _travelAt)
+                {
+                    // new equipment on a visible human (local only): the first equipped item (not backpack, hair, beard,
+                    // mount) takes the next wearable graphic every 500 ms, as a server equip change of its look
+                    Game.GameObjects.Item target = null;
+
+                    foreach (Game.GameObjects.Item item in world.State.Children(world.Player))
+                    {
+                        if (item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard
+                            && item.Layer != Game.Data.Layer.Mount && item.Layer != Game.Data.Layer.Bank && (target == null || item.Layer < target.Layer))
+                        {
+                            target = item;
+                        }
+                    }
+
+                    if (target != null && _equipNext < _equipGraphics.Length)
+                    {
+                        world.Writer.SetLocalItemLook(target, _equipGraphics[_equipNext++], target.Hue);
+                        _equipShown++;
+                    }
+
+                    _travelAt = now + sec / 2;
+                }
                 else if (mode == "lswalk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
                 {
                     // the large-scale scene's lane (tools/large-scale/make_scene.py): end to end through 2,000 mobiles
@@ -1738,6 +1770,11 @@ namespace ClassicUO
                     if (mode == "ui")
                     {
                         UiSceneEnd(world, gs);
+                    }
+
+                    if (mode == "equip")
+                    {
+                        Log.Info($"[bench] equip: {_equipShown} equipment looks shown");
                     }
 
                     if (_bodyRestore != 0)
@@ -2318,7 +2355,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "equip" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
