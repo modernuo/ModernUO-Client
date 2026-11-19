@@ -442,7 +442,7 @@ namespace ClassicUO.Ecs
         public const long VisualEveryFrame = long.MinValue;
 
         /// <summary>
-        /// evloop-4 (present_on_change_anim_due): the game tick after which the mobile's picture next changes without a
+        /// evloop-4 (visual-due tracking): the game tick after which the mobile's picture next changes without a
         /// packet. Steps or opening handles change it every frame. The frame timer changes it only when the frame index can
         /// move (ExecuteAnimation with more than one frame) or a server action can end and switch the group (FromServer). The
         /// idle timer starts an idle action. A due time already past at <paramref name="now"/> belongs to a mobile the
@@ -501,9 +501,9 @@ namespace ClassicUO.Ecs
         public long IdleDue;
 
         /// <summary>
-        /// evloop-4 (present_on_change_anim_due): the frame count of the action the last advance stepped (0 = not known: no
+        /// evloop-4 (visual-due tracking): the frame count of the action the last advance stepped (0 = not known: no
         /// advance since the action was set). <see cref="FrameCount"/> holds it only for a server action; a normal action's
-        /// frames cycle with FrameCount 0, so the next frame was not scheduled (CUO_ANIM_DUE_CHECK mismatches, bench-000827).
+        /// frames cycle with FrameCount 0, so the next frame was not scheduled (a mismatch found in bench-000827).
         /// Read only by <see cref="MobileClockRules.NextVisualTick"/>.
         /// </summary>
         public byte ActionFrames;

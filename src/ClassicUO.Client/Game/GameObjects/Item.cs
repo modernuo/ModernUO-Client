@@ -560,7 +560,7 @@ namespace ClassicUO.Game.GameObjects
         };
 
         /// <summary>
-        /// present_on_change_anim_due (evloop-4): whether the corpse's next frame advance shows another frame (the same lookup
+        /// visual-due tracking (evloop-4): whether the corpse's next frame advance shows another frame (the same lookup
         /// <see cref="ProcessAnimation"/> makes; a finished death action holds its last frame, and its timer keeps running).
         /// </summary>
         internal bool CorpseFrameMoves()

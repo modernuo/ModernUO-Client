@@ -789,56 +789,10 @@ public sealed unsafe class WorldRenderer : IDisposable
         return false;
     }
 
-#if CUO_DEVTOOLS
-    // CUO_ANIM_DUE_CHECK (evloop-4) compares what each frame submits with the last presented frame.
-    /// <summary>When set, every submitted frame's inputs are hashed into <see cref="LastSignature"/>.</summary>
-    public static bool SignatureOn;
-
-    /// <summary>A hash of the last submitted frame: uniforms (camera, z, tints, circle, water), the chunk table, dynamic
-    /// instances, overrides in use, the translucent list and the visible pages still missing (a page that arrives changes what a
-    /// drawn chunk shows; prefetch outside the view does not count).</summary>
-    public static ulong LastSignature;
-
-    /// <summary>Frames signed so far (a frame with no world pass leaves it unchanged).</summary>
-    public static long SignedFrames;
-
-    ulong Sign(in Renderer.FrameInput fi)
-    {
-        ulong h = 14695981039346656037UL;
-        h = Fold(h, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<FrameUniforms>(in fi.Uniforms)));
-        h = Fold(h, System.Runtime.InteropServices.MemoryMarshal.AsBytes(_table.AsSpan(0, fi.ChunkCount)));
-        h = Fold(h, System.Runtime.InteropServices.MemoryMarshal.AsBytes(_dynamic.AsSpan(0, _dynCount)));
-        for (int i = 0; i < _ovUsedCount; i++)
-        {
-            h = (h ^ (ulong)_ovUsed[i]) * 1099511628211UL;
-            h = Fold(h, System.Runtime.InteropServices.MemoryMarshal.AsBytes(_ovTable.AsSpan(_ovUsed[i], 1)));
-        }
-        h = Fold(h, System.Runtime.InteropServices.MemoryMarshal.AsBytes(_trans.AsSpan(0, _transCount)));
-        h = (h ^ (ulong)Pages.MissingVisible) * 1099511628211UL;
-        h = (h ^ (ulong)(AnimPages?.MissingVisible ?? 0)) * 1099511628211UL;
-        return h;
-    }
-
-    static ulong Fold(ulong h, ReadOnlySpan<byte> bytes)
-    {
-        var words = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ulong>(bytes);
-        for (int i = 0; i < words.Length; i++) h = (h ^ words[i]) * 1099511628211UL;
-        for (int i = words.Length * 8; i < bytes.Length; i++) h = (h ^ bytes[i]) * 1099511628211UL;
-        return h;
-    }
-#endif
-
     bool Submit(ref Renderer.FrameInput fi)
     {
         fi.Hold = _jumped;
         GrowInstancesIfNeeded(fi.StreamOnly || _jumped);
-#if CUO_DEVTOOLS
-        if (SignatureOn)
-        {
-            LastSignature = Sign(in fi);
-            SignedFrames++;
-        }
-#endif
         bool ok = Renderer.RenderFrame(ref fi);
         for (int i = 0; i < _ovUsedCount; i++) _ovTable[_ovUsed[i]] = default;
         _ovUsedCount = 0;

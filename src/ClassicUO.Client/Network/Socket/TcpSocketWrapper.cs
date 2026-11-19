@@ -10,7 +10,7 @@ sealed class TcpSocketWrapper : SocketWrapper
 {
     private TcpClient _socket;
 
-    // event_loop: WSAEventSelect has put the socket in non-blocking mode for good (it cannot be switched back while the
+    // event loop: WSAEventSelect has put the socket in non-blocking mode for good (it cannot be switched back while the
     // association lasts), so reads skip the blocking toggle and sends go round WouldBlock themselves.
     private bool _eventSelect;
 
@@ -111,7 +111,7 @@ sealed class TcpSocketWrapper : SocketWrapper
         {
             if (LoopWin32.WSAEventSelect(client.Handle, evt, LoopWin32.FD_READ | LoopWin32.FD_CLOSE) != 0)
             {
-                Log.Warn($"event_loop: WSAEventSelect failed ({System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+                Log.Warn($"event loop: WSAEventSelect failed ({System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
 
                 return false;
             }

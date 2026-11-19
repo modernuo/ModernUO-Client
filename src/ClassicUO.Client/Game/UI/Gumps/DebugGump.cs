@@ -165,7 +165,7 @@ namespace ClassicUO.Game.UI.Gumps
                 WantUpdateSize = true;
             }
 
-            // present_on_change_anim_due: the next timed change
+            // visual-due tracking: the next timed change
             ClassicUO.Loop.VisualDue.At(_timeToUpdate, ClassicUO.Loop.VisualSource.Gump);
         }
 
