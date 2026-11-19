@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using System;
+
 namespace ClassicUO.Loop
 {
     internal enum PresentModeKind
@@ -47,6 +49,14 @@ namespace ClassicUO.Loop
         /// diagnostics), so mailbox reads "VSync (True Triple Buffering)", to show that vsync on costs no raw performance; the
         /// normal vsync fallback and vsync off read plain "VSync".
         /// </summary>
+        /// <summary>
+        /// The fps cap's frame interval (ms) under the present mode: mailbox discards frames the display never shows, so a cap
+        /// above the refresh rate only spends CPU and GPU; it is held to the display rate (owner, 2026-11-19). 0 (no cap) and
+        /// normal vsync/immediate keep the interval.
+        /// </summary>
+        public static double CapInterval(double intervalMs, PresentModeKind mode, double displayHz)
+            => mode == PresentModeKind.Mailbox && intervalMs > 0 && displayHz > 0 ? Math.Max(intervalMs, 1000.0 / displayHz) : intervalMs;
+
         public static string OptionsSuffix(PresentModeKind mode) => mode == PresentModeKind.Mailbox ? "(True Triple Buffering)" : string.Empty;
     }
 }
