@@ -126,6 +126,36 @@ sealed class TcpSocketWrapper : SocketWrapper
         return true;
     }
 
+    // event_loop_linux: epoll watches the fd as it is; the reads already go through Poll and a non-blocking Receive, and
+    // sends stay blocking, so the socket's mode is left alone.
+    public override bool TryGetPollFd(out int fd)
+    {
+        fd = -1;
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return false;
+        }
+
+        var client = _socket?.Client;
+
+        if (client == null || !client.Connected)
+        {
+            return false;
+        }
+
+        try
+        {
+            fd = (int)client.Handle;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+
+        return fd >= 0;
+    }
+
     public override int Available
     {
         get

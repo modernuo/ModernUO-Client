@@ -20,13 +20,80 @@ namespace ClassicUO.UnitTests.Loop
         // ---- mode decision (fallbacks) ----
 
         [Theory]
-        [InlineData(false, true, false, 0)] // not Windows
+        [InlineData(false, true, false, 0)] // no waiter for this OS (or event_loop_linux off)
         [InlineData(true, false, false, 0)] // waiter missing or its probe failed
         [InlineData(true, true, true, 0)] // late-wake backoff in force
         [InlineData(true, true, false, 1)]
-        public void Decide_Falls_Back_To_Legacy_Unless_Everything_Is_Ready(bool windows, bool ready, bool suspended, int expected)
+        public void Decide_Falls_Back_To_Legacy_Unless_Everything_Is_Ready(bool hasWaiter, bool ready, bool suspended, int expected)
         {
-            LoopTiming.Decide(windows, ready, suspended).Should().Be((LoopMode)expected);
+            LoopTiming.Decide(hasWaiter, ready, suspended).Should().Be((LoopMode)expected);
+        }
+
+        // ---- loop-linux: the waiter per OS ----
+
+        [Theory]
+        [InlineData(true, false, false, (int)LoopWaiterKind.Win32)]
+        [InlineData(true, false, true, (int)LoopWaiterKind.Win32)] // the Linux switch does not touch Windows
+        [InlineData(false, true, false, (int)LoopWaiterKind.None)] // event_loop_linux off: legacy loop
+        [InlineData(false, true, true, (int)LoopWaiterKind.LinuxEpoll)]
+        [InlineData(false, false, true, (int)LoopWaiterKind.None)] // other OSes have none yet
+        [InlineData(false, false, false, (int)LoopWaiterKind.None)]
+        public void Factory_Chooses_The_Waiter_Per_OS_And_Switch(bool windows, bool linux, bool linuxSwitch, int expected)
+        {
+            LoopWaiterFactory.Choose(windows, linux, linuxSwitch).Should().Be((LoopWaiterKind)expected);
+        }
+
+        [Fact]
+        public void Factory_Creates_No_Waiter_For_None()
+        {
+            LoopWaiterFactory.Create(LoopWaiterKind.None, 0).Should().BeNull();
+        }
+
+        [Theory]
+        [InlineData(1.0, 0, 1_000_000)]
+        [InlineData(16.5, 0, 16_500_000)]
+        [InlineData(1500.25, 1, 500_250_000)]
+        [InlineData(0.0, 0, 1000)] // a zero it_value would disarm the timerfd
+        [InlineData(-3.0, 0, 1000)]
+        [InlineData(0.0001, 0, 1000)]
+        public void Timerfd_Deadline_Is_Relative_Seconds_And_Nanoseconds_Never_Zero(double ms, long sec, long nsec)
+        {
+            var ts = LoopLinux.ToRelativeTimespec(ms);
+            ts.Sec.Should().Be(sec);
+            ts.Nsec.Should().Be(nsec);
+        }
+
+        [Theory]
+        [InlineData(0.4, 1)] // rounded up so the fallback wait never returns before its deadline
+        [InlineData(16.0, 16)]
+        [InlineData(16.01, 17)]
+        [InlineData(0.0, 0)]
+        [InlineData(double.PositiveInfinity, -1)]
+        public void Epoll_Fallback_Timeout_Rounds_Up(double ms, int expected)
+        {
+            LoopLinux.ToEpollTimeoutMs(ms).Should().Be(expected);
+        }
+
+        [Theory]
+        [InlineData(true, true, true, true, (int)WakeReason.Net)]
+        [InlineData(false, true, true, true, (int)WakeReason.Wake)]
+        [InlineData(false, false, true, true, (int)WakeReason.Timer)]
+        [InlineData(false, false, false, true, (int)WakeReason.Input)]
+        [InlineData(false, false, false, false, (int)WakeReason.Timer)]
+        public void Linux_Wait_Reports_Sources_In_The_Windows_Order(bool net, bool wake, bool timer, bool input, int expected)
+        {
+            LinuxEpollLoopWaiter.PickReason(net, wake, timer, input).Should().Be((WakeReason)expected);
+        }
+
+        [Fact]
+        public unsafe void Epoll_Event_Layout_Puts_The_Tag_After_The_Mask()
+        {
+            byte* ev = stackalloc byte[16];
+            LoopLinux.WriteEvent(ev, LoopLinux.EPOLLIN | LoopLinux.EPOLLONESHOT, 5);
+            LoopLinux.ReadEvents(ev).Should().Be(LoopLinux.EPOLLIN | LoopLinux.EPOLLONESHOT);
+            LoopLinux.ReadTag(ev).Should().Be(5u);
+            LoopLinux.EpollEventSize.Should().Be(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture ==
+                System.Runtime.InteropServices.Architecture.X64 ? 12 : 16);
         }
 
         // ---- frame cap ----
@@ -303,6 +370,134 @@ namespace ClassicUO.UnitTests.Loop
             Second(m, ref now, 50, 20);
             Second(m, ref now, 50, 20);
             m.CurrentBackoffMs.Should().Be(LateWakeMonitor.BackoffMaxMs, "suspended seconds are not clean time");
+        }
+
+        // ---- the Linux waiter (epoll; runs on Linux only, without SDL) ----
+
+        [Fact]
+        public void Linux_Waiter_Wake_Is_Sticky_ClearWake_Drops_It_And_The_Timer_Fires()
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                return;
+            }
+
+            using var w = new LinuxEpollLoopWaiter(0, sdl: false);
+            w.Ready.Should().BeTrue();
+            w.HighResolution.Should().BeTrue("timerfd exists on every supported kernel");
+
+            w.Wake();
+            var sw = Stopwatch.StartNew();
+            w.Wait(2000).Should().Be(WakeReason.Wake);
+            sw.ElapsedMilliseconds.Should().BeLessThan(1000);
+
+            // consumed: the next wait runs to its deadline
+            sw.Restart();
+            w.Wait(5).Should().Be(WakeReason.Timer);
+            sw.Elapsed.TotalMilliseconds.Should().BeInRange(4.5, 1000);
+
+            w.Wake();
+            w.ClearWake();
+            w.Wait(5).Should().Be(WakeReason.Timer, "ClearWake dropped the pending wake");
+
+            var t = new Thread(() =>
+            {
+                Thread.Sleep(20);
+                w.Wake();
+            });
+            t.Start();
+            sw.Restart();
+            w.Wait(5000).Should().Be(WakeReason.Wake);
+            sw.ElapsedMilliseconds.Should().BeLessThan(2500);
+            t.Join();
+        }
+
+        [Fact]
+        public void Linux_Waiter_Wakes_On_Socket_Data_Once_Per_Arm_And_On_Close()
+        {
+            if (!OperatingSystem.IsLinux())
+            {
+                return;
+            }
+
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            var client = new NetClient();
+            client.Load(ClientVersion.CV_70130, EncryptionType.NONE);
+            using var w = new LinuxEpollLoopWaiter(0, sdl: false);
+
+            try
+            {
+                client.Connect("127.0.0.1", (ushort)((IPEndPoint)listener.LocalEndpoint).Port);
+                using var server = listener.AcceptSocket();
+
+                w.BindNet(client);
+                w.Wait(30).Should().Be(WakeReason.Timer, "nothing was sent yet");
+
+                server.Send(new byte[] { 1, 2, 3, 4, 5 });
+                w.Wait(5000).Should().Be(WakeReason.Net);
+                w.Wait(30).Should().Be(WakeReason.Timer, "one-shot: not re-armed until BindNet");
+
+                // re-armed with the data still unread: the next wait ends at once
+                w.BindNet(client);
+                w.Wait(5000).Should().Be(WakeReason.Net);
+
+                var got = new List<byte>();
+                w.BindNet(client);
+                client.Drain(seg =>
+                {
+                    got.AddRange(seg);
+
+                    return 0;
+                }, maxMs: 0);
+                got.Should().Equal(1, 2, 3, 4, 5);
+                w.Wait(30).Should().Be(WakeReason.Timer, "drained");
+
+                for (int i = 0; i < 3; i++)
+                {
+                    w.BindNet(client);
+                    client.Drain(_ => 0, maxMs: 0);
+                    var sender = new Thread(() =>
+                    {
+                        Thread.Sleep(20);
+                        server.Send(new byte[] { 42 });
+                    });
+                    sender.Start();
+
+                    try
+                    {
+                        w.Wait(2000).Should().Be(WakeReason.Net);
+                    }
+                    finally
+                    {
+                        sender.Join();
+                    }
+
+                    w.BindNet(client);
+                    int received = 0;
+                    client.Drain(seg => { received += seg.Count; return 0; }, maxMs: 0);
+                    received.Should().Be(1);
+                }
+
+                // sends are unchanged (the socket's mode is left alone)
+                var token = client.BeginLoginHandshake(0);
+                client.Send(new byte[] { 0x73, 9, 9 });
+                client.EndHandshake(token);
+                client.Flush();
+                var buf = new byte[16];
+                server.ReceiveTimeout = 5000;
+                server.Receive(buf).Should().Be(3);
+
+                w.BindNet(client);
+                server.Shutdown(SocketShutdown.Both);
+                w.Wait(5000).Should().Be(WakeReason.Net, "a peer close ends the wait");
+                w.Wait(30).Should().Be(WakeReason.Timer, "and does not spin the loop before the drain");
+            }
+            finally
+            {
+                client.Disconnect();
+                listener.Stop();
+            }
         }
 
         // ---- the Windows waiter ----

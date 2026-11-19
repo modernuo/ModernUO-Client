@@ -8,8 +8,8 @@ namespace ClassicUO.Loop
     internal enum LoopMode
     {
         /// <summary>
-        /// The original loop, the fallback where the event loop cannot run (not Windows, no working waiter, late-wake
-        /// backoff): skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.
+        /// The original loop, the fallback where the event loop cannot run (no waiter for this OS or its switch is off, no
+        /// working waiter, late-wake backoff): skip the draw and Thread.Sleep(1) (or 12 ms) until the frame interval has passed.
         /// </summary>
         Legacy,
         /// <summary>event loop: one wait for the socket, window messages, a wake and the next deadline.</summary>
@@ -23,12 +23,12 @@ namespace ClassicUO.Loop
         public const double DrawSlackMs = 0.5;
 
         /// <summary>
-        /// The loop mode for this iteration. The event loop needs Windows (its wait is MsgWaitForMultipleObjectsEx), a working
-        /// waiter, and no late-wake backoff in force; otherwise the legacy loop runs.
+        /// The loop mode for this iteration. The event loop needs a waiter for this OS (<see cref="LoopWaiterFactory.Choose"/>),
+        /// that waiter working, and no late-wake backoff in force; otherwise the legacy loop runs.
         /// </summary>
-        public static LoopMode Decide(bool isWindows, bool waiterReady, bool lateWakeSuspended)
+        public static LoopMode Decide(bool hasWaiter, bool waiterReady, bool lateWakeSuspended)
         {
-            if (!isWindows || !waiterReady || lateWakeSuspended)
+            if (!hasWaiter || !waiterReady || lateWakeSuspended)
             {
                 return LoopMode.Legacy;
             }
