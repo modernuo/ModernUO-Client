@@ -7874,3 +7874,37 @@ and ClipEnd still runs. Left out of the scenes. Builds in both variants; 4122 un
 Base 6ea53b00b. Opening CounterBarGump crashed with InvalidOperationException (empty stack) from `UltimaBatcher2D.ClipEnd`. Cause: the gump adds a begin `ScissorControl` sized 0x0 until `OnResize`, so `ClipBegin` returns false (also false when nothing is left after clipping) and pushes no scissor, but the end `ScissorControl` still called `ClipEnd`. Pre-existing: the pre-alloc-gump-2 lambda had the same pairing (d69b24b04 did not change it).
 Fix: `ClipPairTracker` counts begins that pushed nothing; the matching end skips `ClipEnd`. Other ClipBegin users (Combobox, HtmlControl, ResizePic, ScrollArea, StbTextBox, LoginGump, MenuGump, ModernBookGump, OptionsGump, ResizableJournal, WorldMapGump) already call ClipEnd only inside `if (ClipBegin)`; HouseCustomizationGump uses ScissorControl and is covered by the same fix. Plain bug fix, no switch.
 Verified (measure/counterbar-crash, bench-000912): `open counter` crashes base on GPU and Legacy, runs to quit on the fix and the counter bar draws (shot read). Unit tests in `ClipPairTrackerTests`; both build variants.
+
+## 2026-11-19 loop-macos (bg/loop-macos): the event loop on macOS (kqueue + SDL's Cocoa wait), `event_loop_macos` default off
+
+Base 2ff7d0fb2. Code 23508f29c, tests a97d29ec6, runbook dd891cd80.
+
+- **Design (a), no thread hop of ours.** On macOS window and input events reach the main thread only through the Cocoa run loop,
+  which only a Cocoa wait serves; SDL3's `Cocoa_WaitEventTimeout` waits in `nextEventMatchingMask:untilDate:` and SDL ends it by
+  posting an application-defined NSEvent when an event is pushed during the wait (`SDL_SendWakeupEvent`). So `MacLoopWaiter`
+  waits in `SDL_WaitEventTimeoutNS(NULL, ns)` (NULL: the event stays queued for FNA). The game socket (EVFILT_READ,
+  level-triggered) and the cross-thread wake (EVFILT_USER + EV_CLEAR) share one kqueue; its fd is a `CFFileDescriptor` source of
+  the main run loop (common modes). The source's callback runs on the main thread inside the wait, polls the kqueue (zero
+  timeout) to tell net from wake, and pushes one SDL user event, which ends the wait through SDL's own wake path. A callback
+  outside a wait (FNA's poll pump) only records the flag; the next Wait returns at once (sticky, as the Windows events). The
+  one-shot callback is re-armed at each Wait (not in BindNet: before the drain the level-triggered read would fire once for
+  nothing). After each wait the waiter flushes its user event and SDL's poll sentinel so FNA's next `SDL_PollEvent` pumps Cocoa
+  as with the legacy loop. Design (b) (a kqueue thread that wakes SDL) was not needed. Note: CF itself delivers fd readiness to
+  the main run loop through a mach port, so a system-level handoff remains; there is no managed or client thread.
+- **Deadline**: NSDate (double seconds) → the run loop's timeout timer; sub-ms when the app is in front. App Nap / timer
+  coalescing can stretch waits when the window is hidden: the probe (3 x 1 ms) and LateWakeMonitor (back to legacy) cover it.
+- **Seam**: `LoopWaiter.Create(macOSSwitch)` / `Choose(windows, macOS, switch)` per OS; `LoopTiming.Decide(hasWaiter, ...)`
+  instead of `isWindows`. Windows unchanged (`Create` returns `Win32LoopWaiter` as before). `TcpSocketWrapper.TryGetFd` exposes the
+  fd off Windows; the socket stays blocking. Switch `event_loop_macos` (default off), dev override `CUO_EVENT_LOOP_MACOS=1|0`.
+- **Copied code** (BSD-3, owner-approved): IORingGroup 86efd04cdca8b202a42f33fddd0d95b962e36f7b `IORingGroup/Darwin/DarwinIORingGroup.cs`:
+  kqueue/kevent/close decls, kevent/timespec structs, constants → `Loop/LoopMacOS.cs`; EVFILT_USER registration, guarded
+  NOTE_TRIGGER Wake, Dispose drain → `MacKqueue` in `Loop/MacLoopWaiter.cs`. Headers name the source and the licence file.
+- **Present on macOS (for the mailbox work)**: SDL_GPU Metal (`METAL_SupportsPresentMode`) supports VSYNC and, on macOS,
+  IMMEDIATE; MAILBOX is not supported. So vsync on on macOS = FIFO (`displaySyncEnabled = YES`).
+- **Tests**: MacLoopWaiterTests (waiter choice per OS/switch, switch default + JSON key, wake classification, the callback's
+  push/re-arm decisions, kevent layout, socket fd accessor; macOS-only: latched wake, level-triggered socket until drained,
+  unbind/rebind, peer close; these return early elsewhere). Unit tests: 4176 pass / 6 skipped (dev), 4115 / 6 (CuoDevTools=false).
+  Client builds in both variants.
+- **Not verified here**: nothing macOS-specific has run (no Mac). Owner instructions: cuo-poc-state/manual-tests/loop-macos.md
+  (build, settings, off/on runs, top/Activity Monitor CPU and idle wake-ups, `[loop]` lines, what good looks like). No client
+  job: Windows takes the same path as before. Memory: none (one kqueue fd, one CF source).
