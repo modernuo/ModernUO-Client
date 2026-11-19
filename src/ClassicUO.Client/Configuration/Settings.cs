@@ -157,7 +157,7 @@ namespace ClassicUO.Configuration
         // Present every vblank. Off: vsync draws every tick. CUO_VSYNC_PRESENT_CHECK logs the presents it skips.
         [JsonPropertyName("vsync_present_on_change")] public bool VsyncPresentOnChange { get; set; }
 
-        // The event loop (GameController.EventLoopWait, Windows) waits between frames for the socket, window messages, a wake
+        // The event loop (GameController.EventLoopWait; Windows, and Linux with event_loop_linux) waits between frames for the socket, window messages, a wake
         // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (plugin ticks,
         // macros, audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.
         [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
@@ -170,6 +170,11 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("event_loop_idle_wait")] public bool EventLoopIdleWait { get; set; }
 
         [JsonPropertyName("event_loop_idle_max_wait_ms")] public int EventLoopIdleMaxWaitMs { get; set; } = 250;
+
+        // loop-linux: the event loop on Linux, waiting in epoll (LinuxEpollLoopWaiter: socket, wake eventfd, timerfd deadline,
+        // X11/Wayland display fd, SDL event watch) instead of the legacy loop's Sleep(1) and spin. Read once at startup; the
+        // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.
+        [JsonPropertyName("event_loop_linux")] public bool EventLoopLinux { get; set; }
 
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a

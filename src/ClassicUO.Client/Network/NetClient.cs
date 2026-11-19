@@ -184,6 +184,14 @@ namespace ClassicUO.Network
         /// <summary>event loop (Windows): the current socket signals <paramref name="evt"/> when readable or closed.</summary>
         internal bool TryEventSelect(IntPtr evt) => _socket != null && _socket.TryEventSelect(evt);
 
+        /// <summary>event_loop_linux: the connected socket's fd for epoll; false when there is none.</summary>
+        internal bool TryGetPollFd(out int fd)
+        {
+            fd = -1;
+
+            return _socket != null && _socket.TryGetPollFd(out fd);
+        }
+
         /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
         public int ConnectionGeneration => Volatile.Read(ref _generation);
 

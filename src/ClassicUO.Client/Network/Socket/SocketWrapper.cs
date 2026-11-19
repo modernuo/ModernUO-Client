@@ -34,6 +34,13 @@ abstract class SocketWrapper : IDisposable
     /// </summary>
     public virtual bool TryEventSelect(IntPtr evt) => false;
 
+    public virtual bool TryGetPollFd(out int fd)
+    {
+        fd = -1;
+
+        return false;
+    }
+
     public abstract void Disconnect();
 
     public abstract void Dispose();
