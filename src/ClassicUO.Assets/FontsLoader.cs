@@ -122,6 +122,46 @@ namespace ClassicUO.Assets
         public FontsLoader(UOFileManager fileManager) : base(fileManager) { }
 
 
+        // Layout nodes of the strings that are measured or drawn and then dropped (GetWidthUnicode, GenerateUnicode)
+        // come from this stack and go back to it, with their Data list capacity, instead of growing a new List per
+        // string (~1 MB per 15 s of walking in a crowded area). Nodes handed out by GetInfoUnicode to a caller that
+        // keeps them (RenderedText) are never returned. Only the creating thread uses it.
+        private readonly Stack<MultilinesFontInfo> _infoPool = new Stack<MultilinesFontInfo>();
+        private const int MAX_POOLED_INFOS = 64;
+        private const int MAX_POOLED_DATA_CAPACITY = 4096;
+
+        private MultilinesFontInfo RentInfo()
+        {
+            if (_infoPool.Count != 0 && Environment.CurrentManagedThreadId == _reuseThreadId)
+            {
+                return _infoPool.Pop();
+            }
+
+            return new MultilinesFontInfo();
+        }
+
+        private void ReleaseInfo(MultilinesFontInfo head)
+        {
+            if (Environment.CurrentManagedThreadId != _reuseThreadId)
+            {
+                return;
+            }
+
+            while (head != null)
+            {
+                MultilinesFontInfo next = head.Next;
+
+                if (_infoPool.Count < MAX_POOLED_INFOS && head.Data.Capacity <= MAX_POOLED_DATA_CAPACITY)
+                {
+                    head.Data.Clear();
+                    head.Reset();
+                    _infoPool.Push(head);
+                }
+
+                head = next;
+            }
+        }
+
         // Resize ptr.Data to exactly `target` elements, growing with default-initialized
         // slots or shrinking via CollectionsMarshal.SetCount. Used by GetInfo* to
         // reconcile MultilinesFontInfo.Data with CharCount when wrap/newline/countspaces
@@ -1551,6 +1591,7 @@ namespace ClassicUO.Assets
             );
 
             int textWidth = 0;
+            MultilinesFontInfo infoHead = info;
 
             while (info != null)
             {
@@ -1559,11 +1600,10 @@ namespace ClassicUO.Assets
                     textWidth = info.Width;
                 }
 
-                MultilinesFontInfo ptr = info;
                 info = info.Next;
-                ptr.Data.Clear();
-                ptr = null;
             }
+
+            ReleaseInfo(infoHead);
 
             return textWidth + 4;
         }
@@ -1594,7 +1634,7 @@ namespace ClassicUO.Assets
                 return GetInfoHTML(font, str, len, align, flags, width);
             }
 
-            MultilinesFontInfo info = new MultilinesFontInfo();
+            MultilinesFontInfo info = RentInfo();
             info.Reset();
             info.Align = align;
             MultilinesFontInfo ptr = info;
@@ -1674,7 +1714,7 @@ namespace ClassicUO.Assets
                         }
 
                         SetDataCount(ptr.Data, ptr.CharCount - newlineval);
-                        MultilinesFontInfo newptr = new MultilinesFontInfo();
+                        MultilinesFontInfo newptr = RentInfo();
                         newptr.Reset();
                         ptr.Next = newptr;
                         ptr = newptr;
@@ -1703,7 +1743,7 @@ namespace ClassicUO.Assets
                             ptr.MaxHeight = 14 + extraheight;
                         }
 
-                        MultilinesFontInfo newptr = new MultilinesFontInfo();
+                        MultilinesFontInfo newptr = RentInfo();
                         newptr.Reset();
                         ptr.Next = newptr;
                         ptr = newptr;
@@ -1788,7 +1828,7 @@ namespace ClassicUO.Assets
                             break;
                         }
 
-                        MultilinesFontInfo newptr = new MultilinesFontInfo();
+                        MultilinesFontInfo newptr = RentInfo();
                         newptr.Reset();
                         ptr.Next = newptr;
                         ptr = newptr;
@@ -1951,13 +1991,7 @@ namespace ClassicUO.Assets
 
             if (height == 0)
             {
-                while (info != null)
-                {
-                    MultilinesFontInfo ptr1 = info;
-                    info = info.Next;
-                    ptr1.Data.Clear();
-                    ptr1 = null;
-                }
+                ReleaseInfo(info);
 
                 return FontInfo.Empty;
             }
@@ -1966,6 +2000,8 @@ namespace ClassicUO.Assets
             int blocksize = height * width;
             bool measure = MeasuringNow;
             uint[] pData = measure ? null : RentPixels(blocksize);
+
+            MultilinesFontInfo infoHead = info;
 
             try
             {
@@ -2537,6 +2573,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
+                ReleaseInfo(infoHead);
                 //System.Buffers.ArrayPool<uint>.Shared.Return(pData, true);
             }
         }

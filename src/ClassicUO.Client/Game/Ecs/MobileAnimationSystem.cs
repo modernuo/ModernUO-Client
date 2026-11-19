@@ -161,7 +161,7 @@ namespace ClassicUO.Game
         // W5: Select, or the last frame's result when the sampled inputs are the same (MobileFrameCache)
         private static void SelectCached(World world, Mobile m, ushort graphic, ref AnimationState s, ref EquipmentSlots eq)
         {
-            MobileFrameCache cache = m.FrameCache ??= new MobileFrameCache();
+            MobileFrameCache cache = m.FrameCache ??= MobileFrameCache.Rent();
             MobileFrameCache.SelectKey key = default;
             bool cacheable = (s.Flags & AnimStateFlags.HasSteps) == 0;
 

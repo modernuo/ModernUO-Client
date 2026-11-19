@@ -40,6 +40,47 @@ namespace ClassicUO.Game
 
         /// <summary>T3b: the cached world layering answer (null until first used).</summary>
         public LayerDecision Layers;
+
+        // Mobile.Destroy returns the cache and the next mobile read takes it (with its Item array), instead of a WornCache and an
+        // Item[] per mobile coming into range. At most 32 kept: about 32 * (80 B + 1.5 KB) per client.
+        private static readonly System.Collections.Generic.Stack<WornCache> _pool = new System.Collections.Generic.Stack<WornCache>();
+
+        internal static WornCache Rent()
+        {
+            lock (_pool)
+            {
+                if (_pool.Count != 0)
+                {
+                    return _pool.Pop();
+                }
+            }
+
+            return new WornCache();
+        }
+
+        internal static void Return(WornCache c)
+        {
+            c.Entity = default;
+            c.Serial = 0;
+            c.Epoch = 0;
+            c.Version = 0;
+            c.Writes = 0;
+            c.Held = WornHeld.Unknown;
+            c.Layers = null;
+
+            if (c.Items != null)
+            {
+                Array.Clear(c.Items);
+            }
+
+            lock (_pool)
+            {
+                if (_pool.Count < 32)
+                {
+                    _pool.Push(c);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -312,7 +353,7 @@ namespace ClassicUO.Game
 
         private WornCache Refresh(Mobile mobile, WorldMirror mirror)
         {
-            WornCache c = mobile.EquipCache ??= new WornCache();
+            WornCache c = mobile.EquipCache ??= WornCache.Rent();
             CacheRefreshes++;
 
             // Codex audit P3 (#4): a cached NoRecord is looked up again at every refresh (a record can be created for the serial,

@@ -10,6 +10,53 @@ namespace ClassicUO.UnitTests.Ecs
     public class MobileFrameCacheTests
     {
         [Fact]
+        public void Returned_Cache_Comes_Back_Reset()
+        {
+            MobileFrameCache c = MobileFrameCache.Rent();
+            c.SelectValid = true;
+            c.EmitValid = true;
+            c.AbsValid = true;
+            c.LegacyValid = true;
+            c.EnsureCapacity(20);
+            c.Count = 5;
+            c.LightCount = 1;
+            c.EnsureLegacyCapacity(8);
+            c.LegacyCount = 3;
+            MobileFrameCache.Return(c);
+
+            MobileFrameCache again = MobileFrameCache.Rent();
+            Assert.Same(c, again);
+            Assert.False(again.SelectValid);
+            Assert.False(again.EmitValid);
+            Assert.False(again.AbsValid);
+            Assert.False(again.LegacyValid);
+            Assert.Equal(0, again.Count);
+            Assert.Equal(0, again.LightCount);
+            Assert.Equal(0, again.LegacyCount);
+            Assert.True(again.Entries.Length >= 20);
+        }
+
+        [Fact]
+        public void Returned_Worn_Cache_Comes_Back_Reset()
+        {
+            WornCache c = WornCache.Rent();
+            c.Serial = 5;
+            c.Epoch = 3;
+            c.Version = 9;
+            c.Writes = 4;
+            c.Held = WornHeld.Record;
+            c.Items = new ClassicUO.Game.GameObjects.Item[3];
+            WornCache.Return(c);
+
+            WornCache again = WornCache.Rent();
+            Assert.Same(c, again);
+            Assert.Equal(0u, again.Serial);
+            Assert.Equal(WornHeld.Unknown, again.Held);
+            Assert.Equal(0UL, again.Version);
+            Assert.All(again.Items, i => Assert.Null(i));
+        }
+
+        [Fact]
         public void Replayed_Depth_Matches_The_Extracts_Expressions_Bit_For_Bit()
         {
             var rnd = new Random(1234);

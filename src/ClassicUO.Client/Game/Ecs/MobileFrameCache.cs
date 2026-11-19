@@ -137,6 +137,47 @@ namespace ClassicUO.Game
             }
         }
 
+        // A mobile leaving range returns its cache (Mobile.Destroy) and the next mobile coming into range takes it, with the
+        // arrays it grew to, instead of a new cache and its arrays per mobile (~0.3-0.5 MB per 15 s of walking through a crowd).
+        // At most MAX_POOLED caches are kept, so about 32 * 2 KB per client.
+        private const int MAX_POOLED = 32;
+        private static readonly System.Collections.Generic.Stack<MobileFrameCache> _pool = new System.Collections.Generic.Stack<MobileFrameCache>();
+
+        internal static MobileFrameCache Rent()
+        {
+            lock (_pool)
+            {
+                if (_pool.Count != 0)
+                {
+                    return _pool.Pop();
+                }
+            }
+
+            return new MobileFrameCache();
+        }
+
+        internal static void Return(MobileFrameCache cache)
+        {
+            cache.Invalidate();
+            cache.Count = 0;
+            cache.LightCount = 0;
+            cache.LegacyCount = 0;
+            cache.LegacyLightCount = 0;
+            cache.Pack = null;
+            cache.LegacySource = null;
+            cache.Key = default;
+            cache.Selected = default;
+            Array.Clear(cache.LegacyEntries);
+
+            lock (_pool)
+            {
+                if (_pool.Count < MAX_POOLED)
+                {
+                    _pool.Push(cache);
+                }
+            }
+        }
+
         public void Invalidate()
         {
             SelectValid = false;
