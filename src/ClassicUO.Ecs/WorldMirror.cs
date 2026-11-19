@@ -1084,7 +1084,10 @@ namespace ClassicUO.Ecs
             public bool Valid;
         }
 
-        private readonly Dictionary<uint, ContentsSlot> _contents = new Dictionary<uint, ContentsSlot>(64);
+        // walk-alloc-2: sized for the parents a crowded walk caches (the trace grew it 67 -> ... -> 3371 during ls_walk) so the
+        // walk does not resize it; 7013 entries is about 196 KB per client (24 B entries + 4 B buckets), accepted in accepted-costs.md
+        private const int CONTENTS_PRESIZE = 7000;
+        private readonly Dictionary<uint, ContentsSlot> _contents = new Dictionary<uint, ContentsSlot>(CONTENTS_PRESIZE);
         private readonly Stack<ContentsSlot> _freeSlots = new Stack<ContentsSlot>();
         private (ulong Stamp, uint Serial)[] _contentsScratch = new (ulong, uint)[64];
 
