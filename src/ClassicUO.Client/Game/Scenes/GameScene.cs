@@ -1088,6 +1088,63 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        /// <summary>
+        /// event_loop_idle_wait: the scene's non-visual work that Update polls, for the wait that follows
+        /// (GameController.CollectLoopDue). Held input, walking, a macro, OPL requests, chunk loads and the world map (its
+        /// load and the 250 ms party query) poll every Update; the use queue and the delayed click have deadlines.
+        /// </summary>
+        internal void NoteLoopDue()
+        {
+            if (!_world.InGame || _world.Player == null)
+            {
+                LoopDue.Now(LoopDueSource.NotInGame);
+
+                return;
+            }
+
+            if (Mouse.LButtonPressed || Mouse.RButtonPressed || Mouse.MButtonPressed || _flags[0] || _flags[1] || _flags[2] || _flags[3]
+                || _rightMousePressed || _boatIsMoving)
+            {
+                LoopDue.Now(LoopDueSource.Input);
+            }
+
+            if (_continueRunning || _followingMode || _world.Player.Pathfinder.AutoWalking)
+            {
+                LoopDue.Now(LoopDueSource.Walk);
+            }
+
+            if (_world.Macros.IsRunning)
+            {
+                LoopDue.Now(LoopDueSource.Macro);
+            }
+
+            if (_useItemQueue.HasQueued)
+            {
+                LoopDue.At(_useItemQueue.Timer, LoopDueSource.UseQueue);
+            }
+
+            if (_world.DelayedObjectClickManager.IsEnabled)
+            {
+                // it fires once Time.Ticks reaches Timer
+                LoopDue.At((long)_world.DelayedObjectClickManager.Timer - 1, LoopDueSource.DelayedClick);
+            }
+
+            if (PacketHandlers.OplPending(_world))
+            {
+                LoopDue.Now(LoopDueSource.Opl);
+            }
+
+            if (_world.Map is { QueuedChunks: > 0 })
+            {
+                LoopDue.Now(LoopDueSource.Assets);
+            }
+
+            if (UIManager.GetGump<WorldMapGump>() != null)
+            {
+                LoopDue.Now(LoopDueSource.WorldMap);
+            }
+        }
+
         public override void Update()
         {
             Profile currentProfile = ProfileManager.CurrentProfile;

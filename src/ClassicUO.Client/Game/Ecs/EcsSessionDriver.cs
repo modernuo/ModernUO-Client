@@ -139,6 +139,24 @@ namespace ClassicUO.Game
             RunScript(world, player);
         }
 
+        /// <summary>event_loop_idle_wait: the script's next step (a wait's end), or every Update while it walks or shoots.</summary>
+        internal void NoteLoopDue()
+        {
+            if (_logoutAt != 0)
+            {
+                ClassicUO.Loop.LoopDue.At((long)_logoutAt - 1, ClassicUO.Loop.LoopDueSource.Driver);
+            }
+            else if (_shotPending || _walkLeft > 0)
+            {
+                ClassicUO.Loop.LoopDue.Now(ClassicUO.Loop.LoopDueSource.Driver);
+            }
+            else if (_pc < _lines.Length)
+            {
+                // Update runs the script once Time.Ticks reaches _waitUntil
+                ClassicUO.Loop.LoopDue.At((long)_waitUntil - 1, ClassicUO.Loop.LoopDueSource.Driver);
+            }
+        }
+
         // The lambda lives here, not in Update: a closure over Update's parameters is allocated at Update's entry,
         // which put 32 B on every frame's FrameStats alloc/frame even while the script was waiting.
         private void RunScript(World world, PlayerMobile player)
@@ -1035,6 +1053,13 @@ namespace ClassicUO.Game
                 case "vsyncpresent" when args.Length > 0:
                     Settings.GlobalSettings.VsyncPresentOnChange = args[0] == "on";
                     Log.Info($"[ECS] driver: vsync_present_on_change {args[0]}");
+
+                    return true;
+
+                // loopidle on|off: event_loop_idle_wait (the idle wait runs to the next known deadline)
+                case "loopidle" when args.Length > 0:
+                    Settings.GlobalSettings.EventLoopIdleWait = args[0] == "on";
+                    Log.Info($"[ECS] driver: event_loop_idle_wait {args[0]}");
 
                     return true;
 

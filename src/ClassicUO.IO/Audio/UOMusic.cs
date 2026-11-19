@@ -21,6 +21,7 @@ namespace ClassicUO.IO.Audio
         private MusicStream m_Stream;
         private bool m_Started;
         private uint m_PlayTicks;
+        private double m_BufferMs;
         private int m_LoopsLogged;
 
         /// <param name="open">Opens the MP3 bytes (a pack record stream); called on the music worker for each play.</param>
@@ -108,6 +109,7 @@ namespace ClassicUO.IO.Audio
             {
                 SoundInstance.SubmitBuffer(buffer, 0, bytes);
                 stream.Recycle(buffer);
+                m_BufferMs = SoundInstance.GetSampleDuration(bytes).TotalMilliseconds;
 
                 if (!submitted)
                 {
@@ -142,6 +144,31 @@ namespace ClassicUO.IO.Audio
                 Stop();
             }
         }
+
+        /// <summary>
+        /// event_loop_idle_wait: ms until <see cref="Update"/> must run again to keep FAudio fed. 0 while the track opens, waits
+        /// for decoded buffers or drains at its end; with the full queue (<see cref="SubmittedTarget"/> buffers) the length of
+        /// one buffer, since the oldest one finishes within it and the two behind it still play while the next one is
+        /// submitted. Infinity when nothing plays.
+        /// </summary>
+        public double MsUntilUpdateNeeded()
+        {
+            if (m_Stream == null)
+            {
+                return double.PositiveInfinity;
+            }
+
+            if (!m_Started || SoundInstance == null || SoundInstance.IsDisposed || SoundInstance.PendingBufferCount < SubmittedTarget)
+            {
+                return 0;
+            }
+
+            return m_BufferMs;
+        }
+
+        /// <summary>CUO_LOOP_IDLE_CHECK: a started track that has not ended has no buffer queued (it went silent).</summary>
+        public bool Starved => m_Stream != null && m_Started && !m_Stream.IsEnded && SoundInstance != null && !SoundInstance.IsDisposed
+            && SoundInstance.PendingBufferCount == 0;
 
         protected override ArraySegment<byte> GetBuffer() => ArraySegment<byte>.Empty;
 

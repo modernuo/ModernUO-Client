@@ -370,6 +370,9 @@ namespace ClassicUO.Game.Managers
             return obj;
         }
 
+        /// <summary>A macro is running (event_loop_idle_wait keeps the Update cadence: its delays and waits are not tracked).</summary>
+        public bool IsRunning => _lastMacro != null;
+
         public void SetMacroToExecute(MacroObject macro)
         {
             _lastMacro = macro;
