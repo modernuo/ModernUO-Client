@@ -7667,3 +7667,26 @@ Owner decision: drop the client's own zlib. `ZlibInflater` (src/ClassicUO.Utilit
 - **Verification.** Client builds with and without `CuoDevTools`: 0 errors; ClassicUO.UnitTests 4148 passed / 6 skipped; Uo.Converter.Tests 141 / 1 skipped; NativeAOT publish (win-x64): no zlib.dll in the output, `zlib-ng 2.2.5` linked into cuo.exe (System.IO.Compression.Native static); a separate AOT smoke with `ZlibInflater` decodes all 36 vectors and rejects garbage. No live 0xD8/0xDD check (no scene for it in the job runner).
 - **ModernUO (server).** It can adopt `ZLibEncoder.TryCompress` / `GetMaxCompressedLength` and the decoder the same way on .NET 11; not changed here.
 - **Left as is.** Other 32-bit handling: only the log line in Main.cs (`Is64BitOperatingSystem ? "x64" : "x86"`).
+
+## 2026-11-18 text-walk: world text list walks (bg/text-walk, base 8f37cafb5, rebased from 23c6f167c)
+
+Lead: `TextRenderer.ProcessWorldText` costs 0.19-0.31 ms/frame on Legacy ls_z1 with `text_tail_cache` off, with ~528 glyph quads drawn (legacy-regress).
+
+- **Cause (confirmed by counts).** An expired text (`Time < Time.Ticks`) stays linked in `World.WorldTextManager` until its owner is destroyed, its 5-slot container pushes it out, or the container is cleared. Per frame the list is walked forward in `Update`, forward in `ProcessWorldText(true)` (`GameScene.DrawUI`), forward in `Draw`, then backward through every node in `Draw`. Both renderers use `GameScene.DrawUI`, so Gpu uses the same manager.
+- **Counters (CUO_DEVTOOLS only).** `text_nodes/live/expired/nocontent/drawn/fwd_nodes`, `text_exp_mobile/item/other`. bench-000876, JIT dev build 77574d6a2 (rebased: d03eb1473), 2 windows per spot, averages per frame, defaults (text_tail_cache off):
+
+  | spot | nodes | live | expired (all mobile-owned) | no content | drawn | forward-walk nodes |
+  |---|---|---|---|---|---|---|
+  | Legacy britain / bank_z | 6 / 7 | 0 | 3 / 4 | 3 | 0 | 18 / 21 |
+  | Legacy ls_z1 | 1988 | 0 | 1985 | 3 | 0 | 5964 |
+  | Legacy lswalk | 1588 | 454 | 1131 | 3 | 454 | 4764 |
+  | Gpu ls_z1 | 1988 | 0 | 1985 | 3 | 0 | 5964 |
+  | Gpu lswalk | 1541 | 413 | 1126 | 3 | 413 | 4623 |
+
+  At ls_z1 no world text is drawn at all (the 528 glyph quads are UI), yet 1988 nodes are walked three times forward and once backward (about 8000 node visits per frame). Expired texts are all owned by mobiles (1985 = the scene's mobiles, each kept its last speech/name text); items and others: 0. The 3 no-content nodes are the list head and two empty ones.
+- **text_prune_expired (d03eb1473, default off).** `Update` unlinks every text with `Time < Time.Ticks`, which Draw and the doit walk skip anyway (Time never changes after AddMessage); it remembers the earliest live Time, so the walk runs only after an add or an expiry. Owner containers keep the node (`TextAllExpired`, the 5-slot rule and `Destroy` unchanged; `UnlinkD` on an unlinked node is a no-op). It needs a switch because it changes list lifetime. `CUO_TEXT_PRUNE_CHECK=1` compares the live texts and their order before and after each prune and checks none expired is left; `CUO_TEXT_PRUNE=1|0` overrides the setting.
+- **Prune-on counts (bench-000878).** Legacy and Gpu ls_z1: nodes 3 (live 0, drawn 0), forward-walk nodes 9 per frame (5964 before). lswalk: nodes 451 (Legacy) / 411 (Gpu), all live, forward 1353 / 1234 (4764 / 4623 before); drawn counts are the same as with prune off (454 -> 448 and 413 -> 408 are different walk moments, not a difference in the same input; the checker covers identity). Max nodes in lswalk 766.
+- **Checkers.** CUO_TEXT_PRUNE_CHECK: Legacy and Gpu, 0 mismatches (66 prunes compared on one run, 1990 texts pruned). CUO_TEXT_ORDER_CHECK (text_tail_cache): 0 mismatches in 8 runs (Legacy and Gpu, cache on, ~3.5M checks each; Legacy cache off; and with prune on). The checker found nothing to block `text_tail_cache` default-on, but it only saves the two non-doit forward walks, and with prune on the walks are 3 nodes long, so the cache then buys nothing.
+- **text_skip_expired (retired, restructure step 5).** It skipped the text layout (`UpdateTextCoordsV`) of entities whose texts all expired (W5, 8f28491f3; now `TextAllExpired` in `UpdateTextServerEntities`). It never touched the world text list, so prune does not overlap or duplicate it: that one saves per-entity layout, this one list walks.
+- **Tests.** TextRendererPruneTests (6, both switch states, checker on); text/counter/settings filter 67 pass. Timing parked: measure/text-walk/job-timing-PARKED.sh (base/tail/prune/both, Legacy and Gpu).
+- **Merge.** Rebased onto 8f37cafb5 (code commit had no conflicts).

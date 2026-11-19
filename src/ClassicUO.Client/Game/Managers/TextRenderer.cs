@@ -40,6 +40,27 @@ namespace ClassicUO.Game.Managers
 
         private static readonly bool s_check = Environment.GetEnvironmentVariable("CUO_TEXT_ORDER_CHECK") == "1";
 
+        private static readonly bool? s_pruneEnv = Environment.GetEnvironmentVariable("CUO_TEXT_PRUNE") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+
+        private static readonly bool s_pruneCheck = Environment.GetEnvironmentVariable("CUO_TEXT_PRUNE_CHECK") == "1";
+
+        /// <summary>Tests: the prune checker for every renderer (null: <c>CUO_TEXT_PRUNE_CHECK=1</c>).</summary>
+        internal static bool? PruneCheckOverride;
+
+        /// <summary>Prune checker counts: prunes compared, differences found, texts unlinked.</summary>
+        public static long PruneChecks, PruneMismatches, Pruned;
+
+        /// <summary>Tests: sees each prune mismatch line.</summary>
+        internal static Action<string> PruneMismatchObserver;
+
+        private readonly List<TextObject> _pruneShadow = new List<TextObject>();
+        private uint _pruneNextLog;
+
         /// <summary>Tests: the checker for every renderer (null: <c>CUO_TEXT_ORDER_CHECK=1</c>).</summary>
         internal static bool? CheckOverride;
 
@@ -54,6 +75,32 @@ namespace ClassicUO.Game.Managers
 
         /// <summary>Tests: the switch (null: the setting).</summary>
         internal static bool? OverrideForTests;
+
+        // text_prune_expired: the earliest Time of a linked text after the last prune (nothing is expired while Time.Ticks <=
+        // it); 0 = walk at the next Update (a text was added)
+        private long _pruneAt;
+
+        /// <summary>Tests: the prune switch (null: the setting).</summary>
+        internal static bool? PruneOverrideForTests;
+
+        public static bool PruneOn
+        {
+            get
+            {
+                if (PruneOverrideForTests.HasValue)
+                {
+                    return PruneOverrideForTests.Value;
+                }
+
+#if CUO_DEVTOOLS
+                if (s_pruneEnv.HasValue)
+                {
+                    return s_pruneEnv.Value;
+                }
+#endif
+                return Settings.GlobalSettings != null && Settings.GlobalSettings.TextPruneExpired;
+            }
+        }
 
         public static bool TailCacheOn
         {
@@ -81,8 +128,138 @@ namespace ClassicUO.Game.Managers
 
         public virtual void Update()
         {
+            if (PruneOn)
+            {
+                PruneExpired();
+            }
+
             ProcessWorldText(false);
         }
+
+        // text_prune_expired: unlink the texts the draw pass would skip for being expired. Time never moves after a text is added
+        // (the Time.Ticks it expires at is set before AddMessage), so an expired one stays expired; the live ones keep their order.
+        private void PruneExpired()
+        {
+            long now = ClassicUO.Time.Ticks;
+
+            if (now <= _pruneAt)
+            {
+                return;
+            }
+
+#if CUO_DEVTOOLS
+            bool check = PruneCheckOverride ?? s_pruneCheck;
+
+            if (check)
+            {
+                CollectLive(_pruneShadow, now);
+            }
+#endif
+            long earliest = long.MaxValue;
+            TextObject t = FirstNode.DRight;
+
+            while (t != null)
+            {
+                TextObject next = t.DRight;
+
+                if (t.Time < now)
+                {
+                    t.UnlinkD();
+#if CUO_DEVTOOLS
+                    Pruned++;
+#endif
+                }
+                else if (t.Time < earliest)
+                {
+                    earliest = t.Time;
+                }
+
+                t = next;
+            }
+
+            _pruneAt = earliest;
+#if CUO_DEVTOOLS
+            if (check)
+            {
+                CheckPrune(now);
+            }
+#endif
+        }
+
+#if CUO_DEVTOOLS
+        private void CollectLive(List<TextObject> into, long now)
+        {
+            into.Clear();
+
+            for (TextObject t = FirstNode.DRight; t != null; t = t.DRight)
+            {
+                if (t.Time >= now)
+                {
+                    into.Add(t);
+                }
+            }
+        }
+
+        // CUO_TEXT_PRUNE_CHECK: the live texts, in link order, are the same before and after the prune, and no expired one is left
+        private void CheckPrune(long now)
+        {
+            PruneChecks++;
+            int i = 0;
+            int left = 0;
+            bool differs = false;
+
+            for (TextObject t = FirstNode.DRight; t != null; t = t.DRight)
+            {
+                if (t.Time < now)
+                {
+                    left++;
+                }
+                else if (i >= _pruneShadow.Count || !ReferenceEquals(_pruneShadow[i], t))
+                {
+                    if (!differs)
+                    {
+                        PruneMismatch($"live text #{i} differs after the prune (before {Describe(i < _pruneShadow.Count ? _pruneShadow[i] : null)}, after {Describe(t)})");
+                    }
+
+                    differs = true;
+                    i++;
+                }
+                else
+                {
+                    i++;
+                }
+            }
+
+            if (!differs && i != _pruneShadow.Count)
+            {
+                PruneMismatch($"{_pruneShadow.Count} live texts before the prune, {i} after");
+            }
+
+            if (left != 0)
+            {
+                PruneMismatch($"{left} expired texts still linked after the prune");
+            }
+
+            uint tick = (uint)ClassicUO.Time.Ticks;
+
+            if (tick >= _pruneNextLog)
+            {
+                _pruneNextLog = tick + 5000;
+                Log.Info($"[text-prune-check] text_prune_expired={(PruneOn ? "on" : "off")}, checks {PruneChecks}, mismatches {PruneMismatches}, pruned {Pruned}");
+            }
+        }
+
+        private static void PruneMismatch(string what)
+        {
+            PruneMismatches++;
+            PruneMismatchObserver?.Invoke(what);
+
+            if (PruneMismatches <= 20)
+            {
+                Log.Warn($"[text-prune-check] mismatch: {what}");
+            }
+        }
+#endif
 
         /// <summary>The last node of the list; the cached one while no link changed since it was taken.</summary>
         internal TextObject Tail
@@ -122,6 +299,12 @@ namespace ClassicUO.Game.Managers
 
             for (TextObject o = DrawPointer; o != null; o = o.DLeft)
             {
+#if CUO_DEVTOOLS
+                if (FrameStats.On)
+                {
+                    CountNode(o);
+                }
+#endif
                 if (o.IsDestroyed || o.RenderedText == null || o.RenderedText.IsDestroyed || !o.RenderedText.HasContent || o.Time < ClassicUO.Time.Ticks)
                 {
                     continue;
@@ -165,6 +348,9 @@ namespace ClassicUO.Game.Managers
                     y += startY;
                 }
 
+#if CUO_DEVTOOLS
+                FrameStats.Inc(FrameCounter.TextDrawn);
+#endif
                 o.RenderedText.Draw
                 (
                     batcher,
@@ -177,6 +363,28 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+#if CUO_DEVTOOLS
+        // text-walk: classifies a node of the list as Draw reaches it (same test as the skip above)
+        private static void CountNode(TextObject o)
+        {
+            FrameStats.Inc(FrameCounter.TextNodes);
+
+            if (o.IsDestroyed || o.RenderedText == null || o.RenderedText.IsDestroyed || !o.RenderedText.HasContent)
+            {
+                FrameStats.Inc(FrameCounter.TextNoContent);
+            }
+            else if (o.Time < ClassicUO.Time.Ticks)
+            {
+                FrameStats.Inc(FrameCounter.TextExpired);
+                FrameStats.Inc(o.Owner is Mobile ? FrameCounter.TextExpMobile : o.Owner is Item ? FrameCounter.TextExpItem : FrameCounter.TextExpOther);
+            }
+            else
+            {
+                FrameStats.Inc(FrameCounter.TextLive);
+            }
+        }
+#endif
+
         public void MoveToTop(TextObject obj)
         {
             if (obj == null)
@@ -186,6 +394,7 @@ namespace ClassicUO.Game.Managers
 
             obj.UnlinkD();
             LinkVersion++;
+            _pruneAt = 0;
 
             TextObject next = FirstNode.DRight;
             FirstNode.DRight = obj;
@@ -259,6 +468,12 @@ namespace ClassicUO.Game.Managers
                     }
                 }
 
+#if CUO_DEVTOOLS
+                if (FrameStats.On)
+                {
+                    FrameStats.Inc(FrameCounter.TextFwdNodes);
+                }
+#endif
                 if (DrawPointer.DRight == null)
                 {
                     break;
@@ -464,6 +679,7 @@ namespace ClassicUO.Game.Managers
 
             obj.UnlinkD();
             LinkVersion++;
+            _pruneAt = 0;
 
             TextObject item = FirstNode;
 
@@ -533,6 +749,7 @@ namespace ClassicUO.Game.Managers
             FirstNode.DRight = null;
             DrawPointer = null;
             LinkVersion++;
+            _pruneAt = 0;
         }
     }
 }
