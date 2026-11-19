@@ -10,11 +10,11 @@ namespace ClassicUO.UnitTests.Loop;
 public class LoopIdleTests
 {
     [Fact]
-    public void SwitchIsOffByDefault()
+    public void SwitchIsOnByDefault()
     {
         var s = new Settings();
 
-        Assert.False(s.EventLoopIdleWait);
+        Assert.True(s.EventLoopIdleWait);
         Assert.Equal(16, s.EventLoopMaxWaitMs);
         Assert.Equal(250, s.EventLoopIdleMaxWaitMs);
     }

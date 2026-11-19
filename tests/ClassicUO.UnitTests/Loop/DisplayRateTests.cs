@@ -113,11 +113,11 @@ public class DisplayRateTests
     }
 
     [Fact]
-    public void VsyncMailboxIsOffByDefaultAndRoundTrips()
+    public void VsyncMailboxIsOnByDefaultAndRoundTrips()
     {
-        Assert.False(new Settings().VsyncMailbox);
-        Assert.True(JsonSerializer.Deserialize<Settings>("{\"vsync_mailbox\":true}").VsyncMailbox);
-        Assert.Contains("\"vsync_mailbox\":false", JsonSerializer.Serialize(new Settings()));
+        Assert.True(new Settings().VsyncMailbox);
+        Assert.False(JsonSerializer.Deserialize<Settings>("{\"vsync_mailbox\":false}").VsyncMailbox);
+        Assert.Contains("\"vsync_mailbox\":true", JsonSerializer.Serialize(new Settings()));
     }
 
     // FNA3D's choice (XNAToSDL_PresentMode) by driver: SDL_GPU honours the hint where the window supports mailbox, else vsync;
@@ -181,11 +181,11 @@ public class DisplayRateTests
     }
 
     [Fact]
-    public void VsyncPresentOnChangeIsOffByDefaultAndRoundTrips()
+    public void VsyncPresentOnChangeIsOnByDefaultAndRoundTrips()
     {
-        Assert.False(new Settings().VsyncPresentOnChange);
-        Assert.True(JsonSerializer.Deserialize<Settings>("{\"vsync_present_on_change\":true}").VsyncPresentOnChange);
-        Assert.Contains("\"vsync_present_on_change\":false", JsonSerializer.Serialize(new Settings()));
+        Assert.True(new Settings().VsyncPresentOnChange);
+        Assert.False(JsonSerializer.Deserialize<Settings>("{\"vsync_present_on_change\":false}").VsyncPresentOnChange);
+        Assert.Contains("\"vsync_present_on_change\":true", JsonSerializer.Serialize(new Settings()));
     }
 
     [Fact]
