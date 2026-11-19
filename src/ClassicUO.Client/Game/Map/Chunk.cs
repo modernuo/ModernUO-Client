@@ -112,22 +112,27 @@ namespace ClassicUO.Game.Map
         /// <summary>Chunks allocated over the session ([gcs] pool lines).</summary>
         public static long TotalCreated;
 
-        /// <summary>[gcs] pool lines: how many pooled and used chunks have each statics mesh capacity.</summary>
+        /// <summary>[gcs] pool lines: how many pooled and used chunks have each statics mesh capacity, and the bytes their mesh
+        /// layers hold (managed arrays and GPU vertex buffers, pooled and used chunks apart).</summary>
         public static string DescribeMeshCapacities(World world, Map map)
         {
             var hist = new System.Collections.Generic.SortedDictionary<int, int>();
+            long pooledHeld = 0, pooledGpu = 0, usedHeld = 0, usedGpu = 0;
+            int used = 0;
 
-            void Add(Chunk c)
+            void Add(Chunk c, ref long held, ref long gpu)
             {
                 int cap = c.Mesh.Statics.Vertices.Length;
                 hist[cap] = hist.TryGetValue(cap, out int n) ? n + 1 : 1;
+                held += c.Mesh.Land.HeldBytes + c.Mesh.Statics.HeldBytes;
+                gpu += c.Mesh.Land.GpuBytes + c.Mesh.Statics.GpuBytes;
             }
 
             if (world != null)
             {
                 foreach (Chunk c in world.ChunkPool.Chunks)
                 {
-                    Add(c);
+                    Add(c, ref pooledHeld, ref pooledGpu);
                 }
             }
 
@@ -137,7 +142,8 @@ namespace ClassicUO.Game.Map
                 {
                     if (c != null)
                     {
-                        Add(c);
+                        Add(c, ref usedHeld, ref usedGpu);
+                        used++;
                     }
                 }
             }
@@ -148,6 +154,9 @@ namespace ClassicUO.Game.Map
             {
                 sb.Append(' ').Append(kv.Key).Append(':').Append(kv.Value);
             }
+
+            sb.Append(System.Globalization.CultureInfo.InvariantCulture,
+                $"; mesh MB used {used} chunks {usedHeld / 1048576.0:0.00} (gpu {usedGpu / 1048576.0:0.00}), pooled {pooledHeld / 1048576.0:0.00} (gpu {pooledGpu / 1048576.0:0.00})");
 
             return sb.ToString();
         }

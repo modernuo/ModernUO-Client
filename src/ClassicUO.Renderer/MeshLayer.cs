@@ -71,6 +71,16 @@ namespace ClassicUO.Renderer
         // unknown (built, or set without a key, like the highlight). The caller skips SetHue while the key matches.
         private long[] _hueKeys = new long[INITIAL_CAPACITY];
 
+        /// <summary>Managed bytes held by this layer's arrays ([gcs] pools line).</summary>
+        public long HeldBytes =>
+            (long)Vertices.Length * PositionNormalTextureColor4.SIZE_IN_BYTES + (long)Textures.Length * IntPtr.Size
+            + Visible.Length + _prevVisible.Length + _visibleIndexData.Length * sizeof(short) + _hueKeys.Length * sizeof(long)
+            + (_visBits.Length + _prevVisBits.Length) * sizeof(ulong) + _alphaDirtyIndices.Length * sizeof(int)
+            + VisibleRuns.Length * (IntPtr.Size + 2 * sizeof(int));
+
+        /// <summary>Bytes of this layer's GPU vertex buffer ([gcs] pools line).</summary>
+        public long GpuBytes => VertexBuffer == null || VertexBuffer.IsDisposed ? 0 : (long)VertexBuffer.VertexCount * (PositionNormalTextureColor4.SIZE_IN_BYTES / 4);
+
         /// <summary>
         /// Ensures internal arrays can hold at least <paramref name="minCapacity"/> sprites.
         /// </summary>
