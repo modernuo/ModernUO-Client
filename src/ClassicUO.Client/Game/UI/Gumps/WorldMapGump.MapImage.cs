@@ -87,6 +87,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (kept)
                     {
+                        Volatile.Write(ref _postedAt, System.Diagnostics.Stopwatch.GetTimestamp());
                         _pending = image;
                     }
                 }
@@ -112,6 +113,14 @@ namespace ClassicUO.Game.UI.Gumps
                     return image;
                 }
             }
+
+            /// <summary>An image is posted and not taken yet (any thread; a volatile read).</summary>
+            public bool HasPending => Volatile.Read(ref _pending) != null;
+
+            /// <summary>Stopwatch timestamp of the last kept post (CUO_WORLDMAP_IDLE_CHECK measures how long it waited).</summary>
+            public long PostedAt => Volatile.Read(ref _postedAt);
+
+            private long _postedAt;
 
             /// <summary>The gump closed: drops a pending image and every later post.</summary>
             public void Close()

@@ -267,6 +267,11 @@ namespace ClassicUO
                     idleWait ? LoopDue.Busy : LoopDueSource.None, byDue && wait >= timers - LoopTiming.DrawSlackMs, wait >= maxWait, LoopDue.NextTick, LoopDue.NextSource);
                 LoopIdleCheck.Woke(false);
             }
+
+            if (ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.On)
+            {
+                ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.Planned(idleWait && byDue && wait >= timers - LoopTiming.DrawSlackMs && (LoopDue.NextSource & LoopDueSource.WorldMap) != 0);
+            }
 #endif
 
             if (wait <= 0)
@@ -284,6 +289,7 @@ namespace ClassicUO
             long end = Stopwatch.GetTimestamp();
 #if CUO_DEVTOOLS
             if (LoopIdleCheck.On) LoopIdleCheck.Woke(reason == WakeReason.Timer);
+            if (ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.On) ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.Woke(reason == WakeReason.Timer);
 #endif
 #if CUO_DEVTOOLS
             if (VsyncPresentCheck.On) VsyncPresentCheck.Wait();

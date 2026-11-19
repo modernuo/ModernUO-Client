@@ -68,6 +68,12 @@ namespace ClassicUO.Game.Managers
         /// packet within 10 s, and <see cref="Enabled"/>). World.Update asks once per frame instead of per ally.</summary>
         public bool AcceptsLocalUpdates => _lastPacketRecv >= Time.Ticks && Enabled;
 
+        /// <summary>worldmap_idle_loop: the next party/guild query goes out in the first Update with Time.Ticks past this.</summary>
+        public long NextQueryTick => _lastPacketSend;
+
+        /// <summary>worldmap_idle_loop: the next stale-entity prune runs in the first Update with Time.Ticks past this.</summary>
+        public long NextPruneTick => (long)_lastUpdate - 1;
+
         public void SetACKReceived()
         {
             _ackReceived = true;

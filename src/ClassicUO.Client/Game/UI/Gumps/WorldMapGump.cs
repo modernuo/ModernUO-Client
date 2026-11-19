@@ -9,6 +9,7 @@ using ClassicUO.Game.Scenes;
 using ClassicUO.Game.UI.Controls;
 using ClassicUO.Input;
 using ClassicUO.IO;
+using ClassicUO.Loop;
 using ClassicUO.Network.Encryption;
 using ClassicUO.Renderer;
 using ClassicUO.Resources;
@@ -85,6 +86,8 @@ namespace ClassicUO.Game.UI.Gumps
         private WMapMarker _gotoMarker;
 
         private int _mapLoading;
+        // loads started by ChangeMap (game thread) and not finished by their task: worldmap_idle_loop polls while > 0
+        private int _loadsRunning;
         private Task _loadingTask;
         private readonly MapImageHandover<WorldMapImage> _mapImages = new MapImageHandover<WorldMapImage>();
 
@@ -284,6 +287,12 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
+#if CUO_DEVTOOLS
+            if (WorldMapIdleCheck.On)
+            {
+                WorldMapIdleCheck.BeforeUpdate(this, World, IdleLoopEnabled);
+            }
+#endif
             WorldMapImage image = _mapImages.Take();
 
             if (image != null)
@@ -307,6 +316,106 @@ namespace ClassicUO.Game.UI.Gumps
                 ChangeMap(World.MapIndex);
 
             World.WMapManager.RequestServerPartyGuildInfo();
+#if CUO_DEVTOOLS
+            if (WorldMapIdleCheck.On)
+            {
+                WorldMapIdleCheck.AfterUpdate(DrawnStateHash());
+            }
+#endif
+        }
+
+#if CUO_DEVTOOLS
+        // CUO_WORLDMAP_IDLE_CHECK: the map's own drawn state (facet, view, texture, load, packet-only party/guild entities).
+        // Mobiles and entities mirrored from them are world state: they change with packets or the visual deadlines.
+        internal int DrawnStateHash()
+        {
+            var hash = new HashCode();
+            hash.Add(_map.Index);
+            hash.Add(_zoomIndex);
+            hash.Add(_center);
+            hash.Add(_flipMap);
+            hash.Add(_freeView);
+            hash.Add(_mapTexture.Texture == null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_mapTexture.Texture));
+            hash.Add(Volatile.Read(ref _mapLoading));
+            hash.Add(_mapImages.HasPending);
+            hash.Add(World.WMapManager.Entities.Count);
+
+            foreach (WMapEntity e in World.WMapManager.Entities.Values)
+            {
+                if (World.FindMobile(e.Serial) == null)
+                {
+                    hash.Add(e.Serial);
+                    hash.Add(e.X);
+                    hash.Add(e.Y);
+                    hash.Add(e.HP);
+                    hash.Add(e.Map);
+                }
+            }
+
+            return hash.ToHashCode();
+        }
+
+        internal long PostedAt => _mapImages.PostedAt;
+
+        internal bool LoadPendingImage => _mapImages.HasPending;
+#endif
+
+        /// <summary>A map image load is running, or its image is posted and not uploaded yet.</summary>
+        internal bool LoadPending => Volatile.Read(ref _loadsRunning) != 0 || _mapImages.HasPending;
+
+#if CUO_DEVTOOLS
+        // the gates' override of worldmap_idle_loop (CUO_WORLDMAP_IDLE_LOOP=1|0)
+        private static readonly bool? _idleLoopEnv = Environment.GetEnvironmentVariable("CUO_WORLDMAP_IDLE_LOOP") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _idleLoopEnv = null;
+#endif
+
+        internal static bool IdleLoopEnabled => _idleLoopEnv ?? Settings.GlobalSettings.WorldMapIdleLoop;
+
+        /// <summary>GameScene.NoteLoopDue while a world map is open (event_loop_idle_wait).</summary>
+        internal static void NoteLoopDue(World world)
+        {
+            if (!IdleLoopEnabled)
+            {
+                LoopDue.Now(LoopDueSource.WorldMap);
+
+                return;
+            }
+
+            WorldMapGump gump = UIManager.GetGump<WorldMapGump>();
+            WorldMapEntityManager entities = world.WMapManager;
+
+            NoteLoopDue(true, gump == null || gump.LoadPending, entities.Enabled, entities.NextQueryTick, entities.Entities.Count != 0, entities.NextPruneTick);
+        }
+
+        /// <summary>
+        /// worldmap_idle_loop off: poll every Update (the old cadence). On: poll only while a load is pending (the task's
+        /// post does not wake the loop); otherwise the party/guild query and the stale-entity prune are deadlines, and
+        /// packets and input wake the loop for the rest.
+        /// </summary>
+        internal static void NoteLoopDue(bool idleLoop, bool loadPending, bool queryEnabled, long queryTick, bool hasEntities, long pruneTick)
+        {
+            if (!idleLoop || loadPending)
+            {
+                LoopDue.Now(LoopDueSource.WorldMap);
+
+                return;
+            }
+
+            if (queryEnabled)
+            {
+                LoopDue.At(queryTick, LoopDueSource.WorldMap);
+            }
+
+            if (hasEntities)
+            {
+                LoopDue.At(pruneTick, LoopDueSource.WorldMap);
+            }
         }
 
         public void ChangeMap(int index)
@@ -320,11 +429,25 @@ namespace ClassicUO.Game.UI.Gumps
             // read on the game thread: LoadMap runs on a task, and the race is ECS storage
             bool gargoyle = GameObject.PlayerIsGargoyle(World);
             int load = _mapImages.Request();
+            Interlocked.Increment(ref _loadsRunning);
 
             // loads run one after another; a superseded one skips its decode (MapImageHandover.IsCurrent)
             _loadingTask = _loadingTask == null
-                ? Task.Run(() => LoadMap(index, gargoyle, load))
-                : _loadingTask.ContinueWith(_ => LoadMap(index, gargoyle, load), TaskScheduler.Default);
+                ? Task.Run(() => RunLoad(index, gargoyle, load))
+                : _loadingTask.ContinueWith(_ => RunLoad(index, gargoyle, load), TaskScheduler.Default);
+        }
+
+        private void RunLoad(int index, bool gargoyle, int load)
+        {
+            try
+            {
+                LoadMap(index, gargoyle, load);
+            }
+            finally
+            {
+                // after the post: once this reaches 0 a posted image is visible through HasPending
+                Interlocked.Decrement(ref _loadsRunning);
+            }
         }
 
         #endregion
