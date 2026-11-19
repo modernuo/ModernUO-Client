@@ -7707,3 +7707,22 @@ about 950-1900 Control.Update visits, 353 draw visits, ~20 hit visits, 0 keyboar
 The sort is already gated by `_needSort`, the keyboard walk only runs while no control holds focus (0 here), hit test stops early. Too few to matter
 (~0.2 % of a frame): the dirty-control skip is designed (handoffs/ui-walks.md) but not implemented. Side finding: the heavy scene allocates a constant
 5840 B/frame in ui_cache_record (0 B with the 4 base gumps); source not yet bisected.
+
+## 2026-11-19 alloc-gump (bg/alloc-gump): per-frame UI allocations in the gump-heavy scene
+
+Base 1e4fa7f30. The ui-walks scene (paperdoll, backpack + bag, spellbook, status, skills, buffs, combat book, health bar) allocated a constant 5840 B/frame in
+ui_cache_record on both renderers. Cumulative bisect by gump (measure/alloc-gump/bisect.txt + job-bisect.sh, bench-000890): paperdoll, backpack, bag, spellbook,
+status ~0; skills +4.9 KB, combat book +0.55 KB, health bar +0.45 KB. Causes (all closures in AddToRenderLists, which C# allocates at method entry, branch taken or not):
+- `ScrollArea` allocated a closure and a new RenderLists per draw (skills gump list): now a Deferred command and one reused child RenderLists (the HtmlControl/ResizePic pattern).
+- `GumpPicWithWidth` (health bar bars, 3 per bar), `StaticPic`, `CheckerTrans`, `HoveredLabel`, `AnchorableGump` (lock icon; the anchor-preview closure moved to its own method),
+  `StandardSkillsGump` row highlights, `BuffGump` icons/time text, `LineCHB` (custom health bar), spellbook edit icon: typed `GumpCommand`s.
+- Combat book and health bar were hit through AnchorableGump (closure at entry) and GumpPicWithWidth.
+
+Plain allocation removal with identical draw calls and order: no switch/checker. Result (alloc probe, same scene, bench-000892/895/900): 5840 -> about 150 B/frame total on both renderers
+(ui part 48 B; a source not found, see below); no per-gump contribution above noise. Pixel gate (job-pixel.sh, pixel-scene.txt: skills, buffs, status, spellbook, combat book, health bars;
+bench-000893/000896/000901, 4 shots x 2 runs per arm, both renderers): 0 differing pixels base vs new in every pair (base vs base also 0); the Legacy UI shot was looked at.
+Builds in both CuoDevTools variants; 4105 unit tests pass (4111 total, 6 skipped).
+Not fixed (same pattern, other gumps): lambdas still in ButtonTileArt, ColorBox, ClickableColorBox, ColorPickerBox, Combobox, ContextMenu, HSliderBar, NiceButton, ChatGump, CounterBar items,
+CreditsGump, DebugGump, GridLootGump, InfoBarGump, MacroButtonGump, MapGump, MarkersManager, MenuGump, MiniMapGump, ModernBookGump, NetworkStatsGump, OptionsGump, ResizableJournal, ShopGump,
+SkillGumpAdvanced, UseSpellButtonGump; each is a per-frame closure while that gump is shown.
+Legacy ~2x Control.Update visits vs Gpu: not explained; same gump set in both runs (identical gump lists), Control.Update has no renderer branch, and the Gpu window itself is bimodal (p50 950 vs mean 1370), so a gump content count that varies by timing (skill list or item rows built lazily) is the likely cause, not a Legacy-only walk.
