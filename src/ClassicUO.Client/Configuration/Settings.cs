@@ -176,6 +176,11 @@ namespace ClassicUO.Configuration
         // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.
         [JsonPropertyName("event_loop_linux")] public bool EventLoopLinux { get; set; }
 
+        // loop-macos: the event loop on macOS (MacLoopWaiter: SDL's Cocoa wait, ended by a kqueue over the socket and the
+        // cross-thread wake through a main run-loop source). Off: macOS runs the legacy loop, as before. CUO_EVENT_LOOP_MACOS=1|0
+        // overrides it in developer builds. Windows ignores it.
+        [JsonPropertyName("event_loop_macos")] public bool EventLoopMacOS { get; set; }
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

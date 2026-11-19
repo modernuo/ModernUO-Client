@@ -7,7 +7,7 @@ namespace ClassicUO.Loop
 {
     /// <summary>
     /// The event loop's wait between frames. Arm A (<see cref="Win32LoopWaiter"/>) waits on the socket's own readiness event and
-    /// drains inline. Phase-2 arms plug in here: a receive thread (arm B) or a ring receive (arm C) would read in
+    /// drains inline; <see cref="MacLoopWaiter"/> does the same on macOS through SDL's Cocoa wait and a kqueue. Phase-2 arms plug in here: a receive thread (arm B) or a ring receive (arm C) would read in
     /// <see cref="BindNet"/>'s place and call <see cref="Wake"/> when data is ready.
     /// </summary>
     internal abstract class LoopWaiter : IDisposable

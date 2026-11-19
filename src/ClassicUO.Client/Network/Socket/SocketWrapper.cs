@@ -34,6 +34,7 @@ abstract class SocketWrapper : IDisposable
     /// </summary>
     public virtual bool TryEventSelect(IntPtr evt) => false;
 
+    /// <summary>event loop (Linux epoll, macOS kqueue): the connected socket's file descriptor. False on Windows or when not connected.</summary>
     public virtual bool TryGetPollFd(out int fd)
     {
         fd = -1;
