@@ -152,6 +152,11 @@ namespace ClassicUO.Configuration
         // Explicit FPS caps and inactive/minimized policies keep precedence. Unknown refresh uses the original path.
         [JsonPropertyName("present_at_display_rate")] public bool PresentAtDisplayRate { get; set; } = true;
 
+        // vsync-poc: with vsync on (fps 0, window active, event loop) the display-rate schedule and present on change run as
+        // for vsync off: unchanged frames skip Draw and Present and the loop waits for the next change instead of blocking in
+        // Present every vblank. Off: vsync draws every tick. CUO_VSYNC_PRESENT_CHECK logs the presents it skips.
+        [JsonPropertyName("vsync_present_on_change")] public bool VsyncPresentOnChange { get; set; }
+
         // The event loop (GameController.EventLoopWait, Windows) waits between frames for the socket, window messages, a wake
         // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (plugin ticks,
         // macros, audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.

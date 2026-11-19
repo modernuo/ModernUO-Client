@@ -70,7 +70,27 @@ public class DisplayRateTests
     [InlineData(true, 0, true, false, false)]
     [InlineData(true, 0, false, true, false)]
     public void PolicyHonorsSwitchAndExistingCaps(bool on, int fps, bool vsync, bool inactive, bool expected)
-        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, inactive));
+        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, inactive, false));
+
+    // vsync_present_on_change: off, vsync keeps its own cadence; on, vsync runs the schedule like vsync off, and the other caps
+    // (present_at_display_rate off, an fps cap, an inactive window) still win.
+    [Theory]
+    [InlineData(true, 0, true, false, false, false)]
+    [InlineData(true, 0, true, false, true, true)]
+    [InlineData(true, 0, false, false, true, true)]
+    [InlineData(false, 0, true, false, true, false)]
+    [InlineData(true, 60, true, false, true, false)]
+    [InlineData(true, 0, true, true, true, false)]
+    public void VsyncPresentOnChangeEngagesTheScheduleWithVsync(bool on, int fps, bool vsync, bool inactive, bool vsyncSwitch, bool expected)
+        => Assert.Equal(expected, DisplayRateSchedule.Enabled(on, fps, vsync, inactive, vsyncSwitch));
+
+    [Fact]
+    public void VsyncPresentOnChangeIsOffByDefaultAndRoundTrips()
+    {
+        Assert.False(new Settings().VsyncPresentOnChange);
+        Assert.True(JsonSerializer.Deserialize<Settings>("{\"vsync_present_on_change\":true}").VsyncPresentOnChange);
+        Assert.Contains("\"vsync_present_on_change\":false", JsonSerializer.Serialize(new Settings()));
+    }
 
     [Fact]
     public void DeadlineCarriesPhaseAndResyncsAfterMissedPeriod()
