@@ -881,11 +881,9 @@ namespace ClassicUO
                     _suppressedDraw = true;
                     SuppressDraw();
 
-                    // the event loop waits in EventLoopWait; the legacy loop sleeps as on its fps-cap path, or it spins
-                    if (_tickMode == LoopMode.Legacy && !gameTime.IsRunningSlowly)
-                    {
-                        LegacySleep(idleSleepMs);
-                    }
+                    // the event loop waits in EventLoopWait. The legacy loop spins here on purpose (owner, 2026-11-19): a 1 ms
+                    // sleep raised its ping RTT p50 from 0.14 to 3.0 ms (bench-000905); the CPU fix is the event loop's
+                    // wait on every OS, not a sleep
                 }
             }
             else if (x <= 0)
