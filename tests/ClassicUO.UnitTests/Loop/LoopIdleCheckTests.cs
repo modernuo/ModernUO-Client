@@ -33,11 +33,11 @@ public class LoopIdleCheckTests
         LoopIdleCheck.UpdateStart(2, 1000, switchOn, switchOn, 16, false);
         long before = LoopIdleCheck.Mismatches;
 
-        LoopIdleCheck.Wait(3, 16, false, 100, false, true, false, 1100, LoopDueSource.UseQueue);
+        LoopIdleCheck.Wait(3, 16, false, 100, false, LoopDueSource.None, true, false, 1100, LoopDueSource.UseQueue);
         LoopIdleCheck.UpdateStart(4, 1101, switchOn, switchOn, 16, false);
         Assert.Equal(before, LoopIdleCheck.Mismatches);
 
-        LoopIdleCheck.Wait(5, 16, false, 100, false, true, false, 1200, LoopDueSource.UseQueue);
+        LoopIdleCheck.Wait(5, 16, false, 100, false, LoopDueSource.None, true, false, 1200, LoopDueSource.UseQueue);
         LoopIdleCheck.UpdateStart(6, 1301, switchOn, switchOn, 16, false);
         Assert.Equal(before + 1, LoopIdleCheck.Mismatches);
     }

@@ -241,7 +241,7 @@ namespace ClassicUO
             if (LoopIdleCheck.On)
             {
                 LoopIdleCheck.Wait(Stopwatch.GetTimestamp(), Math.Max(1, Settings.GlobalSettings.EventLoopMaxWaitMs), _queuedRan, wait, busy,
-                    byDue && wait >= timers - LoopTiming.DrawSlackMs, wait >= maxWait, LoopDue.NextTick, LoopDue.NextSource);
+                    idleWait ? LoopDue.Busy : LoopDueSource.None, byDue && wait >= timers - LoopTiming.DrawSlackMs, wait >= maxWait, LoopDue.NextTick, LoopDue.NextSource);
                 LoopIdleCheck.Woke(false);
             }
 #endif

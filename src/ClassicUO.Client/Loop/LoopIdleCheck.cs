@@ -24,7 +24,8 @@ namespace ClassicUO.Loop
         private const int MaxLogs = 50;
 
         private static long _start, _lastUpdate, _updates, _waits, _longWaits, _maxWait, _lateDue, _untracked, _underruns, _logs;
-        private static long _byBusy, _byDue, _byCap, _byOther;
+        private static long _byBusy, _byDue, _byCap, _byOther, _byStale;
+        private static readonly long[] _bySource = new long[16];
         private static bool _switch, _engaged, _timedWake, _starved, _dueReached;
         private static long _plannedDue = long.MaxValue;
         private static LoopDueSource _plannedSource;
@@ -104,8 +105,8 @@ namespace ClassicUO.Loop
         /// Before a wait (or at its end when the tick does not wait): judge this Update's sends, then record the wait plan.
         /// <paramref name="trackedDue"/>: a queued action ran in this Update (a LoopDue deadline reached is known here).
         /// </summary>
-        public static void Wait(long now, double cadenceMs, bool trackedDue, double waitMs, bool busy, bool byDue, bool byCap,
-            long dueTick, LoopDueSource dueSource)
+        public static void Wait(long now, double cadenceMs, bool trackedDue, double waitMs, bool busy, LoopDueSource busySources,
+            bool byDue, bool byCap, long dueTick, LoopDueSource dueSource)
         {
             if (UntrackedSend(_sends, _timedWake, _gapMs, cadenceMs, trackedDue || _dueReached))
             {
@@ -129,6 +130,16 @@ namespace ClassicUO.Loop
                 _maxWait = w;
             }
 
+            if (busy)
+            {
+                if (busySources == LoopDueSource.None) _byStale++;
+
+                for (int i = 0; i < _bySource.Length; i++)
+                {
+                    if (((uint)busySources & (1u << i)) != 0) _bySource[i]++;
+                }
+            }
+
             if (busy) _byBusy++;
             else if (byDue) _byDue++;
             else if (byCap) _byCap++;
@@ -144,7 +155,7 @@ namespace ClassicUO.Loop
 
             double s = (now - _start) / (double)Stopwatch.Frequency;
             Log.Info(FormattableString.Invariant(
-                $"[loop-idle-check] switch={_switch} engaged={_engaged} sec={s:F3} updates/s={_updates / s:F1} waits/s={_waits / s:F1} long_waits/s={_longWaits / s:F1} max_wait_ms={_maxWait} wait_by(busy/due/cap/other)={_byBusy}/{_byDue}/{_byCap}/{_byOther} late_due={_lateDue} untracked_send={_untracked} music_underrun={_underruns} mismatches={Mismatches}"));
+                $"[loop-idle-check] switch={_switch} engaged={_engaged} sec={s:F3} updates/s={_updates / s:F1} waits/s={_waits / s:F1} long_waits/s={_longWaits / s:F1} max_wait_ms={_maxWait} wait_by(busy/due/cap/other)={_byBusy}/{_byDue}/{_byCap}/{_byOther} late_due={_lateDue} untracked_send={_untracked} music_underrun={_underruns} busy_by={BusyBy()} mismatches={Mismatches}"));
             _start = now;
             Reset();
         }
@@ -152,8 +163,24 @@ namespace ClassicUO.Loop
         /// <summary>The wait ended: a timer (not a socket, input or send wake) started the next Update.</summary>
         public static void Woke(bool timed) => _timedWake = timed;
 
+        private static string BusyBy()
+        {
+            var sb = new System.Text.StringBuilder();
+
+            for (int i = 0; i < _bySource.Length; i++)
+            {
+                if (_bySource[i] != 0) sb.Append(sb.Length == 0 ? "" : ",").Append((LoopDueSource)(1u << i)).Append(':').Append(_bySource[i]);
+            }
+
+            if (_byStale != 0) sb.Append(sb.Length == 0 ? "" : ",").Append("stale:").Append(_byStale);
+
+            return sb.Length == 0 ? "-" : sb.ToString();
+        }
+
         private static void Reset()
         {
+            Array.Clear(_bySource);
+            _byStale = 0;
             _updates = _waits = _longWaits = _maxWait = _lateDue = _untracked = _underruns = 0;
             _byBusy = _byDue = _byCap = _byOther = 0;
         }
