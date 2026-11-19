@@ -16,7 +16,6 @@ Open defects only, one entry each: severity, symptom, location, status. Fixed on
 - **Low. Pickscan:** about 250 "chunks missing near view" unsettled frames per entry (base too). The skip checker reports land at the top edge "drawn differently" during zoom 2.5 walks (199 on base, 632 on E7's build in one run; look at W1's edge band).
 - **Low. Plugin threads calling `RequestMove`/`WalkTo`** race the pathfinder's reused buffers and `Player.Walk`'s world writes (main-thread only today; perf-alloc-5 Codex P2). Possible later item: marshal plugin entry points onto the game thread.
 - **Low. Item 0x3996 near 5138,2157 (z 8) changes position between scans in base too** (moving fire field); it shows up as a pick-scan difference. `DevBench.Describe` prints the graphic, not the serial, which makes moving-NPC and moving-item differences hard to tell apart.
-- **Low, unverified. WorldMapGump P3:** `Log.Info` at `WorldMapGump.cs:~1565` sits before ownership transfer of the new texture, so a throwing logger would leak it until finalization; move it inside the cleanup `try` at the next touch.
 - **Low. Unexplained single-frame spikes** (16-50 ms `update_other`, 95 ms at a facet switch) seen during verification, never compared with base.
 
 ## Tests and gates
@@ -33,6 +32,7 @@ Open defects only, one entry each: severity, symptom, location, status. Fixed on
 - Scissor exception: b59735443. Zoomed-out land seams: 115e93c71. GPU page fault: SDL fork patch (08b952f3a, now `modernuo/3.4.18-patched`).
 - Raw pop-in on teleports/world entry: a6110f967 (world settle).
 - `WorldMapGump` texture race and off-thread `Print`: 398510734, 5dbb5665d (texture handed over, created in Update; verified the load completion no longer prints from the task at `WorldMapGump.cs:545-547`).
+- `WorldMapGump` texture leak window (a throwing `Log.Info` between creating and storing the map texture): worldmap-audit 31e27bc2a (`WorldMapTextureOwner`: the texture is stored by the statement that creates it; the owner logs nothing).
 - Zero-size backbuffer from `WindowOnClientSizeChanged`: 957237f06.
 - Login disconnect flake (auth id starting 0xEF read as the seed): ModernUO#2744.
 - Flaky tests isolated on `bg/flaky-tests` and `bg/removal-flake`; `ChunkLoadingTests` prefetch timing: c6bd97205.
