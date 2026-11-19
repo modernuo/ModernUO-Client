@@ -58,269 +58,314 @@ namespace ClassicUO.Game.UI.Gumps
 
         private void LoadMarkers()
         {
-            //return Task.Run(() =>
+            if (!World.InGame)
             {
-                if (World.InGame)
+                return;
+            }
+
+            _mapMarkersLoaded = false;
+
+            GameActions.Print(World, ResGumps.LoadingWorldMapMarkers, 0x2A);
+
+            if (!File.Exists(UserMarkersFilePath))
+            {
+                try
                 {
-                    _mapMarkersLoaded = false;
-
-                    GameActions.Print(World, ResGumps.LoadingWorldMapMarkers, 0x2A);
-
-                    foreach (Texture2D t in _markerIcons.Values)
-                    {
-                        if (t != null && !t.IsDisposed)
-                        {
-                            t.Dispose();
-                        }
-                    }
-
-                    if (!File.Exists(UserMarkersFilePath))
-                    {
-                        try
-                        {
-                            // CreateNew: another instance creating it first must not be truncated
-                            using (new FileStream(UserMarkersFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { }
-                        }
-                        catch (IOException)
-                        {
-                        }
-                    }
-
-                    _markerIcons.Clear();
-
-                    if (!Directory.Exists(_mapIconsPath))
-                    {
-                        Directory.CreateDirectory(_mapIconsPath);
-                    }
-
-                    foreach (string icon in Directory.GetFiles(_mapIconsPath, "*.cur").Union(Directory.GetFiles(_mapIconsPath, "*.ico")))
-                    {
-                        FileStream fs = new FileStream(icon, FileMode.Open, FileAccess.Read);
-                        MemoryStream ms = new MemoryStream();
-                        fs.CopyTo(ms);
-                        ms.Seek(0, SeekOrigin.Begin);
-
-                        try
-                        {
-                            Texture2D texture = CurLoader.CreateTextureFromICO_Cur(ms);
-
-                            _markerIcons.Add(Path.GetFileNameWithoutExtension(icon).ToLower(), texture);
-                        }
-                        catch (Exception ee)
-                        {
-                            Log.Error($"{ee}");
-                        }
-                        finally
-                        {
-                            ms.Dispose();
-                            fs.Dispose();
-                        }
-                    }
-
-                    foreach (string icon in Directory.GetFiles(_mapIconsPath, "*.png").Union(Directory.GetFiles(_mapIconsPath, "*.jpg")))
-                    {
-                        FileStream fs = new FileStream(icon, FileMode.Open, FileAccess.Read);
-                        MemoryStream ms = new MemoryStream();
-                        fs.CopyTo(ms);
-                        ms.Seek(0, SeekOrigin.Begin);
-
-                        try
-                        {
-                            Texture2D texture = Texture2D.FromStream(Client.Game.GraphicsDevice, ms);
-
-                            _markerIcons.Add(Path.GetFileNameWithoutExtension(icon).ToLower(), texture);
-                        }
-                        catch (Exception ee)
-                        {
-                            Log.Error($"{ee}");
-                        }
-                        finally
-                        {
-                            ms.Dispose();
-                            fs.Dispose();
-                        }
-                    }
-
-                    List<string> mapFiles = new List<string> { UserMarkersFilePath };
-                    mapFiles.AddRange(Directory.GetFiles(_mapFilesPath, "*.map")
-                                        .Union(Directory.GetFiles(_mapFilesPath, "*.csv"))
-                                        .Union(Directory.GetFiles(_mapFilesPath, "*.xml")));
-
-                    _markerFiles.Clear();
-
-                    foreach (string mapFile in mapFiles)
-                    {
-                        if (File.Exists(mapFile))
-                        {
-                            WMapMarkerFile markerFile = new WMapMarkerFile
-                            {
-                                Hidden = false,
-                                Name = Path.GetFileNameWithoutExtension(mapFile),
-                                FullPath = mapFile,
-                                Markers = new List<WMapMarker>(),
-                                IsEditable = false,
-                            };
-
-                            string hiddenFile = _hiddenMarkerFiles.FirstOrDefault(x => x.Contains(markerFile.Name));
-
-                            if (!string.IsNullOrEmpty(hiddenFile))
-                            {
-                                markerFile.Hidden = true;
-                            }
-
-                            if (mapFile != null && Path.GetExtension(mapFile).ToLower().Equals(".xml")) // Ultima Mapper
-                            {
-                                using (XmlTextReader reader = new XmlTextReader(File.Open(mapFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
-                                {
-                                    while (reader.Read())
-                                    {
-                                        if (reader.Name.Equals("Marker"))
-                                        {
-                                            WMapMarker marker = new WMapMarker
-                                            {
-                                                X = int.Parse(reader.GetAttribute("X")),
-                                                Y = int.Parse(reader.GetAttribute("Y")),
-                                                Name = reader.GetAttribute("Name"),
-                                                MapId = int.Parse(reader.GetAttribute("Facet")),
-                                                Color = Color.White,
-                                                ZoomIndex = 3
-                                            };
-
-                                            if (_markerIcons.TryGetValue(reader.GetAttribute("Icon").ToLower(), out Texture2D value))
-                                            {
-                                                marker.MarkerIcon = value;
-
-                                                marker.MarkerIconName = reader.GetAttribute("Icon").ToLower();
-                                            }
-
-                                            markerFile.Markers.Add(marker);
-                                        }
-                                    }
-
-                                }
-                            }
-                            else if (mapFile != null && Path.GetExtension(mapFile).ToLower().Equals(".map")) //UOAM
-                            {
-                                using (StreamReader reader = new StreamReader(File.Open(mapFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
-                                {
-                                    while (!reader.EndOfStream)
-                                    {
-                                        string line = reader.ReadLine();
-
-                                        // ignore empty lines, and if UOAM, ignore the first line that always has a 3
-                                        if (string.IsNullOrEmpty(line) || line.Equals("3"))
-                                        {
-                                            continue;
-                                        }
-
-                                        // Check for UOAM file
-                                        if (line.Substring(0, 1).Equals("+") || line.Substring(0, 1).Equals("-"))
-                                        {
-                                            string icon = line.Substring(1, line.IndexOf(':') - 1);
-
-                                            line = line.Substring(line.IndexOf(':') + 2);
-
-                                            string[] splits = line.Split(' ');
-
-                                            if (splits.Length <= 1)
-                                            {
-                                                continue;
-                                            }
-
-                                            WMapMarker marker = new WMapMarker
-                                            {
-                                                X = int.Parse(splits[0]),
-                                                Y = int.Parse(splits[1]),
-                                                MapId = int.Parse(splits[2]),
-                                                Name = string.Join(" ", splits, 3, splits.Length - 3),
-                                                Color = Color.White,
-                                                ZoomIndex = 3
-                                            };
-
-                                            string[] iconSplits = icon.Split(' ');
-
-                                            marker.MarkerIconName = iconSplits[0].ToLower();
-
-                                            if (_markerIcons.TryGetValue(iconSplits[0].ToLower(), out Texture2D value))
-                                            {
-                                                marker.MarkerIcon = value;
-                                            }
-
-                                            markerFile.Markers.Add(marker);
-                                        }
-                                    }
-                                }
-                            }
-                            else if (mapFile != null && Path.GetExtension(mapFile).ToLower().Equals(".usr"))
-                            {
-                                markerFile.Markers = LoadUserMarkers() ?? new List<WMapMarker>();
-                                markerFile.IsEditable = true;
-                            }
-                            else if (mapFile != null) //CSV x,y,mapindex,name of marker,iconname,color,zoom
-                            {
-                                using (StreamReader reader = new StreamReader(File.Open(mapFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
-                                {
-                                    while (!reader.EndOfStream)
-                                    {
-                                        string line = reader.ReadLine();
-
-                                        if (string.IsNullOrEmpty(line))
-                                        {
-                                            return;
-                                        }
-
-                                        string[] splits = line.Split(',');
-
-                                        if (splits.Length <= 1)
-                                        {
-                                            continue;
-                                        }
-
-                                        WMapMarker marker = new WMapMarker
-                                        {
-                                            X = int.Parse(splits[0]),
-                                            Y = int.Parse(splits[1]),
-                                            MapId = int.Parse(splits[2]),
-                                            Name = splits[3],
-                                            MarkerIconName = splits[4].ToLower(),
-                                            Color = GetColor(splits[5]),
-                                            ZoomIndex = splits.Length == 7 ? int.Parse(splits[6]) : 3
-                                        };
-
-                                        if (_markerIcons.TryGetValue(splits[4].ToLower(), out Texture2D value))
-                                        {
-                                            marker.MarkerIcon = value;
-                                        }
-
-                                        markerFile.Markers.Add(marker);
-                                    }
-                                }
-                            }
-
-                            if (markerFile.Markers.Count > 0)
-                            {
-                                GameActions.Print(World, $"..{Path.GetFileName(mapFile)} ({markerFile.Markers.Count})", 0x2B);
-                            }
-                            _markerFiles.Add(markerFile);
-                        }
-                    }
-
-                    BuildContextMenu();
-
-                    int count = 0;
-
-                    foreach (WMapMarkerFile file in _markerFiles)
-                    {
-                        count += file.Markers.Count;
-                    }
-
-                    _mapMarkersLoaded = true;
-
-                    GameActions.Print(World, string.Format(ResGumps.WorldMapMarkersLoaded0, count), 0x2A);
+                    // CreateNew: another instance creating it first must not be truncated
+                    using (new FileStream(UserMarkersFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { }
+                }
+                catch (IOException)
+                {
                 }
             }
 
-            //);
+            LoadMarkerIcons();
+
+            List<string> mapFiles = new List<string> { UserMarkersFilePath };
+            mapFiles.AddRange(Directory.GetFiles(_mapFilesPath, "*.map")
+                                .Union(Directory.GetFiles(_mapFilesPath, "*.csv"))
+                                .Union(Directory.GetFiles(_mapFilesPath, "*.xml")));
+
+            _markerFiles.Clear();
+
+            foreach (string mapFile in mapFiles)
+            {
+                if (!File.Exists(mapFile))
+                {
+                    continue;
+                }
+
+                WMapMarkerFile markerFile = new WMapMarkerFile
+                {
+                    Hidden = false,
+                    Name = Path.GetFileNameWithoutExtension(mapFile),
+                    FullPath = mapFile,
+                    Markers = new List<WMapMarker>(),
+                    IsEditable = false,
+                };
+
+                string hiddenFile = _hiddenMarkerFiles.FirstOrDefault(x => x.Contains(markerFile.Name));
+
+                if (!string.IsNullOrEmpty(hiddenFile))
+                {
+                    markerFile.Hidden = true;
+                }
+
+                string extension = Path.GetExtension(mapFile).ToLower();
+
+                if (extension == ".usr")
+                {
+                    markerFile.Markers = LoadUserMarkers() ?? new List<WMapMarker>();
+                    markerFile.IsEditable = true;
+                }
+                else
+                {
+                    // a file that cannot be read keeps the markers read before the error; a bad line is skipped
+                    try
+                    {
+                        using FileStream stream = File.Open(mapFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+                        if (extension == ".xml") // Ultima Mapper
+                        {
+                            ReadXmlMarkers(stream, mapFile, markerFile.Markers);
+                        }
+                        else
+                        {
+                            ReadLineMarkers(stream, mapFile, extension == ".map" ? ParseUoamMarker : ParseCsvMarker, markerFile.Markers);
+                        }
+                    }
+                    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is XmlException)
+                    {
+                        Log.Error($"world map markers: could not read {mapFile}: {e.Message}");
+                    }
+                }
+
+                if (markerFile.Markers.Count > 0)
+                {
+                    GameActions.Print(World, $"..{Path.GetFileName(mapFile)} ({markerFile.Markers.Count})", 0x2B);
+                }
+                _markerFiles.Add(markerFile);
+            }
+
+            BuildContextMenu();
+
+            int count = 0;
+
+            foreach (WMapMarkerFile file in _markerFiles)
+            {
+                count += file.Markers.Count;
+            }
+
+            _mapMarkersLoaded = true;
+
+            GameActions.Print(World, string.Format(ResGumps.WorldMapMarkersLoaded0, count), 0x2A);
+        }
+
+        /// <summary>
+        /// Loads the icon files of MapIcons that are not loaded yet. Icons stay for the session: MarkersManagerGump and
+        /// UserMarkersGump keep references to them, so a reopen or "Reload markers" must not dispose them (every open used
+        /// to); a reload adds new files, and a changed icon file needs a restart. The folder bounds the set.
+        /// </summary>
+        private static void LoadMarkerIcons()
+        {
+            Directory.CreateDirectory(_mapIconsPath);
+
+            foreach (string icon in Directory.GetFiles(_mapIconsPath, "*.cur").Union(Directory.GetFiles(_mapIconsPath, "*.ico")))
+            {
+                LoadMarkerIcon(icon, true);
+            }
+
+            foreach (string icon in Directory.GetFiles(_mapIconsPath, "*.png").Union(Directory.GetFiles(_mapIconsPath, "*.jpg")))
+            {
+                LoadMarkerIcon(icon, false);
+            }
+        }
+
+        private static void LoadMarkerIcon(string path, bool cursorFormat)
+        {
+            string key = Path.GetFileNameWithoutExtension(path).ToLower();
+
+            // also skips the second of two files with one name (a.cur, a.png): it used to be decoded and then leaked when
+            // Add threw on the duplicate key
+            if (_markerIcons.ContainsKey(key))
+            {
+                return;
+            }
+
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var ms = new MemoryStream();
+                fs.CopyTo(ms);
+                ms.Seek(0, SeekOrigin.Begin);
+
+                Texture2D texture;
+
+                if (cursorFormat)
+                {
+                    texture = CurLoader.CreateTextureFromICO_Cur(ms);
+                }
+                else
+                {
+                    texture = Texture2D.FromStream(Client.Game.GraphicsDevice, ms);
+                    ClassicUO.Renderer.TextureUploads.Changed();
+                }
+
+                _markerIcons.Add(key, texture);
+            }
+            catch (Exception ee)
+            {
+                Log.Error($"world map icon {path}: {ee}");
+            }
+        }
+
+        /// <summary>Ultima Mapper XML: Marker elements with X, Y, Name, Facet and Icon. A marker with a bad attribute is
+        /// skipped and logged.</summary>
+        internal static void ReadXmlMarkers(Stream stream, string fileName, List<WMapMarker> markers)
+        {
+            using XmlTextReader reader = new XmlTextReader(stream);
+
+            while (reader.Read())
+            {
+                if (!reader.Name.Equals("Marker"))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    WMapMarker marker = new WMapMarker
+                    {
+                        X = int.Parse(reader.GetAttribute("X")),
+                        Y = int.Parse(reader.GetAttribute("Y")),
+                        Name = reader.GetAttribute("Name"),
+                        MapId = int.Parse(reader.GetAttribute("Facet")),
+                        Color = Color.White,
+                        ZoomIndex = 3
+                    };
+
+                    string icon = reader.GetAttribute("Icon")?.ToLower();
+
+                    if (icon != null && _markerIcons.TryGetValue(icon, out Texture2D value))
+                    {
+                        marker.MarkerIcon = value;
+
+                        marker.MarkerIconName = icon;
+                    }
+
+                    markers.Add(marker);
+                }
+                catch (Exception e) when (IsBadMarkerLine(e))
+                {
+                    Log.Warn($"world map markers: {fileName} line {reader.LineNumber}: {e.Message}");
+                }
+            }
+        }
+
+        /// <summary>A line-based marker file: each line parsed by <paramref name="parse"/> (null: not a marker); a line
+        /// that does not parse is skipped and logged. Blank lines are skipped (a blank line in a CSV file used to end
+        /// LoadMarkers altogether, so no marker of any file was drawn).</summary>
+        internal static void ReadLineMarkers(Stream stream, string fileName, Func<string, WMapMarker> parse, List<WMapMarker> markers)
+        {
+            using StreamReader reader = new StreamReader(stream);
+            int lineNumber = 0;
+
+            while (reader.ReadLine() is { } line)
+            {
+                lineNumber++;
+
+                if (string.IsNullOrEmpty(line))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    WMapMarker marker = parse(line);
+
+                    if (marker != null)
+                    {
+                        markers.Add(marker);
+                    }
+                }
+                catch (Exception e) when (IsBadMarkerLine(e))
+                {
+                    Log.Warn($"world map markers: {fileName} line {lineNumber}: {e.Message}");
+                }
+            }
+        }
+
+        private static bool IsBadMarkerLine(Exception e) =>
+            e is FormatException || e is OverflowException || e is ArgumentException || e is IndexOutOfRangeException || e is NullReferenceException;
+
+        /// <summary>UOAM .map line: "+icon name: x y facet marker name"; the first line ("3") and other lines are not markers.</summary>
+        internal static WMapMarker ParseUoamMarker(string line)
+        {
+            if (line.Equals("3") || !(line.Substring(0, 1).Equals("+") || line.Substring(0, 1).Equals("-")))
+            {
+                return null;
+            }
+
+            string icon = line.Substring(1, line.IndexOf(':') - 1);
+
+            line = line.Substring(line.IndexOf(':') + 2);
+
+            string[] splits = line.Split(' ');
+
+            if (splits.Length <= 1)
+            {
+                return null;
+            }
+
+            WMapMarker marker = new WMapMarker
+            {
+                X = int.Parse(splits[0]),
+                Y = int.Parse(splits[1]),
+                MapId = int.Parse(splits[2]),
+                Name = string.Join(" ", splits, 3, splits.Length - 3),
+                Color = Color.White,
+                ZoomIndex = 3
+            };
+
+            string[] iconSplits = icon.Split(' ');
+
+            marker.MarkerIconName = iconSplits[0].ToLower();
+
+            if (_markerIcons.TryGetValue(iconSplits[0].ToLower(), out Texture2D value))
+            {
+                marker.MarkerIcon = value;
+            }
+
+            return marker;
+        }
+
+        /// <summary>CSV line: x,y,mapindex,name of marker,iconname,color[,zoom].</summary>
+        internal static WMapMarker ParseCsvMarker(string line)
+        {
+            string[] splits = line.Split(',');
+
+            if (splits.Length <= 1)
+            {
+                return null;
+            }
+
+            WMapMarker marker = new WMapMarker
+            {
+                X = int.Parse(splits[0]),
+                Y = int.Parse(splits[1]),
+                MapId = int.Parse(splits[2]),
+                Name = splits[3],
+                MarkerIconName = splits[4].ToLower(),
+                Color = GetColor(splits[5]),
+                ZoomIndex = splits.Length == 7 ? int.Parse(splits[6]) : 3
+            };
+
+            if (_markerIcons.TryGetValue(splits[4].ToLower(), out Texture2D value))
+            {
+                marker.MarkerIcon = value;
+            }
+
+            return marker;
         }
 
         private void AddMarkerOnPlayer()
@@ -345,9 +390,12 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(markerName))
+            // a comma would shift the CSV fields of the saved line
+            if (string.IsNullOrWhiteSpace(markerName) || markerName.Contains(','))
             {
                 GameActions.Print(World, ResGumps.InvalidMarkerName, 0x2A);
+
+                return;
             }
 
             var markerColor = "blue";
@@ -433,7 +481,15 @@ namespace ClassicUO.Game.UI.Gumps
                         {
                             continue;
                         }
-                        tempList.Add(ParseMarker(splits));
+
+                        try
+                        {
+                            tempList.Add(ParseMarker(splits));
+                        }
+                        catch (Exception e) when (IsBadMarkerLine(e))
+                        {
+                            Log.Warn($"world map markers: {UserMarkersFilePath}: {e.Message}");
+                        }
                     }
                 }
             }
