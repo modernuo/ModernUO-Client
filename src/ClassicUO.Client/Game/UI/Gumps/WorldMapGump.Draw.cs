@@ -34,7 +34,14 @@ namespace ClassicUO.Game.UI.Gumps
 {
     internal partial class WorldMapGump
     {
-        private Point RotatePoint(int x, int y, float zoom, int dist, float angle = 45f)
+        // dist is 1 (world to gump) or -1 (gump to world) at every call: the cos/sin of those angles are computed once, with
+        // the same expressions as before, so the result is bit-identical
+        private static readonly double _cosQuarter = Math.Cos(1 * Math.PI / 4.0);
+        private static readonly double _sinQuarter = Math.Sin(1 * Math.PI / 4.0);
+        private static readonly double _cosMinusQuarter = Math.Cos(-1 * Math.PI / 4.0);
+        private static readonly double _sinMinusQuarter = Math.Sin(-1 * Math.PI / 4.0);
+
+        internal static Point RotatePoint(int x, int y, float zoom, int dist, float angle = 45f)
         {
             x = (int) (x * zoom);
             y = (int) (y * zoom);
@@ -44,8 +51,23 @@ namespace ClassicUO.Game.UI.Gumps
                 return new Point(x, y);
             }
 
-            double cos = Math.Cos(dist * Math.PI / 4.0);
-            double sin = Math.Sin(dist * Math.PI / 4.0);
+            double cos, sin;
+
+            if (dist == 1)
+            {
+                cos = _cosQuarter;
+                sin = _sinQuarter;
+            }
+            else if (dist == -1)
+            {
+                cos = _cosMinusQuarter;
+                sin = _sinMinusQuarter;
+            }
+            else
+            {
+                cos = Math.Cos(dist * Math.PI / 4.0);
+                sin = Math.Sin(dist * Math.PI / 4.0);
+            }
 
             return new Point((int) Math.Round(cos * x - sin * y), (int) Math.Round(sin * x + cos * y));
         }
