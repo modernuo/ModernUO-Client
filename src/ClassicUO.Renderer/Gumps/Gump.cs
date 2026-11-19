@@ -43,12 +43,6 @@ namespace ClassicUO.Renderer.Gumps
             _decoder = new FirstSightDecoder("gump", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
         }
 
-        public void Reload()
-        {
-            System.Array.Clear(_spriteInfos);
-            _picker.Clear();
-        }
-
         /// <summary>Worker decodes requested and not uploaded yet.</summary>
         public int PendingDecodes => _decoder.Pending;
 

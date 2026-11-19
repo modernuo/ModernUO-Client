@@ -51,7 +51,7 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>Main-thread decodes and their time since start (never reset; for scripted measurements).</summary>
         public static int TotalSyncLoads;
         public static long TotalSyncTicks;
-        /// <summary>Sprites found missing from the pack and logged (once per id until <see cref="Reload"/>; never reset).</summary>
+        /// <summary>Sprites found missing from the pack and logged (once per id; never reset).</summary>
         public static int TotalMissingLogs;
 #if CUO_DEVTOOLS
         /// <summary>Lookups that took a finished worker decode instead of decoding again (FrameStats resets the frame count).</summary>
@@ -292,21 +292,6 @@ namespace ClassicUO.Renderer.Arts
 
             FrameAsyncUploads++;
         }
-
-        public void Reload()
-        {
-            Array.Clear(_spriteInfos);
-            Array.Clear(_realArtBounds);
-            Array.Clear(_missing);
-            _picker.Clear();
-            Generation++;
-        }
-
-        /// <summary>
-        /// Bumped whenever sprites that were in the atlas may be gone again (<see cref="Reload"/>): a caller that remembered
-        /// "these sprites are ready" must look again.
-        /// </summary>
-        public int Generation { get; private set; }
 
         /// <summary>Scene teardown: drops finished worker decodes and returns their buffers (see FirstSightDecoder.Cancel).</summary>
         public void CancelPending()
