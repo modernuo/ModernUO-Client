@@ -209,6 +209,11 @@ namespace ClassicUO
         TextExpMobile,
         TextExpItem,
         TextExpOther,
+        // ui-walks: controls visited per frame by UIManager.Update (Control.Update), the keyboard-focus search, the hit test and the draw traversal
+        UiUpdateVisits,
+        UiKeyboardVisits,
+        UiHitVisits,
+        UiDrawVisits,
         Count
     }
 
@@ -274,7 +279,8 @@ namespace ClassicUO
             "fill_list_full_runs", "fill_list_reuse_hits", "gumps_walked", "gumps_replayed", "ui_vertices_generated",
             "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs",
             "text_nodes", "text_live", "text_expired", "text_nocontent", "text_drawn", "text_fwd_nodes",
-            "text_exp_mobile", "text_exp_item", "text_exp_other" };
+            "text_exp_mobile", "text_exp_item", "text_exp_other",
+            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

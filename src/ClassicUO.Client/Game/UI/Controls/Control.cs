@@ -365,6 +365,8 @@ namespace ClassicUO.Game.UI.Controls
 
         public virtual bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepth)
         {
+            FrameStats.Inc(FrameCounter.UiDrawVisits);
+
             if (IsDisposed)
             {
                 return false;
@@ -389,6 +391,8 @@ namespace ClassicUO.Game.UI.Controls
 
         public virtual void Update()
         {
+            FrameStats.Inc(FrameCounter.UiUpdateVisits);
+
             if (IsDisposed)
             {
                 return;
@@ -533,6 +537,8 @@ namespace ClassicUO.Game.UI.Controls
 
         public void HitTest(int x, int y, ref Control res)
         {
+            FrameStats.Inc(FrameCounter.UiHitVisits);
+
             if (!IsVisible || !IsEnabled || IsDisposed)
             {
                 return;
@@ -578,6 +584,8 @@ namespace ClassicUO.Game.UI.Controls
 
         public Control GetFirstControlAcceptKeyboardInput()
         {
+            FrameStats.Inc(FrameCounter.UiKeyboardVisits);
+
             if (_acceptKeyboardInput)
             {
                 return this;
