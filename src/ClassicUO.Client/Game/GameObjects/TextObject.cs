@@ -56,8 +56,7 @@ namespace ClassicUO.Game.GameObjects
         /// lives in its gump until it expires, past the item's Destroy; a click on it must not reach the item reused since.</summary>
         public uint OwnerIncarnation;
 
-        /// <summary>The owner, unless it was reused for another object since (item_pool; with the switch off an entity's
-        /// Incarnation never changes, so this is the owner as before).</summary>
+        /// <summary>The owner, unless it was reused for another object since (item_pool).</summary>
         public Entity LiveOwnerEntity => Owner is Entity e && e.Incarnation == OwnerIncarnation ? e : null;
 
         public RenderedText RenderedText;

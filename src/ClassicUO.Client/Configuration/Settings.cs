@@ -213,13 +213,6 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("item_pick_early_reject")] public bool ItemPickEarlyReject { get; set; }
 
 
-        // item-pool: the items World drops (out of range, deleted, swept) wait 2 s in a bounded pool (8,192 items, ~2.3 MB)
-        // and are reset and reused for the items that enter range next (ItemPool), instead of a new Item each. Read once at
-        // startup (CUO_ITEM_POOL=1|0 overrides it in developer builds; CUO_ITEM_POOL_CHECK=1 compares every reused item with a
-        // new one). Default on since 2026-11-11 (owner; gates with the checker: 0 mismatches over ~15k reuses, ls_walk
-        // B/frame -24..34 %); off = a new Item for every item entering range.
-        [JsonPropertyName("item_pool")] public bool ItemPool { get; set; } = true;
-
         // anim-count: while the Gpu world renderer draws, the animation advance reads a mobile's frame count from the pack's
         // animation tables (AnimFrameCount) instead of the Legacy frame cache, which decodes and uploads the direction into the
         // RGBA8 anim atlas that the Gpu world never samples (Legacy keeps the cache read). Read once at startup

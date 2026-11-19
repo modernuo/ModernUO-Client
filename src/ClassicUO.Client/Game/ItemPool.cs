@@ -6,13 +6,12 @@ using ClassicUO.Game.GameObjects;
 #if CUO_DEVTOOLS
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using ClassicUO.Utility.Logging;
 #endif
 
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// <c>item_pool</c>: reuses the <see cref="Item"/> objects World drops (out of range, deleted by the server, swept) for the
+    /// Reuses the <see cref="Item"/> objects World drops (out of range, deleted by the server, swept) for the
     /// items that enter range next (<see cref="World.GetOrCreateItem(uint, out bool)"/>). Walking the large scene used to
     /// create and drop thousands of items (~4.3 MB per 15 s of ls_walk), which drove gen0 collections.
     ///
@@ -32,8 +31,7 @@ namespace ClassicUO.Game
     /// <see cref="GameObject.Incarnation"/> (a reflection unit test fails when a new field is not reset).</item>
     /// </list>
     /// At most <see cref="MaxPooled"/> items are kept (about 2.3 MB at 280 B per item); more are left to the collector.
-    /// CUO_ITEM_POOL_CHECK=1 (developer builds) compares every reused item's fields with a new Item's after the reset and
-    /// checks the rules again at reuse; it logs <c>[item-pool-check] mismatch</c> lines and a summary every 5 s.
+    /// Always on (baked in after quiet-1115; was the item_pool switch, default on since 2026-11-11).
     /// </summary>
     internal sealed class ItemPool
     {
@@ -53,7 +51,7 @@ namespace ClassicUO.Game
         private readonly Queue<Entry> _queue = new Queue<Entry>(MaxPooled);
         private bool _closed;
 
-        /// <summary>Session counts (the checker's summary and the tests): offered by World, retired into quarantine, refused
+        /// <summary>Session counts (the tests): offered by World, retired into quarantine, refused
         /// at commit (still listed somewhere), handed out again, dropped at take (listed again), left out (pool full).</summary>
         public long Offered, Retired, Refused, Reused, Dropped, Overflow;
 
@@ -79,13 +77,6 @@ namespace ClassicUO.Game
         /// <summary>End of the item stage: the pending items that nothing World knows of holds go into quarantine.</summary>
         public void Commit(uint now)
         {
-#if CUO_DEVTOOLS
-            if (CheckOn)
-            {
-                Summary(now);
-            }
-#endif
-
             if (_pending.Count == 0)
             {
                 return;
@@ -128,16 +119,10 @@ namespace ClassicUO.Game
                 Item item = _queue.Dequeue().Item;
                 item.InItemPool = false;
 
-                if (!Free(item, out string why))
+                if (!Free(item, out _))
                 {
                     // something listed it again while it waited (it never should): leave it to the collector
                     Dropped++;
-#if CUO_DEVTOOLS
-                    if (CheckOn)
-                    {
-                        Mismatch($"pooled item 0x{item.Serial:X8} (incarnation {item.Incarnation}) listed again: {why}");
-                    }
-#endif
 
                     continue;
                 }
@@ -145,12 +130,6 @@ namespace ClassicUO.Game
                 ScrubSelection(item);
                 item.ResetForReuse();
                 Reused++;
-#if CUO_DEVTOOLS
-                if (CheckOn)
-                {
-                    CheckReset(item);
-                }
-#endif
 
                 return item;
             }
@@ -246,78 +225,9 @@ namespace ClassicUO.Game
             }
         }
 
-        // ---- the switch and CUO_ITEM_POOL_CHECK ----
+        // ---- the reset's field list (tests) ----
 
 #if CUO_DEVTOOLS
-        // the gate's override of the setting (CUO_ITEM_POOL=1|0) and the checker
-        private static readonly bool s_on = Environment.GetEnvironmentVariable("CUO_ITEM_POOL") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings.ItemPool
-        };
-
-        private static readonly bool s_check = Environment.GetEnvironmentVariable("CUO_ITEM_POOL_CHECK") == "1";
-#else
-        private static readonly bool s_on = Configuration.Settings.GlobalSettings.ItemPool;
-#endif
-
-        /// <summary>The setting (read once at startup; World.ItemPoolOverride wins in tests).</summary>
-        public static bool SettingOn => s_on;
-
-#if CUO_DEVTOOLS
-        /// <summary>Tests: the checker for every pool (null: <c>CUO_ITEM_POOL_CHECK=1</c>).</summary>
-        internal static bool? CheckOverride;
-
-        public static bool CheckOn => CheckOverride ?? s_check;
-
-        /// <summary>Checker counts over the session: reused items compared, fields or rules found different.</summary>
-        public static long Checks, Mismatches;
-
-        /// <summary>Tests: sees each mismatch line.</summary>
-        internal static Action<string> MismatchObserver;
-
-        private Item _fresh;
-        private uint _nextLog;
-
-        private void CheckReset(Item item)
-        {
-            Checks++;
-            _fresh ??= new Item(_world);
-
-            foreach (string field in ResetDifferences(_fresh, item))
-            {
-                Mismatch($"reused item (incarnation {item.Incarnation}): {field} differs from a new Item's");
-            }
-
-            if (ReferenceEquals(SelectedObject.Object, item) || ReferenceEquals(SelectedObject.LastLeftDownObject, item))
-            {
-                Mismatch($"reused item (incarnation {item.Incarnation}) still selected");
-            }
-        }
-
-        private void Summary(uint now)
-        {
-            if (now < _nextLog)
-            {
-                return;
-            }
-
-            _nextLog = now + 5000;
-            Log.Info($"[item-pool-check] item_pool=on, offered {Offered}, retired {Retired}, refused {Refused}, reused {Reused}, dropped {Dropped}, overflow {Overflow}, pooled {_queue.Count}; checks {Checks}, mismatches {Mismatches}");
-        }
-
-        private static void Mismatch(string what)
-        {
-            Mismatches++;
-            MismatchObserver?.Invoke(what);
-
-            if (Mismatches <= 20)
-            {
-                Log.Warn($"[item-pool-check] mismatch: {what}");
-            }
-        }
-
         /// <summary>
         /// The instance fields (World and Incarnation excepted) on which <paramref name="actual"/> differs from
         /// <paramref name="expected"/>: values compared with Equals, references by identity. Reflection over the four declaring

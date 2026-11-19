@@ -172,27 +172,12 @@ namespace ClassicUO.Game
         /// across <see cref="Clear"/>, released by <see cref="ReleasePools"/>.</summary>
         internal ItemPool ItemPool => _itemPool ??= new ItemPool(this);
 
-        // created at the first use with the switch on: with item_pool off the World allocates nothing for it
+        // created at the first use
         private ItemPool _itemPool;
 
-        /// <summary>Tests: whether this World created its pool.</summary>
-        internal bool ItemPoolCreated => _itemPool != null;
-
-        /// <summary>Tests: the switch for this World (null: the <c>item_pool</c> setting, read once at startup).</summary>
-        internal bool? ItemPoolOverride;
-
-        internal bool ItemPoolOn => ItemPoolOverride ?? ItemPool.SettingOn;
-
-        // every removal of a destroyed item from Items: with item_pool on, the item is offered to the pool
+        // every removal of a destroyed item from Items: the item is offered to the pool
         private void DropItem(uint serial)
         {
-            if (!ItemPoolOn)
-            {
-                Items.Remove(serial);
-
-                return;
-            }
-
             Item item = Items.Get(serial);
 
             if (Items.Remove(serial) && item.IsDestroyed)
@@ -208,9 +193,9 @@ namespace ClassicUO.Game
         /// keeps its chunks or map objects alive.</summary>
         public void ReleasePools()
         {
-            if (_itemPool != null || ItemPoolOn)
+            if (_itemPool != null)
             {
-                ItemPool.Close();
+                _itemPool.Close();
             }
 
             ChunkPool.Close();
@@ -850,10 +835,7 @@ namespace ClassicUO.Game
                 _toRemove.Clear();
             }
 
-            if (ItemPoolOn)
-            {
-                ItemPool.Commit(Time.Ticks);
-            }
+            ItemPool.Commit(Time.Ticks);
 
             if (ActiveCheck)
             {
@@ -1077,7 +1059,7 @@ namespace ClassicUO.Game
             if (isNew)
             {
                 // item_pool: a reused item comes back reset to a new Item's state
-                item = ItemPoolOn ? ItemPool.Take(Time.Ticks) : null;
+                item = ItemPool.Take(Time.Ticks);
 
                 if (item != null)
                 {
