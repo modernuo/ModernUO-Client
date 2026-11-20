@@ -8316,3 +8316,57 @@ Owner questions (not decided):
   MB, cliloc 16.3 -> 3.7 MB, fonts/speech/stringdict unchanged: text -17.3 MB (pack 1,112 -> ~1,095 MiB). Cost: cliloc
   decodes its language record at startup (~15 MB raw; the Brotli version cost 7 ms; zstd timing parked) and 866 unifont
   page records decode on first use (~11 us each, on the thread drawing text, usually main).
+
+## 2026-11-20 shared-tables: `shared_cliloc` (cliloc read in place from memory shared between instances, default off) and the resident-table survey (bg/shared-tables)
+
+Branch bg/shared-tables from bg/zstd-pack ad2121353. Survey: cuo-poc-state/surveys/shared-tables-2026-11-20.md.
+
+**Survey ranking (MB of physical memory saved with 4 clients if read in place from one shared mapping):** anim tables
+(anim.bin) ~78, cliloc ~14 (enu only; ~25-27 for a jpn/kor client), frame palette ids ~12, tiledata ~9-11 (plus an
+in-process duplicate: PackSet reads tiledata.bin a second time), lights ~9 (needn't be resident at all), multis ~6, art
+sprite table ~5, record store tables 3-6, the rest under 2 each. No pack table is mapped today. The top five are byte
+copies of Pack=1 layouts except tiledata (derived structs with names).
+
+**What `shared_cliloc` does** (Settings `shared_cliloc`, CUO_SHARED_CLILOC=1|0, checker CUO_SHARED_CLILOC_CHECK=1):
+- A raw cliloc record (the ship profile) is mapped straight from the pack's text/cliloc.bin. A compressed one
+  (`--cliloc-compress`) is decoded once into `<cache root>/ModernUO/cache/<pack key>/cliloc-<lang>.bin` (pack key = first
+  128 bits of manifest.json's sha256; root %LOCALAPPDATA%, $XDG_CACHE_HOME or ~/.cache, ~/Library/Caches;
+  CUO_SHARED_CACHE_DIR overrides). The file has a 64-byte header (source record: pack file size, offset, stored/raw size,
+  codec; payload sha256/128): short, damaged or foreign files are rebuilt, never used. Built in a temp file (decoded
+  straight into a read-write mapping of it, no heap buffer) and moved in without replacing: the loser of two builders
+  maps the winner's file.
+- Every instance holds a shared lock on `<pack key>/.inuse` (FileShare.ReadWrite; flock LOCK_SH on Unix); startup deletes
+  other packs' folders only when it can lock them exclusively (Windows also refuses deleting a mapped file), and temp files
+  older than 10 min. Cap 512 MiB on the root (a file past it is not written). Every failure falls back to the heap path.
+  `AllowDiskCache = false` is the hook for protected packs (no plaintext on disk; not implemented).
+- Lookups read through spans over the view's base pointer, acquired once at load and released only at process end (the
+  coordinator's requirement: no MemoryMappedViewAccessor on a lookup path). Mappings are never released while the process
+  runs, since tables may be read on any thread. A mapped table keeps its string cache in 256-slot blocks made on first use
+  (enu: a 3.7 KB block table + 2 KB per touched block) instead of a 0.94 MB slot array. The pages are prefaulted on a
+  thread-pool worker after load.
+
+**Lookup latency (owner bar: not slower than the heap path).** research/cliloc-bench, classic-1.6 enu (117,725 strings,
+3.88 MB), pinned, busy machine (indicative). NativeAOT, 3 interleaved rounds, per lookup, warm (batches of 256): tooltip
+stream (synthetic Zipf over 600 OPL-range ids) heap 44.5-47.3 ns, mapping 44.9-46.9 ns; random ids heap 87-128 ns,
+mapping 85-127 ns: within noise. JIT TC=0 (3 rounds): tooltip 52.0 vs 52.0-52.3 ns, random 87.9-89.1 vs 88.7-91.0 ns.
+MemoryMappedViewAccessor: 248-297 ns (5x, rejected). UTF-8 decoded per lookup instead of cached: 72-77 / 136-158 ns and
+~85 bytes allocated per lookup (rejected). Cold first touch (first 4,000 lookups of a fresh load), AOT: without prefault,
+random p90 1.6-1.9 us vs heap 0.4-0.6 us (soft faults); with the prefault 0.4-0.5 us, tooltip p99 0.7-0.8 us vs heap
+1.6-1.8 us. Load: heap 1.3-1.5 ms (read 3.9 MB), mapping 0.7 ms (index check touches 0.94 MB), mapping + prefault 1.9 ms
+(the prefault runs on a worker in the client). A second instance holding the mapping changed nothing measurable on
+Windows (the pages come from the file cache either way). JIT TC=0 loads were 5-7 ms for the mapping (JIT time).
+Quiet versions: measure/shared-tables/job-clilocbench-PARKED.sh, job-startup-PARKED.sh (quiet-next.md).
+
+**Memory cost / benefit.** Cost: none held beyond today's (mapped pages are shared file pages; 3.7 KB block table plus
+the touched blocks per table). Benefit per client: the 3.88 MB enu payload (and a non-enu language's) leaves the GC heap
+(LOH) and private bytes, and the 0.94 MB slot array shrinks to the touched blocks; with 4 clients one copy is resident.
+Disk: the cache holds one decoded copy per language a client used, per pack (enu 3.9 MB; all 8 languages 15.6 MB), only
+for compressed packs. Measured per-process numbers with 1/2/4 clients: job memshare (pending at hand-off).
+
+**Test pack:** classic-1.6 hard-linked, `--only cliloc --cliloc-compress`: text/cliloc.bin 16.3 -> 3.72 MB (verify exact,
+941,936 strings); published files untouched (link counts checked).
+
+Tests: SharedClilocTests (build once then reuse, damaged/truncated/empty/foreign file rebuilt, stale folders deleted
+unless locked and the in-use one deleted once released, old temps, two racing builders, cap, no-disk-cache hook, lookups
+equal with the switch on and off over raw and zstd packs incl. the checker's counts, mapped parse rejects what the heap
+parse rejects). Unit tests 2,799 passed, 6 skipped. Both build variants build.
