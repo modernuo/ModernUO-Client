@@ -151,45 +151,141 @@ namespace ClassicUO.UnitTests.Game
 
         private sealed class FakeTexture : IDisposable
         {
+            private static int _live;
             public int DisposeCount;
 
-            public void Dispose() => DisposeCount++;
+            public FakeTexture() => Interlocked.Increment(ref _live);
+
+            public static int Live => Volatile.Read(ref _live);
+
+            public void Dispose()
+            {
+                if (++DisposeCount == 1)
+                {
+                    Interlocked.Decrement(ref _live);
+                }
+            }
+        }
+
+        private static readonly Action<FakeTexture, FakeImage> NoFill = (_, _) => { };
+
+        [Fact]
+        public void Owner_Adopt_Keeps_The_New_Texture_And_Frees_The_Old_One_And_The_Image()
+        {
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            var first = new FakeImage();
+
+            owner.Adopt(first, _ => new FakeTexture(), NoFill, out Exception error).Should().BeTrue();
+            error.Should().BeNull();
+            FakeTexture old = owner.Texture;
+            old.Should().NotBeNull();
+            first.DisposeCount.Should().Be(1);
+
+            var second = new FakeImage();
+            FakeTexture filled = null;
+            owner.Adopt(second, _ => new FakeTexture(), (t, _) => filled = t, out error).Should().BeTrue();
+
+            owner.Texture.Should().NotBeSameAs(old).And.BeSameAs(filled, "fill runs on the texture the owner holds");
+            old.DisposeCount.Should().Be(1);
+            owner.Texture.DisposeCount.Should().Be(0);
+            second.DisposeCount.Should().Be(1);
+
+            owner.Dispose();
         }
 
         [Fact]
-        public void ReplaceMapTexture_Swaps_The_Texture_And_Frees_The_Image()
+        public void Owner_A_Throwing_Allocate_Leaves_No_Texture_And_Returns_The_Error()
         {
-            var old = new FakeTexture();
-            var made = new FakeTexture();
-            FakeTexture current = old;
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _).Should().BeTrue();
+            FakeTexture old = owner.Texture;
             var image = new FakeImage();
+            var boom = new InvalidOperationException("no device memory");
 
-            WorldMapGump.ReplaceMapTexture(ref current, image, _ => made).Should().BeTrue();
+            owner.Adopt<FakeImage>(image, _ => throw boom, NoFill, out Exception error).Should().BeFalse();
 
-            current.Should().BeSameAs(made);
-            old.DisposeCount.Should().Be(1);
-            made.DisposeCount.Should().Be(0);
+            error.Should().BeSameAs(boom);
+            owner.Texture.Should().BeNull("Draw skips a null texture");
+            old.DisposeCount.Should().Be(1, "the old texture is disposed before the new one is made");
             image.DisposeCount.Should().Be(1);
         }
 
         [Fact]
-        public void ReplaceMapTexture_A_Failed_Upload_Is_Logged_And_Leaves_No_Texture()
+        public void Owner_A_Throwing_Fill_Disposes_The_Texture_It_Already_Owns()
         {
-            var old = new FakeTexture();
-            FakeTexture current = old;
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            FakeTexture made = null;
             var image = new FakeImage();
 
-            WorldMapGump.ReplaceMapTexture<FakeImage, FakeTexture>(ref current, image, _ => throw new InvalidOperationException("upload failed"))
-                .Should().BeFalse("the caller prints 'loaded' only on success");
+            owner.Adopt(image, _ => made = new FakeTexture(), (_, _) => throw new InvalidOperationException("upload failed"), out Exception error)
+                .Should().BeFalse();
 
-            current.Should().BeNull("Draw skips a null texture");
-            old.DisposeCount.Should().Be(1);
+            error.Should().BeOfType<InvalidOperationException>();
+            owner.Texture.Should().BeNull();
+            made.DisposeCount.Should().Be(1, "a texture created before a later step threw must not leak");
             image.DisposeCount.Should().Be(1);
+        }
 
-            var image2 = new FakeImage();
-            WorldMapGump.ReplaceMapTexture<FakeImage, FakeTexture>(ref current, image2, _ => null).Should().BeFalse();
-            current.Should().BeNull();
-            image2.DisposeCount.Should().Be(1);
+        [Fact]
+        public void Owner_A_Null_Texture_Is_A_Failure_Without_An_Error()
+        {
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            var image = new FakeImage();
+
+            owner.Adopt(image, _ => null, NoFill, out Exception error).Should().BeFalse();
+
+            error.Should().BeNull();
+            owner.Texture.Should().BeNull();
+            image.DisposeCount.Should().Be(1);
+        }
+
+        [Fact]
+        public void Owner_Release_And_Dispose_Free_The_Texture_And_A_Disposed_Owner_Creates_Nothing()
+        {
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+            owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _);
+            FakeTexture first = owner.Texture;
+
+            owner.Release();
+            owner.Texture.Should().BeNull();
+            first.DisposeCount.Should().Be(1);
+
+            owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _).Should().BeTrue();
+            FakeTexture second = owner.Texture;
+            owner.Dispose();
+            second.DisposeCount.Should().Be(1);
+            owner.Dispose();
+            second.DisposeCount.Should().Be(1, "dispose is idempotent");
+
+            var late = new FakeImage();
+            bool allocated = false;
+            owner.Adopt(late, _ => { allocated = true; return new FakeTexture(); }, NoFill, out _).Should().BeFalse();
+            allocated.Should().BeFalse("a closed gump uploads nothing");
+            late.DisposeCount.Should().Be(1);
+            owner.Texture.Should().BeNull();
+        }
+
+        [Fact]
+        public void Owner_Leaves_No_Live_Texture_Across_Mixed_Successes_And_Failures()
+        {
+            int before = FakeTexture.Live;
+            var owner = new WorldMapTextureOwner<FakeTexture>();
+
+            for (int i = 0; i < 60; i++)
+            {
+                switch (i % 4)
+                {
+                    case 0: owner.Adopt(new FakeImage(), _ => new FakeTexture(), NoFill, out _); break;
+                    case 1: owner.Adopt(new FakeImage(), _ => new FakeTexture(), (_, _) => throw new InvalidOperationException(), out _); break;
+                    case 2: owner.Adopt<FakeImage>(new FakeImage(), _ => throw new InvalidOperationException(), NoFill, out _); break;
+                    default: owner.Release(); break;
+                }
+
+                (FakeTexture.Live - before).Should().BeLessThanOrEqualTo(1, "the owner holds at most one texture");
+            }
+
+            owner.Dispose();
+            (FakeTexture.Live - before).Should().Be(0);
         }
 
         /// <summary>The decoder is FNA3D's stb_image; skipped where the native library can't be loaded.</summary>
@@ -361,6 +457,100 @@ namespace ClassicUO.UnitTests.Game
             {
                 Directory.Delete(dir, true);
             }
+        }
+
+        /// <summary>
+        /// worldmap-audit P-7: a freshly built map is posted from its build buffer instead of being read back from the PNG it
+        /// was just written to. The adopted buffer must hold exactly the pixels the decode of that PNG returns, and the image
+        /// frees it (NativeMemory) once, on Dispose.
+        /// </summary>
+        [Fna3dFact]
+        public unsafe void An_Adopted_Build_Buffer_Equals_The_Decoded_Png_And_Is_Freed_Once()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                const int W = 257, H = 131;
+                byte[] rgba = MapLikePixels(W, H);
+                string png = Path.Combine(dir, "map.png");
+
+                void* buffer = NativeMemory.Alloc((nuint)rgba.Length);
+                rgba.CopyTo(new Span<byte>(buffer, rgba.Length));
+
+                using (var stream = ClassicUO.Utility.AtomicFile.OpenWrite(png))
+                {
+                    Uo.Render.Png.Write(stream, W, H, new ReadOnlySpan<byte>(buffer, rgba.Length));
+                    stream.Commit();
+                }
+
+                WorldMapImage built = WorldMapImage.AdoptNativeMemory(W, H, buffer);
+                using WorldMapImage decoded = WorldMapGump.DecodeMapImage(png);
+
+                built.Width.Should().Be(decoded.Width);
+                built.Height.Should().Be(decoded.Height);
+                built.ByteLength.Should().Be(decoded.ByteLength);
+                built.Span.SequenceEqual(decoded.Span).Should().BeTrue("the image posted from the build is the one the PNG decodes to");
+
+                built.Dispose();
+                built.Dispose();
+                built.Pixels.Should().Be(IntPtr.Zero);
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        /// <summary>
+        /// worldmap-audit P-8: the facet texture is Bgra5551. Every 5-bit radar level (HuesHelper's table) encodes exactly;
+        /// any other value lands on the nearest level (|error| after the GPU's v*255/31 expansion at most 4), the same
+        /// rounding the p8 evidence used; alpha keeps 0 and 255.
+        /// </summary>
+        [Fact]
+        public void Rgba8_To_Bgra5551_Is_Exact_For_Radar_Levels_And_Nearest_Otherwise()
+        {
+            byte[] radar = { 0x00, 0x08, 0x10, 0x18, 0x20, 0x29, 0x31, 0x39, 0x41, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x73, 0x7B,
+                             0x83, 0x8B, 0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBD, 0xC5, 0xCD, 0xD5, 0xDE, 0xE6, 0xEE, 0xF6, 0xFF };
+
+            for (int level = 0; level < 32; level++)
+            {
+                byte v = radar[level];
+                var dst = new ushort[1];
+                WorldMapImage.Rgba8ToBgra5551(new byte[] { v, v, v, 0xFF }, dst);
+                dst[0].Should().Be((ushort)(0x8000 | (level << 10) | (level << 5) | level));
+            }
+
+            for (int v = 0; v < 256; v++)
+            {
+                var dst = new ushort[1];
+                WorldMapImage.Rgba8ToBgra5551(new byte[] { (byte)v, 0, (byte)(255 - v), 0 }, dst);
+                int r = (dst[0] >> 10) & 31, b = dst[0] & 31;
+                r.Should().Be((int)Math.Round(v * 31 / 255.0, MidpointRounding.ToEven));
+                Math.Abs(Math.Round(r * 255 / 31.0) - v).Should().BeLessThanOrEqualTo(4);
+                Math.Abs(Math.Round(b * 255 / 31.0) - (255 - v)).Should().BeLessThanOrEqualTo(4);
+                (dst[0] & 0x8000).Should().Be(0);
+            }
+        }
+
+        [Fact]
+        public unsafe void ConvertToBgra5551_Halves_The_Image_And_Disposes_The_Source()
+        {
+            const int W = 33, H = 17;
+            byte[] rgba = MapLikePixels(W, H);
+            void* buffer = NativeMemory.Alloc((nuint)rgba.Length);
+            rgba.CopyTo(new Span<byte>(buffer, rgba.Length));
+            WorldMapImage source = WorldMapImage.AdoptNativeMemory(W, H, buffer);
+
+            using WorldMapImage image = WorldMapImage.ConvertToBgra5551(source);
+
+            source.Pixels.Should().Be(IntPtr.Zero, "the conversion consumes its source");
+            image.Format.Should().Be(Microsoft.Xna.Framework.Graphics.SurfaceFormat.Bgra5551);
+            image.ByteLength.Should().Be(W * H * 2);
+
+            var expected = new ushort[W * H];
+            WorldMapImage.Rgba8ToBgra5551(rgba, expected);
+            image.Span.SequenceEqual(MemoryMarshal.AsBytes(expected.AsSpan())).Should().BeTrue();
         }
     }
 }

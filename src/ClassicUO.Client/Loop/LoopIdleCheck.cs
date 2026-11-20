@@ -145,7 +145,9 @@ namespace ClassicUO.Loop
             else if (byCap) _byCap++;
             else _byOther++;
 
-            _plannedDue = byDue ? dueTick : long.MaxValue;
+            // a cap wake at the deadline (due == cap, e.g. the world map's 250 ms party query with event_loop_idle_max_wait_ms
+            // 250) serves it too: without it, that Update's send counted as untracked
+            _plannedDue = byDue || byCap ? dueTick : long.MaxValue;
             _plannedSource = dueSource;
 
             if (now - _start < Stopwatch.Frequency * 5)

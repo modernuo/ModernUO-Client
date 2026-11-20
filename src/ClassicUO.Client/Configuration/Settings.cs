@@ -180,6 +180,14 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("event_loop_idle_max_wait_ms")] public int EventLoopIdleMaxWaitMs { get; set; } = 250;
 
+        // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
+        // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
+        // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the
+        // event_loop_max_wait_ms cadence (perf-opportunities "World map gump open keeps the 16 ms loop cadence").
+        // CUO_WORLDMAP_IDLE_CHECK reports map state that changed after an idle wait it was not planned for, and late map work;
+        // CUO_WORLDMAP_IDLE_LOOP=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("worldmap_idle_loop")] public bool WorldMapIdleLoop { get; set; }
+
         // loop-linux: the event loop on Linux, waiting in epoll (LinuxEpollLoopWaiter: socket, wake eventfd, timerfd deadline,
         // X11/Wayland display fd, SDL event watch) instead of the legacy loop's Sleep(1) and spin. Read once at startup; the
         // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.
