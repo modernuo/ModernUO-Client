@@ -91,6 +91,8 @@ namespace ClassicUO
             {
                 Log.Info($"[settle] {where}: hold {(gs.Settle.HoldEnabled ? "on" : "off")}; {gs.Settle.Stats}");
                 Log.Info($"[popin] {where}: {Game.Scenes.PopInStats.Summary()}");
+                var gw = Client.Game.GetGpuWorld()?.World;
+                Log.Info($"[popin-ring] {where}: chunk_ring_prefetch {(Game.Map.Map.RingPrefetch ? "on" : "off")}; client chunks requested {Client.Game.UO.World?.Map?.RingRequested ?? 0}, Gpu pages prefetched {gw?.RingPrefetched ?? 0} (queued ahead {gw?.Pages.PrefetchQueued ?? 0}), page uploads {gw?.Pages.TotalUploads ?? 0}, evictions {gw?.Pages.Evictions ?? 0}, layers {gw?.Pages.Layers ?? 0}");
                 var db = Renderer.DecodeBudget.Shared;
                 Log.Info($"[decode-budget] {where}: peak in flight since the last line {db.TakeLogPeak() >> 10} KiB (all-time {db.PeakBytes >> 10}), cap {db.CapBytes >> 10} KiB, waiting {db.Waiting}");
             }

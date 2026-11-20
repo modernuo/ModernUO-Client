@@ -516,6 +516,25 @@ public sealed unsafe class ChunkStore
     /// <summary>Elements in the CPU instance mirror (grows to the allocator's high-water mark).</summary>
     public int CpuMirrorLength => _cpuInst.Length;
 
+    /// <summary>chunk_ring_prefetch: queues up to <paramref name="max"/> non-resident pages of baked chunks whose art
+    /// intersects <paramref name="lead"/> (the ring the view moves into), only while no visible page waits.</summary>
+    public int PrefetchPages(in RectI lead, PageResidency residency, long frame, int max)
+    {
+        if (!residency.PrefetchRoom) return 0;
+        int queued = 0;
+        for (int i = 0; i < _activeCount && queued < max; i++)
+        {
+            int slot = _active[i];
+            if (_state[slot] != State.Ready || _count[slot] == 0) continue;
+            if (_maxX[slot] < lead.X0 || _minX[slot] > lead.X1 || _maxY[slot] < lead.Y0 || _minY[slot] > lead.Y1) continue;
+            int pc = _pageCount[slot];
+            int pb = slot * MaxPagesPerChunk;
+            for (int p = 0; p < pc && queued < max; p++)
+                if (residency.Prefetch(_pages[pb + p], frame)) queued++;
+        }
+        return queued;
+    }
+
     /// <summary>Visible chunk table for this frame. Touches the pages of every visible chunk in the residency manager.</summary>
     public int BuildDrawList(in RectI view, Span<ChunkDraw> table, PageResidency residency, long frame, out int instances, bool cachePages = true)
     {

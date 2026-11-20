@@ -188,6 +188,13 @@ namespace ClassicUO.Configuration
         // in developer builds. Default off.
         [JsonPropertyName("asset_ready_wake")] public bool AssetReadyWake { get; set; }
 
+        // gpu-popin-2: while the player moves, one chunk ring beyond the draw range on the side it moves to is requested
+        // ahead: the client's chunk loads (Map.RequestRing, after the visible chunks, inside the chunk budget) and the Gpu
+        // world's static art pages (WorldRenderer.PrefetchRing, only while no visible page waits, at most 2 pages a frame;
+        // the page LRU keeps its layer budget). Counted by the [popin] chunk_pages/client_queued counters.
+        // CUO_CHUNK_RING_PREFETCH=1|0 overrides it in developer builds. Default off.
+        [JsonPropertyName("chunk_ring_prefetch")] public bool ChunkRingPrefetch { get; set; }
+
         // loop-linux: the event loop on Linux, waiting in epoll (LinuxEpollLoopWaiter: socket, wake eventfd, timerfd deadline,
         // X11/Wayland display fd, SDL event watch) instead of the legacy loop's Sleep(1) and spin. Read once at startup; the
         // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.

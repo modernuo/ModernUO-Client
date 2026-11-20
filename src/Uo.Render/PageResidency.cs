@@ -384,6 +384,25 @@ public sealed unsafe class PageResidency
         MissingVisible++;
     }
 
+    /// <summary>chunk_ring_prefetch: pages queued ahead of movement before any frame needed them (total).</summary>
+    public int PrefetchQueued;
+
+    /// <summary>No page is waiting for a staging slot: a prefetch queued now delays no visible page.</summary>
+    public bool PrefetchRoom => _qCount == 0;
+
+    /// <summary>Queues a page the view is about to reach (not counted as missing). True when it was queued now.</summary>
+    public bool Prefetch(int page, long frame)
+    {
+        if ((uint)page >= (uint)LogicalCount || _layerOf[page] >= 0) return false;
+        _requested[page] = frame;
+        if (_state[page] != PState.None) return false;
+        _state[page] = PState.Queued;
+        _queue[(_qHead + _qCount) % LogicalCount] = page;
+        _qCount++;
+        PrefetchQueued++;
+        return true;
+    }
+
     public void BeginFrame()
     {
         UploadsThisFrame = 0;

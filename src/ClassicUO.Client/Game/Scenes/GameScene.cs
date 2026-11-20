@@ -737,6 +737,11 @@ namespace ClassicUO.Game.Scenes
             long loopStart = FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
             map.DrawPending = 0;
 
+            if (Map.Map.RingPrefetch)
+            {
+                map.RequestRing(minChunkX, minChunkY, maxChunkX, maxChunkY, Time.Ticks);
+            }
+
             // FrameStats per chunk (masks, walk, hidden) only for the Gpu world and in detail mode. Legacy times the whole
             // chunk loop as PrepWalk, without two timestamps per chunk (~1,400 chunks at the 4K zoom-out, each
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)

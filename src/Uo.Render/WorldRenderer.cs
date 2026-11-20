@@ -291,6 +291,7 @@ public sealed unsafe class WorldRenderer : IDisposable
             RenderDiagnostics.Add(DiagMetric.ChunkTableRebuilds, 1);
         }
         _viewReuse.Remember(_view, need, scale, Chunks.ChangeEpoch, Pages.TotalUploads, AnimPages?.TotalUploads ?? 0);
+        if (RingPrefetch && !reuse) PrefetchRing();
         RenderDiagnostics.Elapsed(DiagMetric.ChunkTableTicks, diagTable);
         _prepared = true;
     }
@@ -305,6 +306,37 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// prefetch ring and page loads nothing visible waits for, so a host can hold its previous frame until this is true.
     /// Read after Render/Stream.</summary>
     public bool VisibleReady => Chunks.MissingNear == 0 && Pages.MissingVisible == 0 && (AnimPages == null || AnimPages.MissingVisible == 0);
+
+    /// <summary>chunk_ring_prefetch (host setting): while the view moves, the static art pages of the baked chunks one chunk
+    /// ring beyond it, on the side it moves to, are queued when no visible page waits (at most
+    /// <see cref="RingPrefetchPagesPerFrame"/> per frame; the page LRU and its layer budget bound what stays).</summary>
+    public bool RingPrefetch;
+    public const int RingPrefetchPagesPerFrame = 2;
+    /// <summary>One chunk (8 tiles) in world pixels along each screen axis.</summary>
+    const int RingPx = 8 * 44;
+    /// <summary>Below this the view is not moving (world px/s; one tile per second).</summary>
+    const double RingMinSpeed = 44;
+    public int RingPrefetched;
+
+    void PrefetchRing()
+    {
+        int dx = _velX > RingMinSpeed ? 1 : _velX < -RingMinSpeed ? -1 : 0;
+        int dy = _velY > RingMinSpeed ? 1 : _velY < -RingMinSpeed ? -1 : 0;
+        if (dx == 0 && dy == 0) return;
+        int left = RingPrefetchPagesPerFrame;
+        // the strip beyond each edge the view moves past, one ring deep and one ring wider than the view
+        if (dx != 0)
+        {
+            var lead = new RectI(dx > 0 ? _view.X1 : _view.X0 - RingPx, _view.Y0 - RingPx, dx > 0 ? _view.X1 + RingPx : _view.X0, _view.Y1 + RingPx);
+            left -= Chunks.PrefetchPages(in lead, Pages, Frame, left);
+        }
+        if (dy != 0 && left > 0)
+        {
+            var lead = new RectI(_view.X0 - RingPx, dy > 0 ? _view.Y1 : _view.Y0 - RingPx, _view.X1 + RingPx, dy > 0 ? _view.Y1 + RingPx : _view.Y0);
+            left -= Chunks.PrefetchPages(in lead, Pages, Frame, left);
+        }
+        RingPrefetched += RingPrefetchPagesPerFrame - left;
+    }
 
     /// <summary>A chunk bake, chunk upload or page load is queued or running (a later frame can draw more).</summary>
     public bool LoadsPending => Chunks.PendingChunks != 0 || Chunks.UploadQueueLength != 0 || Pages.Pending || (AnimPages != null && AnimPages.Pending);
