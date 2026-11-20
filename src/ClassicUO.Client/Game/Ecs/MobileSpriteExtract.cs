@@ -720,7 +720,7 @@ namespace ClassicUO.Game
             }
 
             int n = _count - recStart;
-            bool hold = LookPrefetch.Enabled;
+            bool hold = LookPrefetch.HoldEnabled;
 
             if ((hold || LookPrefetch.Check) && PageResidency != null)
             {
@@ -741,7 +741,7 @@ namespace ClassicUO.Game
                         return;
                     }
 
-                    if (hold && !previous && FirstSightWait(cache))
+                    if (hold && !previous && LookPrefetch.Enabled && FirstSightWait(cache))
                     {
                         // first sight: nothing until the body and every equipment page are resident (bounded)
                         _count = recStart;
@@ -1090,7 +1090,7 @@ namespace ClassicUO.Game
 
             MobileFrameCache.LegacyMisses++;
             Select(e, data, posX, posY, depth);
-            bool hold = LookPrefetch.Enabled;
+            bool hold = LookPrefetch.HoldEnabled;
 
             if (_atlasMiss && (hold || LookPrefetch.Check))
             {
@@ -1108,7 +1108,7 @@ namespace ClassicUO.Game
                     return;
                 }
 
-                if (hold && !previous && FirstSightWait(cache))
+                if (hold && !previous && LookPrefetch.Enabled && FirstSightWait(cache))
                 {
                     // first sight: nothing until the body and every equipment direction are uploaded (bounded)
                     _selCount = 0;

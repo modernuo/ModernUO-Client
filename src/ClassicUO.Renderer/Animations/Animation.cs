@@ -13,7 +13,7 @@ using Uo.Pack;
 
 namespace ClassicUO.Renderer.Animations
 {
-    public sealed class Animations
+    public sealed partial class Animations
     {
         private readonly TextureAtlas _atlas;
         private readonly PixelPicker _picker = new PixelPicker();
@@ -304,7 +304,7 @@ namespace ClassicUO.Renderer.Animations
         /// <summary>Directions finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
         public int ReadyDirections => _queue.ReadyCount;
 
-        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync, bool evicted = false)
+        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync, bool evicted = false, bool prefetch = false)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies
             if (!_animationLoader.TryGetDirection(body, action, dir + 3, out var entry))
@@ -322,7 +322,12 @@ namespace ClassicUO.Renderer.Animations
             // visible mobile never blinks when it turns or changes action; the worker prefetches the chunks of the other
             // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
             // anim_atlas_lru: a direction loaded again after its page was evicted takes the same path (not drawn for a while)
-            if (AsyncFirstSight && !sync && (!_bodyDrawn[body] || evicted) && !IsResident(entry))
+            // anim_async_turn: a body already drawn takes the worker too (a turn or a new action); the draw keeps the
+            // mobile's previous look meanwhile (MobileSpriteExtract's hold, LookPrefetch.HoldMaxMs)
+            bool turn = _bodyDrawn[body] && !evicted && !prefetch;
+            bool resident = IsResident(entry);
+
+            if ((prefetch && AsyncFirstSight) || DecodesOnWorker(sync, _bodyDrawn[body], evicted, AsyncTurn, resident))
             {
                 long heldBytes = 0;
 
@@ -340,6 +345,13 @@ namespace ClassicUO.Renderer.Animations
                 }
 
                 var job = new DirectionJob(this, body, action, dir, entry, sprites);
+#if CUO_DEVTOOLS
+                if (AsyncTurnCheck && turn)
+                {
+                    job.TurnSubmitted = Stopwatch.GetTimestamp();
+                    AsyncTurnSubmitted++;
+                }
+#endif
                 Interlocked.Increment(ref _pendingJobs);
                 _pendingSprites.Add(sprites);
                 _queue.Submit(job, heldBytes, counted: true);
@@ -349,6 +361,9 @@ namespace ClassicUO.Renderer.Animations
 
             _bodyDrawn[body] = true;
             uint[] buffer = null;
+#if CUO_DEVTOOLS
+            long syncStart = AsyncTurnCheck ? Stopwatch.GetTimestamp() : 0;
+#endif
 
             try
             {
@@ -385,6 +400,12 @@ namespace ClassicUO.Renderer.Animations
                     ArrayPool<uint>.Shared.Return(buffer);
                 }
             }
+#if CUO_DEVTOOLS
+            if (AsyncTurnCheck)
+            {
+                NoteSyncDecode(sync, resident, Stopwatch.GetTimestamp() - syncStart);
+            }
+#endif
 
             return sprites;
         }
@@ -743,6 +764,11 @@ namespace ClassicUO.Renderer.Animations
             {
                 CompleteFrames(job);
 #if CUO_DEVTOOLS
+                if (job.TurnSubmitted != 0)
+                {
+                    NoteTurnUploaded(job);
+                }
+
                 if (LruCheck && _lru != null)
                 {
                     CheckReloaded(DirKey(job.Body, job.Action, job.Dir), job.Sprites, "uploaded");
@@ -823,6 +849,9 @@ namespace ClassicUO.Renderer.Animations
             public readonly AnimDirEntry Entry;
             public readonly SpriteInfo[] Sprites;
             public readonly FrameBuffers Buffers; // rented from ArrayPool<uint>.Shared; returned by Upload, ReturnAll or Decode's failure
+#if CUO_DEVTOOLS
+            public long TurnSubmitted; // CUO_ANIM_ASYNC_TURN_CHECK: a turn's direction (its body was drawn before) went to a worker then
+#endif
 
             public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
             {

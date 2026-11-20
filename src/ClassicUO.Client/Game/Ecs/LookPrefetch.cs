@@ -60,6 +60,10 @@ namespace ClassicUO.Game
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AssetPrefetchOnPacket ?? false);
 
+        /// <summary>The draw keeps a mobile's previous complete look while its new one loads (bounded): with this switch, or
+        /// with anim_async_turn, whose turns load on a worker. The first-sight wait stays with this switch only.</summary>
+        public static bool HoldEnabled => Enabled || AnimAsyncTurn.Enabled;
+
         private static readonly uint[] _serials = new uint[Capacity];
         private static readonly Kind[] _kinds = new Kind[Capacity];
         private static int _head, _count;
@@ -297,15 +301,21 @@ namespace ClassicUO.Game
         /// <summary>The look the draw uses: body (or mount) and equipment, with the group and direction of this frame.</summary>
         private static void PrefetchMobile(Mobile mobile)
         {
+            ushort graphic = mobile.GetGraphicForAnimation();
+            PrefetchMobile(mobile, (byte)((byte)mobile.GetDirectionForAnimation() & 7), Mobile.GetGroupForAnimation(mobile, graphic, true));
+        }
+
+        /// <summary>The look's body (or mount), mount and equipment in UO direction <paramref name="uoDir"/> of
+        /// <paramref name="group"/> (anim_async_turn requests the neighbours of the facing direction with it).</summary>
+        internal static void PrefetchMobile(Mobile mobile, byte uoDir, byte group)
+        {
             var animations = Client.Game.UO.Animations;
             var gpu = Client.Game.GetGpuWorld()?.World;
-            byte uoDir = (byte)((byte)mobile.GetDirectionForAnimation() & 7);
             byte dir = uoDir;
             bool flip = false;
             animations.GetAnimDirection(ref dir, ref flip);
 
             ushort graphic = mobile.GetGraphicForAnimation();
-            byte group = Mobile.GetGroupForAnimation(mobile, graphic, true);
             Request(animations, gpu, graphic, group, dir, uoDir, false);
 
             Item mount = mobile.FindItemByLayer(Layer.Mount);
@@ -389,6 +399,11 @@ namespace ClassicUO.Game
             if (gpu != null)
             {
                 gpu.PrefetchAnim(animations.ResolveBody(body), group, uoDir);
+            }
+            else if (Renderer.Animations.Animations.AsyncTurn)
+            {
+                // anim_async_turn: on a worker also for a body already drawn, and never decoded here
+                animations.PrefetchDirection(body, group, dir, equip);
             }
             else
             {

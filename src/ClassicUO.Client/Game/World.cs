@@ -445,6 +445,7 @@ namespace ClassicUO.Game
         {
             Map?.UpdateLoading(Player.X, Player.Y);
             LookPrefetch.Drain(this);
+            AnimAsyncTurn.Drain(this);
         }
 
         // 2. the item the player picked up and the server confirmed gone

@@ -202,6 +202,14 @@ namespace ClassicUO.Configuration
         // states. CUO_ASSET_PREFETCH_ON_PACKET=1|0 overrides it in developer builds. Default off.
         [JsonPropertyName("asset_prefetch_on_packet")] public bool AssetPrefetchOnPacket { get; set; }
 
+        // gpu-popin round 5 (owner 2026-11-20: a brief turn delay on one mobile over a whole-frame stall): a turn or new
+        // action of a body already drawn decodes its direction on a worker (Animations.AsyncTurn) instead of on the main
+        // thread; the mobile keeps its previous look until the direction is uploaded, at most LookPrefetch.HoldMaxMs. Moves,
+        // turns and war-mode changes request the facing direction and its two neighbours early (AnimAsyncTurn).
+        // CUO_ANIM_ASYNC_TURN_CHECK=1 counts the main-thread decodes left and the turn delays in both states;
+        // CUO_ANIM_ASYNC_TURN=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; }
+
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
         // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the
