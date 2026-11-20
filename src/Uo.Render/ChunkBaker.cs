@@ -256,8 +256,8 @@ public sealed class BakeJob : Job
         uint bits = (roof ? SpriteInstance.ZRoof : 0) | (cotCapable ? SpriteInstance.ZCotCapable : 0) | (exempt ? SpriteInstance.ZNoCot : 0);
         if (geo)
         {
-            uint shape = SpriteInstance.GeoShapeBits((f & TileFlags.Wall) != 0, background, surface, d.Height);
-            bits |= shape | (shape != SpriteInstance.ZGeoFlat && z + d.Height <= landZ ? SpriteInstance.ZGeoBuried : 0);
+            uint shape = SpriteInstance.GeoShapeBits((f & TileFlags.Wall) != 0, background, surface, (f & TileFlags.Wet) != 0, d.Height);
+            bits |= shape | ((shape & SpriteInstance.ZGeoFlat) == 0 && z + d.Height <= landZ ? SpriteInstance.ZGeoBuried : 0);
         }
         return (uint)(byte)(sbyte)z | (uint)d.Height << 8 | bits << 16;
     }

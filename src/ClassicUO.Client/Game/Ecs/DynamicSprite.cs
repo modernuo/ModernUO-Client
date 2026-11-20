@@ -93,8 +93,8 @@ namespace ClassicUO.Game
         /// <summary>clip-2 depth model: an art record (item, multi) drawn with a static's shape over tile
         /// (<see cref="GeoTx"/>, <see cref="GeoTy"/>) at <see cref="GeoZ"/> (SpriteInstance.GeoTile); false for everything else.</summary>
         public bool GeoTile;
-        public ushort GeoTx, GeoTy;
-        public byte GeoHeight, GeoBits;
+        public byte GeoHeight;
+        public ushort GeoTx, GeoTy, GeoBits;
 
         public readonly bool Flipped => (Flags & DynamicSpriteFlags.Flip) != 0;
     }

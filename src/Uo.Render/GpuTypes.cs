@@ -57,6 +57,21 @@ public struct SpriteInstance
     public static uint GeoShapeBits(bool wall, bool background, bool surface, int height)
         => wall ? ZGeoWall : height == 0 && (background || surface) ? ZGeoFlat : 0u;
 
+    /// <summary>Corners bit 24 of a <see cref="ZGeoFlat"/> static or <see cref="ZGeoTile"/> instance (switch wet_surface_depth):
+    /// the flat is tiledata Wet (water). With the switch on it keeps only <see cref="GeoDepth.WetDrop"/> instead of
+    /// <see cref="GeoDepth.FlatDrop"/>, so a water surface above a mobile cuts it at the true waterline (Felucca 1675 1705: a
+    /// player at z -15 under water statics at z -5). Baked whenever the shape bits are; the shader reads it only while
+    /// FrameUniforms.DepthModel has <see cref="FrameUniforms.DepthModelWet"/>.</summary>
+    public const uint ZGeoWet = 256;
+
+    /// <summary><see cref="GeoShapeBits(bool, bool, bool, int)"/> plus <see cref="ZGeoWet"/> on a flat that is tiledata Wet.</summary>
+    public static uint GeoShapeBits(bool wall, bool background, bool surface, bool wet, int height)
+    {
+        uint shape = GeoShapeBits(wall, background, surface, height);
+
+        return wet && shape == ZGeoFlat ? shape | ZGeoWet : shape;
+    }
+
     /// <summary>Gives a dynamic art instance a static's geometric depth (clip-2, only with depth_model on): tile (tx, ty) at
     /// z with <paramref name="height"/> and the <see cref="GeoShapeBits"/>, in the baked statics' layout (Light bits 16-31 the
     /// tile's low bytes, Corners = (u8)z | height &lt;&lt; 8 | bits &lt;&lt; 16) plus <see cref="ZGeoTile"/>. False (unchanged)
@@ -69,7 +84,7 @@ public struct SpriteInstance
         }
 
         Light = (Light & 0xFFFFu) | StaticTileBits(tx, ty);
-        Corners = (uint)(byte)(sbyte)Math.Clamp(z, -128, 127) | (uint)Math.Clamp(height, 0, 255) << 8 | ((bits & 0x7Fu) | ZGeoTile) << 16;
+        Corners = (uint)(byte)(sbyte)Math.Clamp(z, -128, 127) | (uint)Math.Clamp(height, 0, 255) << 8 | ((bits & (0x7Fu | ZGeoWet)) | ZGeoTile) << 16;
         return true;
     }
 
@@ -299,6 +314,10 @@ public struct FrameUniforms
     public float GeoOff;
     public float GeoScale;
     public uint GeoPad;
+
+    /// <summary><see cref="DepthModel"/> bit (switch wet_surface_depth, with the geometric model on): flats marked
+    /// <see cref="SpriteInstance.ZGeoWet"/> drop <see cref="GeoDepth.WetDrop"/> instead of <see cref="GeoDepth.FlatDrop"/>.</summary>
+    public const uint DepthModelWet = 2;
 }
 
 /// <summary>Slot of the per-frame override hash (in the frame table): <see cref="Index1"/> = instance index + 1

@@ -74,6 +74,9 @@
 #define Z_GEOBURIED   64u     // a non-flat static whose top is at or under its tile's land: lowered by FLAT_DROP like the flats
 #define Z_GEOTILE     128u    // a dynamic art instance (item, multi, captured static) in the statics' shape layout (SpriteInstance.GeoTile)
 #define FLAT_DROP     1.5     // flats sit FLAT_DROP tile sums back: a mobile's lower rows beat the floors they hang over
+#define Z_GEOWET      256u    // a wet flat (water; SpriteInstance.ZGeoWet, Corners bit 24)
+#define DM_WET        2u      // FrameUniforms.DepthModelWet (switch wet_surface_depth): wet flats drop WET_DROP, not FLAT_DROP
+#define WET_DROP      0.1     // GeoDepth.WetDrop: water above a mobile cuts it near the true waterline
 #define GEO_ZBIAS     2e-3    // GeoDepth.ZBias: ties (one plane) go to the higher object
 #define GEO_RANKBIAS  2.5e-4  // GeoDepth.RankBias: baked land / statics, then the key's rank (insertion order at equal tile and z)
 #define COT_NONE      0u
@@ -419,6 +422,9 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             o.geoB.x = (wall ? 0.02 : 0.0) + z * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
             if (((inst.corners >> 16) & Z_GEOBURIED) != 0)
                 o.geoB.x -= FLAT_DROP;
+            // wet_surface_depth: GEO_FLAT's FLAT_DROP in the PS becomes WET_DROP for water
+            if (flat && (DepthModel & DM_WET) != 0 && ((inst.corners >> 16) & Z_GEOWET) != 0)
+                o.geoB.x += FLAT_DROP - WET_DROP;
         }
         else if (geoMob)
         {

@@ -353,6 +353,7 @@ namespace ClassicUO.Game.Scenes
         {
             SetLandSeason(season);
             _world.GeometricDepth = DepthModel.On;
+            _world.WetSurfaceDepth = WetSurfaceDepth.On;
             UpdateWaterWobble();
         }
 
@@ -884,7 +885,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         private static void GeoTile(ref SpriteInstance inst, GameObject obj, ref StaticTiles td) =>
-            inst.GeoTile(obj.X, obj.Y, obj.Z, td.Height, SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.Height));
+            inst.GeoTile(obj.X, obj.Y, obj.Z, td.Height, SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.IsWet, td.Height));
 
         /// <summary>The last Render drew everything its view needs (WorldRenderer.VisibleReady).</summary>
         public bool VisibleReady => _world != null && _world.VisibleReady;

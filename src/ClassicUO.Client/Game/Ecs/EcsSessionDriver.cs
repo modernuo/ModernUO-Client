@@ -1023,6 +1023,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // wetdepth on|off: wet_surface_depth (WetSurfaceDepth; CUO_WET_SURFACE_DEPTH overrides it)
+                case "wetdepth" when args.Length > 0:
+                    Settings.GlobalSettings.WetSurfaceDepth = args[0] == "on";
+                    Log.Info($"[ECS] driver: wet_surface_depth {Settings.GlobalSettings.WetSurfaceDepth} (effective {WetSurfaceDepth.On})");
+
+                    return false;
+
                 // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
                 case "renderer" when args.Length > 0:
                 {

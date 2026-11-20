@@ -357,6 +357,11 @@ public sealed unsafe class WorldRenderer : IDisposable
         }
     }
 
+    /// <summary>Switch wet_surface_depth, with <see cref="GeometricDepth"/> on: flats marked <see cref="SpriteInstance.ZGeoWet"/>
+    /// drop <see cref="GeoDepth.WetDrop"/> instead of <see cref="GeoDepth.FlatDrop"/> (<see cref="FrameUniforms.DepthModelWet"/>).
+    /// The bit is baked with the shape bits either way, so a flip needs no rebake.</summary>
+    public bool WetSurfaceDepth;
+
     /// <summary>Times <see cref="GeometricDepth"/> flipped and rebaked the chunks.</summary>
     public int GeoRebakes;
 
@@ -710,7 +715,7 @@ public sealed unsafe class WorldRenderer : IDisposable
                 CamFracX = (float)(_cx - camPxX), CamFracY = (float)(_cy - camPxY),
                 ScaleX = scale, ScaleY = scale,
                 CamDepth = BakeJob.CameraDepthKey((float)(_cy / 22.0)),
-                DepthModel = geo ? 1u : 0u,
+                DepthModel = geo ? 1u | (WetSurfaceDepth ? FrameUniforms.DepthModelWet : 0u) : 0u,
                 // the tile sum CameraDepthKey truncates to, so a key-fallback instance and a geometric one share the origin
                 GeoOff = geo ? (float)(camPxY / 22.0 - (int)((float)(_cy / 22.0) * 100) / 100.0) : 0f,
                 GeoScale = geo ? GeoScale : 0f,
