@@ -45,6 +45,11 @@ namespace ClassicUO.Game
         // Item[] per mobile coming into range. At most 32 kept: about 32 * (80 B + 1.5 KB) per client.
         private static readonly System.Collections.Generic.Stack<WornCache> _pool = new System.Collections.Generic.Stack<WornCache>();
 
+        /// <summary>Stats line ([objpools]): caches pooled now, rents that allocated, returns left out (pool full).</summary>
+        public static int PoolCount => _pool.Count;
+        public const int PoolMax = 32;
+        public static long PoolMisses, PoolDropped;
+
         internal static WornCache Rent()
         {
             WornCache c = null;
@@ -57,7 +62,11 @@ namespace ClassicUO.Game
                 }
             }
 
-            c ??= new WornCache();
+            if (c == null)
+            {
+                c = new WornCache();
+                PoolMisses++;
+            }
 #if CUO_DEVTOOLS
             c.InPool = false;
 #endif
@@ -86,7 +95,7 @@ namespace ClassicUO.Game
 
             lock (_pool)
             {
-                if (_pool.Count < 32)
+                if (_pool.Count < PoolMax)
                 {
 #if CUO_DEVTOOLS
                     c.InPool = true;
@@ -96,6 +105,8 @@ namespace ClassicUO.Game
                     return true;
                 }
             }
+
+            PoolDropped++;
 
             return false;
         }

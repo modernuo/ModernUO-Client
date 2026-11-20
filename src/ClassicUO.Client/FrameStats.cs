@@ -775,6 +775,15 @@ namespace ClassicUO
                 Log.Info(string.Format(inv, "[bufpools] +{0:0}s: {1} | renderedText pooled {2}/{3} miss {4} drop {5} | region prefetch dropped {6} | bake trimmed {7}",
                     t, Uo.Buffers.PoolStats.Format(), Game.RenderedText.PoolCount, Game.RenderedText.PoolMax,
                     Game.RenderedText.PoolMisses, Game.RenderedText.PoolDropped, maps?.PendingDropped ?? 0, Uo.Render.BakeJob.TrimmedJobs));
+                var items = world?.ItemPoolIfCreated;
+                Log.Info(string.Format(inv, "[objpools] +{0:0}s: items {1}/{2} offered {3} reused {4} dropped {5} overflow {6} | chunks {7}/{8} | lands {9}/{10} statics {11}/{12} | frameCache {13}/{14} miss {15} drop {16} | wornCache {17}/{18} miss {19} drop {20} | tileEntries {21:0.00}/{22:0.00} MB hw {23:0.00} miss {24} drop {25}",
+                    t, items?.Count ?? 0, Game.ItemPool.MaxPooled, items?.Offered ?? 0, items?.Reused ?? 0, items?.Dropped ?? 0, items?.Overflow ?? 0,
+                    world?.ChunkPool.Count ?? 0, Game.Constants.PREDICTABLE_CHUNKS,
+                    recycler?.PooledLands ?? 0, Game.Map.MapObjectRecycler.MaxLands, recycler?.PooledStatics ?? 0, Game.Map.MapObjectRecycler.MaxStatics,
+                    Game.MobileFrameCache.PoolCount, Game.MobileFrameCache.PoolMax, Game.MobileFrameCache.PoolMisses, Game.MobileFrameCache.PoolDropped,
+                    Game.WornCache.PoolCount, Game.WornCache.PoolMax, Game.WornCache.PoolMisses, Game.WornCache.PoolDropped,
+                    Game.Map.DynamicTileIndex.EntryPool.PooledBytes / 1048576.0, Game.Map.DynamicTileIndex.EntryPool.MaxPooledBytes / 1048576.0,
+                    Game.Map.DynamicTileIndex.EntryPool.HighWaterBytes / 1048576.0, Game.Map.DynamicTileIndex.EntryPool.Misses, Game.Map.DynamicTileIndex.EntryPool.Dropped));
                 _sessionAfterReport = true;
             }
 

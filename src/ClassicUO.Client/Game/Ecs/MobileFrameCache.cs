@@ -143,6 +143,11 @@ namespace ClassicUO.Game
         private const int MAX_POOLED = 32;
         private static readonly System.Collections.Generic.Stack<MobileFrameCache> _pool = new System.Collections.Generic.Stack<MobileFrameCache>();
 
+        /// <summary>Stats line ([objpools]): caches pooled now, rents that allocated, returns left out (pool full).</summary>
+        public static int PoolCount => _pool.Count;
+        public const int PoolMax = MAX_POOLED;
+        public static long PoolMisses, PoolDropped;
+
         internal static MobileFrameCache Rent()
         {
             MobileFrameCache c = null;
@@ -155,7 +160,11 @@ namespace ClassicUO.Game
                 }
             }
 
-            c ??= new MobileFrameCache();
+            if (c == null)
+            {
+                c = new MobileFrameCache();
+                PoolMisses++;
+            }
 #if CUO_DEVTOOLS
             c.InPool = false;
 #endif
@@ -211,6 +220,8 @@ namespace ClassicUO.Game
                     return true;
                 }
             }
+
+            PoolDropped++;
 
             return false;
         }
