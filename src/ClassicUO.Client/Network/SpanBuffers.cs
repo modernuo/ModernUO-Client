@@ -140,8 +140,9 @@ namespace ClassicUO.Network
             return sb.ToString();
         }
 
-        /// <summary>The switch state once, then the checker's 5 s summary and its coverage every 60 s and at exit (ParseQueue).</summary>
-        public static void LogSummary()
+        /// <summary>The switch state once, then the checker's 5 s summary and its coverage every 60 s and at exit (ParseQueue;
+        /// forced at the end of a harness replay).</summary>
+        public static void LogSummary(bool force = false)
         {
             if (!_announced)
             {
@@ -149,7 +150,7 @@ namespace ClassicUO.Network
                 Log.Info($"[span-reader] span_reader={(On ? "on" : "off")} check={(CheckOn ? "on" : "off")}");
             }
 
-            if (!CheckOn || Time.Ticks < _logAt)
+            if (!CheckOn || (!force && Time.Ticks < _logAt))
             {
                 return;
             }
@@ -163,7 +164,7 @@ namespace ClassicUO.Network
             _logAt = Time.Ticks + 5000;
             Log.Info($"[span-reader-check] {Packets} packets, {Reads} reads, {Writes} packets built; mismatches reader {ReaderMismatches}, writer {WriterMismatches} (span_reader={(On ? "on" : "off")})");
 
-            if (Time.Ticks >= _coverageAt)
+            if (force || Time.Ticks >= _coverageAt)
             {
                 _coverageAt = Time.Ticks + 60000;
                 LogCoverage();

@@ -423,6 +423,7 @@ namespace ClassicUO.Network.Harness
                 {
                     _ended = true;
                     long packets = NetHarness.TracePackets;
+                    SpanBuffers.LogSummary(force: true);
                     NetHarness.EndTrace();
                     Log.Info($"[net-replay] done; packets {packets}; exiting");
                     Client.Game.Exit();

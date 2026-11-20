@@ -3199,8 +3199,14 @@ namespace ClassicUO.Network
             string name = p.ReadCp1252(p.ReadByte());
             int count = p.ReadByte();
 
-            ushort menuid = p.ReadUInt16();
-            p.Seek(p.Position - 2, SeekOrigin.Begin);
+            // the first item's graphic, peeked; a menu with no items has none
+            ushort menuid = 0;
+
+            if (p.Remaining >= 2)
+            {
+                menuid = p.ReadUInt16();
+                p.Seek(p.Position - 2, SeekOrigin.Begin);
+            }
 
             if (menuid != 0)
             {
@@ -6043,7 +6049,8 @@ namespace ClassicUO.Network
             Direction dir = (Direction)p.ReadByte();
             ushort hue = p.ReadUInt16();
             Flags flags = (Flags)p.ReadByte();
-            ushort unk2 = p.ReadUInt16();
+            // the 24-byte SA layout (clients before 7.0.9) ends before this field
+            ushort unk2 = p.Remaining >= 2 ? p.ReadUInt16() : (ushort)0;
 
             if (serial != world.Player)
             {
