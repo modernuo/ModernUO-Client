@@ -41,6 +41,11 @@ public static class PackCodec
     /// --zstd-level (for size and time comparisons).</summary>
     public static int WriteLevel = ZstdLevel;
 
+    /// <summary>Writers append zstd's content checksum (4 bytes per frame, XXH64 of the decoded bytes) to every frame
+    /// (converter --zstd-checksum; off in the ship profile). zstd verifies it on decode whenever a frame carries one, so a
+    /// corrupted unit fails as corrupt instead of decoding to wrong pixels; readers need no switch.</summary>
+    public static bool WriteChecksum;
+
     /// <summary>The encoder's window (2^22 = 4 MiB). zstd shrinks it to the unit's size, so a 1 MiB chunk uses 1 MiB.</summary>
     public const int ZstdWindowLog = 22;
 
@@ -99,7 +104,7 @@ public static class PackCodec
 
     /// <summary>Encodes <paramref name="raw"/> into <paramref name="dst"/> (at least <see cref="MaxStoredBytes"/> long) and
     /// returns the stored length.</summary>
-    public static int Encode(ushort codec, ReadOnlySpan<byte> raw, Span<byte> dst, int? level = null)
+    public static int Encode(ushort codec, ReadOnlySpan<byte> raw, Span<byte> dst, int? level = null, bool? checksum = null)
     {
         switch (codec)
         {
@@ -107,6 +112,7 @@ public static class PackCodec
                 raw.CopyTo(dst);
                 return raw.Length;
             case Zstd:
+                if (checksum ?? WriteChecksum) return EncodeZstdChecksummed(raw, dst, level ?? WriteLevel);
                 if (!ZstandardEncoder.TryCompress(raw, dst, out int n, level ?? WriteLevel, ZstdWindowLog))
                     throw new InvalidOperationException("zstd compress failed");
                 return n;
@@ -115,14 +121,24 @@ public static class PackCodec
         }
     }
 
+    private static int EncodeZstdChecksummed(ReadOnlySpan<byte> raw, Span<byte> dst, int level)
+    {
+        using var e = new ZstandardEncoder(new ZstandardCompressionOptions { Quality = level, WindowLog2 = ZstdWindowLog, AppendChecksum = true });
+        // the frame header states the content size, as the one-shot TryCompress writes it (readers decode in one pass)
+        e.SetSourceLength(raw.Length);
+        var st = e.Compress(raw, dst, out int consumed, out int written, isFinalBlock: true);
+        if (st != OperationStatus.Done || consumed != raw.Length) throw new InvalidOperationException($"zstd compress failed ({st})");
+        return written;
+    }
+
     /// <summary>Encodes <paramref name="raw"/> into a new array of its stored length.</summary>
-    public static byte[] Encode(ushort codec, ReadOnlySpan<byte> raw, int? level = null)
+    public static byte[] Encode(ushort codec, ReadOnlySpan<byte> raw, int? level = null, bool? checksum = null)
     {
         if (codec == Raw) return raw.ToArray();
         var buf = ArrayPool<byte>.Shared.Rent((int)MaxStoredBytes(codec, raw.Length));
         try
         {
-            int n = Encode(codec, raw, buf, level);
+            int n = Encode(codec, raw, buf, level, checksum);
             return buf.AsSpan(0, n).ToArray();
         }
         finally { ArrayPool<byte>.Shared.Return(buf); }

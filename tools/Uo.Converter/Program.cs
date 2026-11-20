@@ -48,6 +48,7 @@ for (int i = 0; i < args.Length; i++)
         case "--text-small": TextConvert.SmallRaw = int.Parse(args[++i]); break;
         case "--cliloc-compress": TextConvert.ClilocCompress = true; break;
         case "--zstd-level": PackCodec.WriteLevel = int.Parse(args[++i]); break;
+        case "--zstd-checksum": PackCodec.WriteChecksum = true; break;
         case "--cliloc-skip": foreach (var s in args[++i].Split(',')) TextConvert.ClilocSkip.Add(s.Trim()); break;
         case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--cliloc-overrides": TextConvert.ClilocOverridesPath = args[++i]; break;
@@ -102,7 +103,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages] [--zstd-level 19] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-compress] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages] [--zstd-level 19] [--zstd-checksum] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-compress] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }

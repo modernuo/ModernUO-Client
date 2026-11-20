@@ -44,6 +44,34 @@ namespace ClassicUO.UnitTests.Assets
         // ---- the seam ----
 
         [Fact]
+        public void Checksummed_Frames_Decode_And_A_Corrupt_One_Is_Refused()
+        {
+            var raw = Sample(300_000, 11);
+            var plain = PackCodec.Encode(PackCodec.Zstd, raw, checksum: false);
+            var summed = PackCodec.Encode(PackCodec.Zstd, raw, checksum: true);
+
+            // frame header descriptor (after the 4-byte magic): bit 2 = content checksum, bits 6-7 = content size field
+            (plain[4] & 0x04).Should().Be(0);
+            (summed[4] & 0x04).Should().Be(0x04);
+            (summed[4] & 0xC0).Should().NotBe(0, "the frame states its content size, so readers decode in one pass");
+            summed.Length.Should().Be(plain.Length + 4);
+
+            var dst = new byte[raw.Length];
+            using (var d = PackCodec.Create(PackCodec.Zstd))
+            {
+                d.Decode(summed, dst);
+                dst.Should().Equal(raw);
+
+                var bad = (byte[])summed.Clone();
+                bad[^1] ^= 0x5A;
+                FluentActions.Invoking(() => d.Decode(bad, dst)).Should().Throw<InvalidDataException>();
+                // the context is still usable after a refused frame
+                d.Decode(summed, dst);
+                dst.Should().Equal(raw);
+            }
+        }
+
+        [Fact]
         public void File_Kinds_Map_To_Codecs_And_Brotli_Is_Refused()
         {
             PackCodec.OfFileKind(FileKind.Raw, "x").Should().Be(PackCodec.Raw);
