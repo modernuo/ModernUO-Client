@@ -1456,14 +1456,15 @@ namespace ClassicUO.Game.Scenes
                     _settle.End(visibleReady);
                     // asset_ready_wake: a held or partial frame is followed by one as soon as a load it waits for completes
                     var gw = gpu.World;
-                    // asset_prefetch_on_packet: a mobile kept its previous look while its new pages load
-                    AssetWake.SceneIncomplete = (hold || !visibleReady || LookPrefetch.FrameHeld != 0) && (gw.LoadsPending || _world.Map.DrawPending != 0);
+                    // asset_prefetch_on_packet: a mobile kept its previous look, or drew nothing at first sight, while its pages load
+                    bool lookWait = LookPrefetch.FrameHeld != 0 || LookPrefetch.FrameFirstSightWait != 0;
+                    AssetWake.SceneIncomplete = (hold || !visibleReady || lookWait) && (gw.LoadsPending || _world.Map.DrawPending != 0);
 
                     if (AssetWake.SceneIncomplete)
                     {
                         AssetWake.SceneCauses |= (gw.Chunks.PendingChunks != 0 || gw.Chunks.UploadQueueLength != 0 ? AssetWake.CauseChunks : 0)
                             | (gw.Pages.Pending ? AssetWake.CausePages : 0) | (gw.AnimPages != null && gw.AnimPages.Pending ? AssetWake.CauseAnimPages : 0)
-                            | (_world.Map.DrawPending != 0 ? AssetWake.CauseMapDraw : 0) | (LookPrefetch.FrameHeld != 0 ? AssetWake.CauseHeld : 0);
+                            | (_world.Map.DrawPending != 0 ? AssetWake.CauseMapDraw : 0) | (lookWait ? AssetWake.CauseHeld : 0);
                     }
                     AssetWake.SceneStale = gw.Pages.LoadedNotPlaced + (gw.AnimPages?.LoadedNotPlaced ?? 0);
 #if CUO_DEVTOOLS

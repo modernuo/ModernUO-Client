@@ -20,7 +20,10 @@ namespace ClassicUO.Game
     /// Update, objects beyond the client view range skipped. Main thread; no allocation.
     /// With the switch on, a drawn mobile whose new look is not loaded yet keeps drawing its previous complete look (the
     /// MobileFrameCache recording, Legacy and Gpu) until every layer of the new one is loaded, at most
-    /// <see cref="HoldMaxMs"/>, then switches in one frame (MobileSpriteExtract.Emit / DrawLegacy).
+    /// <see cref="HoldMaxMs"/>, then switches in one frame (MobileSpriteExtract.Emit / DrawLegacy). A mobile with no
+    /// complete look yet (first sight) is drawn as nothing until its body and every equipment layer are loaded, at most
+    /// <see cref="FirstSightMaxMs"/> from the first frame it would be visible, then as far as it is loaded (owner
+    /// 2026-11-20: no naked-humanoid flash, at most 25 ms unseen). Both bounds schedule a present when they expire.
     /// CUO_LOOK_PREFETCH_CHECK=1 measures, in both switch states, packet arrival to the first complete draw per kind
     /// (p50/p95/max), how many looks were complete at their first draw, and frames that drew a tracked look incomplete.
     /// </summary>
@@ -67,9 +70,60 @@ namespace ClassicUO.Game
         /// <summary>Notes waiting.</summary>
         public static int Count => _count;
 
-        /// <summary>The longest a mobile keeps its previous look while the new one loads (a safety bound: a load that never
-        /// completes draws the new look partial after it).</summary>
-        public const int HoldMaxMs = 500;
+        /// <summary>The longest a mobile keeps its previous look while the new one loads (owner 2026-11-20: 50 ms, 25 ms if
+        /// the measured p99 fits; a load that never completes draws the new look partial after it; cap hits are bugs to
+        /// investigate).</summary>
+        public const int HoldMaxMs = 50;
+
+        /// <summary>The longest a mobile seen for the first time is drawn as nothing while its look loads (owner 2026-11-20).</summary>
+        public const int FirstSightMaxMs = 25;
+
+        /// <summary>This frame's mobile draws that drew nothing while waiting for their first complete look (reset at each
+        /// draw start).</summary>
+        public static int FrameFirstSightWait;
+
+        /// <summary>Waits that reached their bound (total): holds (<see cref="HoldTimeouts"/>) and first-sight waits.</summary>
+        public static long FirstSightTimeouts;
+
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: hold durations and first-sight waits in ms (a wait of 0: complete at first sight).</summary>
+        internal static readonly MsSamples HoldMs = new MsSamples(), FirstSightMs = new MsSamples();
+#endif
+
+        /// <summary>A hold ended (<paramref name="capped"/>: by <see cref="HoldMaxMs"/>).</summary>
+        internal static void NoteHoldEnd(uint ms, bool capped)
+        {
+            if (capped)
+            {
+                HoldTimeouts++;
+            }
+#if CUO_DEVTOOLS
+            if (Check)
+            {
+                HoldMs.Add(ms, capped);
+            }
+#endif
+        }
+
+        /// <summary>A first sight ended: the look completed after <paramref name="ms"/> (0: at once), or the bound
+        /// (<paramref name="capped"/>).</summary>
+        internal static void NoteFirstSightEnd(uint ms, bool capped)
+        {
+            if (capped)
+            {
+                FirstSightTimeouts++;
+            }
+#if CUO_DEVTOOLS
+            if (Check)
+            {
+                FirstSightMs.Add(ms, capped);
+            }
+#endif
+        }
+
+        /// <summary>A wait bound that expires at <paramref name="since"/> + <paramref name="maxMs"/>: the present that draws
+        /// what is loaded then (present on change has no other reason to draw if the load never completes).</summary>
+        internal static void ScheduleBound(uint since, int maxMs) => ClassicUO.Loop.VisualDue.At((long)since + maxMs + 1, ClassicUO.Loop.VisualSource.Scene);
 
         /// <summary>This frame's mobile draws (reset at each draw start): kept their previous look (<see cref="FrameHeld"/>),
         /// drew a layer of the current look missing while a previous complete look existed but could not be held
@@ -86,7 +140,7 @@ namespace ClassicUO.Game
         public static long HoldTimeouts;
 
         /// <summary>Draw start: this frame's counts from zero.</summary>
-        public static void BeginDraw() => FrameHeld = FramePartial = FrameFirstSight = FrameBlank = 0;
+        public static void BeginDraw() => FrameHeld = FramePartial = FrameFirstSight = FrameBlank = FrameFirstSightWait = 0;
 
         /// <summary>A mobile draw found layers of its look missing (<paramref name="missing"/> of <paramref name="total"/>
         /// records); <paramref name="hadPrevious"/>: a previous complete look existed.</summary>

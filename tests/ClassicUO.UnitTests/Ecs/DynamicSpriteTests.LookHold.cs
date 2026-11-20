@@ -83,6 +83,40 @@ namespace ClassicUO.UnitTests.Ecs
             });
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Legacy_First_Sight_Waits_For_The_Whole_Look_Only_With_The_Switch(bool on)
+        {
+            WithHold(on, () =>
+            {
+                (AnimationsLoader anims, _) = AnimFixture(5);
+                var atlas = new FakeAtlas(anims, Array.Empty<SpriteEntry>()) { PendingBody = HUMAN };
+                EcsEntity e = MobileCase(new WorldMirror(), "equipped");
+                var extract = new MobileSpriteExtract(anims);
+                var cache = new MobileFrameCache { SelectValid = true, SelectGen = 1 };
+
+                List<LegacyDraw> partial = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
+                List<LegacyDraw> got = DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache);
+
+                if (on)
+                {
+                    Assert.Empty(got);
+                }
+                else
+                {
+                    AssertSameCalls(partial, got, "first sight, switch off");
+                }
+
+                // loaded within the bound: the whole look at once
+                atlas.PendingBody = 0xFFFF;
+                cache.SelectGen++;
+                List<LegacyDraw> whole = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
+                AssertSameCalls(whole, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "loaded");
+                Assert.Equal(on, cache.EverComplete);
+            });
+        }
+
         [Fact]
         public void Legacy_Hold_Ends_After_The_Bound_And_Never_Holds_Without_A_Previous_Look()
         {
@@ -94,11 +128,19 @@ namespace ClassicUO.UnitTests.Ecs
                 var extract = new MobileSpriteExtract(anims);
                 var cache = new MobileFrameCache { SelectValid = true, SelectGen = 1 };
 
-                // first sight: nothing to hold, the loaded layers are drawn
+                // first sight: nothing to hold; nothing is drawn for up to FirstSightMaxMs, then the loaded layers
                 List<LegacyDraw> partial = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
-                AssertSameCalls(partial, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "first sight");
+                Assert.NotEmpty(partial);
+                Assert.Empty(DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache));
+                LookPrefetch.TicksForTests = 1000 + LookPrefetch.FirstSightMaxMs;
+                Assert.Empty(DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache));
+                long firstSightTimeouts = LookPrefetch.FirstSightTimeouts;
+                LookPrefetch.TicksForTests = 1000 + LookPrefetch.FirstSightMaxMs + 1;
+                AssertSameCalls(partial, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "first sight bound");
+                Assert.Equal(firstSightTimeouts + 1, LookPrefetch.FirstSightTimeouts);
                 Assert.False(cache.LegacyValid);
 
+                LookPrefetch.TicksForTests = 1000;
                 atlas.PendingBody = 0xFFFF;
                 cache.SelectGen++;
                 List<LegacyDraw> before = DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache);
@@ -112,7 +154,18 @@ namespace ClassicUO.UnitTests.Ecs
                 cache.SelectGen++;
                 partial = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
                 AssertSameCalls(partial, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "bound");
-                Assert.True(LookPrefetch.HoldTimeouts > timeouts);
+                Assert.Equal(timeouts + 1, LookPrefetch.HoldTimeouts);
+                // one cap hit per hold, not one per frame after it
+                cache.SelectGen++;
+                AssertSameCalls(partial, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "after the bound");
+                Assert.Equal(timeouts + 1, LookPrefetch.HoldTimeouts);
+
+                // loaded: the hold state ends; the next missing look holds again
+                atlas.PendingBody = 0xFFFF;
+                cache.SelectGen++;
+                DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache);
+                Assert.Equal(0u, cache.HoldSince);
+                Assert.False(cache.HoldCapped);
             });
         }
 
@@ -199,6 +252,55 @@ namespace ClassicUO.UnitTests.Ecs
                 LookPrefetch.TicksForTests = 1000 + LookPrefetch.HoldMaxMs + 1;
                 cache.SelectGen++;
                 AssertSameInstances(EmitFresh(extract, in tables, e), EmitCached(extract, in tables, e, cache), "bound");
+            });
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Gpu_First_Sight_Draws_Nothing_Until_Loaded_Within_The_Bound_Only_With_The_Switch(bool on)
+        {
+            WithHold(on, () =>
+            {
+                (AnimationsLoader anims, GpuSpriteTables tables) = AnimFixture(5);
+                EcsEntity e = MobileCase(new WorldMirror(), "equipped");
+                var extract = new MobileSpriteExtract(anims);
+                var pages = new FakeResidency { AllMissing = true };
+                extract.PageResidency = pages;
+                var cache = new MobileFrameCache { SelectValid = true, SelectGen = 1 };
+                SpriteInstance[] look = EmitFresh(extract, in tables, e);
+
+                // switch off: the look as far as it is loaded at once; on: nothing within FirstSightMaxMs
+                SpriteInstance[] got = EmitCached(extract, in tables, e, cache);
+
+                if (!on)
+                {
+                    AssertSameInstances(look, got, "first sight, switch off");
+
+                    return;
+                }
+
+                Assert.Empty(got);
+                Assert.True(pages.Requests > 0);
+                LookPrefetch.TicksForTests = 1000 + LookPrefetch.FirstSightMaxMs;
+                Assert.Empty(EmitCached(extract, in tables, e, cache));
+
+                // loaded before the bound: the whole look in one frame
+                pages.AllMissing = false;
+                cache.SelectGen++;
+                AssertSameInstances(look, EmitCached(extract, in tables, e, cache), "loaded");
+                Assert.True(cache.EverComplete);
+
+                // a second mobile whose pages never come: drawn as far as loaded after the bound
+                var cache2 = new MobileFrameCache { SelectValid = true, SelectGen = 1 };
+                pages.AllMissing = true;
+                LookPrefetch.TicksForTests = 2000;
+                Assert.Empty(EmitCached(extract, in tables, e, cache2));
+                long timeouts = LookPrefetch.FirstSightTimeouts;
+                LookPrefetch.TicksForTests = 2000 + LookPrefetch.FirstSightMaxMs + 1;
+                cache2.SelectGen++;
+                AssertSameInstances(look, EmitCached(extract, in tables, e, cache2), "bound");
+                Assert.Equal(timeouts + 1, LookPrefetch.FirstSightTimeouts);
             });
         }
     }

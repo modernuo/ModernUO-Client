@@ -104,6 +104,23 @@ namespace ClassicUO
                 var db = Renderer.DecodeBudget.Shared;
                 Log.Info($"[decode-budget] {where}: peak in flight since the last line {db.TakeLogPeak() >> 10} KiB (all-time {db.PeakBytes >> 10}), cap {db.CapBytes >> 10} KiB, waiting {db.Waiting}");
             }
+
+            CheckerStep(where);
+        }
+
+        // gpu-popin: the asset/look checkers summarise per plan step, from the step's teleport to its end (arrivals land in the
+        // settle before "measuring"), so the off and on arms compare scene by scene; null starts a window
+        private static void CheckerStep(string where)
+        {
+            if (ClassicUO.Loop.AssetWakeCheck.On)
+            {
+                ClassicUO.Loop.AssetWakeCheck.Step(where);
+            }
+
+            if (LookPrefetch.Check)
+            {
+                LookPrefetchCheck.Step(where);
+            }
         }
 
         // what the 0x20 player update does for a teleport, without the server: chunks, regions and art load as on a real teleport
@@ -2563,6 +2580,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
+                    CheckerStep(null);
                     GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "equip" || mode == "equipsrv" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;

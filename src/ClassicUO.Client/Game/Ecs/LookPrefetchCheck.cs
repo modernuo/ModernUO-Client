@@ -10,14 +10,18 @@ namespace ClassicUO.Game
 {
     /// <summary>
     /// CUO_LOOK_PREFETCH_CHECK=1 (CLEANUP(release)): asset_prefetch_on_packet's measure, both switch states. Every look a
-    /// WorldWriter operation noted (LookPrefetch.Note) is tracked from packet arrival; at each draw start it is polled
-    /// (LookPrefetch.LookComplete: Legacy direction uploaded or art decoded; Gpu anim pages resident). Reports per kind the
-    /// arrival-to-first-complete-draw latency (p50/p95/max), looks complete at their first draw, frames that drew a tracked
-    /// look incomplete, and looks never complete within 3 s. Every 5 s, with the switch state.
+    /// WorldWriter operation noted (LookPrefetch.Note) is tracked; at each draw start it is polled (LookPrefetch.LookComplete:
+    /// Legacy direction uploaded or art decoded; Gpu anim pages resident). Only looks on screen count (GameScene.IsOnScreen,
+    /// the draw walk's culling rectangle): the latency starts at packet arrival when the object was on screen then, else at
+    /// the first frame it is on screen (p3 counted mobiles beyond the screen edge, never drawn, as seconds late). Looks
+    /// never on screen within 3 s of arrival count as offscreen; items not on the ground are not tracked. Reports per kind
+    /// that latency to the first complete draw (p50/p95/max), looks complete at their first visible frame, frames that drew
+    /// a tracked look incomplete, and looks never complete within 3 s of being visible. Every 5 s, with the switch state.
     /// Also every mobile draw of the frame before (LookPrefetch.Frame*): draws that kept the previous look (held), that drew
     /// a look with layers missing although a complete one existed before (partial: the target is 0 with the switch on),
     /// with no complete look before (first_sight), or drew nothing (blank), with the frames that had any, and holds ended by
-    /// LookPrefetch.HoldMaxMs.
+    /// LookPrefetch.HoldMaxMs; the hold durations and first-sight waits (p50/p95/p99/max, cap hits) and the frames that
+    /// drew a mobile as nothing while waiting for its first complete look (first_sight_wait).
     /// </summary>
     internal static class LookPrefetchCheck
     {
@@ -25,15 +29,34 @@ namespace ClassicUO.Game
         private static readonly uint[] _serial = new uint[Tracked];
         private static readonly LookPrefetch.Kind[] _kind = new LookPrefetch.Kind[Tracked];
         private static readonly long[] _arrival = new long[Tracked];
-        private static readonly bool[] _polled = new bool[Tracked];
+        private static readonly bool[] _polled = new bool[Tracked], _seenOff = new bool[Tracked];
+        private static readonly long[] _visible = new long[Tracked];
         private static int _count;
 
         private static readonly long[][] _lat = { new long[Samples], new long[Samples], new long[Samples] };
         private static readonly int[] _latCount = new int[3];
         private static readonly long[] _firstComplete = new long[3], _arrived = new long[3];
-        private static long _incompleteFrames, _never, _gone, _overflow, _start;
+        private static long _incompleteFrames, _never, _gone, _offscreen, _overflow, _start, _waitDraws, _waitFrames;
         private static long _heldDraws, _heldFrames, _partialDraws, _partialFrames, _firstSightDraws, _firstSightFrames, _blankDraws, _blankFrames;
         private static bool _switch;
+
+        /// <summary>DevBench plan: one summary per plan step (<see cref="Step"/>) instead of every 5 s, so arms compare per scene.</summary>
+        public static bool StepWindows;
+
+        /// <summary>DevBench: the window ends; <paramref name="tag"/> null discards it (a step starts), else it is printed.</summary>
+        public static void Step(string tag)
+        {
+            StepWindows = true;
+
+            if (tag != null)
+            {
+                Summary(tag);
+            }
+            else
+            {
+                Summary(null, print: false);
+            }
+        }
 
         public static void Arrived(uint serial, LookPrefetch.Kind kind, bool on)
         {
@@ -64,6 +87,8 @@ namespace ClassicUO.Game
             _kind[_count] = kind;
             _arrival[_count] = Stopwatch.GetTimestamp();
             _polled[_count] = false;
+            _seenOff[_count] = false;
+            _visible[_count] = 0;
             _count++;
         }
 
@@ -82,6 +107,8 @@ namespace ClassicUO.Game
             Count(LookPrefetch.FramePartial, ref _partialDraws, ref _partialFrames);
             Count(LookPrefetch.FrameFirstSight, ref _firstSightDraws, ref _firstSightFrames);
             Count(LookPrefetch.FrameBlank, ref _blankDraws, ref _blankFrames);
+            Count(LookPrefetch.FrameFirstSightWait, ref _waitDraws, ref _waitFrames);
+            var scene = Client.Game.GetScene<Scenes.GameScene>();
 
             bool incomplete = false;
 
@@ -96,12 +123,23 @@ namespace ClassicUO.Game
 
                 bool drop;
 
-                if (e == null || e.IsDestroyed || world.Player == null || e.Distance > world.ClientViewRange)
+                if (e == null || e.IsDestroyed || world.Player == null || e.Distance > world.ClientViewRange || e is Item { OnGround: false })
                 {
                     _gone++;
                     drop = true;
                 }
-                else if (LookPrefetch.LookComplete(e))
+                else if (_visible[i] == 0 && scene != null && !scene.IsOnScreen(e))
+                {
+                    // not drawn yet: its latency starts when it comes on screen
+                    _seenOff[i] = true;
+                    drop = now - _arrival[i] > Stopwatch.Frequency * 3;
+
+                    if (drop)
+                    {
+                        _offscreen++;
+                    }
+                }
+                else if (Visible(i, now) && LookPrefetch.LookComplete(e))
                 {
                     int k = (int)_kind[i];
 
@@ -112,12 +150,12 @@ namespace ClassicUO.Game
 
                     if (_latCount[k] < Samples)
                     {
-                        _lat[k][_latCount[k]++] = now - _arrival[i];
+                        _lat[k][_latCount[k]++] = now - _visible[i];
                     }
 
                     drop = true;
                 }
-                else if (now - _arrival[i] > Stopwatch.Frequency * 3)
+                else if (now - _visible[i] > Stopwatch.Frequency * 3)
                 {
                     _never++;
                     drop = true;
@@ -141,6 +179,8 @@ namespace ClassicUO.Game
                     _kind[i] = _kind[_count];
                     _arrival[i] = _arrival[_count];
                     _polled[i] = _polled[_count];
+                    _seenOff[i] = _seenOff[_count];
+                    _visible[i] = _visible[_count];
                     i--;
                 }
             }
@@ -150,11 +190,22 @@ namespace ClassicUO.Game
                 _incompleteFrames++;
             }
 
-            if (now - _start >= Stopwatch.Frequency * 5)
+            if (!StepWindows && now - _start >= Stopwatch.Frequency * 5)
             {
-                Summary();
+                Summary(null);
                 _start = now;
             }
+        }
+
+        // the look's latency start: packet arrival if it was on screen then, else this first frame on screen
+        private static bool Visible(int i, long now)
+        {
+            if (_visible[i] == 0)
+            {
+                _visible[i] = _seenOff[i] ? now : _arrival[i];
+            }
+
+            return true;
         }
 
         private static void Count(int draws, ref long total, ref long frames)
@@ -166,10 +217,10 @@ namespace ClassicUO.Game
             }
         }
 
-        private static void Summary()
+        private static void Summary(string step, bool print = true)
         {
             var sb = new System.Text.StringBuilder();
-            sb.Append($"[look-prefetch-check] switch={(_switch ? "on" : "off")}");
+            sb.Append($"[look-prefetch-check] {(step != null ? "step=" + step + " " : "")}switch={(_switch ? "on" : "off")}");
 
             for (int k = 0; k < 3; k++)
             {
@@ -184,8 +235,9 @@ namespace ClassicUO.Game
                 _firstComplete[k] = _arrived[k] = 0;
             }
 
-            sb.Append($" incomplete_frames {_incompleteFrames} never_complete {_never} gone {_gone} overflow {_overflow} tracked {_count}; prefetch resolved {LookPrefetch.Resolved} requested {LookPrefetch.Requested} dropped {LookPrefetch.Dropped}");
+            sb.Append($" incomplete_frames {_incompleteFrames} never_complete {_never} gone {_gone} offscreen {_offscreen} overflow {_overflow} tracked {_count}; prefetch resolved {LookPrefetch.Resolved} requested {LookPrefetch.Requested} dropped {LookPrefetch.Dropped}");
             sb.Append($"; mobile draws held {_heldDraws} ({_heldFrames} frames) partial {_partialDraws} ({_partialFrames} frames) first_sight {_firstSightDraws} ({_firstSightFrames} frames) blank {_blankDraws} ({_blankFrames} frames) hold_timeouts {LookPrefetch.HoldTimeouts}");
+            sb.Append($"; first_sight_wait {_waitDraws} ({_waitFrames} frames); hold_ms {LookPrefetch.HoldMs.Summary()}; first_sight_ms {LookPrefetch.FirstSightMs.Summary()}");
             var gpu = Client.Game.GetGpuWorld()?.World;
 
             if (gpu != null && gpu.AnimPrefetchLooks != 0)
@@ -196,8 +248,12 @@ namespace ClassicUO.Game
                     $"; gpu anim prefetch looks {gpu.AnimPrefetchLooks} pages/look dir {gpu.AnimPrefetchPagesDir / looks:F2} all8 {gpu.AnimPrefetchPagesAll / looks:F2} queued {gpu.AnimPrefetchQueued / looks:F2} MiB/look dir {gpu.AnimPrefetchPagesDir / looks * mib:F2} all8 {gpu.AnimPrefetchPagesAll / looks * mib:F2} queued {gpu.AnimPrefetchQueued / looks * mib:F2}"));
             }
 
-            Log.Info(sb.ToString());
-            _incompleteFrames = _never = _gone = _overflow = 0;
+            if (print)
+            {
+                Log.Info(sb.ToString());
+            }
+
+            _incompleteFrames = _never = _gone = _offscreen = _overflow = _waitDraws = _waitFrames = 0;
             _heldDraws = _heldFrames = _partialDraws = _partialFrames = _firstSightDraws = _firstSightFrames = _blankDraws = _blankFrames = 0;
         }
     }

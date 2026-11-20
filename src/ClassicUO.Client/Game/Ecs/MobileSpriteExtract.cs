@@ -741,11 +741,26 @@ namespace ClassicUO.Game
                         return;
                     }
 
+                    if (hold && !previous && FirstSightWait(cache))
+                    {
+                        // first sight: nothing until the body and every equipment page are resident (bounded)
+                        _count = recStart;
+                        _lightCount = recLights;
+                        LookPrefetch.FrameFirstSightWait++;
+
+                        return;
+                    }
+
                     LookPrefetch.NoteIncomplete(missing, n, previous);
                     cache.EmitIncomplete = previous ? (byte)1 : (byte)2;
                 }
                 else
                 {
+                    if (hold)
+                    {
+                        LookComplete(cache);
+                    }
+
                     cache.HoldSince = 0;
                     cache.EmitIncomplete = 0;
                 }
@@ -851,23 +866,83 @@ namespace ClassicUO.Game
         // frame)
         private static bool HoldLook(MobileFrameCache cache)
         {
+            if (cache.HoldCapped)
+            {
+                return false;
+            }
+
             uint now = LookPrefetch.Now;
 
             if (cache.HoldSince == 0)
             {
                 cache.HoldSince = now == 0 ? 1u : now;
-
-                return true;
             }
 
             if (now - cache.HoldSince <= LookPrefetch.HoldMaxMs)
             {
+                LookPrefetch.ScheduleBound(cache.HoldSince, LookPrefetch.HoldMaxMs);
+
                 return true;
             }
 
-            LookPrefetch.HoldTimeouts++;
+            cache.HoldCapped = true;
+            LookPrefetch.NoteHoldEnd(now - cache.HoldSince, true);
 
             return false;
+        }
+
+        // asset_prefetch_on_packet: whether a mobile never drawn complete is still drawn as nothing (LookPrefetch.FirstSightMaxMs
+        // from the first frame it would be visible)
+        private static bool FirstSightWait(MobileFrameCache cache)
+        {
+            if (cache.EverComplete || cache.FirstSightCapped)
+            {
+                return false;
+            }
+
+            uint now = LookPrefetch.Now;
+
+            if (cache.FirstSightSince == 0)
+            {
+                cache.FirstSightSince = now == 0 ? 1u : now;
+            }
+
+            if (now - cache.FirstSightSince <= LookPrefetch.FirstSightMaxMs)
+            {
+                LookPrefetch.ScheduleBound(cache.FirstSightSince, LookPrefetch.FirstSightMaxMs);
+
+                return true;
+            }
+
+            cache.FirstSightCapped = true;
+            LookPrefetch.NoteFirstSightEnd(now - cache.FirstSightSince, true);
+
+            return false;
+        }
+
+        // the whole look was loaded at this draw: a hold or first-sight wait in progress ends
+        private static void LookComplete(MobileFrameCache cache)
+        {
+            if (cache.HoldSince != 0)
+            {
+                if (!cache.HoldCapped)
+                {
+                    LookPrefetch.NoteHoldEnd(LookPrefetch.Now - cache.HoldSince, false);
+                }
+
+                cache.HoldSince = 0;
+                cache.HoldCapped = false;
+            }
+
+            if (!cache.EverComplete)
+            {
+                cache.EverComplete = true;
+
+                if (!cache.FirstSightCapped)
+                {
+                    LookPrefetch.NoteFirstSightEnd(cache.FirstSightSince == 0 ? 0 : LookPrefetch.Now - cache.FirstSightSince, false);
+                }
+            }
         }
 
         internal void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY, sbyte z)
@@ -1033,10 +1108,23 @@ namespace ClassicUO.Game
                     return;
                 }
 
+                if (hold && !previous && FirstSightWait(cache))
+                {
+                    // first sight: nothing until the body and every equipment direction are uploaded (bounded)
+                    _selCount = 0;
+                    LookPrefetch.FrameFirstSightWait++;
+
+                    return;
+                }
+
                 LookPrefetch.NoteIncomplete(_selCount == 0 ? 1 : 0, 1, previous);
             }
 
-            if (!_atlasMiss)
+            if (!_atlasMiss && hold)
+            {
+                LookComplete(cache);
+            }
+            else if (!_atlasMiss)
             {
                 cache.HoldSince = 0;
             }
