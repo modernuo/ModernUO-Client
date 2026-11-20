@@ -34,7 +34,7 @@ namespace ClassicUO.Loop
 #endif
 
         /// <summary>Tests: the switch (null: the setting).</summary>
-        internal static bool? OverrideForTests;
+        [ThreadStatic] internal static bool? OverrideForTests;
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AssetReadyWake ?? false);
 
