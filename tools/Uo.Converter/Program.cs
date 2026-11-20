@@ -190,7 +190,8 @@ T Stage<T>(string name, Func<T> f)
 {
     var sw = Stopwatch.StartNew();
     var r = f();
-    Console.WriteLine($"[{sw.Elapsed.TotalSeconds,7:F2}s] {name}: {r}");
+    using (var self = Process.GetCurrentProcess())
+        Console.WriteLine($"[{sw.Elapsed.TotalSeconds,7:F2}s] {name}: {r} (process peak working set {self.PeakWorkingSet64 >> 20} MiB)");
     return r;
 }
 
