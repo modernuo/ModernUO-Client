@@ -15,9 +15,12 @@ namespace ClassicUO.Game
     /// asset_prefetch_on_packet (gpu-popin-2): the WorldWriter operations that place a mobile or item, change a body,
     /// graphic or hue, or equip, note the object here on packet arrival; the next Update requests the assets of its new
     /// look before its first draw: the animation direction it will draw (Legacy: the worker decode; Gpu: the anim pages,
-    /// that direction first, then the action's other seven), its mount's and equipment's, and an item's art. Bounded: at
-    /// most <see cref="Capacity"/> notes waiting (older ones are dropped), <see cref="BudgetPerUpdate"/> resolved per
-    /// Update, objects beyond the client view range skipped. Main thread; no allocation.
+    /// that direction first, then the action's other seven), its mount's and equipment's, and an item's art. Mobile and
+    /// Equip notes have their own queue and go first (coordinator 2026-11-20: mobiles are what PvP needs); items get the
+    /// budget the mobiles leave. Bounded: at most <see cref="MobileCapacity"/> / <see cref="ItemCapacity"/> notes waiting
+    /// (the oldest are dropped), <see cref="BudgetPerUpdate"/> resolved per Update, objects beyond the client view range
+    /// skipped (at most <see cref="TakesPerUpdate"/> notes looked at). Main thread; no allocation (the queues are sized
+    /// once).
     /// With the switch on, a drawn mobile whose new look is not loaded yet keeps drawing its previous complete look (the
     /// MobileFrameCache recording, Legacy and Gpu) until every layer of the new one is loaded, at most
     /// <see cref="HoldMaxMs"/>, then switches in one frame (MobileSpriteExtract.Emit / DrawLegacy). A mobile with no
@@ -37,8 +40,21 @@ namespace ClassicUO.Game
             Count
         }
 
-        public const int Capacity = 256;
-        public const int BudgetPerUpdate = 16;
+        // Sizes (gpu-popin round 6). The large scene's crowd arrival (cw:lswalk, p5 bench-000999/001000) noted ~5.0k Mobile,
+        // ~3.0k Equip and 29.2k Item looks within a few Updates; the old single queue (256, 16 per Update) dropped ~29.9k
+        // of them. The queues hold that burst with headroom: 16384 mobile notes (2x the 8k burst) and 32768 item notes
+        // (1.1x the 29.2k burst, drained meanwhile), 5 B each: 240 KiB per client, allocated once.
+        // Budget: 256 resolves per Update, mobiles first. A mobile resolve (layers, mount, up to ~8 equipment requests) is
+        // estimated at 2-4 us, an item's at ~0.5 us, so a burst Update spends about 0.5-1 ms; the 8k mobile burst drains
+        // in ~32 Updates (~220 ms at 144 fps), the items after it. More per Update would lengthen the teleport frames,
+        // which already set the first-sight overshoot (p5 cap_frame_gap_ms). CUO_LOOK_PREFETCH_CHECK reports the drain's
+        // longest Update and each queue's high water and drops, to check these numbers.
+        public const int MobileCapacity = 16384, ItemCapacity = 32768;
+        public const int BudgetPerUpdate = 256;
+
+        /// <summary>Notes looked at per Update at most (resolved or skipped: gone, beyond the view range), so a queue of
+        /// far objects cannot make one Update long.</summary>
+        public const int TakesPerUpdate = 4 * BudgetPerUpdate;
 
 #if CUO_DEVTOOLS
         // the gate's override of the setting (CUO_ASSET_PREFETCH_ON_PACKET=1|0)
@@ -64,15 +80,93 @@ namespace ClassicUO.Game
         /// with anim_async_turn, whose turns load on a worker. The first-sight wait stays with this switch only.</summary>
         public static bool HoldEnabled => Enabled || AnimAsyncTurn.Enabled;
 
-        private static readonly uint[] _serials = new uint[Capacity];
-        private static readonly Kind[] _kinds = new Kind[Capacity];
-        private static int _head, _count;
+        /// <summary>A bounded FIFO of notes, sized once; full: the oldest note goes (a burst larger than the queue keeps its
+        /// newest looks).</summary>
+        internal sealed class NoteQueue
+        {
+            private readonly uint[] _serials;
+            private readonly Kind[] _kinds;
+            private int _head, _count;
 
-        /// <summary>Notes dropped because the queue was full, and resolved (total).</summary>
-        public static long Dropped, Resolved, Requested;
+            /// <summary>Notes dropped because the queue was full (total), and the most notes waiting at once.</summary>
+            public long Dropped;
+            public int HighWater;
+
+            public NoteQueue(int capacity)
+            {
+                _serials = new uint[capacity];
+                _kinds = new Kind[capacity];
+            }
+
+            public int Capacity => _serials.Length;
+            public int Count => _count;
+
+            public void Add(uint serial, Kind kind)
+            {
+                int cap = _serials.Length;
+
+                if (_count == cap)
+                {
+                    _head = (_head + 1) % cap;
+                    _count--;
+                    Dropped++;
+                }
+
+                int i = (_head + _count) % cap;
+                _serials[i] = serial;
+                _kinds[i] = kind;
+                _count++;
+
+                if (_count > HighWater)
+                {
+                    HighWater = _count;
+                }
+            }
+
+            public bool TryTake(out uint serial, out Kind kind)
+            {
+                if (_count == 0)
+                {
+                    serial = 0;
+                    kind = Kind.Mobile;
+
+                    return false;
+                }
+
+                serial = _serials[_head];
+                kind = _kinds[_head];
+                _head = (_head + 1) % _serials.Length;
+                _count--;
+
+                return true;
+            }
+
+            public void Clear() => _head = _count = 0;
+
+            public void Reset()
+            {
+                Clear();
+                Dropped = 0;
+                HighWater = 0;
+            }
+        }
+
+        /// <summary>Mobile and Equip notes (drained first), Item notes.</summary>
+        internal static readonly NoteQueue Mobiles = new NoteQueue(MobileCapacity), Items = new NoteQueue(ItemCapacity);
+
+        /// <summary>Notes resolved, and asset requests made (total).</summary>
+        public static long Resolved, Requested;
+
+        /// <summary>Notes dropped because a queue was full (total).</summary>
+        public static long Dropped => Mobiles.Dropped + Items.Dropped;
 
         /// <summary>Notes waiting.</summary>
-        public static int Count => _count;
+        public static int Count => Mobiles.Count + Items.Count;
+
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the longest Drain (Stopwatch ticks) since the checker last read it.</summary>
+        public static long DrainMaxTicks;
+#endif
 
         /// <summary>The longest a mobile keeps its previous look while the new one loads (owner 2026-11-20: 50 ms, 25 ms if
         /// the measured p99 fits; a load that never completes draws the new look partial after it; cap hits are bugs to
@@ -163,7 +257,25 @@ namespace ClassicUO.Game
             FrameHeld = FramePartial = FrameFirstSight = FrameBlank = FrameFirstSightWait = 0;
             _prevDraw = _thisDraw;
             _thisDraw = Now;
+#if CUO_DEVTOOLS
+            DrawSeq++;
+#endif
         }
+
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the draw's frame number (MobileFrameCache.CheckDrawSeq).</summary>
+        public static uint DrawSeq;
+
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: a mobile draw's verdict on its look (the checker's completeness test).</summary>
+        internal static void NoteDrawn(MobileFrameCache cache, bool complete)
+        {
+            if (Check)
+            {
+                cache.CheckDrawSeq = DrawSeq;
+                cache.CheckDrawComplete = complete;
+            }
+        }
+#endif
 
         private static uint _prevDraw, _thisDraw;
 
@@ -201,63 +313,42 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (_count == Capacity)
-            {
-                // the oldest note goes: a burst larger than the queue keeps its newest looks
-                _head = (_head + 1) % Capacity;
-                _count--;
-                Dropped++;
-            }
-
-            int i = (_head + _count) % Capacity;
-            _serials[i] = serial;
-            _kinds[i] = kind;
-            _count++;
+            (kind == Kind.Item ? Items : Mobiles).Add(serial, kind);
         }
 
-        /// <summary>Takes the next note (tests and <see cref="Drain"/>).</summary>
-        internal static bool TryTake(out uint serial, out Kind kind)
-        {
-            if (_count == 0)
-            {
-                serial = 0;
-                kind = Kind.Mobile;
-
-                return false;
-            }
-
-            serial = _serials[_head];
-            kind = _kinds[_head];
-            _head = (_head + 1) % Capacity;
-            _count--;
-
-            return true;
-        }
+        /// <summary>Takes the next note, mobiles first (tests and <see cref="Drain"/>).</summary>
+        internal static bool TryTake(out uint serial, out Kind kind) => Mobiles.TryTake(out serial, out kind) || Items.TryTake(out serial, out kind);
 
         internal static void ResetForTests()
         {
-            _head = _count = 0;
-            Dropped = Resolved = Requested = 0;
+            Mobiles.Reset();
+            Items.Reset();
+            Resolved = Requested = 0;
         }
 
-        /// <summary>Each Update, before the draw: resolves up to <see cref="BudgetPerUpdate"/> notes.</summary>
+        /// <summary>Each Update, before the draw: resolves up to <see cref="BudgetPerUpdate"/> notes, mobiles first.</summary>
         public static void Drain(World world)
         {
-            if (_count == 0)
+            if (Mobiles.Count == 0 && Items.Count == 0)
             {
                 return;
             }
 
             if (world?.Player == null || !Enabled)
             {
-                _head = _count = 0;
+                Mobiles.Clear();
+                Items.Clear();
 
                 return;
             }
 
+#if CUO_DEVTOOLS
+            long t0 = Check ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+#endif
             int range = world.ClientViewRange;
+            int resolved = 0;
 
-            for (int n = 0; n < BudgetPerUpdate && TryTake(out uint serial, out Kind kind); n++)
+            for (int n = 0; n < TakesPerUpdate && resolved < BudgetPerUpdate && TryTake(out uint serial, out Kind kind); n++)
             {
                 Entity e = world.Get(serial);
 
@@ -277,6 +368,7 @@ namespace ClassicUO.Game
                 }
 
                 Resolved++;
+                resolved++;
 
                 if (e is Mobile mobile)
                 {
@@ -296,6 +388,18 @@ namespace ClassicUO.Game
                     }
                 }
             }
+
+#if CUO_DEVTOOLS
+            if (Check)
+            {
+                long dt = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+
+                if (dt > DrainMaxTicks)
+                {
+                    DrainMaxTicks = dt;
+                }
+            }
+#endif
         }
 
         /// <summary>The look the draw uses: body (or mount) and equipment, with the group and direction of this frame.</summary>

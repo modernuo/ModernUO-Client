@@ -88,6 +88,14 @@ namespace ClassicUO.Game
         /// existed before; 2: first sight); 0 once they are all resident.</summary>
         public byte EmitIncomplete;
 
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the frame (LookPrefetch.DrawSeq) of this mobile's last draw, and whether that
+        /// draw drew its whole look (no layer missing, not held, not waiting for first sight): the checker's completeness
+        /// test, so it agrees with the draw (p4/p5: recomputing the look counted covered layers and other groups).</summary>
+        public uint CheckDrawSeq;
+        public bool CheckDrawComplete;
+#endif
+
         /// <summary>An instance relative to the draw origin; depth = Kind == 0 ? baseDepth : (baseDepth + 1f) + Add, as
         /// MobileSpriteExtract writes it.</summary>
         public struct Entry
@@ -251,6 +259,10 @@ namespace ClassicUO.Game
             LegacyLightCount = 0;
             HoldSince = 0;
             EmitIncomplete = 0;
+#if CUO_DEVTOOLS
+            CheckDrawSeq = 0;
+            CheckDrawComplete = false;
+#endif
             Pack = null;
             LegacySource = null;
             Key = default;

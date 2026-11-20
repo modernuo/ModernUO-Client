@@ -10,8 +10,10 @@ namespace ClassicUO.Game
 {
     /// <summary>
     /// CUO_LOOK_PREFETCH_CHECK=1 (CLEANUP(release)): asset_prefetch_on_packet's measure, both switch states. Every look a
-    /// WorldWriter operation noted (LookPrefetch.Note) is tracked; at each draw start it is polled (LookPrefetch.LookComplete:
-    /// Legacy direction uploaded or art decoded; Gpu anim pages resident). Only looks on screen count (GameScene.IsOnScreen,
+    /// WorldWriter operation noted (LookPrefetch.Note) is tracked; at each draw start it is polled: a mobile by the verdict of
+    /// its last draw since the note (MobileFrameCache.CheckDrawComplete: every layer the draw selected was loaded, nothing
+    /// held or waited; a mobile not drawn since the note is not polled and, after 3 s on screen, counts as undrawn), an
+    /// item by LookPrefetch.LookComplete (art decoded or resident). Only looks on screen count (GameScene.IsOnScreen,
     /// the draw walk's culling rectangle): the latency starts at packet arrival when the object was on screen then, else at
     /// the first frame it is on screen (p3 counted mobiles beyond the screen edge, never drawn, as seconds late). Looks
     /// never on screen within 3 s of arrival count as offscreen; items not on the ground are not tracked. Reports per kind
@@ -31,6 +33,8 @@ namespace ClassicUO.Game
         private static readonly long[] _arrival = new long[Tracked];
         private static readonly bool[] _polled = new bool[Tracked], _seenOff = new bool[Tracked];
         private static readonly long[] _visible = new long[Tracked];
+        // LookPrefetch.DrawSeq at the note: a mobile draw after it shows the noted look
+        private static readonly uint[] _arrivalSeq = new uint[Tracked];
         // the last incomplete poll's missing part (LookPrefetch.LookComplete) and the incomplete polls, for the slow-look lines
         private static readonly int[] _missing = new int[Tracked], _polls = new int[Tracked];
         private static readonly ushort[] _missingBody = new ushort[Tracked];
@@ -40,7 +44,7 @@ namespace ClassicUO.Game
         private static readonly long[][] _lat = { new long[Samples], new long[Samples], new long[Samples] };
         private static readonly int[] _latCount = new int[3];
         private static readonly long[] _firstComplete = new long[3], _arrived = new long[3], _merged = new long[3], _complete = new long[3];
-        private static long _incompleteFrames, _never, _gone, _offscreen, _overflow, _start, _waitDraws, _waitFrames;
+        private static long _incompleteFrames, _never, _undrawn, _gone, _offscreen, _overflow, _start, _waitDraws, _waitFrames;
         private static long _heldDraws, _heldFrames, _partialDraws, _partialFrames, _firstSightDraws, _firstSightFrames, _blankDraws, _blankFrames;
         private static bool _switch;
 
@@ -98,6 +102,7 @@ namespace ClassicUO.Game
             _polled[_count] = false;
             _seenOff[_count] = false;
             _visible[_count] = 0;
+            _arrivalSeq[_count] = LookPrefetch.DrawSeq;
             _missing[_count] = _polls[_count] = 0;
             _missingBody[_count] = 0;
             _count++;
@@ -133,6 +138,7 @@ namespace ClassicUO.Game
                 }
 
                 bool drop;
+                int poll = 0;
 
                 if (e == null || e.IsDestroyed || world.Player == null || e.Distance > world.ClientViewRange || e is Item { OnGround: false })
                 {
@@ -150,7 +156,7 @@ namespace ClassicUO.Game
                         _offscreen++;
                     }
                 }
-                else if (Visible(i, now) & LookPrefetch.LookComplete(e, out int missing, out ushort missingBody))
+                else if (Visible(i, now) & (poll = Poll(i, e, out int missing, out ushort missingBody)) > 0)
                 {
                     int k = (int)_kind[i];
                     _complete[k]++;
@@ -174,14 +180,28 @@ namespace ClassicUO.Game
                 }
                 else if (now - _visible[i] > Stopwatch.Frequency * 3)
                 {
-                    _never++;
                     drop = true;
-                    Slow(i, e, now, "never");
 
-                    if (_never <= 20)
+                    if (poll < 0)
                     {
-                        Log.Warn($"[look-prefetch-check] 0x{_serial[i]:X8} ({_kind[i]}) not complete 3 s after its packet, switch={(_switch ? "on" : "off")}");
+                        // on screen by the culling rectangle, yet never drawn since the note (hidden, not visible)
+                        _undrawn++;
                     }
+                    else
+                    {
+                        _never++;
+                        Slow(i, e, now, "never");
+
+                        if (_never <= 20)
+                        {
+                            Log.Warn($"[look-prefetch-check] 0x{_serial[i]:X8} ({_kind[i]}) not complete 3 s after its packet, switch={(_switch ? "on" : "off")}");
+                        }
+                    }
+                }
+                else if (poll < 0)
+                {
+                    // not drawn since the note yet: nothing to poll
+                    drop = false;
                 }
                 else
                 {
@@ -202,6 +222,7 @@ namespace ClassicUO.Game
                     _polled[i] = _polled[_count];
                     _seenOff[i] = _seenOff[_count];
                     _visible[i] = _visible[_count];
+                    _arrivalSeq[i] = _arrivalSeq[_count];
                     _missing[i] = _missing[_count];
                     _polls[i] = _polls[_count];
                     _missingBody[i] = _missingBody[_count];
@@ -236,6 +257,36 @@ namespace ClassicUO.Game
             double f = 1000.0 / Stopwatch.Frequency;
             Log.Info(FormattableString.Invariant(
                 $"[look-prefetch-check] slow 0x{_serial[i]:X8} ({_kind[i]}) {how} after {(now - _visible[i]) * f:F0} ms visible ({(now - _arrival[i]) * f:F0} ms since arrival), {_polls[i]} incomplete polls, last missing {what};{look}"));
+        }
+
+        // 1: complete, 0: not yet, -1: a mobile not drawn since its note. A mobile's verdict is its draw's (the recomputed
+        // look, LookPrefetch.LookComplete, disagreed with the draw in p4/p5: covered layers such as shoes under a dress, a
+        // beard the draw leaves out, other groups; it only names what is missing in the slow-look lines now).
+        private static int Poll(int i, Entity e, out int missing, out ushort missingBody)
+        {
+            missing = 0;
+            missingBody = 0;
+
+            if (e is Mobile m)
+            {
+                MobileFrameCache c = m.FrameCache;
+
+                if (c == null || c.CheckDrawSeq == 0 || c.CheckDrawSeq <= _arrivalSeq[i])
+                {
+                    return -1;
+                }
+
+                if (c.CheckDrawComplete)
+                {
+                    return 1;
+                }
+
+                LookPrefetch.LookComplete(e, out missing, out missingBody);
+
+                return 0;
+            }
+
+            return LookPrefetch.LookComplete(e, out missing, out missingBody) ? 1 : 0;
         }
 
         // the look's latency start: packet arrival if it was on screen then, else this first frame on screen
@@ -276,7 +327,12 @@ namespace ClassicUO.Game
                 _firstComplete[k] = _arrived[k] = _merged[k] = _complete[k] = 0;
             }
 
-            sb.Append($" incomplete_frames {_incompleteFrames} never_complete {_never} gone {_gone} offscreen {_offscreen} overflow {_overflow} tracked {_count}; prefetch resolved {LookPrefetch.Resolved} requested {LookPrefetch.Requested} dropped {LookPrefetch.Dropped}");
+            sb.Append($" incomplete_frames {_incompleteFrames} never_complete {_never} undrawn {_undrawn} gone {_gone} offscreen {_offscreen} overflow {_overflow} tracked {_count}; prefetch resolved {LookPrefetch.Resolved} requested {LookPrefetch.Requested} dropped {LookPrefetch.Dropped}");
+            sb.Append(FormattableString.Invariant(
+                $" (mobile queue hw {LookPrefetch.Mobiles.HighWater}/{LookPrefetch.Mobiles.Capacity} dropped {LookPrefetch.Mobiles.Dropped}, item queue hw {LookPrefetch.Items.HighWater}/{LookPrefetch.Items.Capacity} dropped {LookPrefetch.Items.Dropped}, drain_max_ms {LookPrefetch.DrainMaxTicks * 1000.0 / Stopwatch.Frequency:F2})"));
+            LookPrefetch.Mobiles.HighWater = LookPrefetch.Mobiles.Count;
+            LookPrefetch.Items.HighWater = LookPrefetch.Items.Count;
+            LookPrefetch.DrainMaxTicks = 0;
             sb.Append($"; mobile draws held {_heldDraws} ({_heldFrames} frames) partial {_partialDraws} ({_partialFrames} frames) first_sight {_firstSightDraws} ({_firstSightFrames} frames) blank {_blankDraws} ({_blankFrames} frames) hold_timeouts {LookPrefetch.HoldTimeouts}");
             sb.Append($"; first_sight_wait {_waitDraws} ({_waitFrames} frames); hold_ms {LookPrefetch.HoldMs.Summary()}; first_sight_ms {LookPrefetch.FirstSightMs.Summary()}; cap_frame_gap_ms {LookPrefetch.CapFrameGapMs.Summary()}");
             var gpu = Client.Game.GetGpuWorld()?.World;
@@ -294,7 +350,7 @@ namespace ClassicUO.Game
                 Log.Info(sb.ToString());
             }
 
-            _incompleteFrames = _never = _gone = _offscreen = _overflow = _waitDraws = _waitFrames = 0;
+            _incompleteFrames = _never = _undrawn = _gone = _offscreen = _overflow = _waitDraws = _waitFrames = 0;
             _heldDraws = _heldFrames = _partialDraws = _partialFrames = _firstSightDraws = _firstSightFrames = _blankDraws = _blankFrames = 0;
         }
     }

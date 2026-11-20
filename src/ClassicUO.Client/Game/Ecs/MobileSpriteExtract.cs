@@ -698,6 +698,11 @@ namespace ClassicUO.Game
                         cache.EmitIncomplete = 0;
                     }
                 }
+
+                if (PageResidency != null)
+                {
+                    LookPrefetch.NoteDrawn(cache, cache.EmitIncomplete == 0);
+                }
 #endif
 
                 return;
@@ -737,6 +742,9 @@ namespace ClassicUO.Game
                         _lightCount = recLights;
                         Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, data.Get<Position>().X, baseX, baseY, data.Get<Position>().Z);
                         LookPrefetch.FrameHeld++;
+#if CUO_DEVTOOLS
+                        LookPrefetch.NoteDrawn(cache, false);
+#endif
 
                         return;
                     }
@@ -747,12 +755,18 @@ namespace ClassicUO.Game
                         _count = recStart;
                         _lightCount = recLights;
                         LookPrefetch.FrameFirstSightWait++;
+#if CUO_DEVTOOLS
+                        LookPrefetch.NoteDrawn(cache, false);
+#endif
 
                         return;
                     }
 
                     LookPrefetch.NoteIncomplete(missing, n, previous);
                     cache.EmitIncomplete = previous ? (byte)1 : (byte)2;
+#if CUO_DEVTOOLS
+                    LookPrefetch.NoteDrawn(cache, false);
+#endif
                 }
                 else
                 {
@@ -760,6 +774,9 @@ namespace ClassicUO.Game
                     {
                         LookComplete(cache);
                     }
+#if CUO_DEVTOOLS
+                    LookPrefetch.NoteDrawn(cache, true);
+#endif
 
                     cache.HoldSince = 0;
                     cache.EmitIncomplete = 0;
@@ -1077,6 +1094,10 @@ namespace ClassicUO.Game
                 MobileFrameCache.LegacyHits++;
                 _selCount = 0;
                 ReplayLegacy(batcher, cache, baseX, baseY, depth);
+#if CUO_DEVTOOLS
+                // a Legacy recording is made only with every texture present (record needs !_atlasMiss)
+                LookPrefetch.NoteDrawn(cache, true);
+#endif
 
 #if CUO_DEVTOOLS
                 if (MobileAnimationSystem.CacheCheck)
@@ -1104,6 +1125,9 @@ namespace ClassicUO.Game
                     _selCount = 0;
                     ReplayLegacy(batcher, cache, baseX, baseY, depth);
                     LookPrefetch.FrameHeld++;
+#if CUO_DEVTOOLS
+                    LookPrefetch.NoteDrawn(cache, false);
+#endif
 
                     return;
                 }
@@ -1113,12 +1137,19 @@ namespace ClassicUO.Game
                     // first sight: nothing until the body and every equipment direction are uploaded (bounded)
                     _selCount = 0;
                     LookPrefetch.FrameFirstSightWait++;
+#if CUO_DEVTOOLS
+                    LookPrefetch.NoteDrawn(cache, false);
+#endif
 
                     return;
                 }
 
                 LookPrefetch.NoteIncomplete(_selCount == 0 ? 1 : 0, 1, previous);
             }
+
+#if CUO_DEVTOOLS
+            LookPrefetch.NoteDrawn(cache, !_atlasMiss);
+#endif
 
             if (!_atlasMiss && hold)
             {
