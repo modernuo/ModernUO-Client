@@ -61,6 +61,9 @@ namespace ClassicUO.Network
         public EncryptionType Load(ClientVersion clientVersion, EncryptionType encryption)
         {
             PacketsTable = new PacketsTable(clientVersion);
+#if CUO_DEVTOOLS
+            if (Harness.NetCapture.On) Harness.NetCapture.Load((uint)clientVersion);
+#endif
 
             if (encryption != 0)
             {
@@ -263,6 +266,18 @@ namespace ClassicUO.Network
                 throw new UriFormatException($"NetClient::Connect() invalid Uri {addr}");
 
             Log.Trace($"Connecting to {uri}");
+#if CUO_DEVTOOLS
+            if (Harness.NetCapture.On) Harness.NetCapture.Connect();
+
+            if (Harness.NetReplay.Active)
+            {
+                // net-rework harness: the n-th connection reads the capture's n-th stream
+                AttachSocket(Harness.NetReplay.NextSocket());
+                _socket.Connect(uri);
+
+                return;
+            }
+#endif
 
             AttachSocket(new TcpSocketWrapper());
             _socket.Connect(uri);
@@ -270,11 +285,24 @@ namespace ClassicUO.Network
 
         public void Disconnect()
         {
+#if CUO_DEVTOOLS
+            if (Harness.NetCapture.On) Harness.NetCapture.Disconnect();
+#endif
             _connection?.Retire();
             ResetProtocolState();
             ResetStatistics();
             _socket?.Disconnect();
         }
+
+#if CUO_DEVTOOLS
+        /// <summary>net-rework harness (headless replay): a new connection on <paramref name="socket"/>, as Connect starts one.</summary>
+        internal void AttachReplaySocket(SocketWrapper socket)
+        {
+            ResetProtocolState();
+            ResetStatistics();
+            AttachSocket(socket);
+        }
+#endif
 
         private void ResetStatistics()
         {
@@ -400,6 +428,13 @@ namespace ClassicUO.Network
             }
 #endif
             PacketLogger.Default?.Log(message, true);
+#if CUO_DEVTOOLS
+            if (Harness.NetHarness.On)
+            {
+                if (Harness.NetCapture.On) Harness.NetCapture.Outbound(message);
+                if (Harness.NetReplay.Active) Harness.NetReplay.Sent(message[0]);
+            }
+#endif
 
             if (!skipEncryption)
             {
@@ -462,6 +497,16 @@ namespace ClassicUO.Network
 #if CUO_DEVTOOLS
             long diagStart = Diagnostics.On ? Stopwatch.GetTimestamp() : 0;
             bool diagTimeCap = false;
+#endif
+#if CUO_DEVTOOLS
+            if (Harness.NetReplay.Active)
+            {
+                // net-rework harness: a replay frame reads everything released for it, so the packets each frame dispatches
+                // do not depend on how the reads were cut or how long they took
+                maxBytes = int.MaxValue;
+                maxPackets = int.MaxValue;
+                maxMs = 0;
+            }
 #endif
             LastDrainAvailable = 0;
             LastDrainBytes = 0;
@@ -588,6 +633,9 @@ namespace ClassicUO.Network
                 var span = _compressedBuffer.AsSpan(0, size);
 
                 ProcessEncryption(span);
+#if CUO_DEVTOOLS
+                if (Harness.NetCapture.On) Harness.NetCapture.Inbound(span, _isCompressionEnabled);
+#endif
 
                 data = DecompressBuffer(segment);
 

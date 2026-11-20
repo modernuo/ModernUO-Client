@@ -66,6 +66,11 @@ namespace ClassicUO.Network
         private readonly DiagReceiveTimeline _diagReads = Diagnostics.On ? new() : null;
 #endif
         private int _generation;
+#if CUO_DEVTOOLS
+
+        /// <summary>net-rework harness: the trace every dispatched packet is written to (null when no trace runs).</summary>
+        internal Harness.NetTrace Trace;
+#endif
 
         /// <summary>Times parsing stopped at a packet whose bytes had not all arrived yet (a header or body cut by a read).</summary>
         public int PartialPacketWaits { get; private set; }
@@ -202,6 +207,8 @@ namespace ClassicUO.Network
                 var previousDispatch = Diagnostics.On ? Diagnostics.EnterDispatch(socket.Statistics,
                     packetlength == 2 && packetBuffer[0] == 0x73 && packetBuffer[1] == diagPingIndex ? diagPingIndex : -1,
                     diagRead, diagDequeued) : default;
+                var trace = Trace;
+                trace?.BeginPacket(packetBuffer.AsSpan(0, packetlength));
                 try
                 {
 #endif
@@ -210,6 +217,7 @@ namespace ClassicUO.Network
                 }
                 finally
                 {
+                    trace?.EndPacket(world);
                     if (Diagnostics.On) Diagnostics.LeaveDispatch(previousDispatch);
                 }
 #endif
