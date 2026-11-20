@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause
+﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
 using ClassicUO.Renderer.Animations;
@@ -89,13 +89,15 @@ namespace ClassicUO.Game
                   $"page {animations.AtlasPageBytes >> 20} MiB, min age {policy.MinAgeMs / 1000} s, thrash window {policy.ThrashWindowMs / 1000} s");
         }
 
-        // a thrash reload grows the budget only while the GC sees memory headroom: the load below its high-memory threshold
-        // and at least 1 GiB available (allocates a GCMemoryInfo: only asked on a thrash reload that could grow)
+        // a thrash reload grows the budget only while the machine has at least 1 GiB below the GC's high-memory threshold.
+        // Both numbers are physical memory; TotalAvailableMemoryBytes is not: under GCHeapHardLimit it is the heap limit,
+        // which atlas pages (native) don't count against, and comparing it with the machine load refused every grow.
+        // Allocates a GCMemoryInfo: only asked on a thrash reload that could grow.
         private static bool MemoryAllowsGrowth()
         {
             var info = GC.GetGCMemoryInfo();
 
-            return info.MemoryLoadBytes < info.HighMemoryLoadThresholdBytes && info.TotalAvailableMemoryBytes - info.MemoryLoadBytes > 1L << 30;
+            return info.HighMemoryLoadThresholdBytes - info.MemoryLoadBytes > 1L << 30;
         }
 
 #if CUO_DEVTOOLS
