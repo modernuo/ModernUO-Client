@@ -82,8 +82,8 @@ namespace ClassicUO
         // backpack; the server answers 0x2E): the candidates in the backpack, the hat worn at the start (restored at the end)
         private static readonly string[] _esSeedTypes = { "WizardsHat", "TricorneHat", "JesterHat", "FeatheredHat" };
         private static readonly uint[] _esCands = new uint[8];
-        private static int _esState, _esCandCount, _esIndex, _esSwaps, _esConfirmed, _esSeeded, _esCollects;
-        private static uint _esOriginal, _esTarget;
+        private static int _esState, _esCandCount, _esIndex, _esSwaps, _esConfirmed, _esSeeded, _esCollects, _esHeldFrames;
+        private static uint _esOriginal, _esTarget, _esHeld;
         private static long _esRestoreCap;
         // the equip mode's wearables (chest armour, robes, cloaks, shirts, legs, boots, helms): distinct equipment animations
         private static readonly ushort[] _equipGraphics =
@@ -1641,13 +1641,8 @@ namespace ClassicUO
 
                     if (worn != null && worn.Serial != _esTarget)
                     {
-                        if (GameActions.PickUp(world, worn.Serial, 0, 0))
-                        {
-                            GameActions.DropItem(worn.Serial, 0xFFFF, 0xFFFF, 0, pack.Serial);
-                        }
-
-                        _esState = 3;
-                        _travelAt = now + sec * 2 / 5;
+                        EquipServerLift(world, worn.Serial, 4);
+                        _travelAt = now;
 
                         break;
                     }
@@ -1658,17 +1653,49 @@ namespace ClassicUO
                     break;
 
                 case 3:
-                    if (_esTarget != 0 && worn?.Serial != _esTarget)
+                    if (_esTarget != 0 && worn?.Serial != _esTarget && EquipServerLift(world, _esTarget, 5))
                     {
-                        if (GameActions.PickUp(world, _esTarget, 0, 0))
-                        {
-                            GameActions.Equip(world);
-                            _esSwaps++;
-                        }
+                        _travelAt = now;
+
+                        break;
                     }
 
                     _esState = 2;
                     _travelAt = now + sec * 3 / 5;
+
+                    break;
+
+                case 4:
+                case 5:
+                    // the drop (4) or equip (5) goes out once the client has removed the lifted item (World.ObjectToRemove,
+                    // the frame after the pick up): sent in the pick-up frame, the server's answer (0x25/0x2E) arrived
+                    // before that removal and the removal then deleted the item the server had just placed
+                    if (world.ObjectToRemove == _esHeld && _esHeldFrames++ < 120)
+                    {
+                        break;
+                    }
+
+                    if (_esState == 4)
+                    {
+                        GameActions.DropItem(_esHeld, 0xFFFF, 0xFFFF, 0, pack.Serial);
+                        _esState = 3;
+                        _travelAt = now + sec * 2 / 5;
+                    }
+                    else
+                    {
+                        GameActions.Equip(world);
+                        _esSwaps++;
+                        _esState = 2;
+                        _travelAt = now + sec * 3 / 5;
+                    }
+
+                    // a drop or equip the client refused to send (no hold) must not leave the cursor holding the item
+                    if (Client.Game.UO.GameCursor.ItemHold.Enabled)
+                    {
+                        Client.Game.UO.GameCursor.ItemHold.Clear();
+                    }
+
+                    _esHeld = 0;
 
                     break;
 
@@ -1677,6 +1704,21 @@ namespace ClassicUO
 
                     break;
             }
+        }
+
+        // equipsrv: lifts the item (0x07); the drop or equip follows in state next once the client removed it
+        private static bool EquipServerLift(World world, uint serial, int next)
+        {
+            if (!GameActions.PickUp(world, serial, 0, 0))
+            {
+                return false;
+            }
+
+            _esHeld = serial;
+            _esHeldFrames = 0;
+            _esState = next;
+
+            return true;
         }
 
         private static bool EquipServerRestored(World world, long now, long sec)
@@ -1693,15 +1735,11 @@ namespace ClassicUO
             {
                 if (now >= _travelAt)
                 {
-                    if (_esOriginal == 0 && worn != null)
+                    if (_esOriginal == 0 && worn != null && _esState != 4)
                     {
-                        // no starting hat: take the last one off
-                        if (GameActions.PickUp(world, worn.Serial, 0, 0))
-                        {
-                            GameActions.DropItem(worn.Serial, 0xFFFF, 0xFFFF, 0, world.Player.FindItemByLayer(Layer.Backpack)?.Serial ?? 0);
-                        }
-
-                        _travelAt = now + sec;
+                        // no starting hat: take the last one off (lift now, drop into the backpack in a later frame)
+                        EquipServerLift(world, worn.Serial, 4);
+                        _travelAt = now;
                     }
                     else
                     {
