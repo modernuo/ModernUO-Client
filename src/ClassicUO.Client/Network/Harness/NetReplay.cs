@@ -422,8 +422,9 @@ namespace ClassicUO.Network.Harness
                 else if (++_idleFrames >= 120 && (_sockets.Count == 0 || _sockets[^1].Pending == 0))
                 {
                     _ended = true;
+                    long packets = NetHarness.TracePackets;
                     NetHarness.EndTrace();
-                    Log.Info($"[net-replay] done; packets {NetHarness.TracePackets}; exiting");
+                    Log.Info($"[net-replay] done; packets {packets}; exiting");
                     Client.Game.Exit();
                 }
             }
