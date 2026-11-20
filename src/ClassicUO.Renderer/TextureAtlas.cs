@@ -134,7 +134,9 @@ namespace ClassicUO.Renderer
                 }
             }
 
-            _packer.Dispose();
+            // an atlas that never opened a page has no packer
+            _packer?.Dispose();
+            _packer = null;
             _textureList.Clear();
         }
     }
