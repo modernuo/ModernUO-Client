@@ -248,6 +248,13 @@ namespace ClassicUO.Configuration
         // Default off: the atlases only grow.
         [JsonPropertyName("atlas_lru")] public bool AtlasLru { get; set; }
 
+        // shared-tables: cliloc tables are read in place from read-only memory every instance shares (SharedTableCache):
+        // a raw record straight from the pack file, a compressed one from a per-user cache file it is decompressed into
+        // once (keyed by the pack's manifest hash), instead of a heap copy per process. Read once at startup
+        // (CUO_SHARED_CLILOC=1|0 overrides it in developer builds; CUO_SHARED_CLILOC_CHECK=1 compares every lookup with the
+        // heap path's). Default off.
+        [JsonPropertyName("shared_cliloc")] public bool SharedCliloc { get; set; }
+
         // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
         // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
         // every frame it is visible (GameScene.ApplyMeshHue, MeshHueEpoch). Read once per frame (CUO_MESH_HUE=1|0 overrides
