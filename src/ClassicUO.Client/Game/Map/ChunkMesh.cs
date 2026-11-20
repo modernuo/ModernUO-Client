@@ -171,9 +171,9 @@ namespace ClassicUO.Game.Map
             int landTotal = _landBuckets.ComputeOffsets();
             int staticsTotal = _staticsBuckets.ComputeOffsets();
 
-            Land.EnsureCapacity(landTotal);
+            Land.EnsureCapacity(landTotal, world.MeshPool);
             Land.Count = landTotal;
-            Statics.EnsureCapacity(staticsTotal);
+            Statics.EnsureCapacity(staticsTotal, world.MeshPool);
             Statics.Count = staticsTotal;
 
             // Pass 2: write sprites at their final sorted positions
@@ -215,12 +215,13 @@ namespace ClassicUO.Game.Map
         }
 
         /// <summary>
-        /// Resets mesh state for pool reuse. Keeps GPU buffers and arrays allocated.
+        /// Resets mesh state for pool reuse. Keeps GPU buffers and arrays up to the prefill size (MapWarmup); a larger statics
+        /// layer trades its set for one of that size in <paramref name="pool"/>.
         /// </summary>
-        public void SoftClear()
+        public void SoftClear(MeshLayerPool pool)
         {
-            Land.SoftReset();
-            Statics.SoftReset();
+            Land.SoftReset(pool, MapWarmup.StaticsMeshCapacity);
+            Statics.SoftReset(pool, MapWarmup.StaticsMeshCapacity);
             _landBuckets.Clear();
             _staticsBuckets.Clear();
             IsDirty = true;

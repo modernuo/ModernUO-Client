@@ -71,6 +71,16 @@ namespace ClassicUO.Renderer
         // unknown (built, or set without a key, like the highlight). The caller skips SetHue while the key matches.
         private long[] _hueKeys = new long[INITIAL_CAPACITY];
 
+        /// <summary>Managed bytes held by this layer's arrays ([gcs] pools line).</summary>
+        public long HeldBytes =>
+            (long)Vertices.Length * PositionNormalTextureColor4.SIZE_IN_BYTES + (long)Textures.Length * IntPtr.Size
+            + Visible.Length + _prevVisible.Length + _visibleIndexData.Length * sizeof(short) + _hueKeys.Length * sizeof(long)
+            + (_visBits.Length + _prevVisBits.Length) * sizeof(ulong) + _alphaDirtyIndices.Length * sizeof(int)
+            + VisibleRuns.Length * (IntPtr.Size + 2 * sizeof(int));
+
+        /// <summary>Bytes of this layer's GPU vertex buffer ([gcs] pools line).</summary>
+        public long GpuBytes => VertexBuffer == null || VertexBuffer.IsDisposed ? 0 : (long)VertexBuffer.VertexCount * (PositionNormalTextureColor4.SIZE_IN_BYTES / 4);
+
         /// <summary>
         /// Ensures internal arrays can hold at least <paramref name="minCapacity"/> sprites.
         /// </summary>
@@ -88,6 +98,68 @@ namespace ClassicUO.Renderer
             Array.Resize(ref Visible, newSize);
             Array.Resize(ref _hueKeys, newSize);
             Array.Resize(ref _visBits, (newSize + 63) >> 6);
+        }
+
+        /// <summary>
+        /// <see cref="EnsureCapacity(int)"/> for a layer just <see cref="Reset"/> (its sprites are discarded, not copied): the
+        /// arrays and the vertex buffer are exchanged for a <paramref name="pool"/> set of the same size EnsureCapacity would
+        /// grow to, and the old set goes to the pool. Without a pool it grows in place.
+        /// </summary>
+        public void EnsureCapacity(int minCapacity, MeshLayerPool pool)
+        {
+            if (minCapacity <= Vertices.Length)
+                return;
+
+            if (pool == null)
+            {
+                EnsureCapacity(minCapacity);
+
+                return;
+            }
+
+            int newSize = Vertices.Length;
+            while (newSize < minCapacity)
+                newSize *= 2;
+
+            Exchange(pool, newSize);
+        }
+
+        /// <summary>
+        /// <see cref="SoftReset()"/>, then a layer above <paramref name="keepCapacity"/> sprites hands its arrays and vertex buffer
+        /// to <paramref name="pool"/> for a set of <paramref name="keepCapacity"/> (meshlayer-growth: a pooled chunk no longer
+        /// keeps the arrays of the busiest chunk it ever held).
+        /// </summary>
+        public void SoftReset(MeshLayerPool pool, int keepCapacity)
+        {
+            SoftReset();
+
+            if (pool != null && Vertices.Length > keepCapacity)
+            {
+                Exchange(pool, keepCapacity);
+            }
+        }
+
+        // swaps this layer's set (arrays and vertex buffer) with a pooled set of exactly `size` sprites, or a new one
+        private void Exchange(MeshLayerPool pool, int size)
+        {
+            MeshLayerPool.Set set = pool.Take(size) ?? MeshLayerPool.Set.Create(size);
+
+            (Vertices, set.Vertices) = (set.Vertices, Vertices);
+            (Textures, set.Textures) = (set.Textures, Textures);
+            (Visible, set.Visible) = (set.Visible, Visible);
+            (_hueKeys, set.HueKeys) = (set.HueKeys, _hueKeys);
+            (_visBits, set.VisBits) = (set.VisBits, _visBits);
+            (_prevVisible, set.PrevVisible) = (set.PrevVisible, _prevVisible);
+            (_prevVisBits, set.PrevVisBits) = (set.PrevVisBits, _prevVisBits);
+            (_visibleIndexData, set.IndexData) = (set.IndexData, _visibleIndexData);
+            (VertexBuffer, set.VertexBuffer) = (set.VertexBuffer, VertexBuffer);
+
+            // the new arrays hold no sprites this layer knows of: the next BuildVisibleIndices rebuilds
+            _visibilityDirty = true;
+            _alphaDirty = false;
+            _alphaDirtyCount = 0;
+
+            pool.Return(set);
         }
 
         /// <summary>
