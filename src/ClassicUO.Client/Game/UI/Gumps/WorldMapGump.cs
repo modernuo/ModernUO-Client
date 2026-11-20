@@ -27,6 +27,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
+using Uo.Buffers;
 using static ClassicUO.Game.UI.Gumps.WorldMapGump;
 using SpriteFont = ClassicUO.Renderer.SpriteFont;
 
@@ -910,7 +911,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             public static unsafe Texture2D CreateTextureFromICO_Cur(Stream stream)
             {
-                byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((int) stream.Length);
+                byte[] buffer = BufferPool.Rent<byte>((int) stream.Length);
 
                 try
                 {
@@ -1182,7 +1183,7 @@ namespace ClassicUO.Game.UI.Gumps
                 }
                 finally
                 {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                    BufferPool.Return(buffer);
                 }
             }
 
