@@ -16,7 +16,28 @@ namespace ClassicUO.Utility
         // GetBytesCp1252.
         public static Cp1252.ByteEnumerable StringToCp1252Bytes(string s, int length = -1) => new Cp1252.ByteEnumerable(s, length);
 
-        public static string Cp1252ToString(ReadOnlySpan<byte> strCp1252) => Cp1252.GetString(strCp1252);
+        /// <summary>The text_string_cache switch (ClassicUO.Game.TextStringCache sets it): null decodes every string.</summary>
+        public static Cp1252StringCache Cp1252Cache;
+
+        public delegate void Cp1252CacheCheckHandler(ReadOnlySpan<byte> bytes, string result);
+
+        /// <summary>CUO_TEXT_CACHE_CHECK (developer builds): sees every cached decode with its bytes.</summary>
+        public static Cp1252CacheCheckHandler Cp1252CacheCheck;
+
+        public static string Cp1252ToString(ReadOnlySpan<byte> strCp1252)
+        {
+            Cp1252StringCache cache = Cp1252Cache;
+
+            if (cache == null)
+            {
+                return Cp1252.GetString(strCp1252);
+            }
+
+            string s = cache.GetString(strCp1252);
+            Cp1252CacheCheck?.Invoke(strCp1252, s);
+
+            return s;
+        }
 
         /// <summary>Cp1252ToString, then (when safe) the chars that fail <see cref="IsSafeChar"/> dropped; one allocation.</summary>
         public static string Cp1252ToString(ReadOnlySpan<byte> strCp1252, bool safe) => Cp1252.GetString(strCp1252, safe);
