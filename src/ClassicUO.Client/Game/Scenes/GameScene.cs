@@ -1445,6 +1445,10 @@ namespace ClassicUO.Game.Scenes
                     // visited (a chunk still in the ChunkLoadQueue has no dynamic objects or overrides yet)
                     bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
                     _settle.End(visibleReady);
+                    // asset_ready_wake: a held or partial frame is followed by one as soon as a load it waits for completes
+                    var gw = gpu.World;
+                    AssetWake.SceneIncomplete = (hold || !visibleReady) && (gw.LoadsPending || _world.Map.DrawPending != 0);
+                    AssetWake.SceneStale = gw.Pages.LoadedNotPlaced + (gw.AnimPages?.LoadedNotPlaced ?? 0);
 #if CUO_DEVTOOLS
                     if (hold || _settle.Episode != WorldDiscontinuity.None)
                     {

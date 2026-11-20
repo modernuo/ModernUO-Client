@@ -121,7 +121,31 @@ namespace ClassicUO
         private long _visualDueTick = long.MaxValue, _netEchoTick = long.MaxValue;
         private const int NetEchoMs = 250;
 
-        private long NextVisualTick => Math.Min(VisualDue.NextTick, _netEchoTick);
+        private long NextVisualTick => Math.Min(Math.Min(VisualDue.NextTick, _netEchoTick), AssetWake.FallbackTick);
+#if CUO_DEVTOOLS
+        private int _assetPublishedAtDraw;
+#endif
+
+        // asset_ready_wake: the frame is incomplete when the scene missed something visible with a load pending (Gpu), or any
+        // worker decode (art, texmap, gump, animation direction) is still pending at its end (Legacy draws those as nothing)
+        private void EndAssetFrame()
+        {
+            int pending = (UO.Arts?.PendingDecodes ?? 0) + (UO.Texmaps?.PendingDecodes ?? 0) + (UO.Gumps?.PendingDecodes ?? 0)
+                + (UO.Animations?.PendingDirections ?? 0);
+            bool incomplete = AssetWake.SceneIncomplete || pending != 0;
+#if CUO_DEVTOOLS
+            if (AssetWakeCheck.On)
+            {
+                int ready = (UO.Arts?.ReadyDecodes ?? 0) + (UO.Texmaps?.ReadyDecodes ?? 0) + (UO.Gumps?.ReadyDecodes ?? 0)
+                    + (UO.Animations?.ReadyDirections ?? 0);
+                // ready items published before this draw started are completed loads the frame did not use
+                int legacyStale = Math.Max(0, ready - (ClassicUO.Renderer.AssetSignal.PublishedCount - _assetPublishedAtDraw));
+                AssetWakeCheck.EndDraw(incomplete, legacyStale + AssetWake.SceneStale,
+                    AssetWake.SceneStale != 0 ? "Gpu pages (and Legacy decodes)" : "Legacy decodes");
+            }
+#endif
+            AssetWake.EndDraw(incomplete, Time.Ticks);
+        }
 
         private double MsUntilVisualDue()
         {
@@ -186,6 +210,11 @@ namespace ClassicUO
             if (VisualDue.Continuous != VisualSource.None)
             {
                 _changePending = _continuous = true;
+            }
+
+            if (AssetWake.ChangeDue)
+            {
+                _changePending = true;
             }
 
             if (LoopTiming.VisualDueReached(_visualDueTick, Time.Ticks))

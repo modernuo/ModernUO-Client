@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+using System;
+using System.Diagnostics;
+using ClassicUO.Utility.Logging;
+
+namespace ClassicUO.Loop
+{
+    /// <summary>
+    /// CUO_ASSET_WAKE_CHECK=1 (CLEANUP(release)): asset_ready_wake's checker, both switch states. Per presented frame:
+    /// "stale" = a load that completed before the frame started is still drawn as nothing at its end (Gpu: a loaded page the
+    /// frame touched but did not place; Legacy: a decode published before the draw and not uploaded by its end); "late" = the
+    /// first completion after an incomplete present was presented more than one display interval (plus 2 ms) later. Both
+    /// should be 0 with the switch on. Every 5 s: a summary with the switch state; the first mismatches are logged one by one.
+    /// </summary>
+    internal static class AssetWakeCheck
+    {
+#if CUO_DEVTOOLS
+        public static readonly bool On = Environment.GetEnvironmentVariable("CUO_ASSET_WAKE_CHECK") == "1";
+
+        private const int DetailLogs = 20;
+        private static long _start, _frames, _incomplete, _stale, _late, _waits, _maxLateTicks, _latencySum, _latencyCount, _fallbacks;
+        private static int _logged;
+        private static bool _switch;
+
+        /// <summary>Whether a completion at <paramref name="signalTs"/> presented at <paramref name="drawTs"/> is late.</summary>
+        public static bool IsLate(long signalTs, long drawTs, double intervalMs, long frequency)
+            => signalTs != 0 && (drawTs - signalTs) * 1000.0 / frequency > intervalMs + 2.0;
+
+        /// <summary>Draw start: <paramref name="signalTs"/> = the first completion after the last incomplete present (0: none).</summary>
+        public static void Draw(long signalTs, long drawTs, double intervalMs, bool on, bool fallback)
+        {
+            if (_start == 0 || on != _switch)
+            {
+                Reset(drawTs, on);
+            }
+
+            if (fallback)
+            {
+                _fallbacks++;
+            }
+
+            if (signalTs == 0)
+            {
+                return;
+            }
+
+            long ticks = drawTs - signalTs;
+            _waits++;
+            _latencySum += ticks;
+            _latencyCount++;
+
+            if (IsLate(signalTs, drawTs, intervalMs, Stopwatch.Frequency))
+            {
+                _late++;
+                _maxLateTicks = Math.Max(_maxLateTicks, ticks);
+
+                if (_logged++ < DetailLogs)
+                {
+                    Log.Warn(FormattableString.Invariant($"[asset-wake-check] late: a load completed {ticks * 1000.0 / Stopwatch.Frequency:F1} ms before this frame (display interval {intervalMs:F1} ms), switch={(on ? "on" : "off")}"));
+                }
+            }
+        }
+
+        /// <summary>Draw end: the frame's state.</summary>
+        public static void EndDraw(bool incomplete, int stale, string what)
+        {
+            _frames++;
+
+            if (incomplete)
+            {
+                _incomplete++;
+            }
+
+            if (stale > 0)
+            {
+                _stale++;
+
+                if (_logged++ < DetailLogs)
+                {
+                    Log.Warn($"[asset-wake-check] stale: {stale} {what} completed before this frame and still drawn as nothing, switch={(_switch ? "on" : "off")}");
+                }
+            }
+
+            long now = Stopwatch.GetTimestamp();
+
+            if (now - _start >= Stopwatch.Frequency * 5)
+            {
+                double meanMs = _latencyCount == 0 ? 0 : _latencySum * 1000.0 / Stopwatch.Frequency / _latencyCount;
+                Log.Info(FormattableString.Invariant(
+                    $"[asset-wake-check] switch={(_switch ? "on" : "off")} frames={_frames} incomplete={_incomplete} stale={_stale} late={_late} completions_waited={_waits} mean_ms={meanMs:F1} max_late_ms={_maxLateTicks * 1000.0 / Stopwatch.Frequency:F1} fallbacks={_fallbacks} mismatches={_stale + _late}"));
+                Reset(now, _switch);
+            }
+        }
+
+        private static void Reset(long now, bool on)
+        {
+            _start = now;
+            _switch = on;
+            _frames = _incomplete = _stale = _late = _waits = _maxLateTicks = _latencySum = _latencyCount = _fallbacks = 0;
+        }
+#else
+        public const bool On = false;
+#endif
+    }
+}

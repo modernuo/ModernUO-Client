@@ -25,6 +25,9 @@ namespace ClassicUO.Renderer.Texmaps
         /// <summary>Worker decodes requested and not uploaded yet.</summary>
         public int PendingDecodes => _decoder.Pending;
 
+        /// <summary>Decodes finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
+        public int ReadyDecodes => _decoder.ReadyCount;
+
         /// <summary>Worker decodes uploaded so far.</summary>
         public int CompletedDecodes => _decoder.Completed;
 

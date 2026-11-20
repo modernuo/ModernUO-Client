@@ -270,6 +270,9 @@ namespace ClassicUO.Renderer.Animations
         /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
         public int PendingDirections => Volatile.Read(ref _pendingJobs);
 
+        /// <summary>Directions finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
+        public int ReadyDirections => _queue.ReadyCount;
+
         private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync, bool evicted = false)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies

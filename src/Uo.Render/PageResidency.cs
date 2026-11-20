@@ -286,6 +286,9 @@ public sealed unsafe class PageResidency
 
     public int UploadsThisFrame, ResidentCount, MissingVisible, Evictions, TotalUploads;
     public int UploadBudget;
+    /// <summary>After <see cref="Upload"/>: pages loaded before this frame and touched by it that the pass could not place
+    /// (upload budget, every layer visible): drawn as nothing although their load completed (CUO_ASSET_WAKE_CHECK).</summary>
+    public int LoadedNotPlaced;
 
     public PageResidency(IntPtr device, PackSet pack, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false, int maxLayers = 0)
         : this(device, pack.PagePaths, pack.Format, pack.PageSize, pack.PageMips, workers, layers, uploadBudget, stagingSlots, forceExpand, maxLayers) { }
@@ -529,6 +532,9 @@ public sealed unsafe class PageResidency
             TotalUploads++;
             _slotState[s] = 0;
         }
+        LoadedNotPlaced = 0;
+        for (int s = 0; s < _slotState.Length; s++)
+            if (_slotState[s] == 2 && _jobs[s].Ok && _requested[_jobs[s].Page] >= frame) LoadedNotPlaced++;
     }
 
     /// <summary>Loaded pages this upload pass will place: the loaded, successful slots, within what is left of the budget.</summary>

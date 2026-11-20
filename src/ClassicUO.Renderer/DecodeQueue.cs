@@ -108,6 +108,8 @@ namespace ClassicUO.Renderer
             {
                 _published.Set();
             }
+
+            AssetSignal.Published();
         }
 
         /// <summary>

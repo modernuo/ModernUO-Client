@@ -180,6 +180,14 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("event_loop_idle_max_wait_ms")] public int EventLoopIdleMaxWaitMs { get; set; } = 250;
 
+        // gpu-popin-2: a frame presented with a missing sprite or chunk while a load is pending (Gpu: the view was not ready
+        // or held; Legacy: decodes pending) is followed by a present as soon as a worker load completes (AssetWake: art,
+        // texmap, gump and animation decodes, Gpu page loads and chunk bakes wake the event-loop wait and count as a visual
+        // change), with a fallback deadline (AssetWake.FallbackMs). CUO_ASSET_WAKE_CHECK=1 counts completed loads still
+        // missing and presents later than one display interval after a completion. CUO_ASSET_READY_WAKE=1|0 overrides it
+        // in developer builds. Default off.
+        [JsonPropertyName("asset_ready_wake")] public bool AssetReadyWake { get; set; }
+
         // loop-linux: the event loop on Linux, waiting in epoll (LinuxEpollLoopWaiter: socket, wake eventfd, timerfd deadline,
         // X11/Wayland display fd, SDL event watch) instead of the legacy loop's Sleep(1) and spin. Read once at startup; the
         // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.

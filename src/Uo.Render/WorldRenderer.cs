@@ -306,6 +306,9 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// Read after Render/Stream.</summary>
     public bool VisibleReady => Chunks.MissingNear == 0 && Pages.MissingVisible == 0 && (AnimPages == null || AnimPages.MissingVisible == 0);
 
+    /// <summary>A chunk bake, chunk upload or page load is queued or running (a later frame can draw more).</summary>
+    public bool LoadsPending => Chunks.PendingChunks != 0 || Chunks.UploadQueueLength != 0 || Pages.Pending || (AnimPages != null && AnimPages.Pending);
+
     // ---- dynamic sprites
 
     /// <summary>The next dynamic instance slot (zeroed), or a scratch slot when the frame's capacity is used up.</summary>

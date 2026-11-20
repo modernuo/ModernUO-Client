@@ -146,6 +146,7 @@ namespace ClassicUO
                 if (_waiter is { Ready: true })
                 {
                     Volatile.Write(ref NetClient.SendQueuedWake, _waiter.Wake);
+                    AssetWake.SetWaiter(_waiter);
                 }
             }
 
@@ -1096,7 +1097,16 @@ namespace ClassicUO
         {
             _drawStartTs = Stopwatch.GetTimestamp();
             if (LoopStats.On) LoopStats.NoteDraw();
+            bool assetFallback = AssetWake.FallbackTick != long.MaxValue && Time.Ticks >= AssetWake.FallbackTick;
             BeginPresentedChange();
+            long assetSignalTs = AssetWake.BeginDraw();
+#if CUO_DEVTOOLS
+            if (AssetWakeCheck.On)
+            {
+                AssetWakeCheck.Draw(assetSignalTs, _drawStartTs, DisplayIntervalMs, AssetWake.Enabled, assetFallback && assetSignalTs == 0);
+                _assetPublishedAtDraw = ClassicUO.Renderer.AssetSignal.PublishedCount;
+            }
+#endif
             VisualDue.BeginDraw();
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
@@ -1215,6 +1225,7 @@ namespace ClassicUO
 
             base.Draw(gameTime);
             VisualDue.EndDraw();
+            EndAssetFrame();
 
             FrameStats.End(FramePhase.Draw);
         }
