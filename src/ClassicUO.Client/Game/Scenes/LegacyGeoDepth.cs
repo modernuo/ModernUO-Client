@@ -20,15 +20,24 @@ namespace ClassicUO.Game.Scenes
     {
         private static int _offX, _offY;
 
+        // wet_surface_depth at BeginFrame: the mask the batcher shapes apply to ZGeoWet (the chunk mesh keeps its build's)
+        private static uint _wetMask = ~SpriteInstance.ZGeoWet;
+
         /// <summary>The Legacy render lists' draw offset (screen = world − offset).</summary>
         public static void BeginFrame(int offsetX, int offsetY)
         {
             _offX = offsetX;
             _offY = offsetY;
+            _wetMask = WetMask(WetSurfaceDepth.On);
         }
 
+        /// <summary>The shape-bit mask for wet_surface_depth <paramref name="on"/>: off clears <see cref="SpriteInstance.ZGeoWet"/>,
+        /// so wet flats keep FlatDrop.</summary>
+        public static uint WetMask(bool on) => on ? ~0u : ~SpriteInstance.ZGeoWet;
+
         /// <summary>A static, multi piece or item on tile (tx, ty) at z with tiledata <paramref name="height"/> and shape
-        /// <paramref name="bits"/> (GeoDepth.Static).</summary>
+        /// <paramref name="bits"/> (GeoDepth.Static; a flat with <see cref="SpriteInstance.ZGeoWet"/> drops GeoDepth.WetDrop:
+        /// callers pass that bit only with wet_surface_depth on, <see cref="WetMask"/>).</summary>
         public static void Tile(int tx, int ty, int z, int height, uint bits, bool buried, int offX, int offY,
             out int cls, out float col, out float row, out double baseSum)
         {
@@ -45,7 +54,7 @@ namespace ClassicUO.Game.Scenes
             else if ((bits & SpriteInstance.ZGeoFlat) != 0)
             {
                 cls = LegacyGeo.Flat;
-                baseSum -= GeoDepth.FlatDrop;
+                baseSum -= (bits & SpriteInstance.ZGeoWet) != 0 ? GeoDepth.WetDrop : GeoDepth.FlatDrop;
                 row = ny - offY;
             }
             else
@@ -145,8 +154,14 @@ namespace ClassicUO.Game.Scenes
             LegacyGeo.Apply(ref v, LegacyGeo.Flat, col, row, baseSum);
         }
 
-        /// <summary>The shape bits of a tiledata row.</summary>
-        public static uint Bits(ref StaticTiles td) => SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.Height);
+        /// <summary>The shape bits of a tiledata row (<see cref="SpriteInstance.ZGeoWet"/> only with <paramref name="wet"/>,
+        /// wet_surface_depth).</summary>
+        public static uint Bits(ref StaticTiles td, bool wet) =>
+            SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, wet && td.IsWet, td.Height);
+
+        // the batcher shapes' bits: wet_surface_depth as of BeginFrame
+        private static uint FrameBits(ref StaticTiles td) =>
+            SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.IsWet, td.Height) & _wetMask;
 
         /// <summary>Opens the batcher shape of a land, static or multi view's draw (the render lists' views); nothing for the rest
         /// or with the GEO technique off. Close with <see cref="UltimaBatcher2D.EndGeo"/>.</summary>
@@ -175,7 +190,7 @@ namespace ClassicUO.Game.Scenes
 
                 case Static st:
                 {
-                    uint bits = Bits(ref st.ItemData);
+                    uint bits = FrameBits(ref st.ItemData);
                     bool hasLand = TileLandZ(st, out int landZ);
                     Tile(st.X, st.Y, st.Z, st.ItemData.Height, bits, Buried(st.Z, st.ItemData.Height, bits, landZ, hasLand), _offX, _offY,
                         out int cls, out float col, out float row, out double b);
@@ -186,7 +201,7 @@ namespace ClassicUO.Game.Scenes
 
                 case Multi multi:
                 {
-                    Tile(multi.X, multi.Y, multi.Z, multi.ItemData.Height, Bits(ref multi.ItemData), false, _offX, _offY,
+                    Tile(multi.X, multi.Y, multi.Z, multi.ItemData.Height, FrameBits(ref multi.ItemData), false, _offX, _offY,
                         out int cls, out float col, out float row, out double b);
                     batcher.BeginGeo(cls, col, row, b);
 
@@ -210,7 +225,7 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            Tile(item.X, item.Y, item.Z, item.TileHeight, item.TileGeoBits, false, _offX, _offY, out int cls, out float col, out float row, out double b);
+            Tile(item.X, item.Y, item.Z, item.TileHeight, item.TileGeoBits & _wetMask, false, _offX, _offY, out int cls, out float col, out float row, out double b);
             batcher.BeginGeo(cls, col, row, b);
         }
 

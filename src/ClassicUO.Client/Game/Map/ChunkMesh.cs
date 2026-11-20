@@ -123,6 +123,9 @@ namespace ClassicUO.Game.Map
         /// <summary>clip-4: built with depth_model on (the vertices carry the geometric shapes, LegacyGeo); a flip rebuilds.</summary>
         public bool BuiltGeo;
 
+        /// <summary>Built with wet_surface_depth on (wet flats' shapes drop GeoDepth.WetDrop); a flip rebuilds geo meshes.</summary>
+        public bool BuiltWet;
+
         /// <summary>atlas_lru: AtlasPageClock.FreedEpoch at the last Build or <see cref="HoldsFreedPage"/> check.</summary>
         public int AtlasEpoch;
 
@@ -143,8 +146,8 @@ namespace ClassicUO.Game.Map
             return false;
         }
 
-        // depth_model at this Build
-        private bool _geo;
+        // depth_model and wet_surface_depth at this Build
+        private bool _geo, _wet;
 
         private bool _animatedWaterEffect;
         private TextureBucketTracker _landBuckets = new(16);
@@ -163,6 +166,7 @@ namespace ClassicUO.Game.Map
             Statics.Reset();
             IsDirty = false;
             BuiltGeo = _geo = Scenes.DepthModel.On;
+            BuiltWet = _wet = Scenes.WetSurfaceDepth.On;
             AtlasEpoch = ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch;
 
             var profile = ProfileManager.CurrentProfile;
@@ -492,7 +496,7 @@ namespace ClassicUO.Game.Map
             {
                 // clip-4: the static's shape in world pixels (the mesh draws through the world offset); map statics under
                 // their tile's land are buried, as the Gpu baker marks them; multi pieces are not
-                uint bits = Scenes.LegacyGeoDepth.Bits(ref itemData);
+                uint bits = Scenes.LegacyGeoDepth.Bits(ref itemData, _wet);
                 bool buried = obj is Static st && Scenes.LegacyGeoDepth.TileLandZ(st, out int landZ) &&
                               Scenes.LegacyGeoDepth.Buried(obj.Z, itemData.Height, bits, landZ, true);
                 Scenes.LegacyGeoDepth.ApplyTile(ref Statics.Vertices[idx], true, obj.X, obj.Y, obj.Z, itemData.Height, bits, buried);
