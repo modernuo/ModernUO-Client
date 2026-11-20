@@ -271,6 +271,12 @@ namespace ClassicUO.Configuration
         // builds. Default off.
         [JsonPropertyName("depth_model")] public bool DepthModel { get; set; }
 
+        // A mobile under a water surface (a wet static above its z on its tile) is drawn submerged: with depth_model, wet flats
+        // drop 0.1 tile sums instead of FlatDrop's 1.5 (the waterline at the true height); without it, the mobile's strips all
+        // take + 1 (no floating feet under the V-cut). Game/Scenes/WetSurfaceDepth. CUO_WET_SURFACE_DEPTH=1|0 overrides it and
+        // CUO_WET_DEPTH_CHECK=1 logs the mobiles under a wet surface, in developer builds. Default off.
+        [JsonPropertyName("wet_surface_depth")] public bool WetSurfaceDepth { get; set; }
+
         // step_drain: a non-local mobile's step lasts its learned server pace (never longer than the table time; faster
         // only when the pace is clearly faster), with a bounded drain of a real backlog, instead of the table time and the
         // "mounted when steps are queued" guess (Game/Ecs/StepDrain). CUO_STEP_DRAIN=1|0 overrides it and

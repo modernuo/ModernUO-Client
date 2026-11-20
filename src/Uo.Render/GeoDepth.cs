@@ -45,6 +45,13 @@ public static class GeoDepth
     /// under the ground keeps its shape: its buried part less than FlatDrop · 5.5 z under the land ahead still shows.</summary>
     public const float BuriedDrop = FlatDrop;
 
+    /// <summary>Tile sums a wet flat (water, SpriteInstance.ZGeoWet) sits behind its plane with wet_surface_depth on (sprite.hlsl
+    /// WET_DROP). FlatDrop lets feet beat slightly higher floors ahead; for water above a mobile it put the waterline 33 px
+    /// (1.5 tile sums) too low (Felucca 1675 1705, z -15 under water at z -5: 7 px above the feet instead of 40). This small
+    /// drop puts it 2.2 px low; a mobile at the water's own z still wins by MobileBias on its own tile's front faces, and
+    /// loses only its rows more than 2.2 px under its centre row outside them (FlatDrop kept 33 px there).</summary>
+    public const float WetDrop = 0.1f;
+
     /// <summary>A flat at height <paramref name="z"/> under world pixel row <paramref name="sy"/>.</summary>
     public static float Flat(float sy, int z) => Plane(sy, z) - FlatDrop;
 
@@ -75,12 +82,13 @@ public static class GeoDepth
     }
 
     /// <summary>A baked static's depth with its biases, as the geo VS/PS give it (rank left out): wall, flat or box over tile
-    /// (tx, ty) at z, lowered by <see cref="BuriedDrop"/> when <paramref name="buried"/>.</summary>
-    public static float Static(int tx, int ty, int z, int height, bool wall, bool flat, bool buried, float sx, float sy)
+    /// (tx, ty) at z, lowered by <see cref="BuriedDrop"/> when <paramref name="buried"/>; a <paramref name="wet"/> flat (with
+    /// wet_surface_depth on) by <see cref="WetDrop"/> instead of <see cref="FlatDrop"/>.</summary>
+    public static float Static(int tx, int ty, int z, int height, bool wall, bool flat, bool buried, float sx, float sy, bool wet = false)
     {
         float d;
         if (wall) d = Wall(tx, ty, sx) + WallBias;
-        else if (flat) d = Plane(sy, z) - FlatDrop;
+        else if (flat) d = Plane(sy, z) - (wet ? WetDrop : FlatDrop);
         else d = Box(tx, ty, z, height, sx, sy);
         return d + z * ZBias - (buried ? BuriedDrop : 0f);
     }
