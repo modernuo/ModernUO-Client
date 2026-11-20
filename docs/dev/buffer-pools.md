@@ -19,9 +19,9 @@ Rules:
    `RentShared` with `ReturnShared`); the return routes by length, so a caller does not track the size class.
 2. A per-thread pool never holds an array above 64 KiB, so its retention per thread stays small (27 buckets of up to 33
    arrays, each below the LOH).
-3. `LargeBufferPool` keeps at most its budget of free buffers (48 MiB per client), in four size classes per octave, at most 32
+3. `LargeBufferPool` keeps at most its budget of free buffers (112 MiB per client), in four size classes per octave, at most 32
    per class; above the budget it evicts the least recently returned. It does not cap what is rented out (decode budgets and
-   caches do that). `TrimIdle(30 s)` runs every 5 s from `GameController.Update`; `Trim()` drops everything.
+   caches do that). `TrimIdle(180 s)` runs every 5 s from `GameController.Update` and never goes below a 16 MiB floor of free buffers (classes that never had a hit go first); `Trim()` drops everything.
 4. Return only arrays the pool rented. Arrays allocated with `new` (an initial field array, for example) are left to the GC.
 5. `SharedFamilyPool<T>.Instance` and `LocalFamilyPool<T>.Instance` wrap the two families as an `ArrayPool<T>` for code that
    takes a pool instance (animation frame buffers; the ref collections).
