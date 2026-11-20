@@ -77,6 +77,14 @@ namespace ClassicUO
         private static ushort _ghostRestore, _bodyRestore;
         private static int _bodyNext, _bodiesShown, _glideX, _bwalkLegs, _bwalkDenies = -1;
         private static int _equipNext, _equipShown;
+
+        // equipsrv: hats (Layer.Helmet) worn and taken off through the server (pick up 0x07, equip 0x13, drop 0x08 into the
+        // backpack; the server answers 0x2E): the candidates in the backpack, the hat worn at the start (restored at the end)
+        private static readonly string[] _esSeedTypes = { "WizardsHat", "TricorneHat", "JesterHat", "FeatheredHat" };
+        private static readonly uint[] _esCands = new uint[8];
+        private static int _esState, _esCandCount, _esIndex, _esSwaps, _esConfirmed, _esSeeded, _esCollects;
+        private static uint _esOriginal, _esTarget;
+        private static long _esRestoreCap;
         // the equip mode's wearables (chest armour, robes, cloaks, shirts, legs, boots, helms): distinct equipment animations
         private static readonly ushort[] _equipGraphics =
         {
@@ -1560,6 +1568,156 @@ namespace ClassicUO
         }
 
         // name:x y:zoom measures a fixed spot; name:travel teleports between towns every 2 s; name:walk paths back and forth near Britain.
+        // equipsrv, every step: open the backpack, find (or add, staff command) hats in it, then alternately wear the next
+        // candidate and the starting hat, each swap through the server: the worn hat is picked up and dropped into the
+        // backpack, the new one picked up and equipped. restore: only bring the starting hat back.
+        private static void EquipServerFrame(World world, long now, long sec, bool restore)
+        {
+            Game.GameObjects.Item pack = world.Player.FindItemByLayer(Layer.Backpack);
+
+            if (pack == null)
+            {
+                _travelAt = now + sec;
+
+                return;
+            }
+
+            Game.GameObjects.Item worn = world.Player.FindItemByLayer(Layer.Helmet);
+
+            switch (_esState)
+            {
+                case 0:
+                    GameActions.DoubleClick(world, pack.Serial);
+                    _esOriginal = worn?.Serial ?? 0;
+                    _esIndex = _esSwaps = _esConfirmed = _esSeeded = _esCollects = 0;
+                    _esTarget = 0;
+                    _esRestoreCap = 0;
+                    _esState = 1;
+                    _travelAt = now + sec;
+
+                    break;
+
+                case 1:
+                    _esCandCount = 0;
+
+                    foreach (Game.GameObjects.Item item in world.State.Children(pack))
+                    {
+                        if (item.ItemData.IsWearable && item.ItemData.Layer == (byte)Layer.Helmet && _esCandCount < _esCands.Length)
+                        {
+                            _esCands[_esCandCount++] = item.Serial;
+                        }
+                    }
+
+                    if (_esCandCount < 3 && _esSeeded < _esSeedTypes.Length && _esCollects++ < 8)
+                    {
+                        GameActions.Say($"[self addtopack {_esSeedTypes[_esSeeded++]}");
+                        _travelAt = now + sec / 2;
+
+                        break;
+                    }
+
+                    Log.Info($"[bench] equipsrv: {_esCandCount} hats in the backpack, starting hat 0x{_esOriginal:X8}");
+                    _esState = _esCandCount > 0 ? 2 : 9;
+                    _travelAt = now;
+
+                    break;
+
+                case 2:
+                    if (_esTarget != 0 && worn?.Serial == _esTarget)
+                    {
+                        _esConfirmed++;
+                    }
+
+                    if (restore)
+                    {
+                        _esTarget = _esOriginal;
+                    }
+                    else
+                    {
+                        // the candidates in turn, the starting hat after each (none: the candidates only)
+                        _esTarget = _esOriginal != 0 && (_esIndex & 1) == 1 ? _esOriginal : _esCands[(_esIndex >> (_esOriginal != 0 ? 1 : 0)) % _esCandCount];
+                        _esIndex++;
+                    }
+
+                    if (worn != null && worn.Serial != _esTarget)
+                    {
+                        if (GameActions.PickUp(world, worn.Serial, 0, 0))
+                        {
+                            GameActions.DropItem(worn.Serial, 0xFFFF, 0xFFFF, 0, pack.Serial);
+                        }
+
+                        _esState = 3;
+                        _travelAt = now + sec * 2 / 5;
+
+                        break;
+                    }
+
+                    _esState = 3;
+                    _travelAt = now;
+
+                    break;
+
+                case 3:
+                    if (_esTarget != 0 && worn?.Serial != _esTarget)
+                    {
+                        if (GameActions.PickUp(world, _esTarget, 0, 0))
+                        {
+                            GameActions.Equip(world);
+                            _esSwaps++;
+                        }
+                    }
+
+                    _esState = 2;
+                    _travelAt = now + sec * 3 / 5;
+
+                    break;
+
+                default:
+                    _travelAt = now + sec;
+
+                    break;
+            }
+        }
+
+        private static bool EquipServerRestored(World world, long now, long sec)
+        {
+            Game.GameObjects.Item worn = world.Player.FindItemByLayer(Layer.Helmet);
+            bool done = _esState == 0 || _esState == 9 || (_esOriginal == 0 ? worn == null : worn?.Serial == _esOriginal);
+
+            if (_esRestoreCap == 0)
+            {
+                _esRestoreCap = now + sec * 8;
+            }
+
+            if (!done && now < _esRestoreCap)
+            {
+                if (now >= _travelAt)
+                {
+                    if (_esOriginal == 0 && worn != null)
+                    {
+                        // no starting hat: take the last one off
+                        if (GameActions.PickUp(world, worn.Serial, 0, 0))
+                        {
+                            GameActions.DropItem(worn.Serial, 0xFFFF, 0xFFFF, 0, world.Player.FindItemByLayer(Layer.Backpack)?.Serial ?? 0);
+                        }
+
+                        _travelAt = now + sec;
+                    }
+                    else
+                    {
+                        EquipServerFrame(world, now, sec, true);
+                    }
+                }
+
+                return false;
+            }
+
+            Log.Info($"[bench] equipsrv: {_esSwaps} equip requests, {_esConfirmed} confirmed by the server, starting hat {(done ? "restored" : "NOT restored")}");
+            _esState = 0;
+
+            return true;
+        }
+
         private static void UpdatePlan(GameController game, long now)
         {
             var world = game.UO.World;
@@ -1721,6 +1879,10 @@ namespace ClassicUO
 
                     _travelAt = now + sec / 2;
                 }
+                else if (mode == "equipsrv" && now >= _travelAt)
+                {
+                    EquipServerFrame(world, now, sec, false);
+                }
                 else if (mode == "lswalk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
                 {
                     // the large-scale scene's lane (tools/large-scale/make_scene.py): end to end through 2,000 mobiles
@@ -1766,6 +1928,12 @@ namespace ClassicUO
 
                 if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
                 {
+                    // equipsrv: the step ends once the starting hat is worn again (at most 8 s later)
+                    if (mode == "equipsrv" && !EquipServerRestored(world, now, sec))
+                    {
+                        return;
+                    }
+
                     ClassicUO.FrameStats.StopWindow();
                     world.Player.Pathfinder.StopAutoWalk();
 
@@ -2357,7 +2525,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "equip" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "equip" || mode == "equipsrv" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
