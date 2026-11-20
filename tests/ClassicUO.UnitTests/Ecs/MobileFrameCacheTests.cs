@@ -116,6 +116,20 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.Equal(frameBefore + 1, MobileFrameCache.DoubleReturns);
             Assert.Equal(wornBefore + 1, WornCache.DoubleReturns);
         }
+
+        [Fact]
+        public void Owner_Check_Accepts_The_Dead_Rekey_And_Counts_Another_Mobile()
+        {
+            long before = MobileFrameCache.OwnerMismatches;
+            var c = new MobileFrameCache();
+
+            c.CheckOwner(0x0006D5A2);
+            c.CheckOwner(0x8006D5A2);
+            Assert.Equal(before, MobileFrameCache.OwnerMismatches);
+
+            c.CheckOwner(0x0006D5A3);
+            Assert.Equal(before + 1, MobileFrameCache.OwnerMismatches);
+        }
 #endif
 
         [Fact]
