@@ -8017,3 +8017,56 @@ Codec (due-diligence item 4 of the zstd pack revision, bench-000925, quiet, pinn
 region 1.00 vs 2.45 ms, art chunk 0.55 vs 1.83 ms, anim chunk 0.26 vs 0.98 ms, art page 3.7 vs 13.4 ms, gump record (274 KB)
 0.23 vs 0.57 ms (q9), small raw gump record (7 KB) zstd 19 10.7 us (zstd 9 7.8 us) vs copy 0.1 us. zstd 19 is smaller than
 Brotli as built on every set. Confirms the busy-machine ranking.
+
+## 2026-11-19 meshlayer-growth (bg/meshlayer-growth): pooled chunks no longer keep their high-water mesh arrays
+
+Known issue: Legacy `MeshLayer` arrays keep growing in reused chunks. Re-measured on a NativeAOT dev build of 519f6a4e3 plus a
+byte counter (5c3581dfe), Legacy, ~11 min of teleports (Felucca `travel`, Trammel `travel`, `ltravel`), busy machine (counts only).
+The `[gcs] pools` line now reports `mesh MB used N chunks X (gpu Y), pooled X (gpu Y)` and the statics mesh capacity histogram.
+
+Cause: a `MeshLayer` grows in place by doubling and never shrinks. The chunk pool is FIFO over 300 chunks, so each chunk that once
+held a dense chunk (>256 statics sprites) keeps the 512 set (arrays + vertex buffer) for the rest of the session.
+
+Fix (aa36e8b37): `MeshLayerPool` (Renderer), one per World (`World.MeshPool`). A layer that must grow swaps its whole set for a
+pooled set of the doubled size; `ChunkMesh.SoftClear` (chunk back to the pool) trades a set above 256 sprites
+(`MapWarmup.StaticsMeshCapacity`) for a 256 set. Spare sets are capped at 8 MB (managed + GPU); a set returned above the cap is
+dropped (vertex buffer disposed). UltimaLive's in-place reload passes no pool and keeps its arrays. No switch: pure ownership fix;
+the same vertices, indices and runs are built (MeshLayerPoolTests, 5, compare pooled and in-place layers frame by frame).
+
+Growth (bench-000935 base+counter, bench-000936 fix; managed = used + pooled (+ spares), GPU = vertex buffers):
+
+| t (s) | base 256:512 sets | base managed / GPU MB | fix 256:512 sets | fix managed / GPU MB | fix spares (MB, reused, created, dropped) |
+|---|---|---|---|---|---|
+| 20 | 299:1 | 19.93 / 6.44 | 299:1 | 19.94 / 6.45 | 0.05, 0, 1, 0 |
+| 120 | 292:8 | 20.58 / 11.57 | 299:1 | 20.22 / 11.42 | 0.07, 14, 1, 0 |
+| 240 | 284:16 | 21.15 / 12.86 | 300:0 | 20.32 / 12.67 | 0.16, 31, 1, 0 |
+| 360 | 276:24 | 21.67 / 13.82 | 300:0 | 20.40 / 13.36 | 0.16, 47, 1, 0 |
+| 480 | 268:32 | 22.15 / 14.43 | 300:0 | 20.48 / 13.98 | 0.16, 63, 1, 0 |
+| 600 | 260:40 | 22.60 / 14.79 | 300:0 | 20.53 / 14.41 | 0.16, 79, 1, 0 |
+| 660 | 256:44 | 22.82 / 14.96 | 299:1 | 20.61 / 14.59 | 0.08, 88, 1, 0 |
+| 720 | 253:47 | 22.99 / 15.12 | - | - | - |
+
+Base: real growth, linear (4 more 512 sets a minute, +0.23 MB managed a minute at the end, not slowing). It is bounded only by
+300 chunks x the densest chunk each one has held: all 300 at 512 is about +17 MB managed and +15 MB GPU over the fix (more on
+shards with chunks above 512 sprites, e.g. dense custom housing). Fix: the histogram stays at 300 x 256 (one 512 set in use at a
+time on this route); managed creeps only while chunks fill their lazily grown arrays on first use (+0.07 MB in the last 3 min),
+bounded by 300 prefill sets (~20.7 MB). GPU still rises on both arms as first-used chunks create vertex buffers (sized to the
+largest count seen, at most the set size); with the fix that is bounded by 300 x 256 + 64 sprites x 192 B (~18 MB).
+
+Steady state per client after this route (11 min): base 23.0 MB managed + 15.1 MB GPU and still rising; fix 20.6 MB managed +
+14.6 MB GPU, near its bound. Spares: one set circulates (0.05-0.16 MB, reused 88 times, created 1, dropped 0), so the 8 MB cap is
+a ceiling that this route never approached; it only costs memory when many dense chunks leave at once.
+
+Alloc/frame and GCs (fs-summary, frame-weighted; first visits to a facet or scene load once and land in whichever entry comes
+first, so the medians are the comparison): median window B/frame tr 1623 -> 1279, trt 1334 -> 1172, lt 135 -> 130; GCs per entry
+identical (tr gc0 3 gc1 3 gc2 1, trt gc0 1, lt 0). No new per-frame allocation (a set is created only when no spare of that size
+exists: once in 11 min).
+
+Gate: bench-000937 failed only in its script (it looked for `<name>_legacy.png`; the driver's `shot` writes `<name>_gpu*.png`
+under every renderer). Its shots compared by hand: statics and land identical; the world shots differ only where mobiles moved or
+animated (banker, NPC, player idle frame, dog; the large scene is all mobiles), plus 2 isolated dirt pixels in the house shot
+with small colour shifts. Rerun with mobiles left out of the world draw (`goldenmobiles off`) and a second base run as the noise
+reference: bench-000950 (measure/meshlayer-growth/job-gate.sh), result pending at the time of writing.
+Tests: 4256 pass / 6 skipped; both build variants. Gpu renderer: `ChunkMesh` is Legacy-only; no Gpu job was run.
+Memory: -2.2 MB managed and -0.4 MB GPU per client after 11 min of teleports, growing to about -17 / -15 MB at the base's
+high-water mark; the spare cap of 8 MB (deliberate, held only while dense chunks are being traded; observed 0.16 MB).
