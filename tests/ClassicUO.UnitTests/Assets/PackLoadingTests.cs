@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ClassicUO.Assets;
 using ClassicUO.Renderer;
@@ -280,6 +281,51 @@ namespace ClassicUO.UnitTests.Assets
                 pages.IsResident(0, 0, 0, side, side).Should().BeFalse();
                 pages.Touch(0, 0, 0, 4, 4);
                 pages.IsResident(0, 0, 0, 4, 4).Should().BeTrue();
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Fact]
+        public void PackPages_Concurrent_Reads_Of_One_Chunk_Decode_It_Once()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "cuo-packpages-once-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+
+            try
+            {
+                const int side = 128;
+                var source = new byte[side * side * 2];
+                new Random(11).NextBytes(source);
+                AtlasPage.Write(PackConst.PagePath(dir, 0), side, 1, PixelFormat.B5G5R5A1, source, FileKind.ChunkedBrotli, 4096);
+
+                var single = new PackPages(dir, 1 << 20);
+                single.ReadRect(0, 0, 0, side, side, new byte[source.Length]);
+                int chunks = single.DecodedChunks;
+                chunks.Should().BeGreaterThan(4);
+
+                for (int round = 0; round < 20; round++)
+                {
+                    // the cache holds the whole page: each chunk decodes once however many threads read it at once
+                    var pages = new PackPages(dir, 1 << 20);
+                    using var start = new Barrier(8);
+
+                    Parallel.For(0, 8, new ParallelOptions { MaxDegreeOfParallelism = 8 }, _ =>
+                    {
+                        var dst = new byte[source.Length];
+                        start.SignalAndWait();
+                        pages.ReadRect(0, 0, 0, side, side, dst);
+
+                        if (!dst.AsSpan().SequenceEqual(source))
+                        {
+                            throw new Xunit.Sdk.XunitException("read differs from the source");
+                        }
+                    });
+
+                    pages.DecodedChunks.Should().Be(chunks, $"round {round}");
+                }
             }
             finally
             {
