@@ -8073,3 +8073,33 @@ client assumes no client file changes at runtime), so no atlas pages are left be
   sprite; evicted-key maps pruned past the thrash window. Unit tests: 12 new (policy over fake pages, thrash grow,
   checker, switch states, Dispose).
 - Phase 2 jobs: see the atlas-lru handoff (gates off/on, forced small busy, golden off 0 px, alloc, pick).
+
+**Phase 2 results** (NativeAOT dev e91239169; base ecdf36f42):
+- Switches off: gate-b Legacy (bench4-000008) and gate-pool Gpu (bench2-000041) ATLAS OFF PASS; golden base vs new
+  (bench6-000055) GOLDEN SAME, 0 px, and the forced-small arm (atlas + anim) matched too.
+- Gates with the switches on, forced small (bench3-000033 Legacy, bench2-000040 Gpu): every gate check passed, 0
+  `[atlas-lru-check]` mismatches, but 0 pages evicted, so the eviction path was not exercised. Cause: the gate scenes
+  are one client per spot, and each atlas fit on one page (art stays on 1024^2 pages, its smallest size). The atlas
+  never evicts its open page, so a 1-page working set can't evict whatever the budget. The env reached the client (the
+  state lines show 4 MiB pages and the forced budgets). Fix in the jobs, not the code: 512^2 pages for texmap, light and
+  font, a 1-page budget, floor and ceiling, 2 s min age, plus a part 3 per gate. Part 3 travels on the lane's facet
+  (Minoc, Vesper, Trinsic, then Minoc and Vesper again) and must evict pages and compare reloads. Rerun as
+  bench3-000039 / bench2-000047.
+- pick (bench6-000056): Gpu passed (3 scans, 0 different; art evicted 1 page, 24 reloads). Legacy did not run: the
+  largescene lock timed out after 1500 s behind other lanes' jobs (harness). Rerun as bench6-000058, now with the
+  atlas checker summary per run.
+- Busy, forced small (bench-000966): art evicted pages in both renderers (Legacy 5 pages / 1284 sprites, 364 reloads;
+  Gpu 7 / 1904, 1183 reloads), 0 checker mismatches. Every art reload counted as thrash, because the 5 s min age is
+  well inside the 60 s window while travelling. Budget grew 2 to 4 (ceiling). Gump, texmap, light and font never
+  evicted (each at most 2 pages, within their budget). Anim, same run: Legacy evicted 13 pages, 1402 reloads (thrash
+  268, blink frames 258); Gpu evicted 9 pages, 230 reloads (thrash 190, blink frames 19).
+- Busy, default budgets (bench-000967): no atlas or anim evictions. Peak use: art 1 page (64 MiB), gump 1 (64), texmap
+  1 (16), font 1 (16), light 0. Each budget shrank once, after 180 s quiet, toward its floor.
+- Anim grow fix (62f2eddd5), busy-small rerun bench-000963 vs bench-000938: grows 0 -> 2 (budget 2 -> 4 pages, the
+  ceiling) in both renderers. Legacy thrash 798 -> 242, reloads 1553 -> 1386, blink frames 313 -> 219. Gpu thrash
+  225 -> 199, reloads 505 -> 404, blink frames 144 -> 60. 0 checker mismatches. Anim gate rerun bench3-000032: ALRU
+  PASS, no anim evictions in the gate scenes, only the 0-mismatch `[mobile-cache-check]` summaries.
+- Alloc (bench5-000046 Legacy, bench5-000047 Gpu; base / new switches off / newon atlas_lru on at default): main-thread
+  p50 B/frame 0 in every window of every arm. The one exception is a Legacy corpses window at 264 B (newon), inside
+  the known idle quantum. Window averages and p95 differ only by single-window spikes, which hit every arm (base
+  worldmap 5080, new town_idle 5083, newon gumps 8018). GC counts are equal.
