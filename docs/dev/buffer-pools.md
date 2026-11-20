@@ -19,9 +19,21 @@ Rules:
    `RentShared` with `ReturnShared`); the return routes by length, so a caller does not track the size class.
 2. A per-thread pool never holds an array above 64 KiB, so its retention per thread stays small (27 buckets of up to 33
    arrays, each below the LOH).
-3. `LargeBufferPool` keeps at most its budget of free buffers (112 MiB per client), in four size classes per octave, at most 32
-   per class; above the budget it evicts the least recently returned. It does not cap what is rented out (decode budgets and
-   caches do that). `TrimIdle(180 s)` runs every 5 s from `GameController.Update` and never goes below a 16 MiB floor of free buffers (classes that never had a hit go first); `Trim()` drops everything.
+3. `LargeBufferPool` keeps free buffers per use (`LargeUse`), in four size classes per octave, at most 32 per class; a return
+   over its use's cap evicts that use's least recently returned buffer. It does not cap what is rented out (decode budgets
+   and caches do that). The client derives the caps at startup (`LargePoolCaps`, logged as `[bufpools] caps`):
+   - `General` (scoped scratch, worker decode outputs): DecodeBudget.Shared (16 MiB), plus DecodeBudget.Gumps (32 MiB) with
+     `gump_decode_budget` on, plus 1 MiB of compressed input per scratch thread (main 2, Uo.Render workers, MapLoader
+     MaxPending prefetches + 1 sync load): 35 MiB on a 24-core box (67 MiB with the gump budget).
+   - `Region` (logical region buffers, rented with `RentShared(n, LargeUse.Region)` by `RegionFile.DecompressInto(pooled)`,
+     returned by `Region.ReleaseData` and `MapLoader`): one teleport's swap, 2 caches x 4 regions (each cache's loaded area
+     spans at most 2 x 2 regions of 512 tiles) = 8 buffers, at most 32 MiB. A region rent may take a free buffer up to two
+     classes larger. Both caches load before they evict, so these are the buffers the next teleport reuses.
+   - `Page` (PackPages chunk buffers): 3 lanes x 2 decodes in flight = 6 chunks (6 MiB).
+
+   `TrimIdle(180 s)` runs every 5 s from `GameController.Update` and drops idle `General` and `Page` buffers; `Region` buffers
+   stay (their cap is the floor). `Trim()` drops everything. `[bufpools]` lines print each use's rents, hits, misses,
+   outstanding and free counts, high-waters and cap, also at each teleport and 5 s after it.
 4. Return only arrays the pool rented. Arrays allocated with `new` (an initial field array, for example) are left to the GC.
 5. `SharedFamilyPool<T>.Instance` and `LocalFamilyPool<T>.Instance` wrap the two families as an `ArrayPool<T>` for code that
    takes a pool instance (animation frame buffers; the ref collections).
