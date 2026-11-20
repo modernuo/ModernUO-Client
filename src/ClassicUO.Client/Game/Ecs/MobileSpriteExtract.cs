@@ -17,6 +17,15 @@ namespace ClassicUO.Game
     /// body, equipment in paint order, strips, trim, mirroring, hue mode, depth key), with no atlas and no batcher.
     /// Screen position and base depth are inputs; the Gpu world renderer and the Legacy sink draw from it.
     /// </summary>
+    /// <summary>asset_prefetch_on_packet: whether a dynamic sprite instance's page is resident in the Gpu world, and its
+    /// request (queued like a prefetch, not counted as a missing visible page).</summary>
+    internal interface IDynamicPageResidency
+    {
+        bool Resident(in SpriteInstance instance);
+
+        void Request(in SpriteInstance instance);
+    }
+
     internal sealed class MobileSpriteExtract
     {
         private const int RANK_MOBILE = 7;
@@ -567,10 +576,15 @@ namespace ClassicUO.Game
                 for (int c = before; c < _count; c++)
                 {
                     int i = c - _recordStart;
-                    _record.EnsureCapacity(i + 1);
-                    ref MobileFrameCache.Entry entry = ref _record.Entries[i];
-                    entry.Kind = kind;
-                    entry.Add = add;
+
+                    if (i >= _recKind.Length)
+                    {
+                        Array.Resize(ref _recKind, Math.Max(i + 1, _recKind.Length * 2));
+                        Array.Resize(ref _recAdd, _recKind.Length);
+                    }
+
+                    _recKind[i] = kind;
+                    _recAdd[i] = add;
                 }
             }
         }
@@ -598,6 +612,15 @@ namespace ClassicUO.Game
 
         private MobileFrameCache _record;
         private int _recordStart;
+
+        // the depth recipe of each instance being recorded, copied into the cache's entries when the recording commits (a
+        // held look keeps the previous entries: asset_prefetch_on_packet)
+        private byte[] _recKind = new byte[16];
+        private float[] _recAdd = new float[16];
+
+        /// <summary>The page residency of the Gpu world the instances go to (GpuWorldRenderer sets it before Emit): decides
+        /// whether a new look is complete (asset_prefetch_on_packet). Null: not checked.</summary>
+        internal IDynamicPageResidency PageResidency;
 
         /// <summary>
         /// W5 (MobileFrameCache): <see cref="Emit(EcsEntity, int, int, float)"/>, or the instances, FrameInfo and
@@ -660,6 +683,21 @@ namespace ClassicUO.Game
                 {
                     CheckReplay(e, posX, posY, depth, start, lightStart);
                 }
+
+                // CUO_LOOK_PREFETCH_CHECK: a recording made with pages missing draws incomplete until they are resident
+                if (LookPrefetch.Check && cache.EmitIncomplete != 0 && PageResidency != null)
+                {
+                    int missing = MissingAnimEntries(cache);
+
+                    if (missing != 0)
+                    {
+                        LookPrefetch.NoteIncomplete(missing, cache.Count, cache.EmitIncomplete == 1);
+                    }
+                    else
+                    {
+                        cache.EmitIncomplete = 0;
+                    }
+                }
 #endif
 
                 return;
@@ -682,6 +720,37 @@ namespace ClassicUO.Game
             }
 
             int n = _count - recStart;
+            bool hold = LookPrefetch.Enabled;
+
+            if ((hold || LookPrefetch.Check) && PageResidency != null)
+            {
+                int missing = MissingAnimPages(_out, recStart, n, hold);
+
+                if (missing != 0)
+                {
+                    bool previous = cache.EmitValid && cache.Count != 0 && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo;
+
+                    if (hold && previous && HoldLook(cache))
+                    {
+                        // asset_prefetch_on_packet: the previous complete look until every page of the new one is resident
+                        _count = recStart;
+                        _lightCount = recLights;
+                        Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, data.Get<Position>().X, baseX, baseY, data.Get<Position>().Z);
+                        LookPrefetch.FrameHeld++;
+
+                        return;
+                    }
+
+                    LookPrefetch.NoteIncomplete(missing, n, previous);
+                    cache.EmitIncomplete = previous ? (byte)1 : (byte)2;
+                }
+                else
+                {
+                    cache.HoldSince = 0;
+                    cache.EmitIncomplete = 0;
+                }
+            }
+
             cache.EnsureCapacity(n);
 
             for (int i = 0; i < n; i++)
@@ -689,7 +758,10 @@ namespace ClassicUO.Game
                 SpriteInstance inst = _out[recStart + i];
                 inst.X -= baseX + _offsetX;
                 inst.Y -= baseY + _offsetY;
-                cache.Entries[i].Instance = inst;
+                ref MobileFrameCache.Entry entry = ref cache.Entries[i];
+                entry.Instance = inst;
+                entry.Kind = _recKind[i];
+                entry.Add = _recAdd[i];
             }
 
             cache.Count = n;
@@ -733,6 +805,71 @@ namespace ClassicUO.Game
         /// </list>
         /// The instances are then exposed as a view when this is the first thing emitted since Begin, else appended to _out.
         /// </summary>
+        // asset_prefetch_on_packet: the instances in [start, start + n) whose animation page is not resident (Gpu draws them as
+        // nothing); request: queue those pages (a held look draws none of them, so the renderer would not request them)
+        private int MissingAnimPages(SpriteInstance[] instances, int start, int n, bool request)
+        {
+            IDynamicPageResidency pages = PageResidency;
+            int missing = 0;
+
+            for (int i = start; i < start + n; i++)
+            {
+                ref readonly SpriteInstance inst = ref instances[i];
+
+                if (!pages.Resident(in inst))
+                {
+                    missing++;
+
+                    if (request)
+                    {
+                        pages.Request(in inst);
+                    }
+                }
+            }
+
+            return missing;
+        }
+
+#if CUO_DEVTOOLS
+        private int MissingAnimEntries(MobileFrameCache cache)
+        {
+            int missing = 0;
+
+            for (int i = 0; i < cache.Count; i++)
+            {
+                if (!PageResidency.Resident(in cache.Entries[i].Instance))
+                {
+                    missing++;
+                }
+            }
+
+            return missing;
+        }
+#endif
+
+        // asset_prefetch_on_packet: whether the previous look may still be drawn (LookPrefetch.HoldMaxMs from the first held
+        // frame)
+        private static bool HoldLook(MobileFrameCache cache)
+        {
+            uint now = LookPrefetch.Now;
+
+            if (cache.HoldSince == 0)
+            {
+                cache.HoldSince = now == 0 ? 1u : now;
+
+                return true;
+            }
+
+            if (now - cache.HoldSince <= LookPrefetch.HoldMaxMs)
+            {
+                return true;
+            }
+
+            LookPrefetch.HoldTimeouts++;
+
+            return false;
+        }
+
         internal void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY, sbyte z)
         {
             // a pending view aliases cache.Abs when this cache was replayed earlier since Begin: keep it before Abs changes
@@ -864,38 +1001,7 @@ namespace ClassicUO.Game
             {
                 MobileFrameCache.LegacyHits++;
                 _selCount = 0;
-
-
-                MobileFrameCache.LegacyEntry[] entries = cache.LegacyEntries;
-
-                for (int i = 0; i < cache.LegacyCount; i++)
-                {
-                    // LegacySpriteResolve.Draw of LegacyReplayed's call, from the entry's fields (recorded entries are
-                    // normal or shadow draws, never seated or rotated)
-                    ref readonly MobileFrameCache.LegacyEntry entry = ref entries[i];
-                    var position = new Vector2(baseX + entry.X, baseY + entry.Y);
-                    // anim_atlas_lru: a replay skips GetAnimationFrames, so it marks the page used itself
-                    ClassicUO.Renderer.Animations.AtlasPageClock.Touch(entry.Texture);
-#if CUO_DEVTOOLS
-                    if (ClassicUO.Renderer.Animations.Animations.LruCheck)
-                    {
-                        ClassicUO.Renderer.Animations.Animations.LruCheckUse(entry.Texture, "mobile replay");
-                    }
-#endif
-                    float d = DepthOf(depth, entry.Kind, entry.Add);
-
-                    if (entry.Mode == SpriteCaptureMode.Shadow)
-                    {
-                        batcher.DrawShadow(entry.Texture, position, entry.Source, entry.Flip, d);
-                    }
-                    else
-                    {
-                        batcher.Draw(entry.Texture, position, entry.Source, entry.Hue, 0f, Vector2.Zero, 1f,
-                            entry.Flip ? Microsoft.Xna.Framework.Graphics.SpriteEffects.FlipHorizontally : Microsoft.Xna.Framework.Graphics.SpriteEffects.None, d);
-                    }
-                }
-
-                ApplyLegacyEffects(cache, baseX, baseY);
+                ReplayLegacy(batcher, cache, baseX, baseY, depth);
 
 #if CUO_DEVTOOLS
                 if (MobileAnimationSystem.CacheCheck)
@@ -909,9 +1015,35 @@ namespace ClassicUO.Game
 
             MobileFrameCache.LegacyMisses++;
             Select(e, data, posX, posY, depth);
+            bool hold = LookPrefetch.Enabled;
 
-            // a seated mobile's equipment reads the body rows the last seated human body left (MobileView's statics): not replayed
-            bool record = cache.SelectValid && !_atlasMiss && (s.Flags & AnimStateFlags.CharSitting) == 0;
+            if (_atlasMiss && (hold || LookPrefetch.Check))
+            {
+                bool previous = cache.LegacyValid && cache.LegacyCount != 0 && ReferenceEquals(cache.LegacySource, src) &&
+                    cache.LegacyAtlasEpoch == ClassicUO.Renderer.Animations.Animations.AtlasEpoch;
+
+                if (hold && previous && HoldLook(cache))
+                {
+                    // asset_prefetch_on_packet: the previous complete look until every direction of the new one is uploaded
+                    // (the select above started their decodes)
+                    _selCount = 0;
+                    ReplayLegacy(batcher, cache, baseX, baseY, depth);
+                    LookPrefetch.FrameHeld++;
+
+                    return;
+                }
+
+                LookPrefetch.NoteIncomplete(_selCount == 0 ? 1 : 0, 1, previous);
+            }
+
+            if (!_atlasMiss)
+            {
+                cache.HoldSince = 0;
+            }
+
+            // a seated mobile's equipment reads the body rows the last seated human body left (MobileView's statics): not
+            // replayed. asset_prefetch_on_packet: recorded also when not reusable (a walking mobile), as the look to hold.
+            bool record = (cache.SelectValid || hold) && !_atlasMiss && (s.Flags & AnimStateFlags.CharSitting) == 0;
 
             if (record)
             {
@@ -980,6 +1112,41 @@ namespace ClassicUO.Game
             cache.LegacyBodyHue = bodyHue;
             cache.LegacySource = src;
             cache.LegacyValid = true;
+        }
+
+        // the Legacy batcher calls the cache recorded, at draw origin (baseX, baseY) and base depth, with FrameInfo and lights
+        private void ReplayLegacy(UltimaBatcher2D batcher, MobileFrameCache cache, int baseX, int baseY, float depth)
+        {
+            MobileFrameCache.LegacyEntry[] entries = cache.LegacyEntries;
+
+            for (int i = 0; i < cache.LegacyCount; i++)
+            {
+                // LegacySpriteResolve.Draw of LegacyReplayed's call, from the entry's fields (recorded entries are
+                // normal or shadow draws, never seated or rotated)
+                ref readonly MobileFrameCache.LegacyEntry entry = ref entries[i];
+                var position = new Vector2(baseX + entry.X, baseY + entry.Y);
+                // anim_atlas_lru: a replay skips GetAnimationFrames, so it marks the page used itself
+                ClassicUO.Renderer.Animations.AtlasPageClock.Touch(entry.Texture);
+#if CUO_DEVTOOLS
+                if (ClassicUO.Renderer.Animations.Animations.LruCheck)
+                {
+                    ClassicUO.Renderer.Animations.Animations.LruCheckUse(entry.Texture, "mobile replay");
+                }
+#endif
+                float d = DepthOf(depth, entry.Kind, entry.Add);
+
+                if (entry.Mode == SpriteCaptureMode.Shadow)
+                {
+                    batcher.DrawShadow(entry.Texture, position, entry.Source, entry.Flip, d);
+                }
+                else
+                {
+                    batcher.Draw(entry.Texture, position, entry.Source, entry.Hue, 0f, Vector2.Zero, 1f,
+                        entry.Flip ? Microsoft.Xna.Framework.Graphics.SpriteEffects.FlipHorizontally : Microsoft.Xna.Framework.Graphics.SpriteEffects.None, d);
+                }
+            }
+
+            ApplyLegacyEffects(cache, baseX, baseY);
         }
 
 #if CUO_DEVTOOLS

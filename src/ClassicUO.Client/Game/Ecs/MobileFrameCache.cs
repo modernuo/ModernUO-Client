@@ -65,6 +65,14 @@ namespace ClassicUO.Game
         public Entry[] Entries = new Entry[8];
         public int Count;
 
+        /// <summary>asset_prefetch_on_packet: Time.Ticks of the first frame that kept drawing the recorded look because the
+        /// new one was not loaded (0: not holding; LookPrefetch.HoldMaxMs bounds it).</summary>
+        public uint HoldSince;
+
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the Gpu recording was made with animation pages missing (1: a complete look
+        /// existed before; 2: first sight); 0 once they are all resident.</summary>
+        public byte EmitIncomplete;
+
         /// <summary>An instance relative to the draw origin; depth = Kind == 0 ? baseDepth : (baseDepth + 1f) + Add, as
         /// MobileSpriteExtract writes it.</summary>
         public struct Entry
@@ -226,6 +234,8 @@ namespace ClassicUO.Game
             LightCount = 0;
             LegacyCount = 0;
             LegacyLightCount = 0;
+            HoldSince = 0;
+            EmitIncomplete = 0;
             Pack = null;
             LegacySource = null;
             Key = default;

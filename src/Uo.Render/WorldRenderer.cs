@@ -343,20 +343,45 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// it (Body.def applied). Returns the pages queued.</summary>
     public int PrefetchAnim(int body, int action, int dir)
     {
-        int queued = PrefetchAnimDir(body, action, dir & 7);
+        // the distinct pages of the drawn direction and of all eight (resident or not): how much the turns add
+        Span<int> seen = stackalloc int[64];
+        int distinct = 0;
+        int queued = PrefetchAnimDir(body, action, dir & 7, seen, ref distinct);
+        int dirPages = distinct;
         for (int d = 0; d < 8; d++)
-            if (d != (dir & 7)) queued += PrefetchAnimDir(body, action, d);
+            if (d != (dir & 7)) queued += PrefetchAnimDir(body, action, d, seen, ref distinct);
+        if (distinct != 0)
+        {
+            AnimPrefetchLooks++;
+            AnimPrefetchPagesDir += dirPages;
+            AnimPrefetchPagesAll += distinct;
+            AnimPrefetchQueued += queued;
+        }
         return queued;
     }
 
-    int PrefetchAnimDir(int body, int action, int dir)
+    /// <summary>asset_prefetch_on_packet's measure (totals): looks prefetched, the distinct pages of their drawn direction
+    /// and of all eight directions (a page counted once per look; past 64 distinct pages per look, the rest are counted
+    /// per frame), and the pages queued (not resident or queued already).</summary>
+    public long AnimPrefetchLooks, AnimPrefetchPagesDir, AnimPrefetchPagesAll, AnimPrefetchQueued;
+
+    /// <summary>The bytes of one animation page with its mips.</summary>
+    public long AnimPageBytes => AnimPages?.ChainBytes ?? 0;
+
+    int PrefetchAnimDir(int body, int action, int dir, Span<int> seen, ref int distinct)
     {
         if (!TryGetAnimDir(body, action, dir, out uint first, out int count)) return 0;
         int queued = 0;
         for (int f = 0; f < count; f++)
         {
             ref readonly var sp = ref Pack.AnimFrames[first + f].Sprite;
-            if (sp.Present && AnimPages!.Prefetch(sp.Page, Frame)) queued++;
+            if (!sp.Present) continue;
+            if (seen.Slice(0, Math.Min(distinct, seen.Length)).IndexOf(sp.Page) < 0)
+            {
+                if (distinct < seen.Length) seen[distinct] = sp.Page;
+                distinct++;
+            }
+            if (AnimPages!.Prefetch(sp.Page, Frame)) queued++;
         }
         return queued;
     }

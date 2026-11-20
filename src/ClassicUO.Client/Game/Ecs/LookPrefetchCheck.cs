@@ -14,6 +14,10 @@ namespace ClassicUO.Game
     /// (LookPrefetch.LookComplete: Legacy direction uploaded or art decoded; Gpu anim pages resident). Reports per kind the
     /// arrival-to-first-complete-draw latency (p50/p95/max), looks complete at their first draw, frames that drew a tracked
     /// look incomplete, and looks never complete within 3 s. Every 5 s, with the switch state.
+    /// Also every mobile draw of the frame before (LookPrefetch.Frame*): draws that kept the previous look (held), that drew
+    /// a look with layers missing although a complete one existed before (partial: the target is 0 with the switch on),
+    /// with no complete look before (first_sight), or drew nothing (blank), with the frames that had any, and holds ended by
+    /// LookPrefetch.HoldMaxMs.
     /// </summary>
     internal static class LookPrefetchCheck
     {
@@ -28,6 +32,7 @@ namespace ClassicUO.Game
         private static readonly int[] _latCount = new int[3];
         private static readonly long[] _firstComplete = new long[3], _arrived = new long[3];
         private static long _incompleteFrames, _never, _gone, _overflow, _start;
+        private static long _heldDraws, _heldFrames, _partialDraws, _partialFrames, _firstSightDraws, _firstSightFrames, _blankDraws, _blankFrames;
         private static bool _switch;
 
         public static void Arrived(uint serial, LookPrefetch.Kind kind, bool on)
@@ -71,6 +76,12 @@ namespace ClassicUO.Game
             {
                 _start = now;
             }
+
+            // the frame before's mobile draws (LookPrefetch.BeginDraw resets them after this)
+            Count(LookPrefetch.FrameHeld, ref _heldDraws, ref _heldFrames);
+            Count(LookPrefetch.FramePartial, ref _partialDraws, ref _partialFrames);
+            Count(LookPrefetch.FrameFirstSight, ref _firstSightDraws, ref _firstSightFrames);
+            Count(LookPrefetch.FrameBlank, ref _blankDraws, ref _blankFrames);
 
             bool incomplete = false;
 
@@ -146,6 +157,15 @@ namespace ClassicUO.Game
             }
         }
 
+        private static void Count(int draws, ref long total, ref long frames)
+        {
+            if (draws != 0)
+            {
+                total += draws;
+                frames++;
+            }
+        }
+
         private static void Summary()
         {
             var sb = new System.Text.StringBuilder();
@@ -165,8 +185,20 @@ namespace ClassicUO.Game
             }
 
             sb.Append($" incomplete_frames {_incompleteFrames} never_complete {_never} gone {_gone} overflow {_overflow} tracked {_count}; prefetch resolved {LookPrefetch.Resolved} requested {LookPrefetch.Requested} dropped {LookPrefetch.Dropped}");
+            sb.Append($"; mobile draws held {_heldDraws} ({_heldFrames} frames) partial {_partialDraws} ({_partialFrames} frames) first_sight {_firstSightDraws} ({_firstSightFrames} frames) blank {_blankDraws} ({_blankFrames} frames) hold_timeouts {LookPrefetch.HoldTimeouts}");
+            var gpu = Client.Game.GetGpuWorld()?.World;
+
+            if (gpu != null && gpu.AnimPrefetchLooks != 0)
+            {
+                double looks = gpu.AnimPrefetchLooks;
+                double mib = gpu.AnimPageBytes / (1024.0 * 1024.0);
+                sb.Append(FormattableString.Invariant(
+                    $"; gpu anim prefetch looks {gpu.AnimPrefetchLooks} pages/look dir {gpu.AnimPrefetchPagesDir / looks:F2} all8 {gpu.AnimPrefetchPagesAll / looks:F2} queued {gpu.AnimPrefetchQueued / looks:F2} MiB/look dir {gpu.AnimPrefetchPagesDir / looks * mib:F2} all8 {gpu.AnimPrefetchPagesAll / looks * mib:F2} queued {gpu.AnimPrefetchQueued / looks * mib:F2}"));
+            }
+
             Log.Info(sb.ToString());
             _incompleteFrames = _never = _gone = _overflow = 0;
+            _heldDraws = _heldFrames = _partialDraws = _partialFrames = _firstSightDraws = _firstSightFrames = _blankDraws = _blankFrames = 0;
         }
     }
 }

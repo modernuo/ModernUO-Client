@@ -60,6 +60,40 @@ namespace ClassicUO.Game.Scenes
         }
 
         public WorldRenderer World => _world;
+
+        private DynamicResidency _residency;
+
+        // asset_prefetch_on_packet: a mobile instance's page in the current world (indexed animation pages have their own
+        // residency; the others share the art pages)
+        private sealed class DynamicResidency : IDynamicPageResidency
+        {
+            private readonly GpuWorldRenderer _owner;
+
+            public DynamicResidency(GpuWorldRenderer owner) => _owner = owner;
+
+            public bool Resident(in SpriteInstance instance)
+            {
+                WorldRenderer w = _owner._world;
+
+                return (instance.Flags & SpriteInstance.FlagIndexed) != 0
+                    ? w.AnimPages == null || w.AnimPages.IsResident(instance.Page - _owner._pack.AnimPageBase)
+                    : w.Pages.IsResident(instance.Page);
+            }
+
+            public void Request(in SpriteInstance instance)
+            {
+                WorldRenderer w = _owner._world;
+
+                if ((instance.Flags & SpriteInstance.FlagIndexed) != 0)
+                {
+                    w.AnimPages?.Prefetch(instance.Page - _owner._pack.AnimPageBase, w.Frame);
+                }
+                else
+                {
+                    w.Pages.Prefetch(instance.Page, w.Frame);
+                }
+            }
+        }
         public int CaptureFallbacks { get; private set; }
 
         /// <summary>E12 (CUO_GPU_ITEM_CHECK): the probe pass runs the capture before the batcher begins (and suppressed:
@@ -618,6 +652,7 @@ namespace ClassicUO.Game.Scenes
 
             mobile.DrawAura(batcher, posX, posY, depth);
             extract.Begin(_pack, _offsetX, _offsetY);
+            extract.PageResidency = _world != null ? _residency ??= new DynamicResidency(this) : null;
             extract.Emit(e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
 
             // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped

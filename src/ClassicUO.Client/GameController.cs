@@ -1112,6 +1112,7 @@ namespace ClassicUO
                 LookPrefetchCheck.Draw(UO.World);
             }
 #endif
+            LookPrefetch.BeginDraw();
             VisualDue.BeginDraw();
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);

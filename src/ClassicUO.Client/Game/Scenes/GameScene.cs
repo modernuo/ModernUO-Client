@@ -1452,7 +1452,8 @@ namespace ClassicUO.Game.Scenes
                     _settle.End(visibleReady);
                     // asset_ready_wake: a held or partial frame is followed by one as soon as a load it waits for completes
                     var gw = gpu.World;
-                    AssetWake.SceneIncomplete = (hold || !visibleReady) && (gw.LoadsPending || _world.Map.DrawPending != 0);
+                    // asset_prefetch_on_packet: a mobile kept its previous look while its new pages load
+                    AssetWake.SceneIncomplete = (hold || !visibleReady || LookPrefetch.FrameHeld != 0) && (gw.LoadsPending || _world.Map.DrawPending != 0);
                     AssetWake.SceneStale = gw.Pages.LoadedNotPlaced + (gw.AnimPages?.LoadedNotPlaced ?? 0);
 #if CUO_DEVTOOLS
                     if (hold || _settle.Episode != WorldDiscontinuity.None)

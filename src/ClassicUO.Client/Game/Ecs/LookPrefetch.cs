@@ -18,6 +18,9 @@ namespace ClassicUO.Game
     /// that direction first, then the action's other seven), its mount's and equipment's, and an item's art. Bounded: at
     /// most <see cref="Capacity"/> notes waiting (older ones are dropped), <see cref="BudgetPerUpdate"/> resolved per
     /// Update, objects beyond the client view range skipped. Main thread; no allocation.
+    /// With the switch on, a drawn mobile whose new look is not loaded yet keeps drawing its previous complete look (the
+    /// MobileFrameCache recording, Legacy and Gpu) until every layer of the new one is loaded, at most
+    /// <see cref="HoldMaxMs"/>, then switches in one frame (MobileSpriteExtract.Emit / DrawLegacy).
     /// CUO_LOOK_PREFETCH_CHECK=1 measures, in both switch states, packet arrival to the first complete draw per kind
     /// (p50/p95/max), how many looks were complete at their first draw, and frames that drew a tracked look incomplete.
     /// </summary>
@@ -63,6 +66,46 @@ namespace ClassicUO.Game
 
         /// <summary>Notes waiting.</summary>
         public static int Count => _count;
+
+        /// <summary>The longest a mobile keeps its previous look while the new one loads (a safety bound: a load that never
+        /// completes draws the new look partial after it).</summary>
+        public const int HoldMaxMs = 500;
+
+        /// <summary>This frame's mobile draws (reset at each draw start): kept their previous look (<see cref="FrameHeld"/>),
+        /// drew a layer of the current look missing while a previous complete look existed but could not be held
+        /// (<see cref="FramePartial"/>), drew it missing with no previous look (<see cref="FrameFirstSight"/>, a mobile never
+        /// drawn complete), drew nothing at all (<see cref="FrameBlank"/>, part of the two before).</summary>
+        public static int FrameHeld, FramePartial, FrameFirstSight, FrameBlank;
+
+        /// <summary>Tests: the hold clock (null: Time.Ticks).</summary>
+        [ThreadStatic] internal static uint? TicksForTests;
+
+        internal static uint Now => TicksForTests ?? Time.Ticks;
+
+        /// <summary>Holds ended by <see cref="HoldMaxMs"/> (total).</summary>
+        public static long HoldTimeouts;
+
+        /// <summary>Draw start: this frame's counts from zero.</summary>
+        public static void BeginDraw() => FrameHeld = FramePartial = FrameFirstSight = FrameBlank = 0;
+
+        /// <summary>A mobile draw found layers of its look missing (<paramref name="missing"/> of <paramref name="total"/>
+        /// records); <paramref name="hadPrevious"/>: a previous complete look existed.</summary>
+        internal static void NoteIncomplete(int missing, int total, bool hadPrevious)
+        {
+            if (hadPrevious)
+            {
+                FramePartial++;
+            }
+            else
+            {
+                FrameFirstSight++;
+            }
+
+            if (missing >= total)
+            {
+                FrameBlank++;
+            }
+        }
 
         /// <summary>WorldWriter: <paramref name="serial"/> has a new look (main thread).</summary>
         public static void Note(uint serial, Kind kind)
