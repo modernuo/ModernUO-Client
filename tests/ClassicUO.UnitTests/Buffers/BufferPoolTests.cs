@@ -228,8 +228,34 @@ namespace ClassicUO.UnitTests.Buffers
             LargeBufferPool.Return(LargeBufferPool.Rent<byte>(1 << 20));
             LargeBufferPool.TrimIdle(60_000);
             Assert.Equal(1 << 20, LargeBufferPool.RetainedBytes);
-            LargeBufferPool.TrimIdle(-1);
+            LargeBufferPool.TrimIdle(-1, 0);
             Assert.Equal(0, LargeBufferPool.RetainedBytes);
+        }
+
+        [Fact]
+        public void TrimIdleKeepsTheFloor()
+        {
+            LargeBufferPool.Return(LargeBufferPool.Rent<byte>(1 << 20));
+            LargeBufferPool.TrimIdle(-1);
+            Assert.Equal(1 << 20, LargeBufferPool.RetainedBytes);
+
+            var held = new byte[40][];
+            for (int i = 0; i < held.Length; i++)
+                held[i] = LargeBufferPool.Rent<byte>(1 << 20);
+            foreach (byte[] b in held)
+                LargeBufferPool.Return(b);
+
+            LargeBufferPool.TrimIdle(-1);
+            Assert.InRange(LargeBufferPool.RetainedBytes, LargeBufferPool.IdleFloorBytes, LargeBufferPool.IdleFloorBytes + (1 << 20));
+        }
+
+        [Fact]
+        public void IdleTrimDefaults()
+        {
+            Assert.Equal(112L << 20, LargeBufferPool.DefaultBudgetBytes);
+            Assert.Equal(112L << 20, LargeBufferPool.BudgetBytes);
+            Assert.Equal(16L << 20, LargeBufferPool.IdleFloorBytes);
+            Assert.Equal(180_000, LargeBufferPool.DefaultIdleMs);
         }
 
         [Fact]

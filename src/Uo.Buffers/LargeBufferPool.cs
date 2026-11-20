@@ -17,7 +17,14 @@ public static class LargeBufferPool
 {
     public const int MinClassBytes = 64 << 10;
     public const int MaxClassBytes = 64 << 20;
-    public const long DefaultBudgetBytes = 48L << 20;
+    public const long DefaultBudgetBytes = 112L << 20;
+
+    /// <summary>Free bytes that <see cref="TrimIdle(long)"/> never goes below: about one region set, so a teleport right
+    /// after a long idle still finds its buffers.</summary>
+    public const long IdleFloorBytes = 16L << 20;
+
+    /// <summary>Age after which a free buffer is a trim candidate.</summary>
+    public const long DefaultIdleMs = 180_000;
     private const int MaxPerClass = 32;
     private const int MaxTypes = 4;
 
@@ -265,18 +272,33 @@ public static class LargeBufferPool
         }
     }
 
-    /// <summary>Drops free buffers returned more than <paramref name="maxIdleMs"/> ago. A scan of the class stacks.</summary>
-    public static void TrimIdle(long maxIdleMs)
+    /// <summary>Drops free buffers returned more than <paramref name="maxIdleMs"/> ago, but never below
+    /// <see cref="IdleFloorBytes"/> of free buffers. A scan of the class stacks.</summary>
+    public static void TrimIdle(long maxIdleMs) => TrimIdle(maxIdleMs, IdleFloorBytes);
+
+    /// <summary>Idle trim with an explicit floor. Classes that never produced a hit go first, so the floor is kept in the
+    /// size classes the regions and pages actually reuse.</summary>
+    public static void TrimIdle(long maxIdleMs, long floorBytes)
     {
         long cutoff = Environment.TickCount64 - maxIdleMs;
 
         lock (_lock)
         {
-            for (int i = 0; i < _count.Length; i++)
+            for (int pass = 0; pass < 2 && _retainedBytes > floorBytes; pass++)
             {
-                while (_count[i] > 0 && _stamp[i][0] < cutoff)
+                for (int i = 0; i < _count.Length && _retainedBytes > floorBytes; i++)
                 {
-                    RemoveBottomLocked(i);
+                    bool hot = _classHits[i % ClassCount] != 0;
+
+                    if (hot == (pass == 0))
+                    {
+                        continue;
+                    }
+
+                    while (_count[i] > 0 && _stamp[i][0] < cutoff && _retainedBytes > floorBytes)
+                    {
+                        RemoveBottomLocked(i);
+                    }
                 }
             }
         }
