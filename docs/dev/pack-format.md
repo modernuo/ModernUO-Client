@@ -4,7 +4,7 @@ This document specifies the asset pack that the ModernUO client loads instead of
 
 For every content type described here, the client reads only the pack. MUL and UOP stay only for the content listed in "Not in the pack". The client never reads a patch format. `verdata.mul` is not imported: shard owners merge it into the base files before converting. The converter merges the legacy map patches (`mapdif*`, `mapdifl*`, `stadif*`, `stadifi*`, `stadifl*`) into the maps at import. The `map*x`, `statics*x` and `staidx*x` files are not read; a shard that wants them renames them to the regular names before converting.
 
-The format version is 1. `FileHeader.version` and the manifest `version` are both 1. The tile data layout (magic `TILE`) was introduced in revision 1.1, and `skills.bin` in revision 1.2. Revisions are marked by required files, not by the version number: a client accepts only packs that contain a `TILE` `tiledata.bin` and a `skills.bin`.
+The format version is 1. `FileHeader.version` and the manifest `version` are both 1. The tile data layout (magic `TILE`) was introduced in revision 1.1, `skills.bin` in revision 1.2, and zstd in place of Brotli in revision 1.6. Revisions are marked by required files and codecs, not by the version number: a client accepts only packs that contain a `TILE` `tiledata.bin` and a `skills.bin`, and refuses any Brotli file or record (see "Compression").
 
 ## Conventions
 
@@ -111,11 +111,22 @@ Retired magics:
 
 Compression is chosen per file. Readers accept any mix of kinds in one pack, and raw is always valid for any file. A shard may ship a fully raw pack for binary delta patching, since the manifest's sha256 identifies changed files.
 
+The codec is pack data: a file names it through its kind, a record store record through its `codec` field (see "Record stores"). Every reader decodes through one seam, `Uo.Pack.PackCodec` (`src/Uo.Pack/PackCodec.cs`): it maps a kind to a codec (`OfFileKind`), checks a codec (`Check`), bounds a stored size (`MaxStoredBytes`) and hands out an `IPackDecoder` per worker (`Create`) or per thread (`ForThread`). Loaders do not branch on codecs.
+
+| Codec | Value | Meaning |
+|---|---|---|
+| raw | 0 | the bytes as is |
+| Brotli | 1 | retired in revision 1.6; readers refuse it |
+| zstd | 2 | one zstd frame (RFC 8878), level 19 in the ship profile, no dictionary, with the content size in the frame header and no checksum |
+
+A zstd frame is decoded in one pass straight into a destination of exactly its decoded size, which the format always knows (the chunk length, or the record's `rawBytes`). Readers cap the frame window at 2^23 (`PackCodec.ZstdMaxWindowLog`); the converter writes windows of at most 2^22, which zstd shrinks to the unit's size. A decoder context is about 80 KiB of native memory and is reused, so a decode allocates nothing.
+
 In every kind, the logical payload is the bytes a raw file has after its `FileHeader`.
 
 - **Kind 0, raw.** The payload follows the header as is.
-- **Kind 1, Brotli.** The payload is one Brotli stream (quality 5).
-- **Kind 2, chunked Brotli.** The payload is split into fixed-size chunks that compress independently, so several workers can decode one file and a reader can decode chunk 0 alone to get the leading headers:
+- **Kind 1, Brotli (retired in 1.6).** The payload was one Brotli stream. Readers refuse it with a "convert again" error.
+- **Kind 2, chunked Brotli (retired in 1.6).** Kind 3's layout with Brotli chunks. Readers refuse it with a "convert again" error.
+- **Kind 3, chunked zstd.** The payload is split into fixed-size chunks that compress independently, so several workers can decode one file and a reader can decode chunk 0 alone to get the leading headers:
 
   | Field | Type | Meaning |
   |---|---|---|
@@ -123,11 +134,13 @@ In every kind, the logical payload is the bytes a raw file has after its `FileHe
   | logicalBytes | u64 | uncompressed payload size |
   | chunkCount | u32 | `ceil(logicalBytes / chunkBytes)` |
   | compressedSize | u32[chunkCount] | compressed size of each chunk; chunk offsets are prefix sums from the end of this table |
-  | chunks | bytes | chunk `i` is an independent Brotli stream (quality 5, window 22) that decodes to logical bytes `[i*chunkBytes, (i+1)*chunkBytes)` |
+  | chunks | bytes | chunk `i` is an independent zstd frame that decodes to logical bytes `[i*chunkBytes, (i+1)*chunkBytes)` |
 
-  Decode each chunk straight into the destination buffer at its logical offset. Chunk 0 always contains the `PageHeader` (and for regions the `RegionHeader` and offset table). `Uo.Pack` provides `ChunkedBrotli.Decode` (single thread, in memory), `ChunkedBrotliStream` (sequential) and `ChunkedBrotliDecoder` (persistent worker pool, used by `AtlasPage.Read(path, span, decoder)`).
+  A reader checks that `chunkBytes` is 1..2^30, `logicalBytes` below 2^31 and `chunkCount = ceil(logicalBytes / chunkBytes)` (`ChunkedFile.Check`), and that a chunk's stored size is within the codec's bound before reading it. Decode each chunk straight into the destination buffer at its logical offset. Chunk 0 always contains the `PageHeader` (and for regions the `RegionHeader` and offset table). `Uo.Pack` provides `ChunkedFile.Decode` (single thread, in memory), `ChunkedStream` (sequential) and `ChunkedDecoder` (persistent worker pool, a decoder per worker, used by `AtlasPage.Read(path, span, decoder)`).
 
-Only pages and regions are compressed as whole files; all other files are Kind 0. Record stores (gumps, fonts, cliloc, sounds, music) are Kind 0 files whose records are compressed one by one (see "Record stores"). Which kind pages and regions use is a profile choice (see "Ship profile").
+Only pages and regions are compressed as whole files; all other files are Kind 0. Pages use 1 MiB chunks; a region is one chunk (`chunkBytes = logicalBytes`), since a region decodes on one worker anyway and one frame compresses better. Record stores (gumps, fonts, cliloc, sounds, music) are Kind 0 files whose records are compressed one by one (see "Record stores"). Which kind pages and regions use is a profile choice (see "Ship profile").
+
+**Older packs.** A client refuses a pack with Brotli content: `PackAssets.Open` reads `art/page_0000.bin`'s kind at startup, and every reader (pages, regions, record stores) refuses kinds 1 and 2 and codec 1, each with the message "... comes from a pack revision older than 1.6, which this client no longer reads. Convert the client again with Uo.Converter." The converter refuses to extend (`--only`) a Brotli pack the same way.
 
 ## Atlas pages (`page_NNNN.bin`)
 
@@ -204,7 +217,7 @@ Logical payload:
    - staticCount u16, pad u16;
    - `StaticCell[staticCount]`: graphic u16, x u8, y u8 (0..7), z i8, pad u8, hue u16.
 
-Statics with graphic 0 or 0xFFFF, or x or y above 7, are dropped (as ClassicUO's `Chunk.Load` does). For Kind 1 and 2, the simplest reader rebuilds the logical file (header plus decoded payload) and parses it as Kind 0 (`RegionFile.Parse`, `RegionFile.Decompress`).
+Statics with graphic 0 or 0xFFFF, or x or y above 7, are dropped (as ClassicUO's `Chunk.Load` does). For Kind 3, the simplest reader rebuilds the logical file (header plus decoded payload) and parses it as Kind 0 (`RegionFile.Parse`, `RegionFile.Decompress`).
 
 The data is semantic: the renderer bakes per-chunk instance buffers on worker threads, and walkability and collision stay available for client-side prediction. An UltimaLive update replaces one block record in memory and re-bakes that chunk.
 
@@ -408,8 +421,8 @@ A **string-list store** is a record store (below) with exactly one slot, whose r
 |---|---|---|
 | `skills.bin` | `SKLS` | String-list store, record raw. One entry per skill in the client's order (Skills.idx entries with a positive length, in index order); value bit 0 = the skill has a use button. Required (revision 1.2). |
 | `skillgrp.bin` | `SKGR` | Not a store: `FileHeader`, nameCount u32, assignmentCount u32, blobBytes u32, u32 nameEnd[nameCount], i32 assignment[assignmentCount], UTF-8 blob. The names are skillgrp.mul's groups 1..count−1 (ASCII or, after a −1 marker, UTF-16 in the file); the assignments are the file's trailing i32 group numbers, unchecked. The client builds the groups from them as it built them from the file: group 0 is its own "Miscellaneous", a number past the last group skips the entry, a negative one makes it use its built-in groups. A skillgrp.mul the client could not read (count 0 or negative, a name or number past the end of the file) gets no table, so the client uses the built-in groups as before. |
-| `multimap.bin` | `MMAP` | Record store, 1..256 slots. Slot 0 is Multimap.rle; slot 1 + n is the n-th facet0*.mul file in ordinal path order (the order the client indexed them, so a missing facet02.mul shifts the later ones). Records are the files' bytes, raw up to 16 KiB, else Brotli (quality 9), at most 64 MiB decoded each (`MiscConst.MaxMultiMapRecordBytes`; the stock facet01.mul is 12 MB): the converter refuses a larger file, and the client refuses a record that declares more before allocating. The client decodes a record when the server asks for a map (packets 0x90/0xF5) and keeps nothing; a facet image needs slot 0, as before. |
-| `text/stringdict.bin` | `STRD` | String-list store, record Brotli. string_dictionary.uop's strings in index order, value 0. Absent for installs without the file (pre-UOP). |
+| `multimap.bin` | `MMAP` | Record store, 1..256 slots. Slot 0 is Multimap.rle; slot 1 + n is the n-th facet0*.mul file in ordinal path order (the order the client indexed them, so a missing facet02.mul shifts the later ones). Records are the files' bytes, raw up to 16 KiB, else zstd, at most 64 MiB decoded each (`MiscConst.MaxMultiMapRecordBytes`; the stock facet01.mul is 12 MB): the converter refuses a larger file, and the client refuses a record that declares more before allocating. The client decodes a record when the server asks for a map (packets 0x90/0xF5) and keeps nothing; a facet image needs slot 0, as before. |
+| `text/stringdict.bin` | `STRD` | String-list store, record zstd. string_dictionary.uop's strings in index order, value 0. Absent for installs without the file (pre-UOP). |
 
 ## Loose text files (`loose/`)
 
@@ -428,12 +441,12 @@ Content that the client reads one item at a time, and that the GPU does not samp
 | payloads | back to back, each decodable on its own |
 
 - Slot `i` is id `i`. Several ids may share one record (aliases, identical content).
-- Codec 0: the payload as is (`storedBytes = rawBytes`). Codec 1: one Brotli stream (window 22) that decodes to `rawBytes` bytes. Readers reject other codecs.
+- Codec 0: the payload as is (`storedBytes = rawBytes`). Codec 2: one zstd frame that decodes to `rawBytes` bytes. Codec 1 (Brotli) is retired: a store with such a record is refused with the convert-again message. Readers reject other codecs. A writer keeps a record raw when zstd does not make it smaller (`RecordStoreWriter.EncodeOrRaw`).
 - A reader reads the header, the slot table and the record table once. Because a shard ships the pack, the reader treats it as untrusted (`RecordStore.Open`):
   - before allocating the tables it checks that they fit in the file (`slotCount` at most 2^24, `recordCount` at most `slotCount`, the tables end at or before the file's end);
   - every slot points into the record table;
   - every payload lies in the payload area: `payloadStart <= offset <= fileLength` and `storedBytes <= fileLength - offset` (no wrap-around);
-  - codec 0 has `storedBytes = rawBytes`; other codecs are rejected.
+  - codec 0 has `storedBytes = rawBytes`; codecs other than 0 and 2 are rejected (codec 1 with the convert-again message).
 
   A failure rejects the whole file. A content type whose slot count is fixed passes its bounds to `Open`, which checks them before allocating the tables. The content type then checks its own meta. A record is one positional read plus its decode, from any thread, into the caller's buffer.
 - There is no whole-file compression and there are no per-record files: a store is read by offset, and a record decodes alone.
@@ -446,14 +459,14 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
 - **Slots:** `slotCount` = highest present id + 1. `arg` = the gump.def alias hue (0 = none).
 - **Records:** `meta0` = width, `meta1` = height, `meta2` = payload layout. The record table is the size table: the width and height of any gump are known without decoding it.
 - **Payload layouts** (`Uo.Pack.GumpCodec`), both lossless 16-bit:
-  - 0, texels: `width*height` B5G5R5A1 `u16`, row-major. Texel 0 = transparent, else bit 15 set and bits 0-14 the source colour. Used with codec 1.
-  - 1, run-length rows: `u32 rowStart[height]` (in 4-byte units from the start of this table), then `(u16 texel, u16 run)` pairs. Row `y`'s runs end where row `y+1`'s start (the last row's at the end of the payload); texels no run reaches are transparent. This is the client's own entry layout, re-encoded canonically (a run per change of texel, no trailing transparent run). Used with codec 0.
-  - Any (layout, codec) pair is valid for a reader. Ship profile: an image whose run-length payload is at most 64 KiB (`--gump-small n`, default 65,536) is stored as layout 1, codec 0; every other image as layout 0, codec 1 (Brotli quality 9). `--raw-gumps` stores every image as layout 1, codec 0.
+  - 0, texels: `width*height` B5G5R5A1 `u16`, row-major. Texel 0 = transparent, else bit 15 set and bits 0-14 the source colour. Used for large images.
+  - 1, run-length rows: `u32 rowStart[height]` (in 4-byte units from the start of this table), then `(u16 texel, u16 run)` pairs. Row `y`'s runs end where row `y+1`'s start (the last row's at the end of the payload); texels no run reaches are transparent. This is the client's own entry layout, re-encoded canonically (a run per change of texel, no trailing transparent run). Used for small images.
+  - Any (layout, codec) pair is valid for a reader. Ship profile: an image whose run-length payload is at most 64 KiB (`--gump-small n`, default 65,536) is stored as layout 1, every other image as layout 0, both with codec 2 (zstd 19), or codec 0 where zstd does not shrink the record. `--raw-gumps` stores every image as layout 1, codec 0.
 - **Lossless:** the stored texel is the source value's colour bits plus bit 15 = visible. ClassicUO's decode ignores bit 15, so every image the client draws is reproduced exactly. Hueing needs the exact 5-bit gray texels, which a lossy format would not keep.
 - **Drawing a gump** (ClassicUO `GumpsLoader.GetGump`): each visible texel `v` becomes RGBA8 with ClassicUO's 5-to-8-bit table (`HuesHelper.Color16To32`, not the canonical expansion: gumps go through the CPU and the batcher's RGBA8 atlas, and parity is with the MUL path) and alpha 255. With a slot hue `h`, `1 <= h < hue count`, first `v = hues[h - 1].colors[(v >> 10) & 31]`, and the texel stays visible only if that is not 0.
 - **Converter resolution:** ids whose index entries are identical (gump.def copies the entry and sets a hue; UOP and MUL may alias too) share one record, and so do ids with identical decoded images. An id with a loose `Gumps/<id>.gump` file gets its own record from that file, with no hue; a broken file falls back to the archive entry with its hue. The client does not read loose gump files; re-run the converter (`--only gumps`) after changing them.
 
-**Record checks at load** (`GumpsLoader.CheckRecord`): width and height 1..4096; layout 0 with `rawBytes = width*height*2` exactly; layout 1 with `rawBytes` a multiple of 4, at least the row table (`4*height`) and at most `4*height + 4*width*height`; any other layout is invalid; a Brotli record no larger than Brotli's bound for `rawBytes`. A record that fails, or whose payload later fails to decode, is invalid for the session: its ids are absent, the error is logged once per record, and nothing retries it.
+**Record checks at load** (`GumpsLoader.CheckRecord`): width and height 1..4096; layout 0 with `rawBytes = width*height*2` exactly; layout 1 with `rawBytes` a multiple of 4, at least the row table (`4*height`) and at most `4*height + 4*width*height`; any other layout is invalid; a compressed record no larger than its codec's bound for `rawBytes` (`PackCodec.MaxStoredBytes`). A record that fails, or whose payload later fails to decode, is invalid for the session: its ids are absent, the error is logged once per record, and nothing retries it.
 
 **Client use** (`GumpsLoader`):
 
@@ -501,7 +514,7 @@ A record store with magic `CLIL` (0x4C494C43): one record per language, and at m
   | ends | u32[count]; string `i` is `blob[ends[i-1] .. ends[i])` (from 0 for `i` = 0) |
   | blob | UTF-8, the strings back to back in id order |
 
-  A string is the UTF-8 encoding of the client's decoded text (cut at the first NUL, invalid bytes as U+FFFD). Ship profile: codec 0 (`--cliloc-brotli` stores the whole record as one Brotli stream).
+  A string is the UTF-8 encoding of the client's decoded text (cut at the first NUL, invalid bytes as U+FFFD). Ship profile: codec 0 (`--cliloc-compress` stores the whole record as one zstd frame).
 - **Overrides record:** the converter folds the client folder's `Clilocs.txt`, or the file named by `--cliloc-overrides`, into a flat record of its own (`--no-cliloc-overrides` leaves it out), parsed by `ClilocOverrides.Parse`, the same rules the client uses for the loose file: one "number text" per line, a tab or the first run of spaces between them, blank lines and `#` lines skipped, a later line wins.
 - **Lookups:** the client reads the language's record and, for any other language, enu's, plus the overrides record. A lookup tries, in order: a loose `Clilocs.txt` in the client folder, the pack's overrides record, the language, then enu.
 - **Converter discovery** (`ClilocDiscovery.Find`): files whose name starts with `Cliloc.` in any case; the extension (1-4 ASCII letters or digits) is the language code. Exports and backups beside them are told apart by content, not by name: a cliloc file is BWT-compressed (byte 3 = 0x8E) or a raw table whose records add up exactly to the file's end. `--cliloc-skip a,b` drops more by extension. No language left, no enu, or two files for one code (names differing only in case) fail the conversion.
@@ -604,19 +617,19 @@ camelCase JSON, read case-insensitively (`Uo.Pack.Manifest`):
 
 | Content | Pages | Compression |
 |---|---|---|
-| Art, texmaps | B5G5R5A1, 2048x2048, full mip chain (6 levels) | Kind 2, 1 MiB chunks |
-| Animations | Indexed8, 1024x1024, mip0 only, plus `palettes.bin` | Kind 2, 1 MiB chunks |
-| Map regions | n/a | Kind 1 |
-| Gumps | record store | Kind 0 file; images up to 64 KiB of run-length payload uncompressed, larger ones as texels with Brotli (quality 9) |
-| Fonts | record stores | Kind 0 files; ASCII fonts and unicode pages up to 16 KiB raw uncompressed, larger ones Brotli (quality 9) |
+| Art, texmaps | B5G5R5A1, 2048x2048, full mip chain (6 levels) | Kind 3 (chunked zstd 19), 1 MiB chunks |
+| Animations | Indexed8, 1024x1024, mip0 only, plus `palettes.bin` | Kind 3 (chunked zstd 19), 1 MiB chunks |
+| Map regions | n/a | Kind 3 (zstd 19), one chunk per region |
+| Gumps | record store | Kind 0 file; every image zstd 19 (small ones as run-length rows, larger ones as texels), raw where zstd does not shrink it |
+| Fonts | record stores | Kind 0 files; ASCII fonts and unicode pages up to 16 KiB raw uncompressed, larger ones zstd 19 |
 | Cliloc | record store | Kind 0 file; language records uncompressed |
 | Sounds, music | record stores | Kind 0 files; records uncompressed (raw PCM; the original MP3 bytes) |
-| Multimap, string dictionary | record stores | Kind 0 files; records over 16 KiB Brotli (quality 9); skills raw |
+| Multimap, string dictionary | record stores | Kind 0 files; records over 16 KiB zstd 19; skills raw |
 | Loose files | n/a | verbatim copies |
 | Everything else | n/a | Kind 0 |
 
 - No install-time unpacking is required. A patcher may rewrite any file to Kind 0, since raw is always valid.
-- Compression and page flags: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--page-size n`, `--anim-page-size n`, `--raw-gumps`, `--gump-small n`, `--raw-text`, `--text-small n`, `--cliloc-brotli`. Experimental page formats (`--format rgba8|bc7`, `--anim-format page`) exist for measurement and are not part of the format.
+- Compression and page flags: `--raw-pages`, `--compress-pages` (the default, chunked), `--chunk-bytes n`, `--raw-regions`, `--page-size n`, `--anim-page-size n`, `--raw-gumps`, `--gump-small n`, `--raw-text`, `--text-small n`, `--cliloc-compress`, `--zstd-level n` (default 19; other levels are for size and time comparisons, any level is valid for a reader). Experimental page formats (`--format rgba8|bc7`, `--anim-format page`) exist for measurement and are not part of the format.
 - Stages: `--only art,tex,hues,tiledata,data,layers,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music`, `--verify-only`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin`); `tiledata` writes `tiledata.bin` (and deletes a stale `tiledata_ext.bin`); `data` writes multis, lights, tileart and equipconv; `layers` writes `layerrules.bin`; `fonts` writes `text/fonts.bin` and `text/unifont.bin`; `sounds` and `music` write the audio stores; `skills` writes `skills.bin` and `skillgrp.bin`; `multimap`, `stringdict` and `loose` write the files of their names; `animdata.bin` belongs to `anims`.
 - **Outputs are replaced, never written in place.** Every pack file the converter writes goes to a temp file in the same folder (`.<name>.<guid>.replacing.tmp`), which is then moved over the target (`Uo.Pack.ReplacingFile`). Replacing the directory entry breaks a hard link instead of writing through it, so a test pack built by hard-linking a published pack's files and then converting `--only <stages>` leaves the published files untouched. A failed write deletes its temp file and leaves the target as it was; the manifest skips leftover temp files.
 - **Published packs are refused as output.** The converter and the pack tools refuse an output folder that is, lies under, or contains a published-packs root (`Uo.Pack.PublishedPacks`). Roots are a built-in default root, the `UO_PACKS_ROOTS` environment variable (`;`-separated), every `--packs-root <dir>` argument, and any ancestor folder holding a `CURRENT` file that names one of its subfolders. Paths are compared in canonical form (symlinks, junctions and drive aliases collapse to one path). When the relationship cannot be established, the write is refused. `--verify-only` only reads, so it may verify a published pack.
@@ -638,19 +651,19 @@ Approximate, from one stock install; they vary with the install.
 
 | Content | On disk |
 |---|---|
-| Art (31 pages + sprites.bin) | about 68 MiB (331 MiB as raw pages) |
-| Texmaps (4 pages) | about 16.5 MiB |
-| Animations (about 2,650 pages + tables) | about 675 MiB (2.6 GiB as raw pages) |
-| Maps (6 facets, 297 regions) | about 57 MiB (350 MiB raw) |
+| Art (31 pages + sprites.bin) | about 62 MiB (331 MiB as raw pages) |
+| Texmaps (4 pages) | about 15 MiB |
+| Animations (about 2,630 pages + tables) | about 645 MiB (2.6 GiB as raw pages) |
+| Maps (6 facets, 297 regions) | about 50 MiB (350 MiB raw) |
 | `tiledata.bin` | about 2.4 MiB |
 | `hues_raw.bin`, `radarcol.bin` | about 0.3 MiB and 0.2 MiB |
-| Gumps | about 58 MiB |
+| Gumps | about 37 MiB |
 | Text | about 23 MiB (eight cliloc languages) |
 | Audio | about 160 MiB sounds, about 104 MiB music |
-| Multimap (rle + 6 facet images) | about 9.1 MiB (30 MiB as files) |
+| Multimap (rle + 6 facet images) | about 8.2 MiB (30 MiB as files) |
 | Skills, skill groups, string dictionary, loose files | about 1 KiB, 0.3 KiB, 0.35 MiB, 0.35 MiB |
 
-Decode cost on one worker (desktop CPU): an anim page about 2.6 ms, an art page about 23 ms (about 4 ms with 8 workers on Kind 2), a region about 2.4 ms.
+Decode cost per unit on one worker (desktop CPU, zstd 19, pinned, busy machine; the 2026-11-19 evaluation measured Brotli at 2.4 to 3.6 times these): a 1 MiB art chunk about 0.6 to 0.8 ms (a whole art page of 11 chunks about 4 ms on one thread, less with several workers), a 512 KB anim chunk about 0.3 ms, a region about 1 ms, a 274 KB gump record about 0.24 ms, a small (7 KB) gump record about 11 us.
 
 ## Not in the pack (stay on MUL/UOP)
 
@@ -663,4 +676,4 @@ Decode cost on one worker (desktop CPU): an anim page about 2.6 ms, an art page 
 
 Picking needs CPU-side alpha. The client decodes pack pages on the CPU (B5G5R5A1 bit 15; Indexed8 index other than 0), and gump records likewise (the picker mask is built from the decoded image at upload). Mask sidecars are not part of the format.
 
-Experimental, not shipped: the `Rgba8` and `Bc7` page formats, and Kind 1 pages (valid, but a page then decodes on one thread only).
+Experimental, not shipped: the `Rgba8` and `Bc7` page formats.
