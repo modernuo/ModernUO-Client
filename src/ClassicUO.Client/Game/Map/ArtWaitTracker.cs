@@ -8,13 +8,13 @@ namespace ClassicUO.Game.Map
     /// What the chunk loader remembers about a chunk waiting for its first-sight art (Map.RequestBlockArt and
     /// Map.RequestChunkArt), so that waiting costs O(1) per frame:
     /// <list type="bullet">
-    /// <item>the first check (or the first after the generation changed: a season change, an atlas reload) scans
+    /// <item>the first check (or the first after the generation changed: a season change) scans
     /// everything and requests every missing sprite at once;</item>
     /// <item>later checks resume at the remembered token (the first sprite still missing for a block, the art progress
     /// counter for a loaded chunk) instead of starting over.</item>
     /// </list>
-    /// Sprites before a block's position were ready when it was scanned and stay ready: the atlases only lose sprites on
-    /// a reload, which changes the generation. Main thread only.
+    /// Sprites before a block's position were ready when it was scanned and stay ready: the art and texmap atlases never drop
+    /// sprites (an atlas LRU that does must change the generation). Main thread only.
     /// </summary>
     internal sealed class ArtWaitTracker
     {

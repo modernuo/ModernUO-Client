@@ -8096,3 +8096,88 @@ Commits on `bg/worldmap-audit` after 13a60e10f, code first:
 - **P-8 (3254b1154), owner decision.** The facet texture is Bgra5551: the task converts the RGBA8 image (nearest 5-bit level, alpha from 128 up) before posting, so the upload and the handover image are half size and nothing runs per frame. Chosen once at device creation: Bgra5551 unless FNA3D runs on SDL_GPU without B5G5R5A1 sampling support (then RGBA8, as before). The upload line names the format and the gump rectangle.
 - **Verification.** Dev and `-p:CuoDevTools=false` client builds OK. Dev suite 4271 pass + 6 skipped. Dev `-p:CuoDevTools=false` suite 4208 pass + 6 skipped. Jobs on a dev JIT build of 3254b1154 (`worldmap-audit/bin2`; `measure/worldmap-audit/`): gate2-gpu bench-000952 / gate2-legacy bench-000953 (the gate above on the new binary; "WMAUDIT PASS"), alloc2 bench-000954 (base, branch, branch with `worldmap_idle_loop` on; both renderers), pixel-p8 bench-000955 (base vs branch shots with the map open: 0 px differ outside the map gump, at most 4 per channel inside; "P8 PIXEL PASS"), idle-count bench-000956 (updates/s with the map open, switch off vs on, both checkers, mismatches 0; "IDLE COUNT PASS"). The first-round jobs bench-000946/947/948 (c7b75d640) never started; they were cancelled as superseded by 952-954, which run the same scripts on a binary containing those commits. **Results (bench-000952..956, 3254b1154).** gate2 (952 Gpu, 953 Legacy) failed only on two harness rules; part 2 had no failures on either renderer. Part 3 counted "7 texture uploads (expected 4..6)": 7 decodes, 7 uploads, 0 dropped, one upload per open or facet change (5 opens, 2 changes). The closes 3 s and 1 s after an open no longer land mid-load (a load takes about 1 s), the same 7 as bench-000390/391. Part 4 counted the intended warning for the CSV line "1,2" as an exception line: `world map markers: ...wmaudit.csv line 5: Arg_IndexOutOfRangeException` is the exception message (the type name under the trimmed resource keys), at Warning level, without a stack trace. The rules are fixed: `measure/worldmap-audit/part3.sh` (a copy of worldmap-texture's) allows 4..7 uploads, with uploads <= decodes. part4.sh requires exactly the four expected bad-line warnings (CSV lines 4 and 5, UOAM lines 3 and 4), twice each, at Warning level, and fails on any other exception line, a stack trace, or a marker line at another level. Both runs' logs pass the new rules offline. alloc2 (954, dev JIT, checkers off; arms base / branch / branch with `worldmap_idle_loop` on): the arms match within window noise and gc0/1/2 are 0 in every window. Map-open window: Gpu 1261 / 1241 / 1261 B/frame, Legacy 630 / 630 / 1261. stand: Gpu 1217-1261, Legacy 820-1261. closed: 558-790. Each window holds only 7-23 presented frames (the loop presents on change), so these absolute figures cannot be compared with perf-alloc-3b's NativeAOT numbers; they compare the arms. pixel-p8 (955) failed 4 comparisons, all from the script. The `_screen` shots are backbuffer pixels at UI scale 1.5 (960x720 against the 640x480 `_ui` shot), and the gump rectangle from the log is in UI coordinates. Every differing pixel lies inside the scaled gump (bbox x 155..743, y 155..719, within 150..750), with a max channel diff of 4. In the `_ui` shots, 42,485 px differ inside the gump (max 4) and 0 outside. One branch world-layer shot (Gpu b4 map_b) differs from b2 by 979 px of the player sprite (an idle fidget frame). Its other comparisons are equal, and the world layer does not contain the gump. `p8shots/wm-pixel-cmp.py` now scales the rectangle for `_screen` shots and only notes the world and light layers; on bench-000955's shots all 8 comparisons pass. idle-count (956) PASS: `[worldmap-idle-check]` mismatches are 0 in every window. With the map open and the switch off: 62.9-63.5 updates/s (the loop busy on WorldMap about 315 times per 5 s). With the switch on: 9.2-12.6 updates/s (idle_updates/s 4.0-7.8); late_image, late_query and state_after_idle are 0. With the map closed, both settle at about 7-10 updates/s. With the switch on, `[loop-idle-check]` reported 2-6 `untracked_send` per 5 s (packet 0xF0, the party/guild position query, gap 250.x ms). The query's 250 ms deadline equals `event_loop_idle_max_wait_ms`, so that wait counts as a cap wait, and the checker recorded no deadline for it. The query goes out on time (late_query 0). Checker fixed in 0dae76dfd: a cap wake records the deadline, with a test for both switch states. The job's rule had not read `[loop-idle-check]`; idle-count2 fails on 0xF0 untracked sends or WorldMap late_due. One `untracked_send` 0x06 at login in every arm (both switch states) predates this branch and is not world-map work. **Round 3** (2c4d39b5d merges poc ecdf36f42; 0dae76dfd adds the checker fix): dev suite 4276 pass + 6 skipped; `-p:CuoDevTools=false` suite 4208 pass + 6 skipped; both client builds OK. Jobs on a dev JIT build of 0dae76dfd (`worldmap-audit/bin3`): gate3-gpu bench-000959, gate3-legacy bench-000960 ("WMAUDIT PASS"), pixel-p8b bench-000961 ("P8 PIXEL PASS"), idle-count2 bench-000962 ("IDLE COUNT PASS"). Results: pending at the time of writing.
 - **Costs.** None per frame. Memory: the facet texture halves (Felucca/Trammel 117.5 -> 58.8 MB per client while the map is open); the first build no longer holds a second 117.5 MB decode buffer.
+## 2026-11-19 atlas-lru (bg/atlas-lru): anim_atlas_lru validated in busy play; `atlas_lru` for Art/Gump/Texmap/Light/glyph atlases (default off)
+
+Base 519f6a4e3, merged poc ecdf36f42. Owner 2026-11-19: test the anim LRU in normal and busy play, extend it to the
+other atlases, fix the reload leak.
+
+**Reload leak (H3):** the Options "reload our assets" button is deleted with Art/Gump/Sound/Cliloc Reload (rule: the
+client assumes no client file changes at runtime), so no atlas pages are left behind.
+
+**Phase 1, anim_atlas_lru results** (NativeAOT dev 3c281b06a, switch and CUO_ANIM_LRU_CHECK on):
+- busy-small (bench-000938; 2048^2 pages = 16 MiB, budget 32 MiB = 2 pages, ceiling 4, min age 5 s; large scene,
+  lswalk, bodies wrap x2, Britain walk, glide, teleports): 0 checker mismatches (89.6 M uses, 828 reloads compared in
+  Gpu). Final Gpu: pages 5 (80 MiB), evicted 9 pages / 943 directions, reloads 505 (thrash 225, async 323, blink frames
+  144); Legacy: pages 6, evicted 14 / 2077, reloads 1553 (thrash 798, async 980, blink frames 313), grows 0.
+  - Pages above the ceiling: the ceiling bounds the budget, not residency. A page is evicted only when not drawn for the
+    min age and not the open page; in the large scene and the bodies wrap every resident page is drawn within 5 s, so
+    residency = the last 5 s's working set + the open page (by design: evicting a page in use reloads it every frame).
+  - Thrash (45 %, Gpu): mostly the forced budget (a 2-page budget against a 5-6 page working set), made worse by a bug:
+    grows stayed 0. `MemoryAllowsGrowth` subtracted the machine-wide memory load (19.5 GiB) from
+    `TotalAvailableMemoryBytes`, which is the 8 GiB heap limit under `GCHeapHardLimit` (every job sets one), so growth
+    was always refused. Fixed (62f2eddd5): headroom = high-load threshold minus load (both physical). No thrash loop:
+    evicted pages rose 14 in 5.5 min, not every 5 s line.
+  - Blink frames: frames in which an evicted direction reloading on a worker was asked for before its upload (upper
+    bound: dimension queries count too). Legacy: 313 in ~5.5 min (~1-2 % of frames, each a mobile or layer missing for
+    one or a few frames, only under the forced budget). Gpu: the world draws from the pack pages, so anim atlas blinks
+    are not visible there (only picking/dimensions use it).
+- busy-default (bench-000939, 256 MiB): no evictions; peak 4 pages (256 MiB) Legacy, 3 Gpu.
+- golden (bench6-000051) base vs switch on (default budget): GOLDEN SAME, 0 px. gate-gpu (bench2-000038): ALRU PASS.
+- gate-legacy (bench3-000029) failed only on `[mobile-cache-check] frame cache of 0x0006D6F0 used by 0x8006D6F0`
+  (the dead-bit re-key false mismatch fixed on poc in ecdf36f42); anim LRU checker 0 failures. Rerun after the merge.
+- pick (bench6-000052) failed in the harness: the plain `pickscan:8x6` mode is gone; the job now runs
+  `pickscan:8x6:pick_records` on both renderers. Rerun.
+- alloc (bench5-000041/42, base 519f6a4e3 / new / newon): main-thread p50 B/frame equal in every window of both
+  renderers (536-824 B; one Legacy ls_idle window base 704 vs new 536). Window averages differ only by one-off spikes.
+  The table has no per-update column.
+
+**Phase 2, `atlas_lru`** (approved 2026-11-19; default off):
+- One policy type (`AtlasLruPolicy`, the renamed anim policy) and `AtlasPageLru` per atlas: Art 256/128/1024 MiB
+  (budget/floor/ceiling; 64 MiB pages), Gump 192/128/768 (64 MiB), Texmap 64/32/256, Light 32/16/64, font glyphs
+  32/16/128 (16 MiB pages). Same times as the anim LRU (min age 45 s, thrash window 60 s, shrink 180 s / 45 s unfocused).
+- Pages are touched per draw call (batcher InternalDraw/DrawDirectIndexed, Gpu Emit: one type test per draw call) and
+  freed only in the per-frame Tick before drawing. The owner forgets the entries on a freed page (sprite infos cleared;
+  picker masks and art bounds stay; PackSpriteMap unregistered); they load again on their next lookup.
+- Cross-frame holders: `AtlasPageClock.FreedEpoch` (any freed page) replaces Animations.AtlasEpoch for
+  MobileFrameCache's Legacy replays; a Legacy chunk mesh rebuilds when it holds a freed page (checked once per freed-page
+  event; the Gpu world doesn't draw meshes); Map's art waits rescan (generation includes the epoch); RenderedText's quad
+  runs and recorded UI passes already reject disposed pages.
+- M2: the glyph atlas drops the `_cache`/`_coloredCache` entries of a freed page (and blank coloured entries), so the
+  coloured-glyph cache is bounded by the resident pages.
+- `CUO_ATLAS_LRU_CHECK`: a reloaded sprite has its size before eviction; no batcher draw names a freed page.
+  Developer overrides: CUO_ATLAS_LRU=1|0, CUO_ATLAS_LRU_BUDGET_MB/_FLOOR_MB/_CEILING_MB/_MIN_AGE_S, CUO_ATLAS_PAGE.
+- TextureAtlas.Dispose no longer throws for an atlas that never opened a page.
+- Memory: switch off, none. Switch on, it caps what was unbounded (the atlases only grew); per-page tag lists ~4 B per
+  sprite; evicted-key maps pruned past the thrash window. Unit tests: 12 new (policy over fake pages, thrash grow,
+  checker, switch states, Dispose).
+- Phase 2 jobs: see the atlas-lru handoff (gates off/on, forced small busy, golden off 0 px, alloc, pick).
+
+**Phase 2 results** (NativeAOT dev e91239169; base ecdf36f42):
+- Switches off: gate-b Legacy (bench4-000008) and gate-pool Gpu (bench2-000041) ATLAS OFF PASS; golden base vs new
+  (bench6-000055) GOLDEN SAME, 0 px, and the forced-small arm (atlas + anim) matched too.
+- Gates with the switches on, forced small (bench3-000033 Legacy, bench2-000040 Gpu): every gate check passed, 0
+  `[atlas-lru-check]` mismatches, but 0 pages evicted, so the eviction path was not exercised. Cause: the gate scenes
+  are one client per spot, and each atlas fit on one page (art stays on 1024^2 pages, its smallest size). The atlas
+  never evicts its open page, so a 1-page working set can't evict whatever the budget. The env reached the client (the
+  state lines show 4 MiB pages and the forced budgets). Fix in the jobs, not the code: 512^2 pages for texmap, light and
+  font, a 1-page budget, floor and ceiling, 2 s min age, plus a part 3 per gate. Part 3 travels on the lane's facet
+  (Minoc, Vesper, Trinsic, then Minoc and Vesper again) and must evict pages and compare reloads. Rerun as
+  bench3-000039 / bench2-000047.
+- pick (bench6-000056): Gpu passed (3 scans, 0 different; art evicted 1 page, 24 reloads). Legacy did not run: the
+  largescene lock timed out after 1500 s behind other lanes' jobs (harness). Rerun as bench6-000058, now with the
+  atlas checker summary per run.
+- Busy, forced small (bench-000966): art evicted pages in both renderers (Legacy 5 pages / 1284 sprites, 364 reloads;
+  Gpu 7 / 1904, 1183 reloads), 0 checker mismatches. Every art reload counted as thrash, because the 5 s min age is
+  well inside the 60 s window while travelling. Budget grew 2 to 4 (ceiling). Gump, texmap, light and font never
+  evicted (each at most 2 pages, within their budget). Anim, same run: Legacy evicted 13 pages, 1402 reloads (thrash
+  268, blink frames 258); Gpu evicted 9 pages, 230 reloads (thrash 190, blink frames 19).
+- Busy, default budgets (bench-000967): no atlas or anim evictions. Peak use: art 1 page (64 MiB), gump 1 (64), texmap
+  1 (16), font 1 (16), light 0. Each budget shrank once, after 180 s quiet, toward its floor.
+- Anim grow fix (62f2eddd5), busy-small rerun bench-000963 vs bench-000938: grows 0 -> 2 (budget 2 -> 4 pages, the
+  ceiling) in both renderers. Legacy thrash 798 -> 242, reloads 1553 -> 1386, blink frames 313 -> 219. Gpu thrash
+  225 -> 199, reloads 505 -> 404, blink frames 144 -> 60. 0 checker mismatches. Anim gate rerun bench3-000032: ALRU
+  PASS, no anim evictions in the gate scenes, only the 0-mismatch `[mobile-cache-check]` summaries.
+- Alloc (bench5-000046 Legacy, bench5-000047 Gpu; base / new switches off / newon atlas_lru on at default): main-thread
+  p50 B/frame 0 in every window of every arm. The one exception is a Legacy corpses window at 264 B (newon), inside
+  the known idle quantum. Window averages and p95 differ only by single-window spikes, which hit every arm (base
+  worldmap 5080, new town_idle 5083, newon gumps 8018). GC counts are equal.

@@ -520,8 +520,9 @@ namespace ClassicUO.Game.Map
 
         private static long ChunkKey(int chunkX, int chunkY) => ((long)chunkX << 32) | (uint)chunkY;
 
-        // what a remembered "ready" depends on besides the uploads: the atlas contents (Art.Reload) and the season graphics
-        private int ArtGeneration => Client.Game.UO.Arts.Generation * 16 + (int)_world.Season;
+        // what a remembered "ready" depends on besides the uploads: the season graphics, and (atlas_lru) the freed atlas
+        // pages: a sprite found ready before a page was freed may be gone
+        private int ArtGeneration => (int)_world.Season | (ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch << 4);
 
         private enum ArtCheck
         {
@@ -534,7 +535,7 @@ namespace ClassicUO.Game.Map
 
         /// <summary>
         /// Whether the art that chunk (chunkX, chunkY)'s map block names (land art, texmaps, static art, with the current
-        /// season's graphics) is in the atlases. The first check (and the first after a season change or atlas reload)
+        /// season's graphics) is in the atlases. The first check (and the first after a season change)
         /// requests everything missing at once; later checks resume at the first sprite still missing.
         /// </summary>
         private ArtCheck RequestBlockArt(int chunkX, int chunkY)
