@@ -10,6 +10,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
