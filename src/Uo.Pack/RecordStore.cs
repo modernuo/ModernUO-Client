@@ -232,6 +232,9 @@ public sealed class RecordStore : IDisposable
 
     public int SlotCount => Slots.Length;
 
+    /// <summary>The store file's length in bytes (at open).</summary>
+    public long FileLength => _length;
+
     /// <summary>The slot of <paramref name="id"/> and its record, or false when the id has none.</summary>
     public bool TryGet(int id, out StoreSlot slot, out StoreRecord record)
     {
