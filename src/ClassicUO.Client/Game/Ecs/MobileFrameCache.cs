@@ -175,8 +175,10 @@ namespace ClassicUO.Game
             {
                 OwnerSerial = serial;
             }
-            else if (OwnerSerial != serial)
+            else if ((OwnerSerial & 0x7FFFFFFF) != (serial & 0x7FFFFFFF))
             {
+                // The death packet re-keys a dying mobile to serial | 0x80000000 (WorldWriter.RekeyDeadMobile): same
+                // Mobile, same cache, not a mismatch.
                 OwnerMismatches++;
                 ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] frame cache of 0x{OwnerSerial:X8} used by 0x{serial:X8}");
                 OwnerSerial = serial;
