@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using ClassicUO.Renderer.Animations;
 
 namespace ClassicUO.Renderer
 {
@@ -35,7 +36,8 @@ namespace ClassicUO.Renderer
         public FontGlyphAtlas(FontsLoader fontsLoader, GraphicsDevice device)
         {
             _fontsLoader = fontsLoader;
-            _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
+            int page = TextureAtlas.PageSize(2048, 512);
+            _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -125,6 +127,7 @@ namespace ClassicUO.Renderer
                 glyphInfo.Height,
                 out var uv
             );
+            AtlasPageClock.Touch(texture);
 
             return new GlyphAtlasEntry
             {
@@ -136,6 +139,57 @@ namespace ClassicUO.Renderer
                 GlyphWidth = glyphInfo.Width,
                 GlyphHeight = glyphInfo.Height
             };
+        }
+
+        // ---- atlas_lru: the glyph atlas's page LRU; it also bounds _coloredCache (M2: HTML text adds an entry per glyph
+        // and colour, and every entry holds atlas space, so without eviction both grow for the whole session) ----
+
+        private AtlasPageLru _lru;
+
+        public AtlasPageLru Lru => _lru;
+
+        public long AtlasPageBytes => _atlas.PageBytes;
+
+        public int CachedGlyphs => _cache.Count;
+
+        public int CachedColoredGlyphs => _coloredCache.Count;
+
+        /// <summary>atlas_lru on: call before the first glyph renders.</summary>
+        public void EnableLru(AtlasLruPolicy policy)
+        {
+            _atlas.TrackPages = true;
+            _lru = new AtlasPageLru("font", _atlas, _atlas.PageBytes, policy, DropPage);
+        }
+
+        /// <summary>Once per frame before anything is drawn (atlas_lru on): frees pages above the budget.</summary>
+        public void TickLru(long nowMs, bool unfocused) => _lru?.Tick(nowMs, unfocused);
+
+        // the glyphs on a page about to be freed render again on their next lookup. Entries are keyed by font/char/style
+        // (and colour), not by page, so both caches are walked: only when a page is freed. Coloured entries without a
+        // texture (blank glyphs) go too: they cost no atlas space, but one per colour would otherwise stay forever.
+        private void DropPage(Texture2D page, List<uint> keys)
+        {
+            foreach (var pair in _cache)
+            {
+                if (ReferenceEquals(pair.Value.Texture, page))
+                {
+                    _lru.ForgotUnkeyed();
+                    _cache.Remove(pair.Key);
+                }
+            }
+
+            foreach (var pair in _coloredCache)
+            {
+                if (pair.Value.Texture == null || ReferenceEquals(pair.Value.Texture, page))
+                {
+                    if (pair.Value.Texture != null)
+                    {
+                        _lru.ForgotUnkeyed();
+                    }
+
+                    _coloredCache.Remove(pair.Key);
+                }
+            }
         }
 
         public void Dispose()

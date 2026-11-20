@@ -114,12 +114,6 @@ namespace ClassicUO.Assets
             Load();
         }
 
-        /// <summary>Loads again (Clilocs.txt edited, say): the current strings stay in use until the new set is complete.</summary>
-        public void Reload()
-        {
-            Load();
-        }
-
         public override void Load()
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();

@@ -52,12 +52,6 @@ namespace ClassicUO.Renderer.Sounds
         /// <summary>The sound effects played so far, within <see cref="SoundCacheBudget"/>.</summary>
         public SoundCache Cache { get; }
 
-        public void Reload()
-        {
-            _soundsLoader.LoadOurs();
-            Cache.Clear();
-        }
-
         public IO.Audio.Sound GetSound(int index)
         {
             if (index >= 0 && index < MAX_SOUND_DATA_INDEX_COUNT)
