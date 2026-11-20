@@ -8017,3 +8017,46 @@ Codec (due-diligence item 4 of the zstd pack revision, bench-000925, quiet, pinn
 region 1.00 vs 2.45 ms, art chunk 0.55 vs 1.83 ms, anim chunk 0.26 vs 0.98 ms, art page 3.7 vs 13.4 ms, gump record (274 KB)
 0.23 vs 0.57 ms (q9), small raw gump record (7 KB) zstd 19 10.7 us (zstd 9 7.8 us) vs copy 0.1 us. zstd 19 is smaller than
 Brotli as built on every set. Confirms the busy-machine ranking.
+
+## 2026-11-19 buffer-pools (bg/buffer-pools): one buffer pool facade (Uo.Buffers), ModernUO ref collections, bounded LOH retention
+
+Base 519f6a4e3, poc ecdf36f42 merged. Plan and microbenchmark: cuo-poc-state/surveys/buffer-pools-2026-11-19.md. Owner go
+2026-11-19 (decisions in briefs/buffer-pools-2.md).
+
+What changed:
+- `src/Uo.Buffers` (new, dependency-free): `BufferPool` facade. Same-thread rents up to 64 KiB use the calling thread's
+  `STArrayPool` (ModernUO port); cross-thread rents up to 64 KiB use `ArrayPool.Shared`; everything above 64 KiB goes to
+  `LargeBufferPool` (4 size classes per octave, at most 48 MiB of free buffers, LRU eviction, idle trim after 30 s, counters).
+  `CUO_POOL_AUDIT=1` (dev) logs double, foreign and wrong-thread returns with the stack.
+- ModernUO copies (licence: THIRD-PARTY-NOTICES.md): `PooledRefList` replaces `PooledList`, `ValueStringBuilder` replaces the
+  client's (ToString no longer disposes; every site disposes after ToString), `PooledRefQueue` added. Coordinator change: their
+  rents go through the facade, so an oversized collection lands in the large pool, never in a per-thread pool. The packet code is
+  not edited (network rework); a csproj alias points its `ValueStringBuilder` at the copy.
+- Conversions: pack/asset decode scratch, PackPages chunk buffers (own free stack removed), MapLoader region buffers (4 spares
+  removed; prefetches not adopted within 10 s or beyond 8 are dropped, all dropped on LoadMap), Uo.Render region parse (H4: two
+  LOH arrays of garbage per region load now pooled), bake job arrays trimmed above 2048 on return (M4), renderer decode outputs
+  (`RentShared`), LogFile, world map cursor, Gpu item cache growth.
+- `gump_decode_budget` (default off, `CUO_GUMP_BUDGET_CHECK`): gump worker decodes counted in their own 32 MiB budget (H5).
+- Object pools: QueuedPool capped (RenderedText clears its text on return), FirstSightDecoder job stack capped at 256,
+  `DynamicTileIndex.EntryPool` capped at 4 MiB in all; counters on the `[bufpools]` and new `[objpools]` log lines.
+
+Verification (part 1 at 8e98e1d49, NativeAOT dev builds base 519f6a4e3 / new): gate Gpu with the audit, the gump checker and
+the switch on bench2-000039 PASS; golden bench6-000053 PASS (0 px); gate Legacy bench3-000030 failed only on
+`[mobile-cache-check]` dead-mobile lines (fixed on poc in ecdf36f42, merged). Alloc bench5-000043 (Gpu) / 000044 (Legacy),
+arms base, new, gumpon: 72 of 84 windows have the same main-thread p50; the 12 others differ by one step of the steady idle
+allocation (0/264/536/704/824/944 B), which also changes between rounds of the base arm (tour ls_idle base 536 then 704); traced
+separately (alloc-counters). GC per session (tour, 60 s): 7 collections / 2 gen2 (Gpu) and 5 / 2 (Legacy) in every arm.
+
+Large pool in the tour scene (teleports, Gpu, new arm): 460-590 rents, about half hits, 150-180 MiB allocated over the run,
+outstanding high-water 95-110 MiB, free 3-14 MiB of the 48 MiB budget at the 60 s lines; idle ls scenes: high-water 48-51 MiB,
+60-89 MiB allocated. Per-thread pools: 24 pools, 0.6-1.2 MiB free in all.
+
+Memory (per client): large pool at most 48 MiB of free buffers (measured 3-17 MiB held at the stats lines); per-thread pools
+about 1 MiB in all; gump budget 32 MiB in flight when on; tile entry pool at most 4 MiB. Removed: MapLoader's 4 spare region
+buffers (up to 13 MiB), PackPages' 4 spare chunks (4 MiB). Benefit: LOH retention has a known ceiling (ArrayPool.Shared kept the
+whole burst peak until its age trim), region parses stop producing LOH garbage, and oversized ref collections cannot pin memory
+per thread.
+
+Second part (this round): ref collections through the facade (test: a >64 KiB rent from each lands in the large pool); client
+migrated to the copies; first PooledRefList users outside the fonts (custom house stair delete); facade sites LogFile, world map
+cursor, Gpu item cache; object-pool counters. Jobs for this head: see the handoff (gates both renderers, golden, alloc).
