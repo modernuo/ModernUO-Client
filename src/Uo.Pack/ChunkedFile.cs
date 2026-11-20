@@ -77,6 +77,7 @@ public static class ChunkedFile
             }
         }
         finally { if (scratch != null) ArrayPool<byte>.Shared.Return(scratch); }
+        if (decoder.Codec != PackCodec.Raw) PackDecodeCounts.ChunkedSpan((long)h.LogicalBytes);
         return h;
     }
 
@@ -291,6 +292,7 @@ public sealed unsafe class ChunkedDecoder : IDisposable
             _fh = null; _dest = null; _prefix = null;
         }
         if (_error != null) throw new InvalidDataException("chunk decode failed", _error);
+        if (codec != PackCodec.Raw) PackDecodeCounts.ChunkedBody((long)h.LogicalBytes);
         return h;
     }
 

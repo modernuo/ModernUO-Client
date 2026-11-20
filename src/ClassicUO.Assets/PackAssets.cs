@@ -388,6 +388,7 @@ namespace ClassicUO.Assets
                 RandomAccess.Read(fh, compressed.AsSpan(0, size), info.ChunkOffsets[index]);
                 // the decoding thread's codec context: chunks decode on any worker
                 PackCodec.ForThread(info.Codec).Decode(compressed.AsSpan(0, size), dst);
+                PackDecodeCounts.PageChunk(length);
             }
             catch (InvalidDataException e)
             {

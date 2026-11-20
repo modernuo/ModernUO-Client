@@ -266,6 +266,7 @@ public sealed class RecordStore : IDisposable
             ReadExactly(_file, src, (long)record.Offset);
             try { PackCodec.ForThread(record.Codec).Decode(src, raw); }
             catch (InvalidDataException e) { throw new InvalidDataException($"corrupt record at offset {record.Offset}", e); }
+            PackDecodeCounts.Record(raw.Length);
         }
         finally
         {
