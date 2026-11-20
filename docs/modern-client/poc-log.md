@@ -8147,3 +8147,24 @@ outstanding, so a budget of that size lets a teleport run without LOH reallocati
 (was 30 s; still checked every 5 s) and never goes below a 16 MiB floor of free buffers (about one region set), trimming size
 classes that never had a hit first. Memory cost: up to ~64 MiB more held per client than before; the later memory-cap setting
 scales it (Low uses less). No env override exists for the budget (SetBudget is the code hook). Tests: floor respected, defaults.
+
+## 2026-11-20 buffer-pools round 4: LargeBufferPool per-use caps instead of the flat 112 MiB
+
+Owner decision (supersedes the 112 MiB budget): the flat budget mixed outstanding buffers (mostly resident regions, 24 per
+region cache x 1.2-3.3 MB) with free retention. The large pool now keeps free buffers per use (`LargeUse`), each under a cap
+the client derives at startup (`LargePoolCaps`, logged as `[bufpools] caps`; 24-core box):
+- General (scoped scratch, worker decode outputs): DecodeBudget.Shared 16 MiB (+ DecodeBudget.Gumps 32 MiB with
+  gump_decode_budget) + 1 MiB compressed input x 19 scratch threads (main 2, Uo.Render workers clamp(cores/2-1,2,8) = 8,
+  MapLoader MaxPending 8 + 1 sync load) = 35 MiB (67 MiB). Uo.Render page decoders keep their own buffers (not pooled).
+- Region (logical region buffers): one teleport's swap in both caches, 2 x 4 = 8 buffers, at most 32 MiB. A cache's loaded
+  area (GPU view + prefetch ring; client PrefetchRadius 104 tiles + one block) is under 512 tiles, so at most 2 x 2 regions.
+  A region rent may take a free buffer up to two classes (25 % each) larger, since region sizes spread over several classes.
+  Not idle-trimmed: it replaces the 16 MiB floor.
+- Page (PackPages chunk buffers): 3 lanes x 2 decodes in flight = 6 chunks, 6 MiB.
+Ordering: both region caches load before they evict, by design (MapLoader prefetches up to 8 regions ahead and evicts on
+adoption; ChunkStore evicts regions idle 120 frames, every 64 frames, and bake jobs pin theirs), so evicting first is not
+possible without changing the caches; the Region cap keeps exactly the buffers one teleport's evictions return for the next
+teleport. The first loads after login (caches filling up to 24 regions each) always miss: they are outstanding growth, not
+pool misses. Counters: `[bufpools]` lines print per use rents/hits/misses/allocated, outstanding and free count/MB with
+high-waters, cap, drops and evictions; FrameStats also logs them at each teleport (map change or a jump over 32 tiles) and
+5 s after it. Tests: per-use isolation, region count cap, region fit, idle trim keeps Region, facade with use, cap derivation.
