@@ -125,6 +125,25 @@ namespace ClassicUO.UnitTests.Loop
             AssetWake.ChangeDue.Should().BeTrue();
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void IncompleteFrame_DeferredUploads_ScheduleTheirResumeInsteadOfTheFallback(bool on)
+        {
+            AssetWake.OverrideForTests = on;
+            AssetWake.BeginDraw();
+            AssetWake.EndDraw(true, 1000, 1008);
+
+            AssetWake.FallbackTick.Should().Be(on ? 1008 : long.MaxValue);
+            AssetWake.FallbackScheduled.Should().Be(on);
+
+            // a resume later than the fallback: the fallback, not scheduled
+            AssetWake.BeginDraw();
+            AssetWake.EndDraw(true, 2000, 2000 + AssetWake.FallbackMs + 5);
+            AssetWake.FallbackTick.Should().Be(on ? 2000 + AssetWake.FallbackMs : long.MaxValue);
+            AssetWake.FallbackScheduled.Should().BeFalse();
+        }
+
 #if CUO_DEVTOOLS
         [Fact]
         public void Check_LateOnlyPastOneIntervalPlusSlack()

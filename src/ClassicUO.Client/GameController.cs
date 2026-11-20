@@ -1115,12 +1115,14 @@ namespace ClassicUO
             _drawStartTs = Stopwatch.GetTimestamp();
             if (LoopStats.On) LoopStats.NoteDraw();
             bool assetFallback = AssetWake.FallbackTick != long.MaxValue && Time.Ticks >= AssetWake.FallbackTick;
+            bool assetScheduled = assetFallback && AssetWake.FallbackScheduled;
             BeginPresentedChange();
             long assetSignalTs = AssetWake.BeginDraw();
 #if CUO_DEVTOOLS
             if (AssetWakeCheck.On)
             {
-                AssetWakeCheck.Draw(assetSignalTs, _drawStartTs, DisplayIntervalMs, AssetWake.Enabled, assetFallback && assetSignalTs == 0);
+                AssetWakeCheck.Draw(assetSignalTs, _drawStartTs, DisplayIntervalMs, AssetWake.Enabled,
+                    assetFallback && assetSignalTs == 0 && !assetScheduled, assetScheduled && assetSignalTs == 0);
                 _assetPublishedAtDraw = ClassicUO.Renderer.AssetSignal.PublishedCount;
             }
 

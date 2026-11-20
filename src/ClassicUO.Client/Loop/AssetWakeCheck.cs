@@ -21,22 +21,51 @@ namespace ClassicUO.Loop
         public static readonly bool On = Environment.GetEnvironmentVariable("CUO_ASSET_WAKE_CHECK") == "1";
 
         private const int DetailLogs = 20;
-        private static long _start, _frames, _incomplete, _stale, _late, _waits, _maxLateTicks, _latencySum, _latencyCount, _fallbacks;
+        private static long _start, _frames, _incomplete, _stale, _late, _waits, _maxLateTicks, _latencySum, _latencyCount, _fallbacks, _scheduled;
         private static int _logged, _lastCauses;
         private static bool _switch;
-        private static readonly long[] _fallbackCause = new long[6];
-        private static readonly string[] _causeNames = { "chunks", "pages", "anim_pages", "map_draw", "held", "decodes" };
+
+        /// <summary>DevBench plan: one summary per plan step (<see cref="Step"/>) instead of every 5 s.</summary>
+        public static bool StepWindows;
+
+        /// <summary>DevBench: the window ends; <paramref name="tag"/> null discards it (a step starts), else it is printed.</summary>
+        public static void Step(string tag)
+        {
+            StepWindows = true;
+
+            if (tag != null)
+            {
+                Print(" step=" + tag);
+            }
+
+            Reset(Stopwatch.GetTimestamp(), _switch);
+        }
+
+        private static void Print(string step)
+        {
+            double meanMs = _latencyCount == 0 ? 0 : _latencySum * 1000.0 / Stopwatch.Frequency / _latencyCount;
+            Log.Info(FormattableString.Invariant(
+                $"[asset-wake-check]{step} switch={(_switch ? "on" : "off")} frames={_frames} incomplete={_incomplete} stale={_stale} late={_late} completions_waited={_waits} mean_ms={meanMs:F1} max_late_ms={_maxLateTicks * 1000.0 / Stopwatch.Frequency:F1} fallbacks={_fallbacks} scheduled={_scheduled} mismatches={_stale + _late}") + FallbackCauses());
+        }
+        private static readonly long[] _fallbackCause = new long[7];
+        private static readonly string[] _causeNames = { "chunks", "pages", "anim_pages", "map_draw", "held", "decodes", "anim_decodes" };
 
         /// <summary>Whether a completion at <paramref name="signalTs"/> presented at <paramref name="drawTs"/> is late.</summary>
         public static bool IsLate(long signalTs, long drawTs, double intervalMs, long frequency)
             => signalTs != 0 && (drawTs - signalTs) * 1000.0 / frequency > intervalMs + 2.0;
 
         /// <summary>Draw start: <paramref name="signalTs"/> = the first completion after the last incomplete present (0: none).</summary>
-        public static void Draw(long signalTs, long drawTs, double intervalMs, bool on, bool fallback)
+        /// <paramref name="scheduled"/>: presented at the known resume time of budget-deferred uploads (not a fallback).
+        public static void Draw(long signalTs, long drawTs, double intervalMs, bool on, bool fallback, bool scheduled = false)
         {
             if (_start == 0 || on != _switch)
             {
                 Reset(drawTs, on);
+            }
+
+            if (scheduled)
+            {
+                _scheduled++;
             }
 
             if (fallback)
@@ -97,11 +126,9 @@ namespace ClassicUO.Loop
 
             long now = Stopwatch.GetTimestamp();
 
-            if (now - _start >= Stopwatch.Frequency * 5)
+            if (!StepWindows && now - _start >= Stopwatch.Frequency * 5)
             {
-                double meanMs = _latencyCount == 0 ? 0 : _latencySum * 1000.0 / Stopwatch.Frequency / _latencyCount;
-                Log.Info(FormattableString.Invariant(
-                    $"[asset-wake-check] switch={(_switch ? "on" : "off")} frames={_frames} incomplete={_incomplete} stale={_stale} late={_late} completions_waited={_waits} mean_ms={meanMs:F1} max_late_ms={_maxLateTicks * 1000.0 / Stopwatch.Frequency:F1} fallbacks={_fallbacks} mismatches={_stale + _late}") + FallbackCauses());
+                Print("");
                 Reset(now, _switch);
             }
         }
@@ -129,7 +156,7 @@ namespace ClassicUO.Loop
 
             _start = now;
             _switch = on;
-            _frames = _incomplete = _stale = _late = _waits = _maxLateTicks = _latencySum = _latencyCount = _fallbacks = 0;
+            _frames = _incomplete = _stale = _late = _waits = _maxLateTicks = _latencySum = _latencyCount = _fallbacks = _scheduled = 0;
         }
 #else
         public const bool On = false;

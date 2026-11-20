@@ -127,25 +127,35 @@ namespace ClassicUO
 #endif
 
         // asset_ready_wake: the frame is incomplete when the scene missed something visible with a load pending (Gpu), or any
-        // worker decode (art, texmap, gump, animation direction) is still pending at its end (Legacy draws those as nothing)
+        // worker decode (art, texmap, gump; animation directions on the Legacy world) is still pending at its end (Legacy draws
+        // those as nothing). On the Gpu world the Legacy directions decoding are frame counts and picking masks, never drawn
+        // (its mobiles wait on anim pages, CauseAnimPages): counted, they made every body change incomplete until drained,
+        // and the directions the upload budget deferred sent no completion (bench-000973: 80 fallbacks in the bodies step).
         private void EndAssetFrame()
         {
-            int pending = (UO.Arts?.PendingDecodes ?? 0) + (UO.Texmaps?.PendingDecodes ?? 0) + (UO.Gumps?.PendingDecodes ?? 0)
-                + (UO.Animations?.PendingDirections ?? 0);
-            bool incomplete = AssetWake.SceneIncomplete || pending != 0;
+            int pending = (UO.Arts?.PendingDecodes ?? 0) + (UO.Texmaps?.PendingDecodes ?? 0) + (UO.Gumps?.PendingDecodes ?? 0);
+            bool animPending = !AnimFrameCount.GpuWorld && (UO.Animations?.PendingDirections ?? 0) != 0;
+            bool incomplete = AssetWake.SceneIncomplete || pending != 0 || animPending;
+            long resumeTick = long.MaxValue;
+
+            if (animPending && UO.Animations.DeferredDrainTimestamp is var resume and not 0)
+            {
+                long ts = Stopwatch.GetTimestamp();
+                resumeTick = Time.Ticks + Math.Max(1L, (resume - ts) * 1000 / Stopwatch.Frequency + 1);
+            }
 #if CUO_DEVTOOLS
             if (AssetWakeCheck.On)
             {
                 int ready = (UO.Arts?.ReadyDecodes ?? 0) + (UO.Texmaps?.ReadyDecodes ?? 0) + (UO.Gumps?.ReadyDecodes ?? 0)
-                    + (UO.Animations?.ReadyDirections ?? 0);
+                    + (AnimFrameCount.GpuWorld ? 0 : UO.Animations?.ReadyDirections ?? 0);
                 // ready items published before this draw started are completed loads the frame did not use
                 int legacyStale = Math.Max(0, ready - (ClassicUO.Renderer.AssetSignal.PublishedCount - _assetPublishedAtDraw));
                 AssetWakeCheck.EndDraw(incomplete, legacyStale + AssetWake.SceneStale,
                     AssetWake.SceneStale != 0 ? "Gpu pages (and Legacy decodes)" : "Legacy decodes",
-                    AssetWake.SceneCauses | (pending != 0 ? AssetWake.CauseDecodes : 0));
+                    AssetWake.SceneCauses | (pending != 0 ? AssetWake.CauseDecodes : 0) | (animPending ? AssetWake.CauseAnimDecodes : 0));
             }
 #endif
-            AssetWake.EndDraw(incomplete, Time.Ticks);
+            AssetWake.EndDraw(incomplete, Time.Ticks, resumeTick);
         }
 
         private double MsUntilVisualDue()

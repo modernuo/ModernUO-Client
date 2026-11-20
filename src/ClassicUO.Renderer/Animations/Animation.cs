@@ -686,6 +686,13 @@ namespace ClassicUO.Renderer.Animations
         private const double DrainBudgetMs = 2, DrainWindowMs = 8;
         private long _drainWindowStart, _drainSpent;
 
+        /// <summary>Finished directions the upload budget left for the next drain window: the Stopwatch time that window
+        /// starts (0: none left). No completion signal comes for them, so asset_ready_wake schedules the present at that
+        /// time instead of waiting for its fallback.</summary>
+        public long DeferredDrainTimestamp => _queue.HasReady && _drainSpent >= (long)(DrainBudgetMs * Stopwatch.Frequency / 1000)
+            ? _drainWindowStart + (long)(DrainWindowMs * Stopwatch.Frequency / 1000) + 1
+            : 0;
+
         // main thread: atlas uploads and picker masks for the directions the workers finished
         private void DrainReady()
         {

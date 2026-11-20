@@ -45,7 +45,7 @@ namespace ClassicUO.Loop
         private static volatile bool _armed, _wake;
 
         // main thread
-        private static bool _on, _listening, _incomplete;
+        private static bool _on, _listening, _incomplete, _scheduled;
         private static int _seen;
         private static long _fallbackTick = long.MaxValue;
 
@@ -57,8 +57,9 @@ namespace ClassicUO.Loop
 
         /// <summary>What an incomplete frame waits for (CUO_ASSET_WAKE_CHECK names the cause of each fallback present):
         /// Gpu chunk bakes or uploads, Gpu art or animation pages, client chunks the draw walk asked for, a held look, Legacy
-        /// worker decodes.</summary>
-        public const int CauseChunks = 1, CausePages = 2, CauseAnimPages = 4, CauseMapDraw = 8, CauseHeld = 16, CauseDecodes = 32;
+        /// art/texmap/gump worker decodes, Legacy animation directions (Legacy world only).</summary>
+        public const int CauseChunks = 1, CausePages = 2, CauseAnimPages = 4, CauseMapDraw = 8, CauseHeld = 16, CauseDecodes = 32,
+            CauseAnimDecodes = 64;
 
         /// <summary>The scene's draw: the <c>Cause*</c> bits of this frame (cleared at each draw start).</summary>
         public static int SceneCauses;
@@ -71,6 +72,10 @@ namespace ClassicUO.Loop
 
         /// <summary>A visual due for the fallback present (long.MaxValue: none).</summary>
         public static long FallbackTick => _fallbackTick;
+
+        /// <summary>The due at <see cref="FallbackTick"/> is a known resume time (finished Legacy directions the upload
+        /// budget deferred), not a missing completion signal.</summary>
+        public static bool FallbackScheduled => _scheduled;
 
         /// <summary>A completion arrived since the incomplete frame's draw started: present it.</summary>
         public static bool ChangeDue => _on && _incomplete && Volatile.Read(ref _completions) != _seen;
@@ -121,17 +126,19 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>Draw end (before the present): whether the frame is incomplete; arms the wake and the fallback.</summary>
-        public static void EndDraw(bool incomplete, long nowTick)
+        /// <paramref name="resumeTick"/>: the tick finished work deferred by an upload budget is drawn (long.MaxValue: none).
+        public static void EndDraw(bool incomplete, long nowTick, long resumeTick = long.MaxValue)
         {
             _incomplete = incomplete;
-            _fallbackTick = incomplete && _on ? nowTick + FallbackMs : long.MaxValue;
+            _scheduled = incomplete && _on && resumeTick <= nowTick + FallbackMs;
+            _fallbackTick = incomplete && _on ? Math.Min(nowTick + FallbackMs, resumeTick) : long.MaxValue;
             _armed = incomplete && _listening;
         }
 
         /// <summary>Tests: back to the initial state.</summary>
         internal static void ResetForTests()
         {
-            _armed = _wake = _on = _listening = _incomplete = false;
+            _armed = _wake = _on = _listening = _incomplete = _scheduled = false;
             _seen = 0;
             _completions = 0;
             _firstSignalTs = 0;
