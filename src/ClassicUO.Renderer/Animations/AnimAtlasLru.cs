@@ -7,16 +7,17 @@ using Microsoft.Xna.Framework.Graphics;
 namespace ClassicUO.Renderer.Animations
 {
     /// <summary>
-    /// anim_atlas_lru: one page of the Legacy animation atlas (set as the page texture's <see cref="GraphicsResource.Tag"/>
-    /// while the LRU is on): when it was last drawn from and which cached directions have frames on it.
+    /// anim_atlas_lru / atlas_lru: one page of an atlas (set as the page texture's <see cref="GraphicsResource.Tag"/> while
+    /// its LRU is on): when it was last drawn from and which cached entries (anim directions, art/gump/texmap/light ids)
+    /// have sprites on it.
     /// </summary>
     public sealed class AtlasPage
     {
         public readonly int Serial;
         public long LastUseMs;
 
-        /// <summary>(body, action, dir) keys of the directions uploaded into this page (a direction can also have frames on
-        /// the page after it).</summary>
+        /// <summary>Keys of the entries uploaded into this page: (body, action, dir) for animations (a direction can also
+        /// have frames on the page after it), the sprite index for the other atlases.</summary>
         public readonly List<uint> Directions = new List<uint>();
 
         internal uint LastKey = uint.MaxValue;
@@ -28,15 +29,30 @@ namespace ClassicUO.Renderer.Animations
         }
     }
 
-    /// <summary>The frame clock of the anim atlas LRU: one store per use of a page.</summary>
+    /// <summary>The frame clock of the atlas LRUs (anim_atlas_lru, atlas_lru): one store per use of a page.</summary>
     public static class AtlasPageClock
     {
         /// <summary>The client's frame time in ms (Animations.Tick sets it once per frame).</summary>
         public static long NowMs;
 
+        /// <summary>
+        /// Bumped whenever any atlas frees a page (anim_atlas_lru, atlas_lru): holders of atlas textures across frames
+        /// (MobileFrameCache's Legacy replays, Legacy chunk meshes, the map's art waits) check it.
+        /// </summary>
+        public static int FreedEpoch;
+
         /// <summary>Marks the page of <paramref name="texture"/> used this frame; nothing for a texture that is not a tracked
-        /// anim atlas page (art, gumps, or the LRU off).</summary>
+        /// atlas page (the LRUs off, render targets, solid colours).</summary>
         public static void Touch(Texture2D texture)
+        {
+            if (texture?.Tag is AtlasPage page)
+            {
+                page.LastUseMs = NowMs;
+            }
+        }
+
+        /// <summary>As <see cref="Touch(Texture2D)"/>, for the batcher's draw calls (every Legacy and UI draw).</summary>
+        public static void Touch(Texture texture)
         {
             if (texture?.Tag is AtlasPage page)
             {
@@ -69,14 +85,14 @@ namespace ClassicUO.Renderer.Animations
     }
 
     /// <summary>
-    /// anim_atlas_lru: the budget and eviction policy of the Legacy animation atlas, without the GPU (unit-tested). Pages are
+    /// anim_atlas_lru / atlas_lru: the budget and eviction policy of one atlas, without the GPU (unit-tested). Pages are
     /// the eviction unit (the stb packer can't free a rect). Above the budget (high water), the least recently used pages
     /// that are not the open page and were not used for <see cref="MinAgeMs"/> are evicted down to <see cref="LowWater"/>.
     /// The budget grows a page when a direction evicted less than <see cref="ThrashWindowMs"/> ago is loaded again (thrash)
     /// and memory allows it, up to the ceiling; it shrinks a page after <see cref="ShrinkQuietMs"/> without thrash or resize
     /// (sooner while the client is unfocused or minimized), down to the floor.
     /// </summary>
-    public sealed class AnimAtlasLruPolicy
+    public sealed class AtlasLruPolicy
     {
         public int BudgetPages, FloorPages, CeilingPages;
         public long MinAgeMs = 45_000, ThrashWindowMs = 60_000, GrowCooldownMs = 5_000;
@@ -95,7 +111,7 @@ namespace ClassicUO.Renderer.Animations
         private long _lastThrashMs, _lastResizeMs;
         private bool _started;
 
-        public AnimAtlasLruPolicy(int budgetPages, int floorPages, int ceilingPages)
+        public AtlasLruPolicy(int budgetPages, int floorPages, int ceilingPages)
         {
             FloorPages = Math.Max(1, Math.Min(floorPages, budgetPages));
             CeilingPages = Math.Max(budgetPages, ceilingPages);

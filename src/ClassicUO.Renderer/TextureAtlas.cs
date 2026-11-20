@@ -6,7 +6,17 @@ using System.Collections.Generic;
 
 namespace ClassicUO.Renderer
 {
-    public class TextureAtlas : IDisposable
+    /// <summary>atlas_lru: the pages an <see cref="AtlasPageLru"/> evicts from (a <see cref="TextureAtlas"/>; a fake in tests).</summary>
+    public interface IAtlasPages
+    {
+        int TexturesCount { get; }
+
+        Texture2D GetPage(int index);
+
+        void RemovePage(int index);
+    }
+
+    public class TextureAtlas : IDisposable, IAtlasPages
     {
         private readonly int _width,
             _height;
@@ -27,7 +37,7 @@ namespace ClassicUO.Renderer
 
         public int TexturesCount => _textureList.Count;
 
-        /// <summary>anim_atlas_lru: new pages get an <see cref="Animations.AtlasPage"/> as their Tag.</summary>
+        /// <summary>anim_atlas_lru / atlas_lru: new pages get an <see cref="Animations.AtlasPage"/> as their Tag.</summary>
         public bool TrackPages { get; set; }
 
         public long PageBytes => (long)_width * _height * 4;
@@ -37,7 +47,7 @@ namespace ClassicUO.Renderer
         private int _pageSerial;
 
         /// <summary>
-        /// anim_atlas_lru: frees a page that is not the open one (only the open page has a packer, so a freed page's space
+        /// anim_atlas_lru / atlas_lru: frees a page that is not the open one (only the open page has a packer, so a freed page's space
         /// is never handed out again). Callers drop every reference to the texture first.
         /// </summary>
         public void RemovePage(int index)
@@ -109,6 +119,21 @@ namespace ClassicUO.Renderer
 
             _packer?.Dispose();
             _packer = new Packer(_width, _height);
+        }
+
+        /// <summary>
+        /// The page edge of an atlas: <paramref name="size"/>, or in developer builds CUO_ATLAS_PAGE (atlas_lru gates: small
+        /// pages so eviction happens in a short scene), never below <paramref name="min"/> (the largest sprite it holds).
+        /// </summary>
+        public static int PageSize(int size, int min)
+        {
+#if CUO_DEVTOOLS
+            if (int.TryParse(Environment.GetEnvironmentVariable("CUO_ATLAS_PAGE"), out int p) && p >= 512 && p <= 4096)
+            {
+                return Math.Max(p, min);
+            }
+#endif
+            return size;
         }
 
         public void SaveImages(string name)

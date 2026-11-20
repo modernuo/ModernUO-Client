@@ -23,7 +23,8 @@ namespace ClassicUO.Renderer.Arts
         {
             _artLoader = artLoader;
             _huesLoader = huesLoader;
-            _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
+            int page = TextureAtlas.PageSize(4096, 1024);
+            _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
             _picker = new PixelPicker(_spriteInfos.Length);
@@ -283,6 +284,7 @@ namespace ClassicUO.Renderer.Arts
             var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
             spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
             PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+            _lru?.Uploaded(spriteInfo.Texture, idx, job.Width, job.Height);
 
             if (idx > 0x4000)
             {
@@ -415,6 +417,7 @@ namespace ClassicUO.Renderer.Arts
                     );
 
                     PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+                    _lru?.Uploaded(spriteInfo.Texture, idx, artInfo.Width, artInfo.Height);
 
                     if (idx > 0x4000)
                     {
@@ -563,5 +566,43 @@ namespace ClassicUO.Renderer.Arts
                 : _realArtBounds[idx];
 
         public bool PixelCheck(uint idx, int x, int y) => _picker.Get(idx, x, y);
+
+        // ---- atlas_lru: the art atlas's page LRU (land and static art; picker masks and bounds stay) ----
+
+        private AtlasPageLru _lru;
+
+        public AtlasPageLru Lru => _lru;
+
+        public long AtlasPageBytes => _atlas.PageBytes;
+
+        /// <summary>atlas_lru on: call before the first sprite loads.</summary>
+        public void EnableLru(Animations.AtlasLruPolicy policy)
+        {
+            _atlas.TrackPages = true;
+            _lru = new AtlasPageLru("art", _atlas, _atlas.PageBytes, policy, DropPage);
+        }
+
+        /// <summary>Once per frame before anything is drawn (atlas_lru on): frees pages above the budget.</summary>
+        public void TickLru(long nowMs, bool unfocused) => _lru?.Tick(nowMs, unfocused);
+
+        // the entries on a page about to be freed load again on their next lookup (synchronously, or through a request)
+        private void DropPage(Texture2D page, System.Collections.Generic.List<uint> keys)
+        {
+            if (keys == null)
+            {
+                return;
+            }
+
+            foreach (uint idx in keys)
+            {
+                ref var spriteInfo = ref _spriteInfos[idx];
+
+                if (ReferenceEquals(spriteInfo.Texture, page))
+                {
+                    _lru.Forgot(idx, spriteInfo.UV.Width, spriteInfo.UV.Height);
+                    spriteInfo = default;
+                }
+            }
+        }
     }
 }

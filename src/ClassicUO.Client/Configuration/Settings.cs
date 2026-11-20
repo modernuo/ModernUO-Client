@@ -227,6 +227,13 @@ namespace ClassicUO.Configuration
         // Default off: the atlas only grows.
         [JsonPropertyName("anim_atlas_lru")] public bool AnimAtlasLru { get; set; }
 
+        // atlas-lru: the Art, Gump, Texmap, Light and font glyph atlases free their least recently used pages above a
+        // budget per atlas, with anim_atlas_lru's policy (AtlasLruSetup); evicted sprites load again on use, and the glyph
+        // caches drop the entries of a freed page (bounds the coloured-glyph cache). Read once at startup (CUO_ATLAS_LRU=1|0
+        // and the CUO_ATLAS_LRU_* sizes override it in developer builds; CUO_ATLAS_LRU_CHECK=1 checks reloads and draws).
+        // Default off: the atlases only grow.
+        [JsonPropertyName("atlas_lru")] public bool AtlasLru { get; set; }
+
         // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
         // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
         // every frame it is visible (GameScene.ApplyMeshHue, MeshHueEpoch). Read once per frame (CUO_MESH_HUE=1|0 overrides

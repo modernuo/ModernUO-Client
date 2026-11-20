@@ -410,7 +410,7 @@ namespace ClassicUO.Renderer.Animations
 
         // ---- anim_atlas_lru: a budgeted LRU over the atlas pages (Tick, once per frame) ----
 
-        private AnimAtlasLruPolicy _lru;
+        private AtlasLruPolicy _lru;
         // (body, action, dir) of the evicted directions not loaded again yet, with the eviction time
         private readonly Dictionary<uint, long> _evictedAt = new Dictionary<uint, long>();
         private long[] _lruUse = Array.Empty<long>();
@@ -420,18 +420,18 @@ namespace ClassicUO.Renderer.Animations
         private readonly HashSet<SpriteInfo[]> _pendingReloads = new HashSet<SpriteInfo[]>(ReferenceEqualityComparer.Instance);
         private long _blinkMs = -1;
 
-        /// <summary>Bumped when a page is freed: cached draws that hold atlas textures (MobileFrameCache's Legacy replay) are
-        /// stale.</summary>
-        public static int AtlasEpoch;
+        /// <summary>Changes when any atlas frees a page (<see cref="AtlasPageClock.FreedEpoch"/>): cached draws that hold
+        /// atlas textures (MobileFrameCache's Legacy replay, anim and art) are stale.</summary>
+        public static int AtlasEpoch => AtlasPageClock.FreedEpoch;
 
-        public AnimAtlasLruPolicy Lru => _lru;
+        public AtlasLruPolicy Lru => _lru;
 
         public int AtlasPages => _atlas.TexturesCount;
 
         public long AtlasPageBytes => _atlas.PageBytes;
 
         /// <summary>anim_atlas_lru on: call before the first direction loads.</summary>
-        public void EnableLru(AnimAtlasLruPolicy policy)
+        public void EnableLru(AtlasLruPolicy policy)
         {
             _lru = policy;
             _atlas.TrackPages = true;
@@ -540,7 +540,7 @@ namespace ClassicUO.Renderer.Animations
             PackSpriteMap.Unregister(texture);
             _atlas.RemovePage(index);
             _lru.EvictedPages++;
-            AtlasEpoch++;
+            AtlasPageClock.FreedEpoch++;
             TextureUploads.Changed();
         }
 

@@ -520,8 +520,9 @@ namespace ClassicUO.Game.Map
 
         private static long ChunkKey(int chunkX, int chunkY) => ((long)chunkX << 32) | (uint)chunkY;
 
-        // what a remembered "ready" depends on besides the uploads: the season graphics (atlas sprites are never dropped)
-        private int ArtGeneration => (int)_world.Season;
+        // what a remembered "ready" depends on besides the uploads: the season graphics, and (atlas_lru) the freed atlas
+        // pages: a sprite found ready before a page was freed may be gone
+        private int ArtGeneration => (int)_world.Season | (ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch << 4);
 
         private enum ArtCheck
         {

@@ -39,7 +39,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>The policy for pages of <paramref name="pageBytes"/>, or null when the switch is off.</summary>
-        public static AnimAtlasLruPolicy Create(bool on, long pageBytes)
+        public static AtlasLruPolicy Create(bool on, long pageBytes)
         {
             if (!on)
             {
@@ -58,7 +58,7 @@ namespace ClassicUO.Game
             shrinkS = Env("CUO_ANIM_LRU_SHRINK_S", (int)shrinkS);
             shrinkUnfocusedS = Env("CUO_ANIM_LRU_SHRINK_UNFOCUSED_S", (int)shrinkUnfocusedS);
 #endif
-            var policy = new AnimAtlasLruPolicy(Pages(budgetMb, pageBytes), Pages(floorMb, pageBytes), Pages(ceilingMb, pageBytes))
+            var policy = new AtlasLruPolicy(Pages(budgetMb, pageBytes), Pages(floorMb, pageBytes), Pages(ceilingMb, pageBytes))
             {
                 MinAgeMs = minAgeS * 1000,
                 ThrashWindowMs = thrashS * 1000,
@@ -93,7 +93,7 @@ namespace ClassicUO.Game
         // Both numbers are physical memory; TotalAvailableMemoryBytes is not: under GCHeapHardLimit it is the heap limit,
         // which atlas pages (native) don't count against, and comparing it with the machine load refused every grow.
         // Allocates a GCMemoryInfo: only asked on a thrash reload that could grow.
-        private static bool MemoryAllowsGrowth()
+        internal static bool MemoryAllowsGrowth()
         {
             var info = GC.GetGCMemoryInfo();
 

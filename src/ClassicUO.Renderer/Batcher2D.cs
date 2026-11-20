@@ -1343,6 +1343,7 @@ namespace ClassicUO.Renderer
 
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
 
+            UsePage(texture);
             GraphicsDevice.Textures[0] = texture;
             ApplyEffect();
 
@@ -1564,6 +1565,20 @@ namespace ClassicUO.Renderer
             }
         }
 
+        // anim_atlas_lru / atlas_lru: a draw call marks its atlas page used (one type test per draw call, not per sprite);
+        // CUO_ATLAS_LRU_CHECK: no draw names a freed page
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void UsePage(Texture texture)
+        {
+            Animations.AtlasPageClock.Touch(texture);
+#if CUO_DEVTOOLS
+            if (AtlasPageLru.Check)
+            {
+                AtlasPageLru.CheckUse(texture, "batch");
+            }
+#endif
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void InternalDraw(Texture texture, int baseSprite, int batchSize)
         {
@@ -1572,6 +1587,7 @@ namespace ClassicUO.Renderer
                 FrameDrawCalls++;
             }
 
+            UsePage(texture);
             GraphicsDevice.Textures[0] = texture;
 
             if (_customEffect != null)
