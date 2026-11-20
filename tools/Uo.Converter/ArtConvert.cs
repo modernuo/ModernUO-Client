@@ -40,7 +40,7 @@ public sealed class WorkerReaders : IDisposable
 
 public static class ArtConvert
 {
-    public sealed record Stats(int TableSize, int Present, int Unique, int Aliased, int Empty, int Pages, double Occupancy, long Bytes, long BytesBrotliQ5);
+    public sealed record Stats(int TableSize, int Present, int Unique, int Aliased, int Empty, int Pages, double Occupancy, long Bytes, long BytesStored);
 
     private static ThreadLocal<WorkerReaders> Workers(UOFileManager fm) => new(() => new WorkerReaders(fm), trackAllValues: true);
 
@@ -104,7 +104,7 @@ public static class ArtConvert
 
         var res = AtlasBuilder.Build(dir, tableSize, list, preset, [0x0003, 0x4000 + 0x0CCA, 0x4000 + 0x0E75, 0x4000 + 0x0FAF, 0x4000 + 0x0064, 0x7191]);
         SpriteTable.Write(Path.Combine(dir, "sprites.bin"), res.Entries);
-        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesBrotli);
+        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesStored);
     }
 
     /// <summary>
@@ -183,7 +183,7 @@ public static class ArtConvert
 
         var res = AtlasBuilder.Build(dir, tableSize, list, null, [0x0003]);
         SpriteTable.Write(Path.Combine(dir, "texmaps.bin"), res.Entries);
-        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesBrotli);
+        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesStored);
     }
 
 

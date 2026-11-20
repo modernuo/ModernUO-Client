@@ -15,22 +15,16 @@ public static class TextConvert
 {
     /// <summary>--raw-text: store every record uncompressed (codec 0).</summary>
     public static bool Raw;
-    /// <summary>--text-small n: a record whose raw payload is at most n bytes is stored uncompressed (Brotli's fixed decode cost dominates small payloads).</summary>
+    /// <summary>--text-small n: a record whose raw payload is at most n bytes is stored uncompressed (a decode's fixed cost dominates small payloads).</summary>
     public static int SmallRaw = 16384;
-    /// <summary>--cliloc-brotli: Brotli for cliloc language records too (ship: raw, one read without a decode at startup).</summary>
-    public static bool ClilocBrotli;
-    public const int Quality = 9;
+    /// <summary>--cliloc-compress: zstd for cliloc language records too (ship: raw, one read without a decode at startup).</summary>
+    public static bool ClilocCompress;
 
-    private static ushort CodecFor(int rawBytes) => Raw || rawBytes <= SmallRaw ? StoreConst.CodecRaw : StoreConst.CodecBrotli;
+    private static ushort CodecFor(int rawBytes) => Raw || rawBytes <= SmallRaw ? StoreConst.CodecRaw : StoreConst.CodecZstd;
 
     private static int AddRecord(RecordStoreWriter w, byte[] raw, ushort codec, ushort m0, ushort m1, ushort m2, ref long stored)
     {
-        var payload = RecordStoreWriter.Encode(raw, codec, Quality);
-        if (codec == StoreConst.CodecBrotli && payload.Length >= raw.Length)
-        {
-            codec = StoreConst.CodecRaw; // incompressible: keep it raw
-            payload = raw;
-        }
+        var payload = RecordStoreWriter.EncodeOrRaw(raw, ref codec); // incompressible: kept raw
         stored += payload.Length;
         return w.Add(payload, (uint)raw.Length, codec, m0, m1, m2);
     }
@@ -115,14 +109,14 @@ public static class TextConvert
         var uni = new RecordStoreWriter(TextConst.UnicodeSlots);
         var byContent = new Dictionary<string, int>();
         long uRaw = 0, uStored = 0;
-        int records = 0, shared = 0, glyphTotal = 0, brotli = 0;
+        int records = 0, shared = 0, glyphTotal = 0, compressed = 0;
         var encoded = new (byte[] Payload, ushort Codec)[pages.Length];
         Parallel.For(0, pages.Length, ConvertOptions.Par, i =>
         {
             if (pages[i] == null) return;
             ushort codec = CodecFor(pages[i].Length);
-            var p = RecordStoreWriter.Encode(pages[i], codec, Quality);
-            encoded[i] = codec == StoreConst.CodecBrotli && p.Length >= pages[i].Length ? (pages[i], StoreConst.CodecRaw) : (p, codec);
+            var p = RecordStoreWriter.EncodeOrRaw(pages[i], ref codec);
+            encoded[i] = (p, codec);
         });
         for (int slot = 0; slot < pages.Length; slot++)
         {
@@ -133,7 +127,7 @@ public static class TextConvert
             if (!byContent.TryGetValue(key, out int rec))
             {
                 var (payload, codec) = encoded[slot];
-                if (codec == StoreConst.CodecBrotli) brotli++;
+                if (codec != StoreConst.CodecRaw) compressed++;
                 rec = uni.Add(payload, (uint)raw.Length, codec, (ushort)(slot / TextConst.PagesPerFont), (ushort)(slot % TextConst.PagesPerFont), (ushort)counts[slot]);
                 byContent[key] = rec;
                 uRaw += raw.Length;
@@ -146,7 +140,7 @@ public static class TextConvert
         var uPath = Path.Combine(outDir, TextConst.UnicodeFontsFile);
         uni.Write(uPath, TextConst.MagicFontsUnicode, exists);
         return $"ascii: {f.FontCount} fonts, {aRaw / 1024.0:F0} KiB -> {new FileInfo(aPath).Length / 1024.0:F0} KiB; " +
-               $"unicode: fonts 0x{exists:X5}, {glyphTotal} glyphs in {records} page records ({shared} pages shared, {brotli} Brotli), " +
+               $"unicode: fonts 0x{exists:X5}, {glyphTotal} glyphs in {records} page records ({shared} pages shared, {compressed} zstd), " +
                $"{uRaw / 1048576.0:F2} MiB -> {new FileInfo(uPath).Length / 1048576.0:F2} MiB" +
                (Broken.Count > 0 ? $"; {Broken.Count} glyphs past the end of their file stored as none: {string.Join(", ", Broken.Take(12).Select(b => $"font {b.Font} U+{(int)b.C:X4}"))}" : "");
     }
@@ -181,8 +175,8 @@ public static class TextConvert
         var w = new RecordStoreWriter(files.Count + (ours != null ? 1 : 0));
         long raw = 0, stored = 0;
         var parts = new List<string>();
-        // flat records, stored raw unless --cliloc-brotli (whole-record Brotli, opt-in)
-        ushort codec = ClilocBrotli && !Raw ? StoreConst.CodecBrotli : StoreConst.CodecRaw;
+        // flat records, stored raw unless --cliloc-compress (whole-record zstd, opt-in)
+        ushort codec = ClilocCompress && !Raw ? StoreConst.CodecZstd : StoreConst.CodecRaw;
         for (int i = 0; i < files.Count; i++)
         {
             var (m0, m1) = ClilocTable.PackLanguage(files[i].Lang);

@@ -60,7 +60,7 @@ public static unsafe class Program
                 case "--collisions": // --collisions x y [radiusChunks]: overlapping sprites with equal depth keys
                     Collisions(o.Pack ?? PackSet.FindDefault(), int.Parse(args[i + 1]), int.Parse(args[i + 2]), i + 3 < args.Length ? int.Parse(args[i + 3]) : 6);
                     return 0;
-                case "--debug-compress-pages": // <srcPackDir> <dstPackDir>: Brotli (Kind=1) every other page, for reader tests
+                case "--debug-compress-pages": // <srcPackDir> <dstPackDir>: chunked zstd every other page, for reader tests
                     return Guarded(() => DebugCompressPages(args[i + 1], args[i + 2]));
                 case "--page-decode-bench": // <page dir> [pages] [--expand] [--parallel N]: PageJob per page into native memory, ms + bytes allocated
                 {
@@ -398,10 +398,9 @@ public static unsafe class Program
             var bytes = File.ReadAllBytes(f);
             using var fs = Uo.Pack.ReplacingFile.Create(outPath);
             fs.Write(bytes, 0, 6);
-            fs.Write(BitConverter.GetBytes(Uo.Pack.FileKind.Brotli));
+            fs.Write(BitConverter.GetBytes(Uo.Pack.FileKind.ChunkedZstd));
             fs.Write(bytes, 8, 8);
-            using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = 1 }, leaveOpen: true))
-                br.Write(bytes, 16, bytes.Length - 16);
+            Uo.Pack.ChunkedFile.Write(fs, bytes.AsSpan(16), Uo.Pack.PackCodec.Zstd, level: 1);
             Console.WriteLine($"{rel}: {bytes.Length >> 10} KiB -> {fs.Length >> 10} KiB");
             fs.Commit();
         }
@@ -778,13 +777,13 @@ public static unsafe class Program
             Console.WriteLine($"  GC collections gen0 {g0} gen1 {g1} gen2 {g2}");
             Console.WriteLine($"  allocated: main thread {allocMain} B ({(double)allocMain / n:F1} B/frame); all threads {allocAll / 1024} KiB ({(double)allocAll / n:F0} B/frame, workers' region/page IO)");
             Console.WriteLine($"  pages: {_pages.TotalUploads} uploads, {_pages.Evictions} evictions, main-thread map+unmap+copy-record avg {upMs:F3} ms/page, worker read avg {rdMs:F2} ms/page; VRAM for pages {_pages.VramBytes >> 20} MiB ({_pages.Layers} x {_pages.ChainBytes / 1024} KiB)");
-            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page (+ {waitMs:F2} ms waiting for a chunk decoder, Kind 2: {ChunkedPageReader.Decoders} decoders x {ChunkedPageReader.ThreadsPerDecoder} threads)");
+            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} compressed; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page (+ {waitMs:F2} ms waiting for a chunk decoder, chunked: {ChunkedPageReader.Decoders} decoders x {ChunkedPageReader.ThreadsPerDecoder} threads)");
             Console.WriteLine($"  regions: worker read+decompress avg {rgMs:F2} ms; chunks resident {_chunks.ActiveChunks}; instance buffer {_chunks.Alloc.Used}/{_chunks.Alloc.Capacity} (CPU mirror {_chunks.CpuMirrorLength}); max bakes in flight {maxBake}");
             Console.WriteLine($"  bakes: {_chunks.BakeStats}");
             Console.WriteLine($"  working set {proc.WorkingSet64 >> 20} MiB, private {proc.PrivateMemorySize64 >> 20} MiB, GC heap {GC.GetTotalMemory(false) >> 20} MiB");
             var ci = System.Globalization.CultureInfo.InvariantCulture;
             Console.WriteLine(string.Format(ci,
-                "RESULT format={0} size={1}x{2} fps={3:F0} cpu_med={4:F3} cpu_p95={5:F3} cpu_p99={6:F3} int_med={7:F3} int_p95={8:F3} int_p99={9:F3} gpu_med={10:F3} gpu_p95={11:F3} uploads={12} up_ms={13:F3} read_ms={14:F2} vram_mib={15} ws_mib={16} alloc_bpf={17:F1} gcs={18} region_ms={19:F2} gpu_net={20:F3} gpu_ovh={21:F3} page_file_mib={22:F2} page_read_ms={23:F2} page_dec_ms={24:F2} page_brotli={25} page_exp_ms={26:F2} driver={27}",
+                "RESULT format={0} size={1}x{2} fps={3:F0} cpu_med={4:F3} cpu_p95={5:F3} cpu_p99={6:F3} int_med={7:F3} int_p95={8:F3} int_p99={9:F3} gpu_med={10:F3} gpu_p95={11:F3} uploads={12} up_ms={13:F3} read_ms={14:F2} vram_mib={15} ws_mib={16} alloc_bpf={17:F1} gcs={18} region_ms={19:F2} gpu_net={20:F3} gpu_ovh={21:F3} page_file_mib={22:F2} page_read_ms={23:F2} page_dec_ms={24:F2} page_compressed={25} page_exp_ms={26:F2} driver={27}",
                 fmt, _r.TargetW, _r.TargetH, fps, P(c, 0.5), P(c, 0.95), P(c, 0.99), P(f, 0.5), P(f, 0.95), P(f, 0.99), P(g, 0.5), P(g, 0.95),
                 _pages.TotalUploads, upMs, rdMs, _pages.VramBytes >> 20, proc.WorkingSet64 >> 20, (double)allocMain / n, g0 + g1 + g2, rgMs, Math.Max(0, P(g, 0.5) - _submitOverheadMs), _submitOverheadMs, fileMiB, rdOnlyMs, decMs, _pages.CompressedPages, expMs, driver));
         }

@@ -602,7 +602,7 @@ namespace ClassicUO.UnitTests.Assets
             var enu = Table((1, "enu1"), (3, "enu3"));
             var malformed = Table((3, "ovr3"));
             malformed[4] = 200; // blobBytes no longer adds up
-            var corruptBrotli = (Table((3, "ovr3")), ClilocStore.KindOverrides, (string)null, false, StoreConst.CodecBrotli);
+            var corruptZstd = (Table((3, "ovr3")), ClilocStore.KindOverrides, (string)null, false, StoreConst.CodecZstd);
 
             var cases = new[]
             {
@@ -620,11 +620,11 @@ namespace ClassicUO.UnitTests.Assets
                 c.GetString(3).Should().Be("enu3", Path.GetFileName(path));
             }
 
-            // a Brotli overrides record whose stream is corrupt
+            // a zstd overrides record whose frame is corrupt
             var w = new RecordStoreWriter(2);
             var (m0, m1) = ClilocTable.PackLanguage("enu");
             w.Slots[0] = new StoreSlot { Record = (uint)w.Add(enu, (uint)enu.Length, StoreConst.CodecRaw, m0, m1, 0) + 1 };
-            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(new byte[] { 1, 2, 3, 4 }, (uint)corruptBrotli.Item1.Length, StoreConst.CodecBrotli, 0, 0, ClilocStore.KindOverrides) + 1 };
+            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(new byte[] { 1, 2, 3, 4 }, (uint)corruptZstd.Item1.Length, StoreConst.CodecZstd, 0, 0, ClilocStore.KindOverrides) + 1 };
             w.Write(P("o4.bin"), TextConst.MagicCliloc, 0);
             var b = Cliloc(P("o4.bin"));
             b.Load("enu");

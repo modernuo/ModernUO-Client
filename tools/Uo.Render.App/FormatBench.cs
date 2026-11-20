@@ -69,13 +69,13 @@ public static partial class FormatBench
         if (results.Count == 0) return 1;
         Console.WriteLine();
         Console.WriteLine($"format comparison ({width}x{height} offscreen, identical camera script incl. zoom-0.5 segments, {layers} layers):");
-        string[] cols = ["format", "driver", "fps", "cpu_med", "cpu_p95", "cpu_p99", "int_med", "int_p99", "gpu_med", "gpu_net", "gpu_p95", "uploads", "up_ms", "read_ms", "page_file_mib", "page_read_ms", "page_dec_ms", "page_exp_ms", "page_brotli", "region_ms", "vram_mib", "ws_mib", "alloc_bpf", "gcs"];
+        string[] cols = ["format", "driver", "fps", "cpu_med", "cpu_p95", "cpu_p99", "int_med", "int_p99", "gpu_med", "gpu_net", "gpu_p95", "uploads", "up_ms", "read_ms", "page_file_mib", "page_read_ms", "page_dec_ms", "page_exp_ms", "page_compressed", "region_ms", "vram_mib", "ws_mib", "alloc_bpf", "gcs"];
         Console.WriteLine(string.Join(" | ", cols) + " | sys_load");
         foreach (var (_, r, load) in results)
             Console.WriteLine(string.Join(" | ", cols.Select(c => r.TryGetValue(c, out var v) ? v : "-")) + $" | {load:F0}%");
         Console.WriteLine("cpu = CPU work per frame (excl. waits); int = frame interval with 2 frames in flight = max(CPU, GPU);");
         Console.WriteLine("gpu = one frame alone on an idle GPU, submit->fence (SDL_GPU has no timestamp queries); gpu_net = gpu_med minus empty submit->fence overhead; up_ms = main-thread map+unmap+copy-record per page;");
-        Console.WriteLine("read_ms = worker page file read into the mapped staging buffer; page_exp_ms = worker 16->32-bit expansion per page; region_ms = worker region read (+Brotli decode); vram_mib = layers x page chain bytes.");
+        Console.WriteLine("read_ms = worker page file read into the mapped staging buffer; page_exp_ms = worker 16->32-bit expansion per page; region_ms = worker region read (+decode); vram_mib = layers x page chain bytes.");
         return 0;
     }
 }

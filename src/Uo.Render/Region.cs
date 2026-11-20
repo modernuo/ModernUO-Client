@@ -20,7 +20,7 @@ public sealed class Region
     public void Parse(string path)
     {
         if (!File.Exists(path)) { Data = null; BlocksW = BlocksH = 0; return; }
-        // Kind 1 (v1): Brotli payload after the FileHeader. Decompressed here, on the worker, into the logical
+        // Chunked zstd (one chunk) after the FileHeader. Decompressed here, on the worker, into the logical
         // Kind-0 file so block offsets stay file-relative. The file and the logical bytes are pooled rents (both
         // LOH-sized): the file is returned here, the logical buffer when the region is evicted (ReleaseData).
         byte[] bytes = null;

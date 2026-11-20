@@ -1,11 +1,10 @@
 using System.Buffers;
-using System.IO.Compression;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 namespace Uo.Pack;
 
-/// <summary>Kind=2 body header, right after the FileHeader; followed by u32 CompressedSize[ChunkCount], then the chunks.</summary>
+/// <summary>Chunked body header, right after the FileHeader; followed by u32 CompressedSize[ChunkCount], then the chunks.</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public struct ChunkedHeader
 {
@@ -17,32 +16,30 @@ public struct ChunkedHeader
 }
 
 /// <summary>
-/// Chunked Brotli (FileHeader.Kind = 2): the logical payload (every byte after the FileHeader) split into fixed-size
-/// chunks that compress independently, so several workers can decode one file. See "Distribution and chunked
-/// compression" in docs/modern-client/pack-format-v0.md.
+/// A chunked file body (FileHeader.Kind = <see cref="FileKind.ChunkedZstd"/>): the logical payload (every byte after the
+/// FileHeader) split into fixed-size chunks that compress independently, so several workers can decode one file. The
+/// chunk codec comes from the kind (<see cref="PackCodec.OfFileKind"/>); every chunk decodes through an
+/// <see cref="IPackDecoder"/>. See "Compression" in docs/dev/pack-format.md.
 /// </summary>
-public static class ChunkedBrotli
+public static class ChunkedFile
 {
     public const int DefaultChunkBytes = 1 << 20;
-    public const int Quality = 5;
-    public const int Window = 22;
     public static readonly int HeaderBytes = StructIo.SizeOf<ChunkedHeader>();
 
-    /// <summary>Writes the Kind=2 body (header, size table, chunks) of <paramref name="logical"/>.</summary>
-    public static void Write(Stream s, ReadOnlySpan<byte> logical, int chunkBytes = DefaultChunkBytes, int quality = Quality)
+    /// <summary>Writes the chunked body (header, size table, chunks) of <paramref name="logical"/> in <paramref name="codec"/>.</summary>
+    public static void Write(Stream s, ReadOnlySpan<byte> logical, ushort codec, int chunkBytes = DefaultChunkBytes, int? level = null)
     {
         if (chunkBytes <= 0) throw new ArgumentOutOfRangeException(nameof(chunkBytes));
         int count = (int)((logical.Length + (long)chunkBytes - 1) / chunkBytes);
         var h = new ChunkedHeader { ChunkBytes = (uint)chunkBytes, LogicalBytes = (ulong)logical.Length, ChunkCount = (uint)count };
         var sizes = new uint[count];
-        var buf = ArrayPool<byte>.Shared.Rent(BrotliEncoder.GetMaxCompressedLength(chunkBytes));
+        var buf = ArrayPool<byte>.Shared.Rent((int)PackCodec.MaxStoredBytes(codec, chunkBytes));
         using var data = new MemoryStream();
         try
         {
             for (int i = 0; i < count; i++)
             {
-                var src = logical.Slice(i * chunkBytes, h.ChunkLength(i));
-                if (!BrotliEncoder.TryCompress(src, buf, out int n, quality, Window)) throw new InvalidOperationException("brotli compress failed");
+                int n = PackCodec.Encode(codec, logical.Slice(i * chunkBytes, h.ChunkLength(i)), buf, level);
                 sizes[i] = (uint)n;
                 data.Write(buf, 0, n);
             }
@@ -54,27 +51,28 @@ public static class ChunkedBrotli
     }
 
     /// <summary>
-    /// Single-threaded decode of a Kind=2 body held in memory. <paramref name="dest"/>[0] receives logical byte
+    /// Single-threaded decode of a chunked body held in memory. <paramref name="dest"/>[0] receives logical byte
     /// <paramref name="skip"/>; logical bytes before it go to <paramref name="prefix"/> (as far as it reaches).
     /// </summary>
-    public static ChunkedHeader Decode(ReadOnlySpan<byte> body, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
+    public static ChunkedHeader Decode(ReadOnlySpan<byte> body, IPackDecoder decoder, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
     {
-        var h = MemoryMarshal.Read<ChunkedHeader>(body);
+        var h = ReadHeader(body);
         var sizes = MemoryMarshal.Cast<byte, uint>(body.Slice(HeaderBytes, (int)h.ChunkCount * 4));
         if ((long)h.LogicalBytes - skip > dest.Length) throw new ArgumentException("destination too small");
-        int pos = HeaderBytes + (int)h.ChunkCount * 4;
+        long pos = HeaderBytes + (long)h.ChunkCount * 4;
         byte[]? scratch = null;
         try
         {
             for (int i = 0; i < h.ChunkCount; i++)
             {
-                var src = body.Slice(pos, (int)sizes[i]);
-                pos += (int)sizes[i];
+                if (sizes[i] > body.Length - pos) throw new InvalidDataException("chunk runs past the end of the file");
+                var src = body.Slice((int)pos, (int)sizes[i]);
+                pos += sizes[i];
                 long a = (long)i * h.ChunkBytes;
                 int len = h.ChunkLength(i);
-                if (a >= skip) { DecodeExact(src, dest.Slice((int)(a - skip), len)); continue; }
+                if (a >= skip) { decoder.Decode(src, dest.Slice((int)(a - skip), len)); continue; }
                 scratch ??= ArrayPool<byte>.Shared.Rent((int)h.ChunkBytes);
-                DecodeExact(src, scratch.AsSpan(0, len));
+                decoder.Decode(src, scratch.AsSpan(0, len));
                 Split(scratch.AsSpan(0, len), a, skip, dest, prefix);
             }
         }
@@ -82,10 +80,23 @@ public static class ChunkedBrotli
         return h;
     }
 
-    internal static void DecodeExact(ReadOnlySpan<byte> src, Span<byte> dst)
+    /// <summary>Reads and checks a chunked body's header and that its size table fits in <paramref name="body"/>.</summary>
+    public static ChunkedHeader ReadHeader(ReadOnlySpan<byte> body)
     {
-        if (!BrotliDecoder.TryDecompress(src, dst, out int n) || n != dst.Length)
-            throw new InvalidDataException("corrupt Brotli chunk");
+        if (body.Length < HeaderBytes) throw new InvalidDataException("chunked body too short");
+        var h = MemoryMarshal.Read<ChunkedHeader>(body);
+        Check(h);
+        if ((long)h.ChunkCount * 4 > body.Length - HeaderBytes) throw new InvalidDataException("chunk table runs past the end of the file");
+        return h;
+    }
+
+    /// <summary>Throws unless the header is consistent: a chunk size in 1..2^30, a logical size below 2 GiB and
+    /// ChunkCount = ceil(LogicalBytes / ChunkBytes).</summary>
+    public static void Check(in ChunkedHeader h)
+    {
+        if (h.ChunkBytes == 0 || h.ChunkBytes > 1u << 30 || h.LogicalBytes > int.MaxValue
+            || h.ChunkCount != (h.LogicalBytes + h.ChunkBytes - 1) / h.ChunkBytes)
+            throw new InvalidDataException($"bad chunked header (chunk {h.ChunkBytes}, logical {h.LogicalBytes}, count {h.ChunkCount})");
     }
 
     /// <summary>Copies a decoded chunk starting at logical offset <paramref name="a"/> into prefix [0, skip) and dest [skip, ...).</summary>
@@ -102,23 +113,26 @@ public static class ChunkedBrotli
     }
 }
 
-/// <summary>Forward-only stream over a Kind=2 body (sequential, one chunk buffered). Used by AtlasPage.OpenChain.</summary>
-public sealed class ChunkedBrotliStream : Stream
+/// <summary>Forward-only stream over a chunked body (sequential, one chunk buffered). Used by AtlasPage.OpenChain.</summary>
+public sealed class ChunkedStream : Stream
 {
     private readonly Stream _src;
     private readonly ChunkedHeader _h;
     private readonly uint[] _sizes;
     private readonly byte[] _chunk, _comp;
+    private readonly ushort _codec;
     private int _next, _len, _pos;
 
-    public ChunkedBrotliStream(Stream src)
+    public ChunkedStream(Stream src, ushort codec)
     {
         _src = src;
+        _codec = codec;
         _h = StructIo.Read<ChunkedHeader>(src);
+        ChunkedFile.Check(_h);
         _sizes = new uint[_h.ChunkCount];
         StructIo.ReadSpan<uint>(src, _sizes);
         _chunk = ArrayPool<byte>.Shared.Rent((int)Math.Max(1, _h.ChunkBytes));
-        _comp = ArrayPool<byte>.Shared.Rent(BrotliEncoder.GetMaxCompressedLength((int)Math.Max(1, _h.ChunkBytes)));
+        _comp = ArrayPool<byte>.Shared.Rent((int)PackCodec.MaxStoredBytes(codec, Math.Max(1, _h.ChunkBytes)));
     }
 
     public ChunkedHeader Header => _h;
@@ -131,10 +145,12 @@ public sealed class ChunkedBrotliStream : Stream
             if (_pos == _len)
             {
                 if (_next >= _h.ChunkCount) break;
+                if (_sizes[_next] > _comp.Length) throw new InvalidDataException("chunk larger than its bound");
                 var c = _comp.AsSpan(0, (int)_sizes[_next]);
                 _src.ReadExactly(c);
                 _len = _h.ChunkLength(_next);
-                ChunkedBrotli.DecodeExact(c, _chunk.AsSpan(0, _len));
+                // the reading thread's decoder: a stream may be read on any thread, one at a time
+                PackCodec.ForThread(_codec).Decode(c, _chunk.AsSpan(0, _len));
                 _next++;
                 _pos = 0;
             }
@@ -170,11 +186,12 @@ public sealed class ChunkedBrotliStream : Stream
 }
 
 /// <summary>
-/// Parallel Kind=2 decoder: <c>workers - 1</c> persistent threads plus the calling thread pull chunks from a shared
+/// Parallel chunked-body decoder: <c>workers - 1</c> persistent threads plus the calling thread pull chunks from a shared
 /// counter, read their compressed bytes with RandomAccess and decode them straight into the caller's span at their
-/// logical offsets. Per-worker buffers are reused, so a steady-state Decode does not allocate. One Decode at a time.
+/// logical offsets. Each worker keeps its own codec decoder and buffers, so a steady-state Decode does not allocate.
+/// One Decode at a time.
 /// </summary>
-public sealed unsafe class ChunkedBrotliDecoder : IDisposable
+public sealed unsafe class ChunkedDecoder : IDisposable
 {
     private readonly Thread[] _threads;
     // Kernel events rather than SemaphoreSlim/CountdownEvent: their blocking paths allocate under contention.
@@ -182,6 +199,7 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
     private readonly AutoResetEvent _done = new(false);
     private int _pending;
     private readonly byte[][] _comp, _scratch;
+    private readonly IPackDecoder?[] _decoders;
     private volatile bool _stop;
 
     private SafeFileHandle? _fh;
@@ -195,11 +213,12 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
 
     public int Workers => _threads.Length + 1;
 
-    public ChunkedBrotliDecoder(int workers)
+    public ChunkedDecoder(int workers)
     {
         workers = Math.Max(1, workers);
         _comp = new byte[workers][];
         _scratch = new byte[workers][];
+        _decoders = new IPackDecoder?[workers];
         for (int i = 0; i < workers; i++) { _comp[i] = []; _scratch[i] = []; }
         _threads = new Thread[workers - 1];
         _go = new AutoResetEvent[workers - 1];
@@ -224,30 +243,37 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
     }
 
     /// <summary>
-    /// Decodes the Kind=2 body that starts at <paramref name="bodyOffset"/> in <paramref name="fh"/>. dest[0] receives
-    /// logical byte <paramref name="skip"/>; bytes before it go to <paramref name="prefix"/> (e.g. a page's PageHeader).
+    /// Decodes the chunked body (chunks in <paramref name="codec"/>) that starts at <paramref name="bodyOffset"/> in
+    /// <paramref name="fh"/>. dest[0] receives logical byte <paramref name="skip"/>; bytes before it go to
+    /// <paramref name="prefix"/> (e.g. a page's PageHeader).
     /// </summary>
-    public ChunkedHeader Decode(SafeFileHandle fh, long bodyOffset, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
+    public ChunkedHeader Decode(SafeFileHandle fh, long bodyOffset, ushort codec, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
     {
         ChunkedHeader h = default;
         RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref h)), bodyOffset);
-        return Decode(fh, bodyOffset, h, dest, skip, prefix);
+        return Decode(fh, bodyOffset, h, codec, dest, skip, prefix);
     }
 
-    /// <summary>As <see cref="Decode(SafeFileHandle, long, Span{byte}, long, Span{byte})"/> with the body's ChunkedHeader already read by the caller.</summary>
-    public ChunkedHeader Decode(SafeFileHandle fh, long bodyOffset, in ChunkedHeader header, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
+    /// <summary>As <see cref="Decode(SafeFileHandle, long, ushort, Span{byte}, long, Span{byte})"/> with the body's ChunkedHeader already read by the caller.</summary>
+    public ChunkedHeader Decode(SafeFileHandle fh, long bodyOffset, in ChunkedHeader header, ushort codec, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
     {
         var h = header;
+        ChunkedFile.Check(h);
         if ((long)h.LogicalBytes - skip > dest.Length) throw new ArgumentException("destination too small");
         int count = (int)h.ChunkCount;
         if (_sizes.Length < count) { _sizes = new uint[count]; _offs = new long[count]; }
-        long tableAt = bodyOffset + ChunkedBrotli.HeaderBytes;
+        long tableAt = bodyOffset + ChunkedFile.HeaderBytes;
         RandomAccess.Read(fh, MemoryMarshal.AsBytes(_sizes.AsSpan(0, count)), tableAt);
-        int maxComp = BrotliEncoder.GetMaxCompressedLength((int)h.ChunkBytes);
+        int maxComp = (int)PackCodec.MaxStoredBytes(codec, h.ChunkBytes);
         for (int i = 0; i < _comp.Length; i++)
         {
             if (_comp[i].Length < maxComp) _comp[i] = new byte[maxComp];
             if (_scratch[i].Length < h.ChunkBytes) _scratch[i] = new byte[h.ChunkBytes];
+            if (_decoders[i]?.Codec != codec)
+            {
+                _decoders[i]?.Dispose();
+                _decoders[i] = PackCodec.Create(codec);
+            }
         }
         long off = tableAt + 4L * count;
         for (int i = 0; i < count; i++) { _offs[i] = off; off += _sizes[i]; }
@@ -268,16 +294,17 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
         return h;
     }
 
-    public ChunkedHeader Decode(string path, long bodyOffset, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
+    public ChunkedHeader Decode(string path, long bodyOffset, ushort codec, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
     {
         using var fh = File.OpenHandle(path);
-        return Decode(fh, bodyOffset, dest, skip, prefix);
+        return Decode(fh, bodyOffset, codec, dest, skip, prefix);
     }
 
     private void Run(int id)
     {
         try
         {
+            var decoder = _decoders[id]!;
             int i;
             while ((i = Interlocked.Increment(ref _next) - 1) < _h.ChunkCount)
             {
@@ -288,10 +315,10 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
                 long a = (long)i * _h.ChunkBytes;
                 int len = _h.ChunkLength(i);
                 var dest = new Span<byte>(_dest, (int)_destLen);
-                if (a >= _skip) { ChunkedBrotli.DecodeExact(src, dest.Slice((int)(a - _skip), len)); continue; }
+                if (a >= _skip) { decoder.Decode(src, dest.Slice((int)(a - _skip), len)); continue; }
                 var tmp = _scratch[id].AsSpan(0, len);
-                ChunkedBrotli.DecodeExact(src, tmp);
-                ChunkedBrotli.Split(tmp, a, _skip, dest, new Span<byte>(_prefix, (int)_prefixLen));
+                decoder.Decode(src, tmp);
+                ChunkedFile.Split(tmp, a, _skip, dest, new Span<byte>(_prefix, (int)_prefixLen));
             }
         }
         catch (Exception ex)
@@ -308,5 +335,6 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
         foreach (var t in _threads) t.Join();
         foreach (var e in _go) e.Dispose();
         _done.Dispose();
+        foreach (var d in _decoders) d?.Dispose();
     }
 }

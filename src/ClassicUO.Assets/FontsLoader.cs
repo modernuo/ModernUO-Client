@@ -275,7 +275,7 @@ namespace ClassicUO.Assets
         }
 
         // Type checks of the pack's records (RecordStore checked extents and codecs): a size a font record can have, a
-        // Brotli payload no larger than Brotli's bound. A failing record is absent for the session.
+        // compressed payload no larger than its codec's bound. A failing record is absent for the session.
         private void CheckRecords()
         {
             int asciiRecords = _asciiStore.Records.Length;
@@ -309,7 +309,7 @@ namespace ClassicUO.Assets
                 return false;
             }
 
-            return r.Codec != StoreConst.CodecBrotli || r.StoredBytes <= System.IO.Compression.BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes);
+            return r.StoredBytes <= PackCodec.MaxStoredBytes(r.Codec, r.RawBytes);
         }
 
         private void MarkBad(int index, string why)

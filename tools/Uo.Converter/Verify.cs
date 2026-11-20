@@ -893,7 +893,7 @@ public static class Verify
 
     private static double Psnr(double se, long n) => n == 0 || se == 0 ? 99 : 10 * Math.Log10(255.0 * 255.0 / (se / n));
 
-    /// <summary>Single-thread per-page load timing: open, Brotli-decompress if Kind 1, read the full chain into a buffer.</summary>
+    /// <summary>Single-thread per-page load timing: open, decompress if compressed, read the full chain into a buffer.</summary>
     public static void PageTimings(string dir)
     {
         var files = Directory.GetFiles(dir, "page_*.bin");
@@ -915,7 +915,7 @@ public static class Verify
                           $"single-thread load (read+decompress) median {t[t.Count / 2]:F1} ms, max {t[^1]:F1} ms");
     }
 
-    /// <summary>Serial per-region timing (warm cache): read file, Brotli-decompress (Kind 1), parse blocks.</summary>
+    /// <summary>Serial per-region timing (warm cache): read file, decompress, parse blocks.</summary>
     public static void RegionTimings(string outDir, Manifest manifest)
     {
         var read = new List<double>(); var dec = new List<double>(); var parse = new List<double>(); var fileSizes = new List<long>(); var rawSizes = new List<long>();

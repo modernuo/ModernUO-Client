@@ -104,7 +104,7 @@ public sealed class MiscConvertTests : IDisposable
         {
             store.SlotCount.Should().Be(2);
             store.TryGet(1, out _, out var rec).Should().BeTrue();
-            rec.Codec.Should().Be(StoreConst.CodecBrotli); // 40000 zero bytes compress
+            rec.Codec.Should().Be(StoreConst.CodecZstd); // 40000 zero bytes compress
         }
         File.ReadAllBytes(P("loose/citytext.enu")).Should().Equal(0, 1, 2, 3, 0xFF);
         File.Exists(P("loose/prof.txt")).Should().BeTrue();
