@@ -1828,13 +1828,15 @@ namespace ClassicUO.Network
                 return;
             }
 
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.ContainedItem(p.Buffer),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_6017 ? PacketLayouts.ContainedGrid : PacketLayouts.ContainedNoGrid);
             uint serial = p.ReadUInt32();
             ushort graphic = (ushort)(p.ReadUInt16() + p.ReadByte());
             ushort amount = Math.Max((ushort)1, p.ReadUInt16());
             ushort x = p.ReadUInt16();
             ushort y = p.ReadUInt16();
 
-            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_6017)
+            if (layout == PacketLayouts.ContainedGrid)
             {
                 p.Skip(1);
             }
@@ -2344,6 +2346,8 @@ namespace ClassicUO.Network
                 return;
             }
 
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.ContainedItems(p.Buffer, Client.Game.UO.Version),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_6017 ? PacketLayouts.ContainedGrid : PacketLayouts.ContainedNoGrid);
             ushort count = p.ReadUInt16();
 
             for (int i = 0; i < count; i++)
@@ -2354,7 +2358,7 @@ namespace ClassicUO.Network
                 ushort x = p.ReadUInt16();
                 ushort y = p.ReadUInt16();
 
-                if (Client.Game.UO.Version >= Utility.ClientVersion.CV_6017)
+                if (layout == PacketLayouts.ContainedGrid)
                 {
                     p.Skip(1);
                 }
@@ -3081,6 +3085,9 @@ namespace ClassicUO.Network
                 return;
             }
 
+            bool wornHue = PacketLayouts.Resolve(ref p, PacketLayouts.WornList(p.Buffer, Client.Game.UO.Version),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_70331 ? PacketLayouts.WornAlwaysHue : PacketLayouts.WornFlagHue)
+                == PacketLayouts.WornAlwaysHue;
             uint serial = p.ReadUInt32();
             ushort graphic = p.ReadUInt16();
             ushort x = p.ReadUInt16();
@@ -3139,7 +3146,7 @@ namespace ClassicUO.Network
                 byte layer = p.ReadByte();
                 ushort item_hue = 0;
 
-                if (Client.Game.UO.Version >= Utility.ClientVersion.CV_70331)
+                if (wornHue)
                 {
                     item_hue = p.ReadUInt16();
                 }
@@ -3156,7 +3163,8 @@ namespace ClassicUO.Network
 
                 _wornEntries[entryCount++] = new WorldWriter.WornEntry(itemSerial, itemGraphic, (Layer)layer, item_hue);
 
-                itemSerial = p.ReadUInt32();
+                // a list without the zero serial ends at the packet's end
+                itemSerial = p.Remaining > 0 ? p.ReadUInt32() : 0;
             }
 
             // T1: the clear, then each entry's values, out of its old container, onto obj (captured once, before the list) at
@@ -3194,6 +3202,7 @@ namespace ClassicUO.Network
                 return;
             }
 
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.Menu(p.Buffer), PacketLayouts.MenuItems);
             uint serial = p.ReadUInt32();
             ushort id = p.ReadUInt16();
             string name = p.ReadCp1252(p.ReadByte());
@@ -3202,7 +3211,7 @@ namespace ClassicUO.Network
             // the first item's graphic, peeked; a menu with no items has none
             ushort menuid = 0;
 
-            if (p.Remaining >= 2)
+            if (layout == PacketLayouts.MenuItems && p.Remaining >= 2)
             {
                 menuid = p.ReadUInt16();
                 p.Seek(p.Position - 2, SeekOrigin.Begin);
@@ -4034,14 +4043,15 @@ namespace ClassicUO.Network
 
         private static void ChatMessage(World world, ref NetReader p)
         {
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.Chat(p.Buffer), PacketLayouts.ChatFull);
             ushort cmd = p.ReadUInt16();
 
             switch (cmd)
             {
                 case 0x03E8: // create conference
-                    p.Skip(4);
+                    SkipChatLanguage(ref p, layout);
                     string channelName = p.ReadBigUni();
-                    bool hasPassword = p.ReadUInt16() == 0x31;
+                    bool hasPassword = p.Remaining > 0 && p.ReadUInt16() == 0x31;
                     world.ChatManager.CurrentChannelName = channelName;
                     world.ChatManager.AddChannel(channelName, hasPassword);
 
@@ -4050,7 +4060,7 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03E9: // destroy conference
-                    p.Skip(4);
+                    SkipChatLanguage(ref p, layout);
                     channelName = p.ReadBigUni();
                     world.ChatManager.RemoveChannel(channelName);
 
@@ -4072,7 +4082,7 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03ED: // username accepted, display chat
-                    p.Skip(4);
+                    SkipChatLanguage(ref p, layout);
                     string username = p.ReadBigUni();
                     world.ChatManager.ChatIsEnabled = ChatStatus.Enabled;
                     NetClient.Socket.Send_ChatJoinCommand("General");
@@ -4080,14 +4090,14 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03EE: // add user
-                    p.Skip(4);
-                    ushort userType = p.ReadUInt16();
+                    SkipChatLanguage(ref p, layout);
+                    ushort userType = p.Remaining > 0 ? p.ReadUInt16() : (ushort)0;
                     username = p.ReadBigUni();
 
                     break;
 
                 case 0x03EF: // remove user
-                    p.Skip(4);
+                    SkipChatLanguage(ref p, layout);
                     username = p.ReadBigUni();
 
                     break;
@@ -4096,7 +4106,7 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03F1: // you have joined a conference
-                    p.Skip(4);
+                    SkipChatLanguage(ref p, layout);
                     channelName = p.ReadBigUni();
                     world.ChatManager.CurrentChannelName = channelName;
 
@@ -4113,7 +4123,7 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03F4:
-                    p.Skip(4);
+                    SkipChatLanguage(ref p, layout);
                     channelName = p.ReadBigUni();
 
                     GameActions.Print(
@@ -4129,8 +4139,8 @@ namespace ClassicUO.Network
                 case 0x0025:
                 case 0x0026:
                 case 0x0027:
-                    p.Skip(4);
-                    ushort msgType = p.ReadUInt16();
+                    SkipChatLanguage(ref p, layout);
+                    ushort msgType = p.Remaining > 0 ? p.ReadUInt16() : (ushort)0;
                     username = p.ReadBigUni();
                     string msgSent = p.ReadBigUni();
 
@@ -4169,7 +4179,7 @@ namespace ClassicUO.Network
                             return;
                         }
 
-                        p.Skip(4);
+                        SkipChatLanguage(ref p, layout);
                         string text = p.ReadBigUni();
 
                         if (!string.IsNullOrEmpty(text))
@@ -4205,6 +4215,14 @@ namespace ClassicUO.Network
             }
         }
 
+        private static void SkipChatLanguage(ref NetReader p, int layout)
+        {
+            if (layout != PacketLayouts.ChatNoText)
+            {
+                p.Skip(4);
+            }
+        }
+
         private static void Help(World world, ref NetReader p) { }
 
         private static void CharacterProfile(World world, ref NetReader p)
@@ -4230,8 +4248,10 @@ namespace ClassicUO.Network
         private static void EnableLockedFeatures(World world, ref NetReader p)
         {
             LockedFeatureFlags flags = 0;
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.LockedFeatures(p.Buffer),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_60142 ? PacketLayouts.Features32 : PacketLayouts.Features16);
 
-            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_60142)
+            if (layout == PacketLayouts.Features32)
             {
                 flags = (LockedFeatureFlags)p.ReadUInt32();
             }
@@ -4258,8 +4278,10 @@ namespace ClassicUO.Network
             ushort my = p.ReadUInt16();
 
             uint serial = 0;
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.QuestArrow(p.Buffer),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_7090 ? PacketLayouts.QuestArrowSerial : PacketLayouts.QuestArrowNoSerial);
 
-            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_7090)
+            if (layout == PacketLayouts.QuestArrowSerial)
             {
                 serial = p.ReadUInt32();
             }
@@ -5830,6 +5852,12 @@ namespace ClassicUO.Network
                 BuffGump gump = UIManager.GetGump<BuffGump>();
                 ushort count = p.ReadUInt16();
 
+                if (count != 0)
+                {
+                    // the second and third text blocks may be absent (RunUO and ModernUO end the packet after one or two)
+                    PacketLayouts.Resolve(ref p, PacketLayouts.BuffEntries(p.Buffer), 3);
+                }
+
                 if (count == 0)
                 {
                     world.PlayerState.RemoveBuff(ic);
@@ -5860,8 +5888,14 @@ namespace ClassicUO.Network
                             true
                         );
 
-                        arg_length = p.ReadUInt16();
-                        string args_2 = p.ReadLittleUni();
+                        string args_2 = string.Empty;
+
+                        if (p.Remaining > 0)
+                        {
+                            arg_length = p.ReadUInt16();
+                            args_2 = p.ReadLittleUni();
+                        }
+
                         string description = string.Empty;
 
                         if (descriptionCliloc != 0)
@@ -5880,8 +5914,14 @@ namespace ClassicUO.Network
                             }
                         }
 
-                        arg_length = p.ReadUInt16();
-                        string args_3 = p.ReadLittleUni();
+                        string args_3 = string.Empty;
+
+                        if (p.Remaining > 0)
+                        {
+                            arg_length = p.ReadUInt16();
+                            args_3 = p.ReadLittleUni();
+                        }
+
                         string wtf = string.Empty;
 
                         if (wtfCliloc != 0)
@@ -5976,11 +6016,13 @@ namespace ClassicUO.Network
 
                 case 0x01: // custom party info
                 case 0x02: // guild track info
+                    PacketLayouts.Resolve(ref p, PacketLayouts.Krrios(p.Buffer), PacketLayouts.KrriosValid);
                     bool locations = type == 0x01 || p.ReadBoolean();
 
                     uint serial;
 
-                    while ((serial = p.ReadUInt32()) != 0)
+                    // the list ends at a zero serial, or at the packet's end
+                    while (p.Remaining > 0 && (serial = p.ReadUInt32()) != 0)
                     {
                         if (locations)
                         {
@@ -6036,6 +6078,8 @@ namespace ClassicUO.Network
                 return;
             }
 
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.ItemSA(p.Buffer, Client.Game.UO.Version),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_7090 ? PacketLayouts.ItemSALong : PacketLayouts.ItemSAShort);
             p.Skip(2);
             byte type = p.ReadByte();
             uint serial = p.ReadUInt32();
@@ -6050,7 +6094,7 @@ namespace ClassicUO.Network
             ushort hue = p.ReadUInt16();
             Flags flags = (Flags)p.ReadByte();
             // the 24-byte SA layout (clients before 7.0.9) ends before this field
-            ushort unk2 = p.Remaining >= 2 ? p.ReadUInt16() : (ushort)0;
+            ushort unk2 = layout == PacketLayouts.ItemSALong ? p.ReadUInt16() : (ushort)0;
 
             if (serial != world.Player)
             {

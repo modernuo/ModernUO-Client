@@ -614,10 +614,15 @@ namespace ClassicUO.Game.Scenes
 
         public void ReceiveCharacterList(ref NetReader p)
         {
-            ParseCharacterList(ref p);
-            ParseCities(ref p);
+            // the city size and the flags follow the packet's length, not the client version
+            bool versionNew = Client.Game.UO.Version >= ClientVersion.CV_70130;
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.CharacterList(p.Buffer, Client.Game.UO.Version),
+                (versionNew ? PacketLayouts.CharListNewCities : 0) | PacketLayouts.CharListFlags);
 
-            _world.ClientFeatures.SetFlags((CharacterListFlags) p.ReadUInt32());
+            ParseCharacterList(ref p);
+            ParseCities(ref p, (layout & PacketLayouts.CharListNewCities) != 0);
+
+            _world.ClientFeatures.SetFlags((layout & PacketLayouts.CharListFlags) != 0 ? (CharacterListFlags) p.ReadUInt32() : 0);
             CurrentLoginStep = LoginSteps.CharacterSelection;
 
             uint charToSelect = 0;
@@ -736,12 +741,11 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        private void ParseCities(ref NetReader p)
+        private void ParseCities(ref NetReader p, bool isNew)
         {
             byte count = p.ReadByte();
             Cities = new CityInfo[count];
 
-            bool isNew = Client.Game.UO.Version >= ClientVersion.CV_70130;
             string[] descriptions = null;
 
             if (!isNew)

@@ -41,7 +41,7 @@ namespace ClassicUO.UnitTests.Network
         }
 
         // the stream cut into recorded reads at the given offsets; reads are grouped into frames of framesPer reads
-        private static void AddStream(CaptureWriter w, int conn, byte[] stream, bool compressed, IEnumerable<int> cuts, ref uint frame, int framesPer = 1)
+        internal static void AddStream(CaptureWriter w, int conn, byte[] stream, bool compressed, IEnumerable<int> cuts, ref uint frame, int framesPer = 1)
         {
             int prev = 0, n = 0;
 
@@ -59,7 +59,7 @@ namespace ClassicUO.UnitTests.Network
             frame++;
         }
 
-        private static byte[] Concat(IEnumerable<byte[]> packets, bool compressed) =>
+        internal static byte[] Concat(IEnumerable<byte[]> packets, bool compressed) =>
             packets.SelectMany(p => compressed ? NetDrainTests.HuffmanEncode(p) : p).ToArray();
 
         private static Capture Build(Action<CaptureWriter> write)

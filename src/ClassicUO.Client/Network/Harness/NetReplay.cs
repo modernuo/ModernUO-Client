@@ -251,16 +251,18 @@ namespace ClassicUO.Network.Harness
 
     /// <summary>
     /// Replays a capture through NetClient.Drain and PacketHandlers.ParsePackets with no client around them: no world, no
-    /// handlers, no renderer. Each frame group is drained with the caps off. The trace has the framing columns only (the
+    /// handlers (unless a test adds some), no renderer. Each frame group is drained with the caps off. The trace has the framing columns only (the
     /// effect columns are o0). Used by the unit tests and by <c>CUO_NET_REPLAY_FILE</c> runs of the test project.
     /// </summary>
     internal static class HeadlessReplay
     {
-        public static long Run(Capture capture, ChunkMode mode, TextWriter output, int seed = 1234)
+        /// <param name="setup">Tests: registers handlers on the replay's (otherwise empty) handler table.</param>
+        public static long Run(Capture capture, ChunkMode mode, TextWriter output, int seed = 1234, Action<PacketHandlers> setup = null)
         {
             var client = new NetClient();
             client.Load((ClientVersion)capture.ClientVersion, EncryptionType.NONE);
             var handlers = new PacketHandlers();
+            setup?.Invoke(handlers);
             using var trace = new NetTrace(output, $"headless mode={mode}");
             handlers.Trace = trace;
 

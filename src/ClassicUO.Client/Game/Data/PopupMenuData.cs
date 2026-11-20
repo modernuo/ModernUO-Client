@@ -21,8 +21,12 @@ namespace ClassicUO.Game.Data
 
         public static PopupMenuData Parse(ref NetReader p)
         {
+            // the old layout's optional words: this client's rule (0x84, 0x40, 0x20) or only the color word (0x20), whichever
+            // the packet's length fits
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.Popup(p.Buffer, p.Position), PacketLayouts.PopupOldClassic);
             ushort mode = p.ReadUInt16();
             bool isNewCliloc = mode >= 2;
+            bool classic = layout != PacketLayouts.PopupOldColor;
             uint serial = p.ReadUInt32();
             byte count = p.ReadByte();
             PopupMenuItem[] items = new PopupMenuItem[count];
@@ -45,12 +49,12 @@ namespace ClassicUO.Game.Data
                     cliloc = p.ReadUInt16() + 3000000;
                     flags = p.ReadUInt16();
 
-                    if ((flags & 0x84) != 0)
+                    if (classic && (flags & 0x84) != 0)
                     {
                         p.Skip(2);
                     }
 
-                    if ((flags & 0x40) != 0)
+                    if (classic && (flags & 0x40) != 0)
                     {
                         p.Skip(2);
                     }
