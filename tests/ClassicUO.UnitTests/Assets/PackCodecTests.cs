@@ -142,9 +142,10 @@ namespace ClassicUO.UnitTests.Assets
             using var fh = File.OpenHandle(path);
             Span<byte> hdr = stackalloc byte[16];
             dec.Decode(fh, 16, PackCodec.Zstd, into, 16, hdr);
-            long a0 = GC.GetTotalAllocatedBytes(true);
+            // the calling thread decodes chunks too; other tests run in parallel, so only this thread is counted
+            long a0 = GC.GetAllocatedBytesForCurrentThread();
             for (int k = 0; k < 5; k++) dec.Decode(fh, 16, PackCodec.Zstd, into, 16, hdr);
-            (GC.GetTotalAllocatedBytes(true) - a0).Should().BeLessThan(1024, "the workers reuse their contexts and buffers");
+            (GC.GetAllocatedBytesForCurrentThread() - a0).Should().Be(0, "the workers reuse their contexts and buffers");
             into.Should().Equal(chain);
             // the sequential stream and the header-only read agree
             AtlasPage.Read(path, new byte[chain.Length]).Should().Be(AtlasPage.ReadHeader(path));
