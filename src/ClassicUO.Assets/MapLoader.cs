@@ -9,6 +9,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Uo.Pack;
 
@@ -373,7 +374,17 @@ namespace ClassicUO.Assets
 
         // out of line: a lambda in StartPrefetch made it allocate its closure on entry, on every call (several per frame,
         // nearly all of them returning early above)
-        private Task<RegionData> StartLoad(FacetInfo facet, int rx, int ry) => Task.Run(() => LoadRegion(facet, rx, ry));
+        private Task<RegionData> StartLoad(FacetInfo facet, int rx, int ry) => Task.Run(() =>
+        {
+            RegionData region = LoadRegion(facet, rx, ry);
+            Volatile.Read(ref RegionLoaded)?.Invoke();
+
+            return region;
+        });
+
+        /// <summary>Any thread: a prefetched region finished loading (the client loop's asset_ready_wake installs it: chunks
+        /// waiting on map data can load now).</summary>
+        public static Action RegionLoaded;
 
         public RegionData ReadRegion(int map, int rx, int ry)
         {

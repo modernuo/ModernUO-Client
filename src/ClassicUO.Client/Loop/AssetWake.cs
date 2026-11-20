@@ -55,6 +55,14 @@ namespace ClassicUO.Loop
         /// <summary>The scene's draw: Gpu pages whose load completed before this frame and that it still drew as nothing.</summary>
         public static int SceneStale;
 
+        /// <summary>What an incomplete frame waits for (CUO_ASSET_WAKE_CHECK names the cause of each fallback present):
+        /// Gpu chunk bakes or uploads, Gpu art or animation pages, client chunks the draw walk asked for, a held look, Legacy
+        /// worker decodes.</summary>
+        public const int CauseChunks = 1, CausePages = 2, CauseAnimPages = 4, CauseMapDraw = 8, CauseHeld = 16, CauseDecodes = 32;
+
+        /// <summary>The scene's draw: the <c>Cause*</c> bits of this frame (cleared at each draw start).</summary>
+        public static int SceneCauses;
+
         /// <summary>Completions so far (any thread; wraps).</summary>
         public static int Completions => Volatile.Read(ref _completions);
 
@@ -100,12 +108,14 @@ namespace ClassicUO.Loop
                 _listening = listen;
                 Volatile.Write(ref ClassicUO.Renderer.AssetSignal.Ready, listen ? _signal : null);
                 Volatile.Write(ref Uo.Render.WorkerPool.JobCompleted, listen ? _signal : null);
+                Volatile.Write(ref ClassicUO.Assets.MapLoader.RegionLoaded, listen ? _signal : null);
             }
 
             _wake = _on;
             _seen = Volatile.Read(ref _completions);
             SceneIncomplete = false;
             SceneStale = 0;
+            SceneCauses = 0;
 
             return Interlocked.Exchange(ref _firstSignalTs, 0);
         }
@@ -129,6 +139,7 @@ namespace ClassicUO.Loop
             _waiter = null;
             Volatile.Write(ref ClassicUO.Renderer.AssetSignal.Ready, null);
             Volatile.Write(ref Uo.Render.WorkerPool.JobCompleted, null);
+            Volatile.Write(ref ClassicUO.Assets.MapLoader.RegionLoaded, null);
         }
     }
 }

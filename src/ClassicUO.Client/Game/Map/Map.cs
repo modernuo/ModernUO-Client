@@ -608,6 +608,12 @@ namespace ClassicUO.Game.Map
 
             _queue.Drain(pcx, pcy, _frame, deadline, _clock, _tryLoad);
 
+            // asset_ready_wake: chunks loaded here (main thread) complete what an incomplete frame waited for (DrawPending)
+            if (_queue.LastLoaded != 0)
+            {
+                ClassicUO.Loop.AssetWake.Signal();
+            }
+
             // keys of chunks that left the queue unloaded; a forgotten key only costs one full scan
             _blockArtWait.Trim(4096);
             _chunkArtWait.Trim(4096);

@@ -141,7 +141,8 @@ namespace ClassicUO
                 // ready items published before this draw started are completed loads the frame did not use
                 int legacyStale = Math.Max(0, ready - (ClassicUO.Renderer.AssetSignal.PublishedCount - _assetPublishedAtDraw));
                 AssetWakeCheck.EndDraw(incomplete, legacyStale + AssetWake.SceneStale,
-                    AssetWake.SceneStale != 0 ? "Gpu pages (and Legacy decodes)" : "Legacy decodes");
+                    AssetWake.SceneStale != 0 ? "Gpu pages (and Legacy decodes)" : "Legacy decodes",
+                    AssetWake.SceneCauses | (pending != 0 ? AssetWake.CauseDecodes : 0));
             }
 #endif
             AssetWake.EndDraw(incomplete, Time.Ticks);

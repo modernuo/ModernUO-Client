@@ -12,6 +12,8 @@ namespace ClassicUO.Loop
     /// frame touched but did not place; Legacy: a decode published before the draw and not uploaded by its end); "late" = the
     /// first completion after an incomplete present was presented more than one display interval (plus 2 ms) later. Both
     /// should be 0 with the switch on. Every 5 s: a summary with the switch state; the first mismatches are logged one by one.
+    /// A fallback present (no completion came) is a completion signal missing: it is counted per cause of the incomplete
+    /// frame before it (AssetWake.Cause*), so the source that does not signal is named.
     /// </summary>
     internal static class AssetWakeCheck
     {
@@ -20,8 +22,10 @@ namespace ClassicUO.Loop
 
         private const int DetailLogs = 20;
         private static long _start, _frames, _incomplete, _stale, _late, _waits, _maxLateTicks, _latencySum, _latencyCount, _fallbacks;
-        private static int _logged;
+        private static int _logged, _lastCauses;
         private static bool _switch;
+        private static readonly long[] _fallbackCause = new long[6];
+        private static readonly string[] _causeNames = { "chunks", "pages", "anim_pages", "map_draw", "held", "decodes" };
 
         /// <summary>Whether a completion at <paramref name="signalTs"/> presented at <paramref name="drawTs"/> is late.</summary>
         public static bool IsLate(long signalTs, long drawTs, double intervalMs, long frequency)
@@ -38,6 +42,14 @@ namespace ClassicUO.Loop
             if (fallback)
             {
                 _fallbacks++;
+
+                for (int b = 0; b < _fallbackCause.Length; b++)
+                {
+                    if ((_lastCauses & (1 << b)) != 0)
+                    {
+                        _fallbackCause[b]++;
+                    }
+                }
             }
 
             if (signalTs == 0)
@@ -63,9 +75,10 @@ namespace ClassicUO.Loop
         }
 
         /// <summary>Draw end: the frame's state.</summary>
-        public static void EndDraw(bool incomplete, int stale, string what)
+        public static void EndDraw(bool incomplete, int stale, string what, int causes)
         {
             _frames++;
+            _lastCauses = incomplete ? causes : 0;
 
             if (incomplete)
             {
@@ -88,13 +101,32 @@ namespace ClassicUO.Loop
             {
                 double meanMs = _latencyCount == 0 ? 0 : _latencySum * 1000.0 / Stopwatch.Frequency / _latencyCount;
                 Log.Info(FormattableString.Invariant(
-                    $"[asset-wake-check] switch={(_switch ? "on" : "off")} frames={_frames} incomplete={_incomplete} stale={_stale} late={_late} completions_waited={_waits} mean_ms={meanMs:F1} max_late_ms={_maxLateTicks * 1000.0 / Stopwatch.Frequency:F1} fallbacks={_fallbacks} mismatches={_stale + _late}"));
+                    $"[asset-wake-check] switch={(_switch ? "on" : "off")} frames={_frames} incomplete={_incomplete} stale={_stale} late={_late} completions_waited={_waits} mean_ms={meanMs:F1} max_late_ms={_maxLateTicks * 1000.0 / Stopwatch.Frequency:F1} fallbacks={_fallbacks} mismatches={_stale + _late}") + FallbackCauses());
                 Reset(now, _switch);
             }
         }
 
+        private static string FallbackCauses()
+        {
+            if (_fallbacks == 0)
+            {
+                return "";
+            }
+
+            var sb = new System.Text.StringBuilder(" fallback_causes");
+
+            for (int b = 0; b < _fallbackCause.Length; b++)
+            {
+                sb.Append(' ').Append(_causeNames[b]).Append('=').Append(_fallbackCause[b]);
+            }
+
+            return sb.ToString();
+        }
+
         private static void Reset(long now, bool on)
         {
+            Array.Clear(_fallbackCause);
+
             _start = now;
             _switch = on;
             _frames = _incomplete = _stale = _late = _waits = _maxLateTicks = _latencySum = _latencyCount = _fallbacks = 0;
