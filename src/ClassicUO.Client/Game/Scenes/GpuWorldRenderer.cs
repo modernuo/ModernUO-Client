@@ -273,8 +273,9 @@ namespace ClassicUO.Game.Scenes
                     // (4 MiB of instances, 1 MiB per Indexed8 anim layer)
                     MaxDynamic = 131072,
                     // Grow on demand (memory per client, several clients at once): the anim pages and instance buffer
-                    // start at 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75% occupancy up to the old
-                    // fixed sizes, 128 / 2M (128 + 64 MiB), which the large scene still reaches. The art pages start at
+                    // start at 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75% occupancy up to 256 anim
+                    // layers (256 MiB; 128 until gpu-popin round 6, which a crowd after the all-bodies tour overran) and 2M
+                    // instances (64 MiB), which the large scene still reaches. The art pages start at
                     // their ceiling, 24 layers (256 MiB): every login filled 12 by frame 15 (GrowthPolicy.ArtLayersStart).
                     // CUO_GPU_GROW=0 starts at the ceilings (the old fixed sizes, for A/B).
                     Layers = GrowOnDemand ? GrowthPolicy.ArtLayersStart : GrowthPolicy.ArtLayersMax,
