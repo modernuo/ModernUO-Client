@@ -486,6 +486,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(item?.Serial ?? 0, LookPrefetch.Kind.Item);
+
             // a mobile's placement is not an item placement (it stays outstanding for its PlaceMobile)
             if (item == null || !Consume(placement))
             {
@@ -986,6 +988,8 @@ namespace ClassicUO.Game
                 return null;
             }
 
+            LookPrefetch.Note(serial, LookPrefetch.Kind.Equip);
+
             // T9 slice B2: an attach to the wearer (one exists once the item does) that would close a loop is refused before
             // anything is created or written: the item keeps its values and its place
             {
@@ -1261,6 +1265,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(owner.Serial, LookPrefetch.Kind.Equip);
+
             ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
             mirror.BeginWornBatch(owner.Serial);
 
@@ -1466,6 +1472,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(placement.Subject?.Serial ?? 0, LookPrefetch.Kind.Mobile);
+
             if (mobile == null || !Consume(placement))
             {
                 Reject(Violation.Placement, $"WorldWriter.PlaceMobile: 0x{placement.Subject?.Serial ?? 0:X8} is not an outstanding mobile placement (used twice, superseded, abandoned, an item's or never issued)");
@@ -1545,6 +1553,8 @@ namespace ClassicUO.Game
             {
                 return;
             }
+
+            LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
 
             bool detached = !Holds(mobile);
 
@@ -1648,6 +1658,8 @@ namespace ClassicUO.Game
             {
                 return;
             }
+
+            LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
 
             bool detached = !Holds(mobile);
 

@@ -270,6 +270,24 @@ namespace ClassicUO.Renderer.Animations
         /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
         public int PendingDirections => Volatile.Read(ref _pendingJobs);
 
+        /// <summary>The body whose frames <see cref="GetAnimationFrames"/> reads for <paramref name="id"/> (Body.def applied).</summary>
+        public ushort ResolveBody(ushort id) => id < _animationLoader.BodyCount ? _animationLoader.ResolveBody(id, false, out _) : id;
+
+        /// <summary>Whether (body, action, stored direction) has frames uploaded or no frames at all: drawing it now is
+        /// complete. Starts nothing (asset_prefetch_on_packet's checker).</summary>
+        public bool IsDirectionReady(ushort id, byte action, byte dir)
+        {
+            if (action >= AnimationsLoader.MAX_ACTIONS || dir >= AnimationsLoader.MAX_DIRECTIONS || id >= _animationLoader.BodyCount)
+            {
+                return true;
+            }
+
+            id = _animationLoader.ResolveBody(id, false, out _);
+            var sprites = _cache[id]?[action]?[dir];
+
+            return sprites != null && (sprites.Length == 0 || _pendingSprites.Count == 0 || !_pendingSprites.Contains(sprites));
+        }
+
         /// <summary>Directions finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
         public int ReadyDirections => _queue.ReadyCount;
 

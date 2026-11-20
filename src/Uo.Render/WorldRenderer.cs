@@ -338,6 +338,56 @@ public sealed unsafe class WorldRenderer : IDisposable
         RingPrefetched += RingPrefetchPagesPerFrame - left;
     }
 
+    /// <summary>asset_prefetch_on_packet: queues the animation pages of (body, action) before the first draw needs them:
+    /// UO direction <paramref name="dir"/> first, then the other seven (turns). <paramref name="body"/> as the host resolved
+    /// it (Body.def applied). Returns the pages queued.</summary>
+    public int PrefetchAnim(int body, int action, int dir)
+    {
+        int queued = PrefetchAnimDir(body, action, dir & 7);
+        for (int d = 0; d < 8; d++)
+            if (d != (dir & 7)) queued += PrefetchAnimDir(body, action, d);
+        return queued;
+    }
+
+    int PrefetchAnimDir(int body, int action, int dir)
+    {
+        if (!TryGetAnimDir(body, action, dir, out uint first, out int count)) return 0;
+        int queued = 0;
+        for (int f = 0; f < count; f++)
+        {
+            ref readonly var sp = ref Pack.AnimFrames[first + f].Sprite;
+            if (sp.Present && AnimPages!.Prefetch(sp.Page, Frame)) queued++;
+        }
+        return queued;
+    }
+
+    /// <summary>Every frame page of (body, action, UO direction) is resident (or it has no frames): its draw is complete.</summary>
+    public bool AnimResident(int body, int action, int dir)
+    {
+        if (!TryGetAnimDir(body, action, dir & 7, out uint first, out int count)) return true;
+        for (int f = 0; f < count; f++)
+        {
+            ref readonly var sp = ref Pack.AnimFrames[first + f].Sprite;
+            if (sp.Present && !AnimPages!.IsResident(sp.Page)) return false;
+        }
+        return true;
+    }
+
+    bool TryGetAnimDir(int body, int action, int dir, out uint first, out int count)
+    {
+        first = 0; count = 0;
+        if (AnimPages == null || Pack.AnimBodies == null || (uint)body >= (uint)Pack.AnimBodies.Length) return false;
+        ref readonly var b = ref Pack.AnimBodies[body];
+        if ((uint)action >= b.ActionCount) return false;
+        long di = b.FirstDir + (long)action * 8 + dir;
+        if (di >= Pack.AnimDirs.Length) return false;
+        ref readonly var de = ref Pack.AnimDirs[di];
+        if (de.FirstFrame + (long)de.FrameCount > Pack.AnimFrames.Length) return false;
+        first = de.FirstFrame;
+        count = de.FrameCount;
+        return count != 0;
+    }
+
     /// <summary>A chunk bake, chunk upload or page load is queued or running (a later frame can draw more).</summary>
     public bool LoadsPending => Chunks.PendingChunks != 0 || Chunks.UploadQueueLength != 0 || Pages.Pending || (AnimPages != null && AnimPages.Pending);
 

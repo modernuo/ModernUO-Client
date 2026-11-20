@@ -80,6 +80,9 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>As <see cref="RequestLand"/>, for static art <paramref name="idx"/>.</summary>
         public bool RequestArt(uint idx) => Request(idx + 0x4000);
 
+        /// <summary>Static art <paramref name="idx"/> has a worker decode queued or running (not uploaded yet).</summary>
+        public bool IsDecodePending(uint idx) => _decoder.IsRequested(idx + 0x4000);
+
         private bool Request(uint idx)
         {
             // a sprite the worker could not decode counts as ready: the request was speculative, and a real lookup decodes

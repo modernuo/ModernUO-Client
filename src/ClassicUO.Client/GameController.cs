@@ -1106,6 +1106,11 @@ namespace ClassicUO
                 AssetWakeCheck.Draw(assetSignalTs, _drawStartTs, DisplayIntervalMs, AssetWake.Enabled, assetFallback && assetSignalTs == 0);
                 _assetPublishedAtDraw = ClassicUO.Renderer.AssetSignal.PublishedCount;
             }
+
+            if (LookPrefetch.Check && UO.World is { InGame: true })
+            {
+                LookPrefetchCheck.Draw(UO.World);
+            }
 #endif
             VisualDue.BeginDraw();
             FrameStats.Begin(FramePhase.Draw);

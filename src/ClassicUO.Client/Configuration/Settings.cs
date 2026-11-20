@@ -195,6 +195,13 @@ namespace ClassicUO.Configuration
         // CUO_CHUNK_RING_PREFETCH=1|0 overrides it in developer builds. Default off.
         [JsonPropertyName("chunk_ring_prefetch")] public bool ChunkRingPrefetch { get; set; }
 
+        // gpu-popin-2: the WorldWriter operations that place a mobile or item, change a body, graphic or hue, or equip,
+        // request the new look's assets on packet arrival (LookPrefetch: the animation direction the draw will use, then
+        // the action's other directions on Gpu; mount and equipment; an item's art), at most 16 objects an Update, objects
+        // beyond the view range skipped. CUO_LOOK_PREFETCH_CHECK=1 measures packet-to-complete-draw latency per kind in both
+        // states. CUO_ASSET_PREFETCH_ON_PACKET=1|0 overrides it in developer builds. Default off.
+        [JsonPropertyName("asset_prefetch_on_packet")] public bool AssetPrefetchOnPacket { get; set; }
+
         // loop-linux: the event loop on Linux, waiting in epoll (LinuxEpollLoopWaiter: socket, wake eventfd, timerfd deadline,
         // X11/Wayland display fd, SDL event watch) instead of the legacy loop's Sleep(1) and spin. Read once at startup; the
         // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.
