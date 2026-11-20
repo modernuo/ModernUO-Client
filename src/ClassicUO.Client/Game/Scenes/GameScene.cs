@@ -411,7 +411,7 @@ namespace ClassicUO.Game.Scenes
                         200,
                         string.Format(
                             ResGeneral.ConnectionLost0,
-                            StringHelper.AddSpaceBeforeCapital(e.ToString())
+                            NetClient.Socket.DisconnectReason ?? StringHelper.AddSpaceBeforeCapital(e.ToString())
                         ),
                         s =>
                         {

@@ -43,7 +43,7 @@ namespace ClassicUO.UnitTests.Network
         {
             var handlers = new PacketHandlers();
             var seen = new List<byte[]>();
-            PacketHandlers.OnPacketBufferReader record = (World _, ref StackDataReader p) => seen.Add(p.Buffer.ToArray());
+            PacketHandlers.OnPacketBufferReader record = (World _, ref NetReader p) => seen.Add(p.Buffer.ToArray());
             handlers.Add(0x73, record);
             handlers.Add(0xA9, record);
             handlers.Add(0x03, record);

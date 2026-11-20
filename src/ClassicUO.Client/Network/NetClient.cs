@@ -252,8 +252,22 @@ namespace ClassicUO.Network
             Terminate(SocketError.ProtocolNotSupported);
         }
 
+        /// <summary>
+        /// Why the client dropped the last connection, for the player (span_reader: a packet a handler could not read), or
+        /// null. Set before the Disconnected handlers run; cleared by the next Connect.
+        /// </summary>
+        public string DisconnectReason { get; private set; }
+
+        /// <summary>A packet could not be read (span_reader): drop the connection with a reason shown to the player.</summary>
+        internal void ProtocolError(string reason)
+        {
+            DisconnectReason = reason;
+            Terminate(SocketError.ProtocolNotSupported);
+        }
+
         public void Connect(string ip, ushort port)
         {
+            DisconnectReason = null;
             ResetProtocolState();
             ResetStatistics();
 

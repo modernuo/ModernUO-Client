@@ -97,22 +97,14 @@ namespace ClassicUO.Assets
             }
         }
 
-        /// <summary>Map patch packets (0xBF/0x18) are not applied at run time. The converter bakes mapdif/stadif into the pack
+        /// <summary>Map patch counts (0xBF/0x18, one call per map) are not applied at run time. The converter bakes mapdif/stadif into the pack
         /// for pre-UOP installs the way ModernUO serves them (land below 6.0.0.0, statics below 7.0.9.0; Uo.Converter
         /// ClientLoad.ApplyLegacyMapRules), so the counts the server sends describe patches the pack already holds.</summary>
-        public bool ApplyPatches(ref StackDataReader reader)
+        public bool ApplyPatch(int map, uint land, uint statics)
         {
-            uint maps = reader.ReadUInt32BE();
-
-            for (uint i = 0; i < maps && reader.Remaining >= 8; i++)
+            if (statics != 0 || land != 0)
             {
-                uint statics = reader.ReadUInt32BE();
-                uint land = reader.ReadUInt32BE();
-
-                if (statics != 0 || land != 0)
-                {
-                    Log.Warn($"Server sent map patches for map {i} ({land} land, {statics} statics); ignored: the converter bakes map diffs into the pack");
-                }
+                Log.Warn($"Server sent map patches for map {map} ({land} land, {statics} statics); ignored: the converter bakes map diffs into the pack");
             }
 
             return false;
