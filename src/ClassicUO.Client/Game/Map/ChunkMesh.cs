@@ -72,6 +72,19 @@ namespace ClassicUO.Game.Map
         /// Computes prefix-sum offsets from the counts. Returns total sprite count.
         /// After this, GetNextIndex() can be called during pass 2.
         /// </summary>
+        public bool AnyDisposed()
+        {
+            for (int i = 0; i < _bucketCount; i++)
+            {
+                if (_textures[i] != null && _textures[i].IsDisposed)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public int ComputeOffsets()
         {
             int offset = 0;
@@ -110,6 +123,26 @@ namespace ClassicUO.Game.Map
         /// <summary>clip-4: built with depth_model on (the vertices carry the geometric shapes, LegacyGeo); a flip rebuilds.</summary>
         public bool BuiltGeo;
 
+        /// <summary>atlas_lru: AtlasPageClock.FreedEpoch at the last Build or <see cref="HoldsFreedPage"/> check.</summary>
+        public int AtlasEpoch;
+
+        /// <summary>
+        /// atlas_lru: after an atlas freed a page (<paramref name="epoch"/> changed), whether this mesh draws from a freed page
+        /// and must be rebuilt; otherwise it is current for <paramref name="epoch"/>. Only meshes that are drawn ask (Legacy),
+        /// and only once per freed-page event: a few texture tests per mesh.
+        /// </summary>
+        public bool HoldsFreedPage(int epoch)
+        {
+            if (_landBuckets.AnyDisposed() || _staticsBuckets.AnyDisposed())
+            {
+                return true;
+            }
+
+            AtlasEpoch = epoch;
+
+            return false;
+        }
+
         // depth_model at this Build
         private bool _geo;
 
@@ -130,6 +163,7 @@ namespace ClassicUO.Game.Map
             Statics.Reset();
             IsDirty = false;
             BuiltGeo = _geo = Scenes.DepthModel.On;
+            AtlasEpoch = ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch;
 
             var profile = ProfileManager.CurrentProfile;
             if (profile == null)
@@ -171,9 +205,9 @@ namespace ClassicUO.Game.Map
             int landTotal = _landBuckets.ComputeOffsets();
             int staticsTotal = _staticsBuckets.ComputeOffsets();
 
-            Land.EnsureCapacity(landTotal);
+            Land.EnsureCapacity(landTotal, world.MeshPool);
             Land.Count = landTotal;
-            Statics.EnsureCapacity(staticsTotal);
+            Statics.EnsureCapacity(staticsTotal, world.MeshPool);
             Statics.Count = staticsTotal;
 
             // Pass 2: write sprites at their final sorted positions
@@ -215,12 +249,13 @@ namespace ClassicUO.Game.Map
         }
 
         /// <summary>
-        /// Resets mesh state for pool reuse. Keeps GPU buffers and arrays allocated.
+        /// Resets mesh state for pool reuse. Keeps GPU buffers and arrays up to the prefill size (MapWarmup); a larger statics
+        /// layer trades its set for one of that size in <paramref name="pool"/>.
         /// </summary>
-        public void SoftClear()
+        public void SoftClear(MeshLayerPool pool)
         {
-            Land.SoftReset();
-            Statics.SoftReset();
+            Land.SoftReset(pool, MapWarmup.StaticsMeshCapacity);
+            Statics.SoftReset(pool, MapWarmup.StaticsMeshCapacity);
             _landBuckets.Clear();
             _staticsBuckets.Clear();
             IsDirty = true;

@@ -758,6 +758,10 @@ namespace ClassicUO.Game.Scenes
 
         private bool Emit(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode)
         {
+            // anim_atlas_lru / atlas_lru: the Gpu world draws from the pack pages, but the client atlas page this sprite was
+            // looked up in stays in use while the object is drawn (its sizes and the pick masks come from it)
+            ClassicUO.Renderer.Animations.AtlasPageClock.Touch(texture);
+
             if (!PackSpriteMap.TryFind(texture, source, out uint packRef, out Point origin))
             {
                 return Fallback(texture, position, source, hue, flip, depth, mode);

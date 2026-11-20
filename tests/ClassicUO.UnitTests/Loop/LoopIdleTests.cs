@@ -7,6 +7,7 @@ using Xunit;
 namespace ClassicUO.UnitTests.Loop;
 
 // loop-idle: event_loop_idle_wait's longest wait, its deadlines (LoopDue) and the music refill time, in both switch states.
+[Collection("LoopDue")]
 public class LoopIdleTests
 {
     [Fact]

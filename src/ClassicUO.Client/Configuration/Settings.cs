@@ -202,6 +202,14 @@ namespace ClassicUO.Configuration
         // states. CUO_ASSET_PREFETCH_ON_PACKET=1|0 overrides it in developer builds. Default off.
         [JsonPropertyName("asset_prefetch_on_packet")] public bool AssetPrefetchOnPacket { get; set; }
 
+        // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
+        // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
+        // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the
+        // event_loop_max_wait_ms cadence (perf-opportunities "World map gump open keeps the 16 ms loop cadence").
+        // CUO_WORLDMAP_IDLE_CHECK reports map state that changed after an idle wait it was not planned for, and late map work;
+        // CUO_WORLDMAP_IDLE_LOOP=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("worldmap_idle_loop")] public bool WorldMapIdleLoop { get; set; }
+
         // loop-linux: the event loop on Linux, waiting in epoll (LinuxEpollLoopWaiter: socket, wake eventfd, timerfd deadline,
         // X11/Wayland display fd, SDL event watch) instead of the legacy loop's Sleep(1) and spin. Read once at startup; the
         // log names the waiter ("main loop: Event (epoll-x11)"). Off: Linux runs the legacy loop. No effect on other OSes.
@@ -248,6 +256,13 @@ namespace ClassicUO.Configuration
         // CUO_ANIM_LRU_* sizes override it in developer builds; CUO_ANIM_LRU_CHECK=1 checks reloads and freed pages).
         // Default off: the atlas only grows.
         [JsonPropertyName("anim_atlas_lru")] public bool AnimAtlasLru { get; set; }
+
+        // atlas-lru: the Art, Gump, Texmap, Light and font glyph atlases free their least recently used pages above a
+        // budget per atlas, with anim_atlas_lru's policy (AtlasLruSetup); evicted sprites load again on use, and the glyph
+        // caches drop the entries of a freed page (bounds the coloured-glyph cache). Read once at startup (CUO_ATLAS_LRU=1|0
+        // and the CUO_ATLAS_LRU_* sizes override it in developer builds; CUO_ATLAS_LRU_CHECK=1 checks reloads and draws).
+        // Default off: the atlases only grow.
+        [JsonPropertyName("atlas_lru")] public bool AtlasLru { get; set; }
 
         // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
         // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
