@@ -25,17 +25,21 @@ namespace ClassicUO.Game
     /// </summary>
     internal static class LookPrefetchCheck
     {
-        private const int Tracked = 1024, Samples = 2048;
+        private const int Tracked = 1024, Samples = 8192, SlowMs = 250;
         private static readonly uint[] _serial = new uint[Tracked];
         private static readonly LookPrefetch.Kind[] _kind = new LookPrefetch.Kind[Tracked];
         private static readonly long[] _arrival = new long[Tracked];
         private static readonly bool[] _polled = new bool[Tracked], _seenOff = new bool[Tracked];
         private static readonly long[] _visible = new long[Tracked];
+        // the last incomplete poll's missing part (LookPrefetch.LookComplete) and the incomplete polls, for the slow-look lines
+        private static readonly int[] _missing = new int[Tracked], _polls = new int[Tracked];
+        private static readonly ushort[] _missingBody = new ushort[Tracked];
+        private static long _slowLogged;
         private static int _count;
 
         private static readonly long[][] _lat = { new long[Samples], new long[Samples], new long[Samples] };
         private static readonly int[] _latCount = new int[3];
-        private static readonly long[] _firstComplete = new long[3], _arrived = new long[3];
+        private static readonly long[] _firstComplete = new long[3], _arrived = new long[3], _merged = new long[3], _complete = new long[3];
         private static long _incompleteFrames, _never, _gone, _offscreen, _overflow, _start, _waitDraws, _waitFrames;
         private static long _heldDraws, _heldFrames, _partialDraws, _partialFrames, _firstSightDraws, _firstSightFrames, _blankDraws, _blankFrames;
         private static bool _switch;
@@ -66,15 +70,20 @@ namespace ClassicUO.Game
             }
 
             _switch = on;
-            _arrived[(int)kind]++;
 
             for (int i = 0; i < _count; i++)
             {
                 if (_serial[i] == serial)
                 {
-                    return; // the earliest arrival of a look still pending counts
+                    // the earliest arrival of a look still pending counts: a 0x78's worn list (Equip, the wearer's serial)
+                    // folds into the look its placement noted just before (p4 printed those as Equip arrived, never complete)
+                    _merged[(int)kind]++;
+
+                    return;
                 }
             }
+
+            _arrived[(int)kind]++;
 
             if (_count == Tracked)
             {
@@ -89,6 +98,8 @@ namespace ClassicUO.Game
             _polled[_count] = false;
             _seenOff[_count] = false;
             _visible[_count] = 0;
+            _missing[_count] = _polls[_count] = 0;
+            _missingBody[_count] = 0;
             _count++;
         }
 
@@ -139,9 +150,10 @@ namespace ClassicUO.Game
                         _offscreen++;
                     }
                 }
-                else if (Visible(i, now) && LookPrefetch.LookComplete(e))
+                else if (Visible(i, now) & LookPrefetch.LookComplete(e, out int missing, out ushort missingBody))
                 {
                     int k = (int)_kind[i];
+                    _complete[k]++;
 
                     if (!_polled[i])
                     {
@@ -153,12 +165,18 @@ namespace ClassicUO.Game
                         _lat[k][_latCount[k]++] = now - _visible[i];
                     }
 
+                    if (now - _visible[i] > Stopwatch.Frequency * SlowMs / 1000)
+                    {
+                        Slow(i, e, now, "complete");
+                    }
+
                     drop = true;
                 }
                 else if (now - _visible[i] > Stopwatch.Frequency * 3)
                 {
                     _never++;
                     drop = true;
+                    Slow(i, e, now, "never");
 
                     if (_never <= 20)
                     {
@@ -170,6 +188,9 @@ namespace ClassicUO.Game
                     _polled[i] = true;
                     incomplete = true;
                     drop = false;
+                    _polls[i]++;
+                    _missing[i] = missing;
+                    _missingBody[i] = missingBody;
                 }
 
                 if (drop)
@@ -181,6 +202,9 @@ namespace ClassicUO.Game
                     _polled[i] = _polled[_count];
                     _seenOff[i] = _seenOff[_count];
                     _visible[i] = _visible[_count];
+                    _missing[i] = _missing[_count];
+                    _polls[i] = _polls[_count];
+                    _missingBody[i] = _missingBody[_count];
                     i--;
                 }
             }
@@ -195,6 +219,23 @@ namespace ClassicUO.Game
                 Summary(null);
                 _start = now;
             }
+        }
+
+        // a look complete only after SlowMs (or never): what was missing at its last incomplete poll, to tell a slow load from a
+        // look the checker waits on and the draw does not (p4: single Legacy mobiles at 777-974 ms with no partial draw)
+        private static void Slow(int i, Entity e, long now, string how)
+        {
+            if (++_slowLogged > 40)
+            {
+                return;
+            }
+
+            var m = e as Mobile;
+            string what = _missing[i] == 0 ? "-" : _missing[i] < 0 ? $"body 0x{_missingBody[i]:X4}" : $"layer {(Data.Layer)_missing[i]} draw body 0x{_missingBody[i]:X4}";
+            string look = m == null ? "" : $" graphic 0x{m.GetGraphicForAnimation():X4} group {Mobile.GetGroupForAnimation(m, m.GetGraphicForAnimation(), true)} dir {(byte)m.GetDirectionForAnimation() & 7} steps {m.Steps.Count} player {ReferenceEquals(m, m.World?.Player)}";
+            double f = 1000.0 / Stopwatch.Frequency;
+            Log.Info(FormattableString.Invariant(
+                $"[look-prefetch-check] slow 0x{_serial[i]:X8} ({_kind[i]}) {how} after {(now - _visible[i]) * f:F0} ms visible ({(now - _arrival[i]) * f:F0} ms since arrival), {_polls[i]} incomplete polls, last missing {what};{look}"));
         }
 
         // the look's latency start: packet arrival if it was on screen then, else this first frame on screen
@@ -230,14 +271,14 @@ namespace ClassicUO.Game
                 double p50 = span.Length == 0 ? 0 : span[span.Length / 2] * f;
                 double p95 = span.Length == 0 ? 0 : span[Math.Min(span.Length - 1, span.Length * 95 / 100)] * f;
                 double max = span.Length == 0 ? 0 : span[^1] * f;
-                sb.Append(FormattableString.Invariant($" {(LookPrefetch.Kind)k}: arrived {_arrived[k]} complete {span.Length} complete_at_first_draw {_firstComplete[k]} p50_ms {p50:F1} p95_ms {p95:F1} max_ms {max:F1};"));
+                sb.Append(FormattableString.Invariant($" {(LookPrefetch.Kind)k}: arrived {_arrived[k]} complete {_complete[k]} complete_at_first_draw {_firstComplete[k]} p50_ms {p50:F1} p95_ms {p95:F1} max_ms {max:F1} merged {_merged[k]} samples {span.Length};"));
                 _latCount[k] = 0;
-                _firstComplete[k] = _arrived[k] = 0;
+                _firstComplete[k] = _arrived[k] = _merged[k] = _complete[k] = 0;
             }
 
             sb.Append($" incomplete_frames {_incompleteFrames} never_complete {_never} gone {_gone} offscreen {_offscreen} overflow {_overflow} tracked {_count}; prefetch resolved {LookPrefetch.Resolved} requested {LookPrefetch.Requested} dropped {LookPrefetch.Dropped}");
             sb.Append($"; mobile draws held {_heldDraws} ({_heldFrames} frames) partial {_partialDraws} ({_partialFrames} frames) first_sight {_firstSightDraws} ({_firstSightFrames} frames) blank {_blankDraws} ({_blankFrames} frames) hold_timeouts {LookPrefetch.HoldTimeouts}");
-            sb.Append($"; first_sight_wait {_waitDraws} ({_waitFrames} frames); hold_ms {LookPrefetch.HoldMs.Summary()}; first_sight_ms {LookPrefetch.FirstSightMs.Summary()}");
+            sb.Append($"; first_sight_wait {_waitDraws} ({_waitFrames} frames); hold_ms {LookPrefetch.HoldMs.Summary()}; first_sight_ms {LookPrefetch.FirstSightMs.Summary()}; cap_frame_gap_ms {LookPrefetch.CapFrameGapMs.Summary()}");
             var gpu = Client.Game.GetGpuWorld()?.World;
 
             if (gpu != null && gpu.AnimPrefetchLooks != 0)

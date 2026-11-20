@@ -88,6 +88,18 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
         /// <summary>CUO_LOOK_PREFETCH_CHECK: hold durations and first-sight waits in ms (a wait of 0: complete at first sight).</summary>
         internal static readonly MsSamples HoldMs = new MsSamples(), FirstSightMs = new MsSamples();
+
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: at each cap hit, the time since the draw before (a bound passes between two
+        /// draws, so a wait overshoots its cap by up to that frame gap: a long frame, not a late bound).</summary>
+        internal static readonly MsSamples CapFrameGapMs = new MsSamples();
+
+        private static void NoteCapGap(bool capped)
+        {
+            if (capped)
+            {
+                CapFrameGapMs.Add(_prevDraw == 0 ? 0 : _thisDraw - _prevDraw, false);
+            }
+        }
 #endif
 
         /// <summary>A hold ended (<paramref name="capped"/>: by <see cref="HoldMaxMs"/>).</summary>
@@ -101,6 +113,7 @@ namespace ClassicUO.Game
             if (Check)
             {
                 HoldMs.Add(ms, capped);
+                NoteCapGap(capped);
             }
 #endif
         }
@@ -117,6 +130,7 @@ namespace ClassicUO.Game
             if (Check)
             {
                 FirstSightMs.Add(ms, capped);
+                NoteCapGap(capped);
             }
 #endif
         }
@@ -140,7 +154,14 @@ namespace ClassicUO.Game
         public static long HoldTimeouts;
 
         /// <summary>Draw start: this frame's counts from zero.</summary>
-        public static void BeginDraw() => FrameHeld = FramePartial = FrameFirstSight = FrameBlank = FrameFirstSightWait = 0;
+        public static void BeginDraw()
+        {
+            FrameHeld = FramePartial = FrameFirstSight = FrameBlank = FrameFirstSightWait = 0;
+            _prevDraw = _thisDraw;
+            _thisDraw = Now;
+        }
+
+        private static uint _prevDraw, _thisDraw;
 
         /// <summary>A mobile draw found layers of its look missing (<paramref name="missing"/> of <paramref name="total"/>
         /// records); <paramref name="hadPrevious"/>: a previous complete look existed.</summary>
@@ -377,8 +398,14 @@ namespace ClassicUO.Game
         }
 
         /// <summary>The look of <paramref name="e"/> is drawable completely now (checker).</summary>
-        internal static bool LookComplete(Entity e)
+        internal static bool LookComplete(Entity e) => LookComplete(e, out _, out _);
+
+        /// <summary><see cref="LookComplete(Entity)"/>, with what is missing: <paramref name="missing"/> -1 the body, else
+        /// the layer, and the body not loaded (<paramref name="missingBody"/>).</summary>
+        internal static bool LookComplete(Entity e, out int missing, out ushort missingBody)
         {
+            missing = 0;
+            missingBody = 0;
             var animations = Client.Game.UO.Animations;
             var gpu = Client.Game.GetGpuWorld()?.World;
 
@@ -393,6 +420,9 @@ namespace ClassicUO.Game
 
                 if (!Ready(animations, gpu, graphic, group, dir, uoDir))
                 {
+                    missing = -1;
+                    missingBody = graphic;
+
                     return false;
                 }
 
@@ -409,6 +439,9 @@ namespace ClassicUO.Game
 
                     if (drawBody != 0 && !Ready(animations, gpu, drawBody, group, dir, uoDir))
                     {
+                        missing = layer;
+                        missingBody = drawBody;
+
                         return false;
                     }
                 }
