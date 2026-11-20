@@ -8147,3 +8147,35 @@ outstanding, so a budget of that size lets a teleport run without LOH reallocati
 (was 30 s; still checked every 5 s) and never goes below a 16 MiB floor of free buffers (about one region set), trimming size
 classes that never had a hit first. Memory cost: up to ~64 MiB more held per client than before; the later memory-cap setting
 scales it (Low uses less). No env override exists for the budget (SetBudget is the code hook). Tests: floor respected, defaults.
+
+## 2026-11-20 zstd-pack: pack revision classic-1.6, Brotli -> BCL zstd 19 (bg/zstd-pack)
+
+Owner go 2026-11-20. Base bg/buffer-pools f06578c21. Survey: cuo-poc-state/surveys/zstd-pack-2026-11-20.md.
+
+- **Format.** The codec is pack data: `FileHeader.Kind` 3 = chunked zstd (pages 1 MiB chunks; a region is one chunk),
+  `StoreRecord.Codec` 2 = zstd. Level 19, no dictionaries, content size in each frame. Kinds 1/2 and codec 1 (Brotli)
+  are retired: every reader refuses them and `PackAssets.Open` checks `art/page_0000.bin` at startup, with "... pack
+  revision older than 1.6 ... Convert the client again with Uo.Converter." Small run-length gump records are now
+  compressed too (3,915 small; 44 records kept raw where zstd does not shrink them).
+- **One seam.** `Uo.Pack.PackCodec`: `OfFileKind`, `Check`, `MaxStoredBytes`, `Create` (per worker), `ForThread`
+  ([ThreadStatic], for record stores, page chunks, region parse). Loaders hold no codec branches.
+  `ChunkedBrotli*` became `ChunkedFile`/`ChunkedStream`/`ChunkedDecoder` with a decoder per worker. Brotli is gone from
+  `src/` (the Kind 1 page path and its 1 MiB per-PageJob buffer are deleted, not pooled).
+- **Decision: the client requires 1.6** (no Brotli decoder kept). 1.5 stays published and immutable for 1.5 binaries;
+  the coordinator flips CURRENT after the gates pass and once no queued job runs a pre-1.6 binary on CURRENT.
+- **Pack.** `uo-packs/classic-1.6` published (converted in scratch, moved in, `--verify-only` all checks passed;
+  CURRENT untouched). 1,174.9 -> 1,112.3 MiB (-62.5 MiB, -5.3 %): art -8 %, tex -9 %, anim -4 %, map -13 %, gumps
+  58.2 -> 37.0 MiB, multimap -10 %, text/audio unchanged (raw by design). Conversion (busy machine, 24 threads):
+  230 s, peak working set 3.3 GB (anims stage); `--zstd-level 9` for comparison 130 s, 2.6 GB, 1,173.4 MiB.
+- **AOT.** zstd is statically linked on win-x64 (built), linux-x64 and osx-arm64 (runtime packs: `libzstd.a`, linked
+  by the ILCompiler Unix targets unless `UseSystemZstd`). Exe (win-x64 dev) 19,937,280 -> 19,439,104 B (-498 KB:
+  Brotli no longer linked).
+- **Memory.** A zstd context is ~80 KiB native, reused; decodes allocate 0 managed bytes (tests). A Brotli decode held
+  ~1 MiB transient per decode. A streaming zstd decode would grow a context to ~1.2 MiB, so the client always decodes
+  whole frames into exact-size buffers. Net per client: about -1 MiB per PageJob (buffer deleted) plus ~80 KiB per
+  decoding thread or chunk worker (about 2.5 MB worst case with 2x8 chunk workers and ~16 decoding pool threads).
+- **Verification.** Release builds both variants OK; unit tests 4340 pass + 6 skipped; converter tests 141 + 1
+  skipped. New tests: the seam, per-kind round trips, raw fallback, refusal of Brotli files/records/packs, 0-alloc
+  decodes. Jobs (pending at hand-off): bench-000975 gate-gpu, 000976 gate-legacy, 000977 golden (1.5 base vs 1.6 new,
+  0 px expected), 000978/000979 alloc, 000980/000981 pop-in/settle counts, 000982 codec sampling profile (phase-1 item
+  1). Parked: measure/zstd-pack/job-timing-PARKED.sh.
