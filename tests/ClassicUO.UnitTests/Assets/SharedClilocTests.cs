@@ -84,6 +84,25 @@ namespace ClassicUO.UnitTests.Assets
             a.GetOrBuild("t.bin", Source(data.Length), data.Length, d => fills++).Should().BeSameAs(m, "the same file asked again is the same mapping");
         }
 
+        [Fact]
+        public void Prefault_Is_Safe_Before_During_And_After_Dispose()
+        {
+            // the loader queues Prefault on a worker; the table can be disposed first (this crashed the test host)
+            var data = Payload(1 << 20, 7);
+            var path = Path.Combine(_tmp, "raw.bin");
+            File.WriteAllBytes(path, data);
+            var c = NewCache();
+
+            for (int i = 0; i < 50; i++)
+            {
+                var m = c.MapFileRange(path, i * 4096, data.Length - i * 4096); // a new range each time: the cache returns a range's mapping again
+                var t = Task.Run(() => m.Prefault());
+                m.Dispose();
+                t.Wait();
+                m.Prefault().Should().Be(0);
+            }
+        }
+
         [Theory]
         [InlineData("flip")]
         [InlineData("truncate")]

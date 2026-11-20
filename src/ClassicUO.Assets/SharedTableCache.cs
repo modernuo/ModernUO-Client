@@ -658,15 +658,45 @@ namespace ClassicUO.Assets
             /// </summary>
             public int Prefault()
             {
-                int sum = 0;
+                // Runs on a worker and can race Dispose (a test or a reload disposing the table first): a reference on
+                // the view handle keeps the view mapped until the walk ends, and a disposed mapping is skipped.
+                SafeMemoryMappedViewHandle handle = _handle;
                 byte* p = Pointer;
 
-                for (long i = 0; i < Length; i += 4096)
+                if (handle == null || p == null)
                 {
-                    sum += Volatile.Read(ref p[i]);
+                    return 0;
                 }
 
-                return sum;
+                bool added = false;
+
+                try
+                {
+                    handle.DangerousAddRef(ref added);
+                }
+                catch (ObjectDisposedException)
+                {
+                    return 0;
+                }
+
+                try
+                {
+                    int sum = 0;
+
+                    for (long i = 0; i < Length; i += 4096)
+                    {
+                        sum += Volatile.Read(ref p[i]);
+                    }
+
+                    return sum;
+                }
+                finally
+                {
+                    if (added)
+                    {
+                        handle.DangerousRelease();
+                    }
+                }
             }
 
             public void Dispose()
