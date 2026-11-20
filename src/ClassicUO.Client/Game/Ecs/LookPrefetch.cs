@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
+using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
-using ClassicUO.Utility.Logging;
+using ClassicUO.Utility;
+using Uo.Pack;
 
 namespace ClassicUO.Game
 {
@@ -191,6 +193,8 @@ namespace ClassicUO.Game
                 }
             }
 
+            var look = new EquipLook(mobile);
+
             for (int layer = (int)Layer.OneHanded; layer <= (int)Layer.Legs; layer++)
             {
                 if (layer == (int)Layer.Mount || layer == (int)Layer.Backpack)
@@ -198,13 +202,56 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                Item item = mobile.FindItemByLayer((Layer)layer);
+                ushort drawBody = EquipDrawBody(mobile.FindItemByLayer((Layer)layer), in look);
 
-                if (item != null && item.ItemData.AnimID != 0)
+                if (drawBody != 0)
                 {
-                    Request(animations, gpu, item.ItemData.AnimID, group, dir, uoDir, true);
+                    Request(animations, gpu, drawBody, group, dir, uoDir, true);
                 }
             }
+        }
+
+        /// <summary>What the draw needs to turn a worn item's AnimID into the body it draws (MobileAnimationSystem.Rebuild).</summary>
+        private readonly struct EquipLook
+        {
+            public readonly LayerSubject Subject;
+            public readonly Dictionary<ushort, EquipConvData> Conv;
+            public readonly bool Human;
+
+            public EquipLook(Mobile mobile)
+            {
+                ushort body = mobile.Graphic;
+                bool gargoyle = AnimationRules.IsGargoyleDrawBody(body, Client.Game.UO.Version >= ClientVersion.CV_7000);
+                Subject = LayerRuleEval.Subject(body, mobile.IsFemale, gargoyle);
+                Client.Game.UO.FileManager.Animations.EquipConversions.TryGetValue(body, out Conv);
+                Human = mobile.IsHuman;
+            }
+        }
+
+        /// <summary>The body a worn item draws with (the layering rules' remap, then the equip conversion), as
+        /// MobileAnimationSystem.Rebuild sets EquipSlot.DrawBody; 0 when it draws nothing (no AnimID, or a non-human body).</summary>
+        private static ushort EquipDrawBody(Item item, in EquipLook look)
+        {
+            if (item == null || !look.Human)
+            {
+                return 0;
+            }
+
+            ushort anim = item.ItemData.AnimID;
+
+            if (anim == 0)
+            {
+                return 0;
+            }
+
+            ushort drawBody = LayerRuleEval.Remap(anim, look.Subject);
+
+            if (look.Conv != null && look.Conv.TryGetValue(anim, out EquipConvData data))
+            {
+                drawBody = data.Graphic;
+            }
+
+            return drawBody;
         }
 
         private static void Request(Renderer.Animations.Animations animations, Uo.Render.WorldRenderer gpu, ushort body, byte group, byte dir, byte uoDir, bool equip)
@@ -239,6 +286,8 @@ namespace ClassicUO.Game
                     return false;
                 }
 
+                var look = new EquipLook(mobile);
+
                 for (int layer = (int)Layer.OneHanded; layer <= (int)Layer.Legs; layer++)
                 {
                     if (layer == (int)Layer.Mount || layer == (int)Layer.Backpack)
@@ -246,9 +295,9 @@ namespace ClassicUO.Game
                         continue;
                     }
 
-                    Item item = mobile.FindItemByLayer((Layer)layer);
+                    ushort drawBody = EquipDrawBody(mobile.FindItemByLayer((Layer)layer), in look);
 
-                    if (item != null && item.ItemData.AnimID != 0 && !Ready(animations, gpu, item.ItemData.AnimID, group, dir, uoDir))
+                    if (drawBody != 0 && !Ready(animations, gpu, drawBody, group, dir, uoDir))
                     {
                         return false;
                     }
