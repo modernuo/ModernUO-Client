@@ -22,10 +22,10 @@ namespace ClassicUO.UnitTests.Renderer
 
         public void Dispose() => AnimAtlasLruSetup.OnOverride = null;
 
-        private static AnimAtlasLruPolicy Policy(int budget = 4, int floor = 2, int ceiling = 16) =>
-            new AnimAtlasLruPolicy(budget, floor, ceiling) { MinAgeMs = 45_000, ThrashWindowMs = 60_000, GrowCooldownMs = 5_000 };
+        private static AtlasLruPolicy Policy(int budget = 4, int floor = 2, int ceiling = 16) =>
+            new AtlasLruPolicy(budget, floor, ceiling) { MinAgeMs = 45_000, ThrashWindowMs = 60_000, GrowCooldownMs = 5_000 };
 
-        private static int[] Select(AnimAtlasLruPolicy p, long now, params long[] lastUse)
+        private static int[] Select(AtlasLruPolicy p, long now, params long[] lastUse)
         {
             var victims = new int[lastUse.Length];
             int n = p.SelectVictims(lastUse, lastUse.Length - 1, now, victims);
@@ -188,7 +188,7 @@ namespace ClassicUO.UnitTests.Renderer
         [Fact]
         public void Floor_and_ceiling_bracket_the_budget()
         {
-            var p = new AnimAtlasLruPolicy(budgetPages: 2, floorPages: 4, ceilingPages: 1);
+            var p = new AtlasLruPolicy(budgetPages: 2, floorPages: 4, ceilingPages: 1);
             p.FloorPages.Should().Be(2);
             p.CeilingPages.Should().Be(2);
             p.BudgetPages.Should().Be(2);

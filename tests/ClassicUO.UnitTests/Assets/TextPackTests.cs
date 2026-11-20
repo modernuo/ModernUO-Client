@@ -335,7 +335,7 @@ namespace ClassicUO.UnitTests.Assets
             clilocs.Load("enu");
             clilocs.Revision.Should().Be(r0 + 1);
 
-            clilocs.Reload();
+            clilocs.Load();
             clilocs.Revision.Should().Be(r0 + 2);
 
             clilocs.ClearResources();

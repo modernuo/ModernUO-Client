@@ -101,6 +101,7 @@ namespace ClassicUO
             MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, game.GraphicsDevice);
             Sounds = new Renderer.Sounds.Sound(FileManager.Sounds);
             FontGlyphAtlas = new Renderer.FontGlyphAtlas(FileManager.Fonts, game.GraphicsDevice);
+            ClassicUO.Game.AtlasLruSetup.Enable(this);
 
             LightColors.LoadLights();
 
