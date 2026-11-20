@@ -1,7 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // Copied from ModernUO Projects/Server/Collections/PooledRefList.cs (commit b19149856); used here under agreement from its author.
-// Changes: namespace Uo.Buffers; the single-thread pool is the calling thread's STArrayPool<T>.ThreadLocal.
+// Changes: namespace Uo.Buffers; rents go through the BufferPool facade (LocalFamilyPool / SharedFamilyPool), so arrays above 64 KiB use LargeBufferPool.
 
 using System;
 using System.Buffers;
@@ -35,7 +35,7 @@ public ref struct PooledRefList<T>
     private ArrayPool<T> ArrayPool
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal;
+        get => _mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -57,7 +57,7 @@ public ref struct PooledRefList<T>
         {
             < 0 => throw new ArgumentOutOfRangeException(nameof(capacity), capacity, CollectionThrowStrings.ArgumentOutOfRange_NeedNonNegNum),
             0   => Array.Empty<T>(),
-            _   => (_mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Rent(capacity)
+            _   => (_mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Rent(capacity)
         };
 
     }
@@ -79,7 +79,7 @@ public ref struct PooledRefList<T>
         }
         else
         {
-            _items = (mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Rent(count);
+            _items = (mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Rent(count);
             collection.CopyTo(_items, 0);
             _size = count;
         }
@@ -109,7 +109,7 @@ public ref struct PooledRefList<T>
             }
             else
             {
-                _items = (mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Rent(count);
+                _items = (mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Rent(count);
                 c.CopyTo(_items, 0);
                 _size = count;
             }

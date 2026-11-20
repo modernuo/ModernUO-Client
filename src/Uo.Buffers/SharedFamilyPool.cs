@@ -10,7 +10,7 @@ namespace Uo.Buffers;
 /// </summary>
 public sealed class SharedFamilyPool<T> : ArrayPool<T>
 {
-    public static readonly SharedFamilyPool<T> Instance = new SharedFamilyPool<T>();
+    public static readonly ArrayPool<T> Instance = new SharedFamilyPool<T>();
 
     private SharedFamilyPool()
     {

@@ -1,7 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // Copied from ModernUO Projects/Server/Collections/PooledRefQueue.cs (commit ebaf10493); used here under agreement from its author.
-// Changes: namespace Uo.Buffers; the single-thread pool is the calling thread's STArrayPool<T>.ThreadLocal.
+// Changes: namespace Uo.Buffers; rents go through the BufferPool facade (LocalFamilyPool / SharedFamilyPool), so arrays above 64 KiB use LargeBufferPool.
 
 using System;
 using System.Buffers;
@@ -42,7 +42,7 @@ public ref struct PooledRefQueue<T>
         {
             < 0 => throw new ArgumentOutOfRangeException(nameof(capacity), capacity, CollectionThrowStrings.ArgumentOutOfRange_NeedNonNegNum),
             0   => s_emptyArray,
-            _   => (mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Rent(capacity)
+            _   => (mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Rent(capacity)
         };
 
         _head = 0;
@@ -271,7 +271,7 @@ public ref struct PooledRefQueue<T>
             return s_emptyArray;
         }
 
-        var arr = (mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Rent(_size);
+        var arr = (mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Rent(_size);
 
         if (_head < _tail)
         {
@@ -290,7 +290,7 @@ public ref struct PooledRefQueue<T>
     // must be >= _size.
     private void SetCapacity(int capacity)
     {
-        var newarray = (_mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Rent(capacity);
+        var newarray = (_mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Rent(capacity);
         if (_size > 0)
         {
             if (_head < _tail)
@@ -307,7 +307,7 @@ public ref struct PooledRefQueue<T>
         if (_array.Length > 0)
         {
             Array.Clear(_array);
-            (_mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Return(_array);
+            (_mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Return(_array);
         }
 
         _array = newarray;
@@ -389,7 +389,7 @@ public ref struct PooledRefQueue<T>
         if (array?.Length > 0)
         {
             Clear();
-            (_mt ? ArrayPool<T>.Shared : STArrayPool<T>.ThreadLocal).Return(array);
+            (_mt ? SharedFamilyPool<T>.Instance : LocalFamilyPool<T>.Instance).Return(array);
         }
 
         this = default;

@@ -329,6 +329,80 @@ namespace ClassicUO.UnitTests.Buffers
             Assert.Equal(99, list[99]);
         }
 
+        // The ref collections rent through the facade: an array above 64 KiB goes to the large pool, never to the
+        // per-thread STArrayPool (which keeps up to 33 arrays per bucket for the thread's life).
+        [Fact]
+        public void PooledRefListAboveSmallMaxUsesLargePool()
+        {
+            const int n = BufferPool.SmallMaxBytes / sizeof(int) * 2;
+            long rents = LargeBufferPool.Rents;
+            var list = PooledRefList<int>.Create();
+
+            for (int i = 0; i < n; i++)
+            {
+                list.Add(i);
+            }
+
+            Assert.True(LargeBufferPool.Rents > rents);
+            long returns = LargeBufferPool.Returns;
+            list.Dispose();
+            Assert.True(LargeBufferPool.Returns > returns);
+        }
+
+        [Fact]
+        public void PooledRefQueueAboveSmallMaxUsesLargePool()
+        {
+            const int n = BufferPool.SmallMaxBytes / sizeof(long) + 1;
+            long rents = LargeBufferPool.Rents;
+            var queue = PooledRefQueue<long>.Create(n);
+            Assert.True(LargeBufferPool.Rents > rents);
+
+            queue.Enqueue(1);
+            Assert.Equal(1, queue.Dequeue());
+            long returns = LargeBufferPool.Returns;
+            queue.Dispose();
+            Assert.True(LargeBufferPool.Returns > returns);
+        }
+
+        [Fact]
+        public void ValueStringBuilderAboveSmallMaxUsesLargePool()
+        {
+            long rents = LargeBufferPool.Rents;
+            var sb = ValueStringBuilder.Create(BufferPool.SmallMaxBytes / sizeof(char) + 1);
+            Assert.True(LargeBufferPool.Rents > rents);
+            sb.Append('x');
+            long returns = LargeBufferPool.Returns;
+            sb.Dispose();
+            Assert.True(LargeBufferPool.Returns > returns);
+        }
+
+        // The client members kept from the earlier builder: Replace swaps the first occurrence only (spell display
+        // format), Insert takes a span (cliloc arguments), ToString leaves the builder usable until Dispose.
+        [Fact]
+        public void ValueStringBuilderClientMembers()
+        {
+            var sb = new ValueStringBuilder("{power} [{spell}] {spell}".AsSpan());
+            sb.Replace("{power}".AsSpan(), "In Mani".AsSpan());
+            sb.Replace("{spell}".AsSpan(), "Heal".AsSpan());
+            Assert.Equal("In Mani [Heal] {spell}", sb.ToString());
+
+            sb.Replace("In Mani".AsSpan(), "X".AsSpan());
+            Assert.Equal("X [Heal] {spell}", sb.ToString());
+
+            sb.Insert(1, "yz".AsSpan());
+            sb.Append('!');
+            Assert.Equal("Xyz [Heal] {spell}!", sb.ToString());
+            sb.Dispose();
+
+            Span<char> stack = stackalloc char[2];
+            var small = new ValueStringBuilder(stack);
+            small.Append('a');
+            small.Append('b');
+            small.Append('c');
+            Assert.Equal("abc", small.ToString());
+            small.Dispose();
+        }
+
         [Fact]
         public void ValueStringBuilderBuilds()
         {

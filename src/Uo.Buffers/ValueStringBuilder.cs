@@ -1,7 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // Copied from ModernUO Projects/Server/Buffers/ValueStringBuilder.cs (commit 61e41df00); used here under agreement from its author.
-// Changes: namespace Uo.Buffers; nullable warnings suppressed; the single-thread pool is the calling thread's STArrayPool<T>.ThreadLocal.
+// Changes: namespace Uo.Buffers; nullable warnings suppressed; partial (client members in ValueStringBuilder.Client.cs); rents go through the BufferPool facade (LocalFamilyPool / SharedFamilyPool), so arrays above 64 KiB use LargeBufferPool.
 
 #nullable enable
 #pragma warning disable CS8602, CS8618, CS8625 // upstream annotations; kept as copied
@@ -13,7 +13,7 @@ using System.Runtime.InteropServices;
 
 namespace Uo.Buffers;
 
-public ref struct ValueStringBuilder
+public ref partial struct ValueStringBuilder
 {
     private char[] _arrayToReturnToPool;
     private Span<char> _chars;
@@ -23,7 +23,7 @@ public ref struct ValueStringBuilder
     private ArrayPool<char> ArrayPool
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => _mt ? ArrayPool<char>.Shared : STArrayPool<char>.ThreadLocal;
+        get => _mt ? SharedFamilyPool<char>.Instance : LocalFamilyPool<char>.Instance;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -56,7 +56,7 @@ public ref struct ValueStringBuilder
     {
         _mt = mt;
         _length = 0;
-        _arrayToReturnToPool = (_mt ? ArrayPool<char>.Shared : STArrayPool<char>.ThreadLocal).Rent(initialCapacity);
+        _arrayToReturnToPool = (_mt ? SharedFamilyPool<char>.Instance : LocalFamilyPool<char>.Instance).Rent(initialCapacity);
         _chars = _arrayToReturnToPool;
     }
 
