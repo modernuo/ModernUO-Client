@@ -23,6 +23,7 @@ Target framework is `net11.0`; `global.json` pins the .NET 11 SDK. Submodules (`
 - `ClassicUO.Renderer`: the batcher, art, animation and font rendering.
 - `ClassicUO.IO`: packet reader and writer, audio decoding, def-file and files_override helpers.
 - `ClassicUO.Utility`: shared helpers (logging, collections, client version, `Crypter`).
+- `Uo.Buffers`: array pools (per-thread, shared and large) behind the `BufferPool` facade, and the pooled ref collections (`PooledRefList`, `PooledRefQueue`, `ValueStringBuilder`).
 - `Uo.Pack`: pack format structs, readers and writers, layer rules data.
 - `Uo.Render`: the GPU world renderer (SDL_GPU): page residency, chunk baking, shaders.
 - `native/cuo_mp3`: C source of the static MP3 decoder.
@@ -79,4 +80,5 @@ Code commits do not touch docs. Changes under `docs/dev/` go in their own commit
 - C# code follows the existing file: 4-space indent, braces on their own lines, `_camelCase` private fields.
 - Do not add comments that restate the code. Comments explain why, and name the switch or checker involved.
 - No new allocations in per-frame paths; check FrameStats `alloc/frame` when you touch one.
+- Pooled arrays come from `Uo.Buffers.BufferPool` (`Rent`/`Return` on one thread, `RentShared`/`ReturnShared` across threads), not `ArrayPool<T>.Shared` or a private free list; see [buffer-pools.md](docs/dev/buffer-pools.md).
 - Do not commit local paths, account names, passwords or settings files. Passwords belong only encrypted in a throwaway `settings.json`.
