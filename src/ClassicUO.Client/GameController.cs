@@ -267,6 +267,11 @@ namespace ClassicUO
                     idleWait ? LoopDue.Busy : LoopDueSource.None, byDue && wait >= timers - LoopTiming.DrawSlackMs, wait >= maxWait, LoopDue.NextTick, LoopDue.NextSource);
                 LoopIdleCheck.Woke(false);
             }
+
+            if (ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.On)
+            {
+                ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.Planned(idleWait && byDue && wait >= timers - LoopTiming.DrawSlackMs && (LoopDue.NextSource & LoopDueSource.WorldMap) != 0);
+            }
 #endif
 
             if (wait <= 0)
@@ -284,6 +289,7 @@ namespace ClassicUO
             long end = Stopwatch.GetTimestamp();
 #if CUO_DEVTOOLS
             if (LoopIdleCheck.On) LoopIdleCheck.Woke(reason == WakeReason.Timer);
+            if (ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.On) ClassicUO.Game.UI.Gumps.WorldMapIdleCheck.Woke(reason == WakeReason.Timer);
 #endif
 #if CUO_DEVTOOLS
             if (VsyncPresentCheck.On) VsyncPresentCheck.Wait();
@@ -364,6 +370,13 @@ namespace ClassicUO
             Log.Trace(_gpuDevice != IntPtr.Zero
                 ? $"SDL_GPU device 0x{_gpuDevice:X}: driver={GpuInterop.GetDriverName(_gpuDevice)} shaders={GpuInterop.GetShaderFormats(_gpuDevice)}"
                 : "FNA3D is not on the SDL_GPU driver; GPU interop disabled");
+
+            // P-8: the world map texture is Bgra5551 where the device samples it. FNA3D's D3D11 (DXGI B5G5R5A1, Windows 8+)
+            // and OpenGL (GL_RGB5_A1) drivers always do; on SDL_GPU it is optional (Metal on Intel Macs lacks it)
+            Game.UI.Gumps.WorldMapImage.Use16Bit = _gpuDevice == IntPtr.Zero || SDL_GPUTextureSupportsFormat(
+                _gpuDevice, SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_B5G5R5A1_UNORM, SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D,
+                SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER);
+            Log.Info($"world map texture format: {(Game.UI.Gumps.WorldMapImage.Use16Bit ? "Bgra5551" : "Color")}");
 
             Fonts.Initialize(GraphicsDevice);
             SolidColorTextureCache.Initialize(GraphicsDevice);

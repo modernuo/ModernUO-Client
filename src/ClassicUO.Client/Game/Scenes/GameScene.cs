@@ -1139,9 +1139,10 @@ namespace ClassicUO.Game.Scenes
                 LoopDue.Now(LoopDueSource.Assets);
             }
 
-            if (UIManager.GetGump<WorldMapGump>() != null)
+            if (WorldMapGump.IsOpen)
             {
-                LoopDue.Now(LoopDueSource.WorldMap);
+                // worldmap_idle_loop off: Now (every Update); on: Now only while a map image loads, else deadlines
+                WorldMapGump.NoteLoopDue(_world);
             }
         }
 

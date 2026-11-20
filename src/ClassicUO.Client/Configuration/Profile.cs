@@ -313,6 +313,7 @@ namespace ClassicUO.Configuration
         public bool WorldMapShowGroupBar { get; set; } = true;
         public bool WorldMapShowMarkers { get; set; } = true;
         public bool WorldMapShowMarkersNames { get; set; } = true;
+        public bool WorldMapShowMarkerIcons { get; set; } = true;
         public bool WorldMapShowMultis { get; set; } = true;
         public string WorldMapHiddenMarkerFiles { get; set; } = string.Empty;
         public string WorldMapHiddenZoneFiles { get; set; } = string.Empty;
