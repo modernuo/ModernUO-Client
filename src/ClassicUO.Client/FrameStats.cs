@@ -676,6 +676,8 @@ namespace ClassicUO
 
                 WorldHeld = false;
                 _sessionAfterReport = false;
+                _poolMap = -1;
+                _poolAfterAt = -1;
                 _sessionLast = now;
                 _sessionWaitTicks = 0;
                 SessionBaseline();
@@ -710,6 +712,7 @@ namespace ClassicUO
             double frameMs = BusyFrameMs(now - _sessionLast, _sessionWaitTicks, Stopwatch.Frequency);
             _sessionLast = now;
             _sessionWaitTicks = 0;
+            PoolTeleportTick(t, inv);
             int seen0 = GC.CollectionCount(0);
 
             if (seen0 != _sessionGcSeen0)
@@ -788,6 +791,39 @@ namespace ClassicUO
             }
 
             SessionBaseline();
+        }
+
+        // the large pool at each teleport (a facet change or a jump of more than 32 tiles): at the jump (what the old area
+        // holds) and 5 s later (after the region swap), the evidence for the per-use caps (LargePoolCaps)
+        private static int _poolMap = -1, _poolX, _poolY;
+        private static double _poolAfterAt = -1;
+
+        private static void PoolTeleportTick(double t, CultureInfo inv)
+        {
+            var world = Client.Game?.UO?.World;
+            var player = world?.Player;
+
+            if (player == null)
+            {
+                return;
+            }
+
+            int map = world.MapIndex, x = player.X, y = player.Y;
+
+            if (_poolMap >= 0 && (map != _poolMap || Math.Max(Math.Abs(x - _poolX), Math.Abs(y - _poolY)) > 32))
+            {
+                Log.Info(string.Format(inv, "[bufpools] teleport +{0:0.0}s map {1} -> {2} ({3},{4}): {5}", t, _poolMap, map, x, y, Uo.Buffers.PoolStats.Format()));
+                _poolAfterAt = t + 5;
+            }
+            else if (_poolAfterAt >= 0 && t >= _poolAfterAt)
+            {
+                _poolAfterAt = -1;
+                Log.Info(string.Format(inv, "[bufpools] teleport+5s +{0:0.0}s: {1}", t, Uo.Buffers.PoolStats.Format()));
+            }
+
+            _poolMap = map;
+            _poolX = x;
+            _poolY = y;
         }
 
         // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept

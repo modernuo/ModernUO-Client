@@ -777,7 +777,8 @@ namespace ClassicUO
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
-            // the large buffer pool keeps free buffers up to its budget; ones idle for 180 s go back, keeping a 16 MiB floor to the GC
+            // the large buffer pool keeps free buffers up to its per-use caps (LargePoolCaps); General and Page ones idle for
+            // 180 s go back to the GC, Region ones stay (one teleport's swap set)
             if (Time.Ticks - _poolTrimTick >= 5000)
             {
                 _poolTrimTick = Time.Ticks;

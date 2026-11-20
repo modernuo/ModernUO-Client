@@ -46,7 +46,7 @@ public sealed class Region
     /// <summary>Returns <see cref="Data"/> to the pool. Main thread, only for a region no bake job pins.</summary>
     public void ReleaseData()
     {
-        BufferPool.ReturnShared(Data);
+        BufferPool.ReturnShared(Data, LargeUse.Region);
         Data = null;
     }
 

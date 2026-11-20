@@ -189,9 +189,9 @@ namespace ClassicUO.UnitTests.Buffers
         }
 
         [Fact]
-        public void BudgetEvictsLeastRecentlyReturned()
+        public void CapEvictsLeastRecentlyReturned()
         {
-            LargeBufferPool.SetBudget(3 << 20);
+            LargeBufferPool.SetCaps(LargeUse.General, 3 << 20, int.MaxValue);
             byte[] a = LargeBufferPool.Rent<byte>(1 << 20);
             byte[] b = LargeBufferPool.Rent<byte>(2 << 20);
             byte[] c = LargeBufferPool.Rent<byte>(1536 << 10);
@@ -200,10 +200,69 @@ namespace ClassicUO.UnitTests.Buffers
             Assert.Equal(3 << 20, LargeBufferPool.RetainedBytes);
 
             LargeBufferPool.Return(c); // 1.5 MiB more: evicts a (oldest), then still over: evicts b
-            Assert.True(LargeBufferPool.RetainedBytes <= 3 << 20);
             Assert.Equal(1536 << 10, LargeBufferPool.RetainedBytes);
             Assert.Equal(2, LargeBufferPool.Evicted);
             Assert.NotSame(a, LargeBufferPool.Rent<byte>(1 << 20));
+        }
+
+        [Fact]
+        public void UsesKeepTheirOwnFreeBuffers()
+        {
+            LargeBufferPool.SetCaps(LargeUse.General, 2 << 20, int.MaxValue);
+            byte[] region = LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region);
+            LargeBufferPool.Return(region, LargeUse.Region);
+
+            // a burst of General returns over its cap evicts only General buffers
+            var held = new byte[4][];
+            for (int i = 0; i < held.Length; i++)
+                held[i] = LargeBufferPool.Rent<byte>(1 << 20);
+            foreach (byte[] h in held)
+                LargeBufferPool.Return(h);
+
+            Assert.Equal(1, LargeBufferPool.StatsOf(LargeUse.Region).FreeCount);
+            Assert.Equal(2 << 20, LargeBufferPool.StatsOf(LargeUse.General).FreeBytes);
+            Assert.Equal(2, LargeBufferPool.StatsOf(LargeUse.General).Evicted);
+
+            // and a General rent never takes the Region buffer
+            Assert.NotSame(region, LargeBufferPool.Rent<byte>(2 << 20));
+            Assert.Same(region, LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region));
+        }
+
+        [Fact]
+        public void RegionCountCapKeepsTheNewest()
+        {
+            LargeBufferPool.SetCaps(LargeUse.Region, 64 << 20, 2);
+            byte[] a = LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region);
+            byte[] b = LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region);
+            byte[] c = LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region);
+            Assert.Equal(3, LargeBufferPool.StatsOf(LargeUse.Region).OutCount);
+            LargeBufferPool.Return(a, LargeUse.Region);
+            LargeBufferPool.Return(b, LargeUse.Region);
+            LargeBufferPool.Return(c, LargeUse.Region);
+
+            LargeBufferPool.UseStats s = LargeBufferPool.StatsOf(LargeUse.Region);
+            Assert.Equal(2, s.FreeCount);
+            Assert.Equal(0, s.OutCount);
+            Assert.Equal(1, s.Evicted);
+            Assert.Equal(3, s.Misses);
+            Assert.Equal(6 << 20, s.OutHighBytes);
+            Assert.Equal(4 << 20, s.FreeHighBytes);
+        }
+
+        [Fact]
+        public void RegionRentFitsUpToTwoClassesLarger()
+        {
+            byte[] big = LargeBufferPool.Rent<byte>(3584 << 10, LargeUse.Region); // 3.5 MiB class
+            LargeBufferPool.Return(big, LargeUse.Region);
+
+            Assert.NotSame(big, LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region)); // 2 MiB: three classes below
+            Assert.Same(big, LargeBufferPool.Rent<byte>(2560 << 10, LargeUse.Region)); // 2.5 MiB: two classes below
+            Assert.Equal(1, LargeBufferPool.StatsOf(LargeUse.Region).Hits);
+
+            // General rents stay exact
+            byte[] g = LargeBufferPool.Rent<byte>(3 << 20);
+            LargeBufferPool.Return(g);
+            Assert.NotSame(g, LargeBufferPool.Rent<byte>(2560 << 10));
         }
 
         [Fact]
@@ -228,34 +287,41 @@ namespace ClassicUO.UnitTests.Buffers
             LargeBufferPool.Return(LargeBufferPool.Rent<byte>(1 << 20));
             LargeBufferPool.TrimIdle(60_000);
             Assert.Equal(1 << 20, LargeBufferPool.RetainedBytes);
-            LargeBufferPool.TrimIdle(-1, 0);
+            LargeBufferPool.TrimIdle(-1);
             Assert.Equal(0, LargeBufferPool.RetainedBytes);
         }
 
         [Fact]
-        public void TrimIdleKeepsTheFloor()
+        public void TrimIdleKeepsRegionBuffers()
         {
+            LargeBufferPool.Return(LargeBufferPool.Rent<byte>(2 << 20, LargeUse.Region), LargeUse.Region);
+            LargeBufferPool.Return(LargeBufferPool.Rent<byte>(1 << 20, LargeUse.Page), LargeUse.Page);
             LargeBufferPool.Return(LargeBufferPool.Rent<byte>(1 << 20));
-            LargeBufferPool.TrimIdle(-1);
-            Assert.Equal(1 << 20, LargeBufferPool.RetainedBytes);
-
-            var held = new byte[40][];
-            for (int i = 0; i < held.Length; i++)
-                held[i] = LargeBufferPool.Rent<byte>(1 << 20);
-            foreach (byte[] b in held)
-                LargeBufferPool.Return(b);
 
             LargeBufferPool.TrimIdle(-1);
-            Assert.InRange(LargeBufferPool.RetainedBytes, LargeBufferPool.IdleFloorBytes, LargeBufferPool.IdleFloorBytes + (1 << 20));
+            Assert.Equal(2 << 20, LargeBufferPool.RetainedBytes);
+            Assert.Equal(1, LargeBufferPool.StatsOf(LargeUse.Region).FreeCount);
+            Assert.Equal(0, LargeBufferPool.StatsOf(LargeUse.Page).FreeCount);
         }
 
         [Fact]
-        public void IdleTrimDefaults()
+        public void Defaults()
         {
-            Assert.Equal(112L << 20, LargeBufferPool.DefaultBudgetBytes);
-            Assert.Equal(112L << 20, LargeBufferPool.BudgetBytes);
-            Assert.Equal(16L << 20, LargeBufferPool.IdleFloorBytes);
             Assert.Equal(180_000, LargeBufferPool.DefaultIdleMs);
+            Assert.Equal(LargeBufferPool.DefaultGeneralCapBytes, LargeBufferPool.CapBytes(LargeUse.General));
+            Assert.Equal(LargeBufferPool.DefaultRegionCapCount, LargeBufferPool.CapCount(LargeUse.Region));
+            Assert.Equal(LargeBufferPool.DefaultPageCapCount, LargeBufferPool.CapCount(LargeUse.Page));
+            Assert.Equal(LargeBufferPool.DefaultGeneralCapBytes + LargeBufferPool.DefaultRegionCapBytes + LargeBufferPool.DefaultPageCapBytes,
+                LargeBufferPool.BudgetBytes);
+        }
+
+        [Fact]
+        public void SharedFamilyWithUseCountsAgainstThatUse()
+        {
+            byte[] a = BufferPool.RentShared<byte>(1 << 20, LargeUse.Page);
+            BufferPool.ReturnShared(a, LargeUse.Page);
+            Assert.Equal(1, LargeBufferPool.StatsOf(LargeUse.Page).FreeCount);
+            Assert.Same(a, BufferPool.RentShared<byte>(1 << 20, LargeUse.Page));
         }
 
         [Fact]

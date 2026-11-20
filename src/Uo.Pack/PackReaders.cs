@@ -321,8 +321,9 @@ public static class RegionFile
     /// <summary>
     /// Writes the logical (Kind=0 layout, header included) bytes of a region file into <paramref name="dest"/> and returns
     /// their length. <paramref name="dest"/> is reused when big enough, else replaced by a larger array (null = allocate).
-    /// With <paramref name="pooled"/>, a larger array is rented with BufferPool.RentShared and a replaced one returned
-    /// with ReturnShared (dest must then be null or such a rent), so the caller returns the result with ReturnShared.
+    /// With <paramref name="pooled"/>, a larger array is rented with BufferPool.RentShared (LargeUse.Region) and a replaced
+    /// one returned with ReturnShared (dest must then be null or such a rent), so the caller returns the result with
+    /// ReturnShared and LargeUse.Region.
     /// </summary>
     public static int DecompressInto(ReadOnlySpan<byte> fileBytes, ref byte[] dest, bool pooled = false)
     {
@@ -370,9 +371,9 @@ public static class RegionFile
     static void Ensure(ref byte[] buffer, int size, int keep, bool pooled)
     {
         if (buffer != null && buffer.Length >= size) return;
-        var bigger = pooled ? BufferPool.RentShared<byte>(size) : new byte[size];
+        var bigger = pooled ? BufferPool.RentShared<byte>(size, LargeUse.Region) : new byte[size];
         if (buffer != null && keep > 0) buffer.AsSpan(0, keep).CopyTo(bigger);
-        if (pooled && buffer != null) BufferPool.ReturnShared(buffer);
+        if (pooled && buffer != null) BufferPool.ReturnShared(buffer, LargeUse.Region);
         buffer = bigger;
     }
 

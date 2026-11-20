@@ -49,7 +49,7 @@ namespace ClassicUO.Assets
         // a completed prefetch not adopted within this time is dropped; more than MaxPending entries drop the oldest
         // completed ones (a 3x3 block neighbourhood touches at most 4 regions)
         private const long PendingMaxAgeMs = 10_000;
-        private const int MaxPending = 8;
+        public const int MaxPending = 8;
 
         /// <summary>
         /// False (CUO_CHUNK_SYNC=1) turns prefetching off: every region decodes on the calling thread when first needed,
@@ -593,7 +593,7 @@ namespace ClassicUO.Assets
 
         // logical region buffers (1.2-3.3 MB) come from the large pool: rented by a prefetch task, returned on the main
         // thread at eviction
-        private static void ReturnBuffer(byte[] buffer) => BufferPool.ReturnShared(buffer);
+        private static void ReturnBuffer(byte[] buffer) => BufferPool.ReturnShared(buffer, LargeUse.Region);
 
         // thread-safe: called by lookups and by prefetch tasks
         private RegionData LoadRegion(FacetInfo facet, int rx, int ry)

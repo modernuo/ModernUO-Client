@@ -96,6 +96,8 @@ namespace ClassicUO
             Uo.Buffers.PoolAudit.Log = static s => Log.Warn(s);
 #endif
             Gumps = new Renderer.Gumps.Gump(FileManager.Gumps, game.GraphicsDevice, GumpDecodeBudgetEnabled());
+            var poolCaps = ClassicUO.Game.LargePoolCaps.Apply(GumpDecodeBudgetEnabled());
+            Log.Trace($"[bufpools] caps: general {poolCaps.GeneralBytes >> 20} MiB ({poolCaps.ScratchThreads} scratch threads), region {poolCaps.RegionCount} buffers / {poolCaps.RegionBytes >> 20} MiB, page {poolCaps.PageCount} chunks / {poolCaps.PageBytes >> 20} MiB");
             Texmaps = new Renderer.Texmaps.Texmap(FileManager.Texmaps, game.GraphicsDevice);
             Lights = new Renderer.Lights.Light(FileManager.Lights, game.GraphicsDevice);
             MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, game.GraphicsDevice);

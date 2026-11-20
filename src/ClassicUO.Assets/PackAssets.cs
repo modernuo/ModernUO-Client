@@ -335,9 +335,9 @@ namespace ClassicUO.Assets
         }
 
         // Chunk buffers come from the large pool: decoded on any thread, returned at eviction on any thread.
-        private static byte[] RentBuffer(int size) => BufferPool.RentShared<byte>(size);
+        private static byte[] RentBuffer(int size) => BufferPool.RentShared<byte>(size, LargeUse.Page);
 
-        private static void ReturnBufferLocked(byte[] buffer) => BufferPool.ReturnShared(buffer);
+        private static void ReturnBufferLocked(byte[] buffer) => BufferPool.ReturnShared(buffer, LargeUse.Page);
 
         // decodes chunk `index` into `buffer` (capacity info.ChunkBytes) and returns its length
         private int DecodeChunk(PageInfo info, int page, int index, byte[] buffer)

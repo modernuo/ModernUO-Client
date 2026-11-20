@@ -83,6 +83,30 @@ public static class BufferPool
         }
     }
 
+    /// <summary>Shared-family rent whose large array counts against <paramref name="use"/>'s cap (region and page
+    /// buffers); return it with <see cref="ReturnShared{T}(T[], LargeUse)"/> and the same use.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static T[] RentShared<T>(int minimumLength, LargeUse use) =>
+        IsSmall<T>(minimumLength) ? ArrayPool<T>.Shared.Rent(minimumLength) : LargeBufferPool.Rent<T>(minimumLength, use);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ReturnShared<T>(T[] array, LargeUse use)
+    {
+        if (array is null)
+        {
+            return;
+        }
+
+        if (IsSmall<T>(array.Length))
+        {
+            ArrayPool<T>.Shared.Return(array);
+        }
+        else
+        {
+            LargeBufferPool.Return(array, use);
+        }
+    }
+
     /// <summary>The length a rent of <paramref name="minimumLength"/> returns (either family).</summary>
     public static int PooledLength<T>(int minimumLength)
     {

@@ -74,8 +74,11 @@ public static class PoolStats
           .Append(" hwMB=").Append(Mb(LargeBufferPool.HighWaterBytes))
           .Append(" freeMB=").Append(Mb(LargeBufferPool.RetainedBytes)).Append('/').Append(Mb(LargeBufferPool.BudgetBytes))
           .Append(" drop=").Append(LargeBufferPool.Dropped)
-          .Append(" evict=").Append(LargeBufferPool.Evicted)
-          .Append(" | st pools=").Append(st.Pools)
+          .Append(" evict=").Append(LargeBufferPool.Evicted);
+        AppendUse(sb, "general", LargeUse.General);
+        AppendUse(sb, "region", LargeUse.Region);
+        AppendUse(sb, "page", LargeUse.Page);
+        sb.Append(" | st pools=").Append(st.Pools)
           .Append(" rents=").Append(st.Rents)
           .Append(" miss=").Append(st.Misses)
           .Append(" allocMB=").Append(Mb(st.AllocatedBytes))
@@ -90,6 +93,32 @@ public static class PoolStats
         }
 
         return sb.ToString();
+    }
+
+    // a use's counters: rents, hits, misses, allocated; outstanding count/MB and high-water MB; free count/MB, free high-water
+    // MB and cap (count/MB); returns dropped over the cap or foreign, free buffers evicted by the cap, idle trim or class limit
+    private static void AppendUse(StringBuilder sb, string name, LargeUse use)
+    {
+        LargeBufferPool.UseStats u = LargeBufferPool.StatsOf(use);
+        sb.Append(" | ").Append(name)
+          .Append(" rents=").Append(u.Rents)
+          .Append(" hits=").Append(u.Hits)
+          .Append(" miss=").Append(u.Misses)
+          .Append(" allocMB=").Append(Mb(u.AllocatedBytes))
+          .Append(" out=").Append(u.OutCount).Append('/').Append(Mb(u.OutBytes))
+          .Append(" outHwMB=").Append(Mb(u.OutHighBytes))
+          .Append(" free=").Append(u.FreeCount).Append('/').Append(Mb(u.FreeBytes))
+          .Append(" freeHwMB=").Append(Mb(u.FreeHighBytes))
+          .Append(" cap=");
+
+        if (u.CapCount != int.MaxValue)
+        {
+            sb.Append(u.CapCount).Append('/');
+        }
+
+        sb.Append(Mb(u.CapBytes))
+          .Append(" drop=").Append(u.Dropped)
+          .Append(" evict=").Append(u.Evicted);
     }
 
     private static string Mb(long bytes) => (bytes / (1024.0 * 1024.0)).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture);
