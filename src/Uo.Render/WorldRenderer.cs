@@ -386,6 +386,25 @@ public sealed unsafe class WorldRenderer : IDisposable
         return queued;
     }
 
+    /// <summary>asset_prefetch_on_packet: queues the page of static art <paramref name="graphic"/> (an item's look). True when
+    /// queued now.</summary>
+    public bool PrefetchArt(int graphic)
+    {
+        int i = graphic + 0x4000;
+        if (Pack.Sprites == null || (uint)i >= (uint)Pack.Sprites.Length) return false;
+        ref readonly var sp = ref Pack.Sprites[i];
+        return sp.Present && Pages.Prefetch(sp.Page, Frame);
+    }
+
+    /// <summary>The page of static art <paramref name="graphic"/> is resident (or it has none).</summary>
+    public bool ArtResident(int graphic)
+    {
+        int i = graphic + 0x4000;
+        if (Pack.Sprites == null || (uint)i >= (uint)Pack.Sprites.Length) return true;
+        ref readonly var sp = ref Pack.Sprites[i];
+        return !sp.Present || Pages.IsResident(sp.Page);
+    }
+
     /// <summary>Every frame page of (body, action, UO direction) is resident (or it has no frames): its draw is complete.</summary>
     public bool AnimResident(int body, int action, int dir)
     {

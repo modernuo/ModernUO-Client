@@ -205,7 +205,16 @@ namespace ClassicUO.Game
                 }
                 else if (e is Item it && it.OnGround)
                 {
-                    Requested += Client.Game.UO.Arts.RequestArt(it.DisplayedGraphic) ? 0 : 1;
+                    var gpu = Client.Game.GetGpuWorld()?.World;
+
+                    if (gpu != null)
+                    {
+                        Requested += gpu.PrefetchArt(it.DisplayedGraphic) ? 1 : 0;
+                    }
+                    else
+                    {
+                        Requested += Client.Game.UO.Arts.RequestArt(it.DisplayedGraphic) ? 0 : 1;
+                    }
                 }
             }
         }
@@ -299,13 +308,17 @@ namespace ClassicUO.Game
 
         private static void Request(Renderer.Animations.Animations animations, Uo.Render.WorldRenderer gpu, ushort body, byte group, byte dir, byte uoDir, bool equip)
         {
-            // a non-sync lookup starts the worker decode of a direction never loaded (Animations.LoadDirection)
-            animations.GetAnimationFrames(body, group, dir, out _, out _, isEquip: equip);
             Requested++;
 
+            // the renderer drawing the world: the Gpu world reads its own pages (a Legacy atlas decode would be unused)
             if (gpu != null)
             {
                 gpu.PrefetchAnim(animations.ResolveBody(body), group, uoDir);
+            }
+            else
+            {
+                // a non-sync lookup starts the worker decode of a direction never loaded (Animations.LoadDirection)
+                animations.GetAnimationFrames(body, group, dir, out _, out _, isEquip: equip);
             }
         }
 
@@ -351,13 +364,13 @@ namespace ClassicUO.Game
 
             if (e is Item it && it.OnGround)
             {
-                return !Client.Game.UO.Arts.IsDecodePending(it.DisplayedGraphic);
+                return gpu != null ? gpu.ArtResident(it.DisplayedGraphic) : !Client.Game.UO.Arts.IsDecodePending(it.DisplayedGraphic);
             }
 
             return true;
         }
 
         private static bool Ready(Renderer.Animations.Animations animations, Uo.Render.WorldRenderer gpu, ushort body, byte group, byte dir, byte uoDir)
-            => animations.IsDirectionReady(body, group, dir) && (gpu == null || gpu.AnimResident(animations.ResolveBody(body), group, uoDir));
+            => gpu != null ? gpu.AnimResident(animations.ResolveBody(body), group, uoDir) : animations.IsDirectionReady(body, group, dir);
     }
 }

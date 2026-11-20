@@ -21,7 +21,7 @@ namespace ClassicUO.Game
     /// </summary>
     internal static class LookPrefetchCheck
     {
-        private const int Tracked = 256, Samples = 2048;
+        private const int Tracked = 1024, Samples = 2048;
         private static readonly uint[] _serial = new uint[Tracked];
         private static readonly LookPrefetch.Kind[] _kind = new LookPrefetch.Kind[Tracked];
         private static readonly long[] _arrival = new long[Tracked];
