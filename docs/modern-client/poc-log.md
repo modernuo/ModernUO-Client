@@ -8181,3 +8181,34 @@ client assumes no client file changes at runtime), so no atlas pages are left be
   p50 B/frame 0 in every window of every arm. The one exception is a Legacy corpses window at 264 B (newon), inside
   the known idle quantum. Window averages and p95 differ only by single-window spikes, which hit every arm (base
   worldmap 5080, new town_idle 5083, newon gumps 8018). GC counts are equal.
+
+## 2026-11-20 water-depth (bg/water-depth): `wet_surface_depth`, mobiles under a water surface (default off)
+
+Owner go 2026-11-20 for both parts of the water-feet fix (investigation: cuo-poc-state measure/quiet-next/water-feet/README.md).
+Case: Felucca 1675 1705, water statics (Background|Impassable|Wet, height 0) at z -5 over sea-bed land at z -15; a plain
+`[go` puts the player at z -15. Key mode drew a V-cut body with floating feet; depth_model hid the feet but put the
+waterline 7 px above the feet instead of ~40 px (wet flats got FlatDrop, 33 px).
+
+- Switch `wet_surface_depth` (default off; `CUO_WET_SURFACE_DEPTH=1|0` dev override; checker `CUO_WET_DEPTH_CHECK=1` logs
+  every mobile found under a wet surface with the rule it got, plus a 5 s summary). Game/Scenes/WetSurfaceDepth.
+- Part 1, depth_model on, both renderers: wet flats carry `SpriteInstance.ZGeoWet` (Corners bit 24, baked with the shape
+  bits whenever depth_model is on, so a flip needs no rebake); with the frame's `FrameUniforms.DepthModelWet` bit the GEO
+  VS drops them by `GeoDepth.WetDrop` = 0.1 instead of FlatDrop 1.5. Legacy: LegacyGeoDepth.Tile drops WetDrop when the
+  caller passes the bit (WetMask; geo chunk meshes rebuild on a flip). Waterline (unit test, anchor column): 10 z under
+  38 px above the centre row (true 40; was 7), 5 z under 17 px (true 20; was none). A mobile at the water's own z still
+  wins on its own tile's front faces by MobileBias; outside them, its rows more than 2.2 px below its centre row lose to
+  same-z static water ahead (FlatDrop kept 33 px). Land water keeps FlatDrop (no bit on land: a mobile is never under it,
+  and stretched land has no spare Corners bits). Only vsgeo shaders change.
+- Part 2, depth_model off (key mode, both renderers): when the mobile's tile has a wet static (or wet land) above its z,
+  every strip takes + 1 (the upper strip's key), so the water ahead hides the feet with the legs; the V-cut stays.
+  The tile scan runs once per position / tile-content change (cached in MobileFrameCache); its result is part of the
+  select key, so recorded strips follow a flip.
+- Item and captured-static geo bits widen to ushort (ItemSpriteInput.TileGeoBits, DynamicSprite.GeoBits; the
+  DynamicSprite fields were reordered so its size is unchanged).
+- Shadow on the water over a submerged mobile (depth_model on): shadows keep the key fallback; with WetDrop the water's
+  depth is above the shadow's key, so it is expected hidden with the switch on (see shots).
+- Driver command `wetdepth on|off`. Unit tests: 21 (WetSurfaceDepthTests: bits, bake, GeoTile, Gpu waterline maths,
+  same-z mobile wins, Legacy decode with the switch on/off, key-mode scan by switch x depth_model x height, strips + 1,
+  seated unchanged, select key).
+- Memory: none per client beyond ~24 B per MobileFrameCache. Cost: one per-vertex branch in the GEO VS; a cached scan per
+  mobile in key mode with the switch on; nothing with it off.
