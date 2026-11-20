@@ -22,6 +22,8 @@
 using System;
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text;
 
 namespace ClassicUO.Utility
@@ -61,9 +63,168 @@ namespace ClassicUO.Utility
                 return string.Empty;
             }
 
+            // Benchmark (measure/text-encoding, JIT and NativeAOT): up to 16 bytes the table loop is as fast as Latin1 and
+            // needs no scan; above, the two-pass decode (scan, Latin1 or widen-and-patch) wins.
+            return bytes.Length <= 16 ? GetStringTable(bytes) : GetStringTwoPass(bytes);
+        }
+
+        // Decode variants, public so the benchmark (measure/text-encoding/bench) can compare them; GetString dispatches.
+
+        /// <summary>Variant 0: scan for 0x80-0x9F, then decode into a stack or pooled buffer and copy into the string.</summary>
+        public static string GetStringBuffered(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.IsEmpty)
+            {
+                return string.Empty;
+            }
+
             int first = bytes.IndexOfAnyInRange((byte)0x80, (byte)0x9F);
 
             return first < 0 ? Encoding.Latin1.GetString(bytes) : Decode(bytes, first, false);
+        }
+
+        /// <summary>
+        /// Variant 1, two passes: scan for 0x80-0x9F; none: Latin1.GetString; hits: string.Create, Latin1 widen straight into
+        /// the string, then patch the hits from the table (no intermediate buffer).
+        /// </summary>
+        public static string GetStringTwoPass(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.IsEmpty)
+            {
+                return string.Empty;
+            }
+
+            int first = bytes.IndexOfAnyInRange((byte)0x80, (byte)0x9F);
+
+            if (first < 0)
+            {
+                return Encoding.Latin1.GetString(bytes);
+            }
+
+            return string.Create(bytes.Length, bytes, static (chars, b) =>
+            {
+                Encoding.Latin1.GetChars(b, chars);
+                int i = b.IndexOfAnyInRange((byte)0x80, (byte)0x9F);
+
+                while (i >= 0)
+                {
+                    chars[i] = C1ToChar[b[i] - 0x80];
+                    int next = b.Slice(i + 1).IndexOfAnyInRange((byte)0x80, (byte)0x9F);
+                    i = next < 0 ? -1 : i + 1 + next;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Variant 2, one SIMD pass: widen bytes to chars and test 0x80-0x9F in the same pass (Vector256 or Vector128, any
+        /// platform the vector API accelerates); clean blocks are stored as widened, dirty blocks patched scalar; scalar tail.
+        /// </summary>
+        public static string GetStringSimd(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.IsEmpty)
+            {
+                return string.Empty;
+            }
+
+            return string.Create(bytes.Length, bytes, static (chars, b) => WidenCp1252(b, chars));
+        }
+
+        private static void WidenCp1252(ReadOnlySpan<byte> src, Span<char> dst)
+        {
+            ref byte s = ref MemoryMarshal.GetReference(src);
+            ref ushort d = ref Unsafe.As<char, ushort>(ref MemoryMarshal.GetReference(dst));
+            int n = src.Length;
+            int i = 0;
+
+            if (Vector256.IsHardwareAccelerated && n >= Vector256<byte>.Count)
+            {
+                Vector256<byte> lo = Vector256.Create((byte)0x80);
+                Vector256<byte> span = Vector256.Create((byte)0x1F);
+
+                for (; i <= n - Vector256<byte>.Count; i += Vector256<byte>.Count)
+                {
+                    Vector256<byte> v = Vector256.LoadUnsafe(ref s, (nuint)i);
+                    (Vector256<ushort> a, Vector256<ushort> c) = Vector256.Widen(v);
+                    a.StoreUnsafe(ref d, (nuint)i);
+                    c.StoreUnsafe(ref d, (nuint)(i + Vector256<ushort>.Count));
+
+                    if (Vector256.LessThanOrEqualAny(v - lo, span))
+                    {
+                        PatchC1(src, dst, i, Vector256<byte>.Count);
+                    }
+                }
+            }
+
+            if (Vector128.IsHardwareAccelerated && n - i >= Vector128<byte>.Count)
+            {
+                Vector128<byte> lo = Vector128.Create((byte)0x80);
+                Vector128<byte> span = Vector128.Create((byte)0x1F);
+
+                for (; i <= n - Vector128<byte>.Count; i += Vector128<byte>.Count)
+                {
+                    Vector128<byte> v = Vector128.LoadUnsafe(ref s, (nuint)i);
+                    (Vector128<ushort> a, Vector128<ushort> c) = Vector128.Widen(v);
+                    a.StoreUnsafe(ref d, (nuint)i);
+                    c.StoreUnsafe(ref d, (nuint)(i + Vector128<ushort>.Count));
+
+                    if (Vector128.LessThanOrEqualAny(v - lo, span))
+                    {
+                        PatchC1(src, dst, i, Vector128<byte>.Count);
+                    }
+                }
+            }
+
+            for (; i < n; i++)
+            {
+                dst[i] = ToChar(src[i]);
+            }
+        }
+
+        private static void PatchC1(ReadOnlySpan<byte> src, Span<char> dst, int start, int count)
+        {
+            for (int j = start, end = start + count; j < end; j++)
+            {
+                uint k = (uint)(src[j] - 0x80);
+
+                if (k < 0x20)
+                {
+                    dst[j] = C1ToChar[(int)k];
+                }
+            }
+        }
+
+        // Variant 3: every byte through a 256-entry char table (branch-free scalar).
+        private static readonly char[] _byteToChar = BuildByteToChar();
+
+        private static char[] BuildByteToChar()
+        {
+            var t = new char[256];
+
+            for (int i = 0; i < 256; i++)
+            {
+                t[i] = (uint)(i - 0x80) < 0x20 ? C1ToChar[i - 0x80] : (char)i;
+            }
+
+            return t;
+        }
+
+        /// <summary>Variant 3: a scalar 256-entry table lookup per byte, written straight into the string.</summary>
+        public static string GetStringTable(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.IsEmpty)
+            {
+                return string.Empty;
+            }
+
+            return string.Create(bytes.Length, bytes, static (chars, b) =>
+            {
+                char[] t = _byteToChar;
+
+                for (int i = 0; i < b.Length; i++)
+                {
+                    chars[i] = t[b[i]];
+                }
+            });
         }
 
         /// <summary>
@@ -84,7 +245,14 @@ namespace ClassicUO.Utility
 
             int first = bytes.IndexOfAny(_remapOrUnsafe);
 
-            return first < 0 ? Encoding.Latin1.GetString(bytes) : Decode(bytes, first, true);
+            if (first < 0)
+            {
+                return Encoding.Latin1.GetString(bytes);
+            }
+
+            int c0 = bytes.Slice(first).IndexOfAnyInRange((byte)0x00, (byte)0x1F);
+
+            return c0 < 0 ? GetString(bytes) : Decode(bytes, first, true);
         }
 
         private static string Decode(ReadOnlySpan<byte> bytes, int first, bool safe)
@@ -125,6 +293,18 @@ namespace ClassicUO.Utility
         /// </summary>
         public static int GetBytes(ReadOnlySpan<char> chars, Span<byte> destination)
         {
+            // One pass: narrows the ASCII prefix and stops at the first non-ASCII char.
+            if (Ascii.FromUtf16(chars, destination, out int ascii) == OperationStatus.Done)
+            {
+                return ascii;
+            }
+
+            return EncodeFrom(chars, destination, ascii);
+        }
+
+        /// <summary>Encode variant: two range scans for a char that needs remapping, Latin1 narrowing before it.</summary>
+        public static int GetBytesLatin1Scan(ReadOnlySpan<char> chars, Span<byte> destination)
+        {
             int first = IndexOfRemap(chars);
 
             if (first < 0)
@@ -137,6 +317,11 @@ namespace ClassicUO.Utility
                 Encoding.Latin1.GetBytes(chars.Slice(0, first), destination);
             }
 
+            return EncodeFrom(chars, destination, first);
+        }
+
+        private static int EncodeFrom(ReadOnlySpan<char> chars, Span<byte> destination, int first)
+        {
             int n = first;
 
             for (int i = first; i < chars.Length; i++)
