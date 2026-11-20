@@ -8017,3 +8017,59 @@ Codec (due-diligence item 4 of the zstd pack revision, bench-000925, quiet, pinn
 region 1.00 vs 2.45 ms, art chunk 0.55 vs 1.83 ms, anim chunk 0.26 vs 0.98 ms, art page 3.7 vs 13.4 ms, gump record (274 KB)
 0.23 vs 0.57 ms (q9), small raw gump record (7 KB) zstd 19 10.7 us (zstd 9 7.8 us) vs copy 0.1 us. zstd 19 is smaller than
 Brotli as built on every set. Confirms the busy-machine ranking.
+
+## 2026-11-19 atlas-lru (bg/atlas-lru): anim_atlas_lru validated in busy play; `atlas_lru` for Art/Gump/Texmap/Light/glyph atlases (default off)
+
+Base 519f6a4e3, merged poc ecdf36f42. Owner 2026-11-19: test the anim LRU in normal and busy play, extend it to the
+other atlases, fix the reload leak.
+
+**Reload leak (H3):** the Options "reload our assets" button is deleted with Art/Gump/Sound/Cliloc Reload (rule: the
+client assumes no client file changes at runtime), so no atlas pages are left behind.
+
+**Phase 1, anim_atlas_lru results** (NativeAOT dev 3c281b06a, switch and CUO_ANIM_LRU_CHECK on):
+- busy-small (bench-000938; 2048^2 pages = 16 MiB, budget 32 MiB = 2 pages, ceiling 4, min age 5 s; large scene,
+  lswalk, bodies wrap x2, Britain walk, glide, teleports): 0 checker mismatches (89.6 M uses, 828 reloads compared in
+  Gpu). Final Gpu: pages 5 (80 MiB), evicted 9 pages / 943 directions, reloads 505 (thrash 225, async 323, blink frames
+  144); Legacy: pages 6, evicted 14 / 2077, reloads 1553 (thrash 798, async 980, blink frames 313), grows 0.
+  - Pages above the ceiling: the ceiling bounds the budget, not residency. A page is evicted only when not drawn for the
+    min age and not the open page; in the large scene and the bodies wrap every resident page is drawn within 5 s, so
+    residency = the last 5 s's working set + the open page (by design: evicting a page in use reloads it every frame).
+  - Thrash (45 %, Gpu): mostly the forced budget (a 2-page budget against a 5-6 page working set), made worse by a bug:
+    grows stayed 0. `MemoryAllowsGrowth` subtracted the machine-wide memory load (19.5 GiB) from
+    `TotalAvailableMemoryBytes`, which is the 8 GiB heap limit under `GCHeapHardLimit` (every job sets one), so growth
+    was always refused. Fixed (62f2eddd5): headroom = high-load threshold minus load (both physical). No thrash loop:
+    evicted pages rose 14 in 5.5 min, not every 5 s line.
+  - Blink frames: frames in which an evicted direction reloading on a worker was asked for before its upload (upper
+    bound: dimension queries count too). Legacy: 313 in ~5.5 min (~1-2 % of frames, each a mobile or layer missing for
+    one or a few frames, only under the forced budget). Gpu: the world draws from the pack pages, so anim atlas blinks
+    are not visible there (only picking/dimensions use it).
+- busy-default (bench-000939, 256 MiB): no evictions; peak 4 pages (256 MiB) Legacy, 3 Gpu.
+- golden (bench6-000051) base vs switch on (default budget): GOLDEN SAME, 0 px. gate-gpu (bench2-000038): ALRU PASS.
+- gate-legacy (bench3-000029) failed only on `[mobile-cache-check] frame cache of 0x0006D6F0 used by 0x8006D6F0`
+  (the dead-bit re-key false mismatch fixed on poc in ecdf36f42); anim LRU checker 0 failures. Rerun after the merge.
+- pick (bench6-000052) failed in the harness: the plain `pickscan:8x6` mode is gone; the job now runs
+  `pickscan:8x6:pick_records` on both renderers. Rerun.
+- alloc (bench5-000041/42, base 519f6a4e3 / new / newon): main-thread p50 B/frame equal in every window of both
+  renderers (536-824 B; one Legacy ls_idle window base 704 vs new 536). Window averages differ only by one-off spikes.
+  The table has no per-update column.
+
+**Phase 2, `atlas_lru`** (approved 2026-11-19; default off):
+- One policy type (`AtlasLruPolicy`, the renamed anim policy) and `AtlasPageLru` per atlas: Art 256/128/1024 MiB
+  (budget/floor/ceiling; 64 MiB pages), Gump 192/128/768 (64 MiB), Texmap 64/32/256, Light 32/16/64, font glyphs
+  32/16/128 (16 MiB pages). Same times as the anim LRU (min age 45 s, thrash window 60 s, shrink 180 s / 45 s unfocused).
+- Pages are touched per draw call (batcher InternalDraw/DrawDirectIndexed, Gpu Emit: one type test per draw call) and
+  freed only in the per-frame Tick before drawing. The owner forgets the entries on a freed page (sprite infos cleared;
+  picker masks and art bounds stay; PackSpriteMap unregistered); they load again on their next lookup.
+- Cross-frame holders: `AtlasPageClock.FreedEpoch` (any freed page) replaces Animations.AtlasEpoch for
+  MobileFrameCache's Legacy replays; a Legacy chunk mesh rebuilds when it holds a freed page (checked once per freed-page
+  event; the Gpu world doesn't draw meshes); Map's art waits rescan (generation includes the epoch); RenderedText's quad
+  runs and recorded UI passes already reject disposed pages.
+- M2: the glyph atlas drops the `_cache`/`_coloredCache` entries of a freed page (and blank coloured entries), so the
+  coloured-glyph cache is bounded by the resident pages.
+- `CUO_ATLAS_LRU_CHECK`: a reloaded sprite has its size before eviction; no batcher draw names a freed page.
+  Developer overrides: CUO_ATLAS_LRU=1|0, CUO_ATLAS_LRU_BUDGET_MB/_FLOOR_MB/_CEILING_MB/_MIN_AGE_S, CUO_ATLAS_PAGE.
+- TextureAtlas.Dispose no longer throws for an atlas that never opened a page.
+- Memory: switch off, none. Switch on, it caps what was unbounded (the atlases only grew); per-page tag lists ~4 B per
+  sprite; evicted-key maps pruned past the thrash window. Unit tests: 12 new (policy over fake pages, thrash grow,
+  checker, switch states, Dispose).
+- Phase 2 jobs: see the atlas-lru handoff (gates off/on, forced small busy, golden off 0 px, alloc, pick).
