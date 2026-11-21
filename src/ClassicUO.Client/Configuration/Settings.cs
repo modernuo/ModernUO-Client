@@ -299,8 +299,8 @@ namespace ClassicUO.Configuration
         // text_string_cache: server Cp1252 strings are decoded through a bounded cache keyed by their bytes (2048 strings of
         // up to 64 chars), so repeated names and lines allocate nothing (Game/TextStringCache). CUO_TEXT_STRING_CACHE=1|0
         // overrides it and CUO_TEXT_CACHE_CHECK=1 compares every cached string with a fresh decode, in developer builds.
-        // Default off.
-        [JsonPropertyName("text_string_cache")] public bool TextStringCache { get; set; }
+        // Default on (2026-11-20: 85.6 % hit rate, ~166 KiB per tour not allocated, ~45 KiB held per client, at most ~0.3 MB).
+        [JsonPropertyName("text_string_cache")] public bool TextStringCache { get; set; } = true;
 
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
