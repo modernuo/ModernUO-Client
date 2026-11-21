@@ -220,7 +220,9 @@ namespace ClassicUO
             // loaded yet, and SDL is up (SDL_GetPreferredLocales also works before init).
             // The configured preference is kept apart for saving (Settings.ConfiguredLanguage).
             Settings.ApplyLanguage(Settings.GlobalSettings, FileManager.Clilocs.AvailableLanguages(), OsLanguage.Select);
+            ClassicUO.Game.SharedClilocSetup.Enable(FileManager);
             FileManager.Load(Settings.GlobalSettings.Language);
+            ClassicUO.Game.SharedClilocSetup.LogLoaded(FileManager);
             ClassicUO.Game.Map.Chunk.StaticTileData = FileManager.TileData.StaticData;
 
             StaticFilters.Load(FileManager.TileData);
