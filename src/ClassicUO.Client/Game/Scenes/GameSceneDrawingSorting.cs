@@ -1400,6 +1400,18 @@ namespace ClassicUO.Game.Scenes
             return false;
         }
 
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the object's anchor is inside the last prepared frame's culling rectangle (the
+        /// draw walk's own test: the viewport plus a tile).</summary>
+        internal bool IsOnScreen(GameObject obj)
+        {
+            int screenX = ((obj.X - obj.Y) * 22) - _offset.X - 22;
+            int screenY = ((obj.X + obj.Y) * 22 - (obj.Z << 2)) - _offset.Y - 22;
+
+            return screenX >= _minPixel.X && screenX <= _maxPixel.X && screenY >= _minPixel.Y && screenY <= _maxPixel.Y;
+        }
+#endif
+
         private void GetViewPort()
         {
             int oldDrawOffsetX = _offset.X;

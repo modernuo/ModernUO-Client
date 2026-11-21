@@ -13,7 +13,8 @@ namespace ClassicUO
     //   CUO_BENCH_GO="x y"  once in game, [go there, zoom 1, then measure
     //   CUO_FRAMESTATS=1    uncap the frame rate, force inactive throttling off, log per-phase timings every 5 s (FrameStats)
     //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;name:ltravel;name:glide;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
-    //     bodies: swap the player to a new body every 50 ms; ltravel: client-only teleports between towns every 2 s;
+    //     bodies: swap the player to a new body every 50 ms; equip: the player's first equipped item takes a new wearable
+    //     look every 500 ms (local; pop-in counters [popin], CUO_POPIN_SHOTS=dir[|pairs]); ltravel: client-only teleports between towns every 2 s;
     //     glide: client-only travel east from Britain at 25 tiles/s (ltravel/glide need no staff account)
     //     lswalk: [go 5156 2150, then walk the large-scale scene's lane (5141..5171, y 2150) end to end (tools/large-scale)
     //     bwalk: [go 1495 1528, then walk to 1495 1542 and back (a region edge, two chunk edges, a z 40 -> 30 slope),
@@ -75,6 +76,21 @@ namespace ClassicUO
         private static int _planIndex, _travelIndex, _windowsAtStart;
         private static ushort _ghostRestore, _bodyRestore;
         private static int _bodyNext, _bodiesShown, _glideX, _bwalkLegs, _bwalkDenies = -1;
+        private static int _equipNext, _equipShown;
+
+        // equipsrv: hats (Layer.Helmet) worn and taken off through the server (pick up 0x07, equip 0x13, drop 0x08 into the
+        // backpack; the server answers 0x2E): the candidates in the backpack, the hat worn at the start (restored at the end)
+        private static readonly string[] _esSeedTypes = { "WizardsHat", "TricorneHat", "JesterHat", "FeatheredHat" };
+        private static readonly uint[] _esCands = new uint[8];
+        private static int _esState, _esCandCount, _esIndex, _esSwaps, _esConfirmed, _esSeeded, _esCollects, _esHeldFrames;
+        private static uint _esOriginal, _esTarget, _esHeld;
+        private static long _esRestoreCap;
+        // the equip mode's wearables (chest armour, robes, cloaks, shirts, legs, boots, helms): distinct equipment animations
+        private static readonly ushort[] _equipGraphics =
+        {
+            0x1415, 0x13BF, 0x13CC, 0x13DB, 0x13EC, 0x144F, 0x1F03, 0x1515, 0x1F7B, 0x1EFD, 0x1F9F, 0x1541,
+            0x153B, 0x1F01, 0x1516, 0x1537, 0x152E, 0x1539, 0x1711, 0x170B, 0x1412, 0x1408, 0x140A, 0x13BB
+        };
 
         // cumulative world settle counters (WorldSettleGate): unsettled frames presented, frames held, hold durations
         private static void LogSettle(Game.Scenes.GameScene gs, string where)
@@ -82,8 +98,33 @@ namespace ClassicUO
             if (gs != null)
             {
                 Log.Info($"[settle] {where}: hold {(gs.Settle.HoldEnabled ? "on" : "off")}; {gs.Settle.Stats}");
+                Log.Info($"[popin] {where}: {Game.Scenes.PopInStats.Summary()}");
+                var gw = Client.Game.GetGpuWorld()?.World;
+                Log.Info($"[popin-ring] {where}: chunk_ring_prefetch {(Game.Map.Map.RingPrefetch ? "on" : "off")}; client chunks requested {Client.Game.UO.World?.Map?.RingRequested ?? 0}, Gpu pages prefetched {gw?.RingPrefetched ?? 0} (queued ahead {gw?.Pages.PrefetchQueued ?? 0}), page uploads {gw?.Pages.TotalUploads ?? 0}, evictions {gw?.Pages.Evictions ?? 0}, layers {gw?.Pages.Layers ?? 0}");
                 var db = Renderer.DecodeBudget.Shared;
                 Log.Info($"[decode-budget] {where}: peak in flight since the last line {db.TakeLogPeak() >> 10} KiB (all-time {db.PeakBytes >> 10}), cap {db.CapBytes >> 10} KiB, waiting {db.Waiting}");
+            }
+
+            CheckerStep(where);
+        }
+
+        // gpu-popin: the asset/look checkers summarise per plan step, from the step's teleport to its end (arrivals land in the
+        // settle before "measuring"), so the off and on arms compare scene by scene; null starts a window
+        private static void CheckerStep(string where)
+        {
+            if (ClassicUO.Loop.AssetWakeCheck.On)
+            {
+                ClassicUO.Loop.AssetWakeCheck.Step(where);
+            }
+
+            if (LookPrefetch.Check)
+            {
+                LookPrefetchCheck.Step(where);
+            }
+
+            if (AnimAsyncTurn.Check)
+            {
+                AnimAsyncTurn.Step(where);
             }
         }
 
@@ -1549,6 +1590,194 @@ namespace ClassicUO
         }
 
         // name:x y:zoom measures a fixed spot; name:travel teleports between towns every 2 s; name:walk paths back and forth near Britain.
+        // equipsrv, every step: open the backpack, find (or add, staff command) hats in it, then alternately wear the next
+        // candidate and the starting hat, each swap through the server: the worn hat is picked up and dropped into the
+        // backpack, the new one picked up and equipped. restore: only bring the starting hat back.
+        private static void EquipServerFrame(World world, long now, long sec, bool restore)
+        {
+            Game.GameObjects.Item pack = world.Player.FindItemByLayer(Layer.Backpack);
+
+            if (pack == null)
+            {
+                _travelAt = now + sec;
+
+                return;
+            }
+
+            Game.GameObjects.Item worn = world.Player.FindItemByLayer(Layer.Helmet);
+
+            switch (_esState)
+            {
+                case 0:
+                    GameActions.DoubleClick(world, pack.Serial);
+                    _esOriginal = worn?.Serial ?? 0;
+                    _esIndex = _esSwaps = _esConfirmed = _esSeeded = _esCollects = 0;
+                    _esTarget = 0;
+                    _esRestoreCap = 0;
+                    _esState = 1;
+                    _travelAt = now + sec;
+
+                    break;
+
+                case 1:
+                    _esCandCount = 0;
+
+                    foreach (Game.GameObjects.Item item in world.State.Children(pack))
+                    {
+                        if (item.ItemData.IsWearable && item.ItemData.Layer == (byte)Layer.Helmet && _esCandCount < _esCands.Length)
+                        {
+                            _esCands[_esCandCount++] = item.Serial;
+                        }
+                    }
+
+                    if (_esCandCount < 3 && _esSeeded < _esSeedTypes.Length && _esCollects++ < 8)
+                    {
+                        GameActions.Say($"[self addtopack {_esSeedTypes[_esSeeded++]}");
+                        _travelAt = now + sec / 2;
+
+                        break;
+                    }
+
+                    Log.Info($"[bench] equipsrv: {_esCandCount} hats in the backpack, starting hat 0x{_esOriginal:X8}");
+                    _esState = _esCandCount > 0 ? 2 : 9;
+                    _travelAt = now;
+
+                    break;
+
+                case 2:
+                    if (_esTarget != 0 && worn?.Serial == _esTarget)
+                    {
+                        _esConfirmed++;
+                    }
+
+                    if (restore)
+                    {
+                        _esTarget = _esOriginal;
+                    }
+                    else
+                    {
+                        // the candidates in turn, the starting hat after each (none: the candidates only)
+                        _esTarget = _esOriginal != 0 && (_esIndex & 1) == 1 ? _esOriginal : _esCands[(_esIndex >> (_esOriginal != 0 ? 1 : 0)) % _esCandCount];
+                        _esIndex++;
+                    }
+
+                    if (worn != null && worn.Serial != _esTarget)
+                    {
+                        EquipServerLift(world, worn.Serial, 4);
+                        _travelAt = now;
+
+                        break;
+                    }
+
+                    _esState = 3;
+                    _travelAt = now;
+
+                    break;
+
+                case 3:
+                    if (_esTarget != 0 && worn?.Serial != _esTarget && EquipServerLift(world, _esTarget, 5))
+                    {
+                        _travelAt = now;
+
+                        break;
+                    }
+
+                    _esState = 2;
+                    _travelAt = now + sec * 3 / 5;
+
+                    break;
+
+                case 4:
+                case 5:
+                    // the drop (4) or equip (5) goes out once the client has removed the lifted item (World.ObjectToRemove,
+                    // the frame after the pick up): sent in the pick-up frame, the server's answer (0x25/0x2E) arrived
+                    // before that removal and the removal then deleted the item the server had just placed
+                    if (world.ObjectToRemove == _esHeld && _esHeldFrames++ < 120)
+                    {
+                        break;
+                    }
+
+                    if (_esState == 4)
+                    {
+                        GameActions.DropItem(_esHeld, 0xFFFF, 0xFFFF, 0, pack.Serial);
+                        _esState = 3;
+                        _travelAt = now + sec * 2 / 5;
+                    }
+                    else
+                    {
+                        GameActions.Equip(world);
+                        _esSwaps++;
+                        _esState = 2;
+                        _travelAt = now + sec * 3 / 5;
+                    }
+
+                    // a drop or equip the client refused to send (no hold) must not leave the cursor holding the item
+                    if (Client.Game.UO.GameCursor.ItemHold.Enabled)
+                    {
+                        Client.Game.UO.GameCursor.ItemHold.Clear();
+                    }
+
+                    _esHeld = 0;
+
+                    break;
+
+                default:
+                    _travelAt = now + sec;
+
+                    break;
+            }
+        }
+
+        // equipsrv: lifts the item (0x07); the drop or equip follows in state next once the client removed it
+        private static bool EquipServerLift(World world, uint serial, int next)
+        {
+            if (!GameActions.PickUp(world, serial, 0, 0))
+            {
+                return false;
+            }
+
+            _esHeld = serial;
+            _esHeldFrames = 0;
+            _esState = next;
+
+            return true;
+        }
+
+        private static bool EquipServerRestored(World world, long now, long sec)
+        {
+            Game.GameObjects.Item worn = world.Player.FindItemByLayer(Layer.Helmet);
+            bool done = _esState == 0 || _esState == 9 || (_esOriginal == 0 ? worn == null : worn?.Serial == _esOriginal);
+
+            if (_esRestoreCap == 0)
+            {
+                _esRestoreCap = now + sec * 8;
+            }
+
+            if (!done && now < _esRestoreCap)
+            {
+                if (now >= _travelAt)
+                {
+                    if (_esOriginal == 0 && worn != null && _esState != 4)
+                    {
+                        // no starting hat: take the last one off (lift now, drop into the backpack in a later frame)
+                        EquipServerLift(world, worn.Serial, 4);
+                        _travelAt = now;
+                    }
+                    else
+                    {
+                        EquipServerFrame(world, now, sec, true);
+                    }
+                }
+
+                return false;
+            }
+
+            Log.Info($"[bench] equipsrv: {_esSwaps} equip requests, {_esConfirmed} confirmed by the server, starting hat {(done ? "restored" : "NOT restored")}");
+            _esState = 0;
+
+            return true;
+        }
+
         private static void UpdatePlan(GameController game, long now)
         {
             var world = game.UO.World;
@@ -1687,6 +1916,33 @@ namespace ClassicUO
 
                     _travelAt = now + sec / 20;
                 }
+                else if (mode == "equip" && now >= _travelAt)
+                {
+                    // new equipment on a visible human (local only): the first equipped item (not backpack, hair, beard,
+                    // mount) takes the next wearable graphic every 500 ms, as a server equip change of its look
+                    Game.GameObjects.Item target = null;
+
+                    foreach (Game.GameObjects.Item item in world.State.Children(world.Player))
+                    {
+                        if (item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard
+                            && item.Layer != Game.Data.Layer.Mount && item.Layer != Game.Data.Layer.Bank && (target == null || item.Layer < target.Layer))
+                        {
+                            target = item;
+                        }
+                    }
+
+                    if (target != null && _equipNext < _equipGraphics.Length)
+                    {
+                        world.Writer.SetLocalItemLook(target, _equipGraphics[_equipNext++], target.Hue);
+                        _equipShown++;
+                    }
+
+                    _travelAt = now + sec / 2;
+                }
+                else if (mode == "equipsrv" && now >= _travelAt)
+                {
+                    EquipServerFrame(world, now, sec, false);
+                }
                 else if (mode == "lswalk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
                 {
                     // the large-scale scene's lane (tools/large-scale/make_scene.py): end to end through 2,000 mobiles
@@ -1732,12 +1988,23 @@ namespace ClassicUO
 
                 if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
                 {
+                    // equipsrv: the step ends once the starting hat is worn again (at most 8 s later)
+                    if (mode == "equipsrv" && !EquipServerRestored(world, now, sec))
+                    {
+                        return;
+                    }
+
                     ClassicUO.FrameStats.StopWindow();
                     world.Player.Pathfinder.StopAutoWalk();
 
                     if (mode == "ui")
                     {
                         UiSceneEnd(world, gs);
+                    }
+
+                    if (mode == "equip")
+                    {
+                        Log.Info($"[bench] equip: {_equipShown} equipment looks shown");
                     }
 
                     if (_bodyRestore != 0)
@@ -2319,7 +2586,8 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
+                    CheckerStep(null);
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "equip" || mode == "equipsrv" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 

@@ -61,6 +61,9 @@ namespace ClassicUO.Renderer.Gumps
         /// <summary>Worker decodes requested and not uploaded yet.</summary>
         public int PendingDecodes => _decoder.Pending;
 
+        /// <summary>Decodes finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
+        public int ReadyDecodes => _decoder.ReadyCount;
+
         /// <summary>
         /// Same answer as <c>GetGump(idx).Texture != null</c>, from the pack's size table without decoding.
         /// </summary>

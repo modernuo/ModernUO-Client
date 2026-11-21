@@ -88,7 +88,11 @@ namespace ClassicUO.UnitTests.Ecs
                         }
                     }
 
-                    _dirs[key] = sprites;
+                    // a decoding direction is looked up again (its decode can finish: PendingBody changes)
+                    if (body != PendingBody)
+                    {
+                        _dirs[key] = sprites;
+                    }
                 }
 
                 return sprites;

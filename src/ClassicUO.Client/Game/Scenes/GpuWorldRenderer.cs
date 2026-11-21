@@ -60,6 +60,40 @@ namespace ClassicUO.Game.Scenes
         }
 
         public WorldRenderer World => _world;
+
+        private DynamicResidency _residency;
+
+        // asset_prefetch_on_packet: a mobile instance's page in the current world (indexed animation pages have their own
+        // residency; the others share the art pages)
+        private sealed class DynamicResidency : IDynamicPageResidency
+        {
+            private readonly GpuWorldRenderer _owner;
+
+            public DynamicResidency(GpuWorldRenderer owner) => _owner = owner;
+
+            public bool Resident(in SpriteInstance instance)
+            {
+                WorldRenderer w = _owner._world;
+
+                return (instance.Flags & SpriteInstance.FlagIndexed) != 0
+                    ? w.AnimPages == null || w.AnimPages.IsResident(instance.Page - _owner._pack.AnimPageBase)
+                    : w.Pages.IsResident(instance.Page);
+            }
+
+            public void Request(in SpriteInstance instance)
+            {
+                WorldRenderer w = _owner._world;
+
+                if ((instance.Flags & SpriteInstance.FlagIndexed) != 0)
+                {
+                    w.AnimPages?.Prefetch(instance.Page - _owner._pack.AnimPageBase, w.Frame);
+                }
+                else
+                {
+                    w.Pages.Prefetch(instance.Page, w.Frame);
+                }
+            }
+        }
         public int CaptureFallbacks { get; private set; }
 
         /// <summary>E12 (CUO_GPU_ITEM_CHECK): the probe pass runs the capture before the batcher begins (and suppressed:
@@ -239,8 +273,9 @@ namespace ClassicUO.Game.Scenes
                     // (4 MiB of instances, 1 MiB per Indexed8 anim layer)
                     MaxDynamic = 131072,
                     // Grow on demand (memory per client, several clients at once): the anim pages and instance buffer
-                    // start at 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75% occupancy up to the old
-                    // fixed sizes, 128 / 2M (128 + 64 MiB), which the large scene still reaches. The art pages start at
+                    // start at 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75% occupancy up to 256 anim
+                    // layers (256 MiB; 128 until gpu-popin round 6, which a crowd after the all-bodies tour overran) and 2M
+                    // instances (64 MiB), which the large scene still reaches. The art pages start at
                     // their ceiling, 24 layers (256 MiB): every login filled 12 by frame 15 (GrowthPolicy.ArtLayersStart).
                     // CUO_GPU_GROW=0 starts at the ceilings (the old fixed sizes, for A/B).
                     Layers = GrowOnDemand ? GrowthPolicy.ArtLayersStart : GrowthPolicy.ArtLayersMax,
@@ -619,6 +654,7 @@ namespace ClassicUO.Game.Scenes
 
             mobile.DrawAura(batcher, posX, posY, depth);
             extract.Begin(_pack, _offsetX, _offsetY);
+            extract.PageResidency = _world != null ? _residency ??= new DynamicResidency(this) : null;
             extract.Emit(e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
 
             // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped
@@ -904,6 +940,7 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+            _world.RingPrefetch = Map.Map.RingPrefetch;
             _world.Prepare(in camera);
 #if CUO_DEVTOOLS
             GoldenCapture.EndGpu(DynamicInstances);

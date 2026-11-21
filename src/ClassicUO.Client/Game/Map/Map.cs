@@ -442,6 +442,105 @@ namespace ClassicUO.Game.Map
 
         public int QueuedChunks => _queue.Count;
 
+#if CUO_DEVTOOLS
+        // the gate's override of chunk_ring_prefetch (CUO_CHUNK_RING_PREFETCH=1|0)
+        private static readonly bool? _ringEnv = Environment.GetEnvironmentVariable("CUO_CHUNK_RING_PREFETCH") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _ringEnv = null;
+#endif
+
+        /// <summary>Tests: the switch (null: the setting).</summary>
+        internal static bool? RingOverrideForTests;
+
+        public static bool RingPrefetch => RingOverrideForTests ?? _ringEnv ?? (Configuration.Settings.GlobalSettings?.ChunkRingPrefetch ?? false);
+
+        // the player's last tile step (UpdateLoading): its direction and when
+        private int _lastPx = -1, _lastPy = -1, _moveDx, _moveDy;
+        private long _moveTick = long.MinValue / 2;
+        private const int RingMoveMs = 500;
+
+        /// <summary>chunk_ring_prefetch: chunks the ring asked for that were not loaded (total).</summary>
+        public int RingRequested;
+
+        /// <summary>
+        /// chunk_ring_prefetch: the draw walk's chunk range; while the player has moved within <see cref="RingMoveMs"/>, the
+        /// unloaded chunks one ring beyond it on the side(s) of the last step are queued. The queue loads nearest the player
+        /// first, so they come after the visible ones, inside the same per-frame chunk budget.
+        /// </summary>
+        public void RequestRing(int minCx, int minCy, int maxCx, int maxCy, long now)
+        {
+            if (!Incremental || now - _moveTick > RingMoveMs)
+            {
+                return;
+            }
+
+            int n = RingCellCount(minCx, minCy, maxCx, maxCy, _moveDx, _moveDy);
+
+            for (int i = 0; i < n; i++)
+            {
+                RingCell(i, minCx, minCy, maxCx, maxCy, _moveDx, _moveDy, out int cx, out int cy);
+                RequestIfUnloaded(cx, cy);
+            }
+        }
+
+        /// <summary>Cells of the ring beyond the range on the sides of (dx, dy): a column, then a row, one wider each way
+        /// (a diagonal step lists the corner twice; a second request of a queued chunk costs a lookup).</summary>
+        internal static int RingCellCount(int minCx, int minCy, int maxCx, int maxCy, int dx, int dy)
+            => (dx != 0 ? maxCy - minCy + 3 : 0) + (dy != 0 ? maxCx - minCx + 3 : 0);
+
+        internal static void RingCell(int i, int minCx, int minCy, int maxCx, int maxCy, int dx, int dy, out int cx, out int cy)
+        {
+            int column = dx != 0 ? maxCy - minCy + 3 : 0;
+
+            if (i < column)
+            {
+                cx = dx > 0 ? maxCx + 1 : minCx - 1;
+                cy = minCy - 1 + i;
+            }
+            else
+            {
+                cx = minCx - 1 + (i - column);
+                cy = dy > 0 ? maxCy + 1 : minCy - 1;
+            }
+        }
+
+        private void RequestIfUnloaded(int cx, int cy)
+        {
+            if (cx < 0 || cy < 0 || !IsInMap(cx, cy))
+            {
+                return;
+            }
+
+            Chunk c = _terrainChunks[GetBlock(cx, cy)];
+
+            if (c == null || c.IsDestroyed || c.ArtPending)
+            {
+                _queue.Request(cx, cy, _frame);
+                RingRequested++;
+            }
+        }
+
+        // UpdateLoading: the direction of the player's last tile change (a jump of more than 2 tiles is not a step)
+        private void NoteMove(int x, int y, long now)
+        {
+            int dx = x - _lastPx, dy = y - _lastPy;
+
+            if (_lastPx >= 0 && (dx != 0 || dy != 0) && Math.Abs(dx) <= 2 && Math.Abs(dy) <= 2)
+            {
+                _moveDx = Math.Sign(dx);
+                _moveDy = Math.Sign(dy);
+                _moveTick = now;
+            }
+
+            _lastPx = x;
+            _lastPy = y;
+        }
+
         /// <summary>Starts decoding the regions around tile (x, y) on the thread pool (a teleport or position packet).</summary>
         public void Prefetch(int x, int y)
         {
@@ -464,6 +563,7 @@ namespace ClassicUO.Game.Map
                 return;
             }
 
+            NoteMove(playerX, playerY, Time.Ticks);
             var maps = Client.Game.UO.FileManager.Maps;
             maps.PrefetchAround(Index, playerX, playerY, PrefetchRadius);
 
@@ -507,6 +607,12 @@ namespace ClassicUO.Game.Map
             }
 
             _queue.Drain(pcx, pcy, _frame, deadline, _clock, _tryLoad);
+
+            // asset_ready_wake: chunks loaded here (main thread) complete what an incomplete frame waited for (DrawPending)
+            if (_queue.LastLoaded != 0)
+            {
+                ClassicUO.Loop.AssetWake.Signal();
+            }
 
             // keys of chunks that left the queue unloaded; a forgotten key only costs one full scan
             _blockArtWait.Trim(4096);

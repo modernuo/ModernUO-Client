@@ -142,6 +142,9 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>Last frame: overrides that matched a baked instance, missed (chunk not ready or no such object), dropped
     /// (hash or translucent list full); translucent instances drawn; dynamic instances.</summary>
     public int OverridesApplied, OverridesMissed, OverridesDropped, TranslucentCount, DynamicDrawn;
+    /// <summary>Last frame: dynamic instances drawn as nothing because their art (or Indexed8 anim) page was not resident,
+    /// and their summed quad area in pixels (pop-in diagnostics; counted only on frames with a missing dynamic page).</summary>
+    public int DynamicMissingArt, DynamicMissingAnim, DynamicMissingPixels;
     /// <summary>Last frame: translucent draws split by effect blend (0 = one draw).</summary>
     public int TransRunCount;
     /// <summary>Last frame: instances listed for the circle-of-transparency ring (translucent pass).</summary>
@@ -290,6 +293,7 @@ public sealed unsafe class WorldRenderer : IDisposable
             RenderDiagnostics.Add(DiagMetric.ChunkTableRebuilds, 1);
         }
         _viewReuse.Remember(_view, need, scale, Chunks.ChangeEpoch, Pages.TotalUploads, AnimPages?.TotalUploads ?? 0);
+        if (RingPrefetch && !reuse) PrefetchRing();
         RenderDiagnostics.Elapsed(DiagMetric.ChunkTableTicks, diagTable);
         _prepared = true;
     }
@@ -304,6 +308,134 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// prefetch ring and page loads nothing visible waits for, so a host can hold its previous frame until this is true.
     /// Read after Render/Stream.</summary>
     public bool VisibleReady => Chunks.MissingNear == 0 && Pages.MissingVisible == 0 && (AnimPages == null || AnimPages.MissingVisible == 0);
+
+    /// <summary>chunk_ring_prefetch (host setting): while the view moves, the static art pages of the baked chunks one chunk
+    /// ring beyond it, on the side it moves to, are queued when no visible page waits (at most
+    /// <see cref="RingPrefetchPagesPerFrame"/> per frame; the page LRU and its layer budget bound what stays).</summary>
+    public bool RingPrefetch;
+    public const int RingPrefetchPagesPerFrame = 2;
+    /// <summary>One chunk (8 tiles) in world pixels along each screen axis.</summary>
+    const int RingPx = 8 * 44;
+    /// <summary>Below this the view is not moving (world px/s; one tile per second).</summary>
+    const double RingMinSpeed = 44;
+    public int RingPrefetched;
+
+    void PrefetchRing()
+    {
+        int dx = _velX > RingMinSpeed ? 1 : _velX < -RingMinSpeed ? -1 : 0;
+        int dy = _velY > RingMinSpeed ? 1 : _velY < -RingMinSpeed ? -1 : 0;
+        if (dx == 0 && dy == 0) return;
+        int left = RingPrefetchPagesPerFrame;
+        // the strip beyond each edge the view moves past, one ring deep and one ring wider than the view
+        if (dx != 0)
+        {
+            var lead = new RectI(dx > 0 ? _view.X1 : _view.X0 - RingPx, _view.Y0 - RingPx, dx > 0 ? _view.X1 + RingPx : _view.X0, _view.Y1 + RingPx);
+            left -= Chunks.PrefetchPages(in lead, Pages, Frame, left);
+        }
+        if (dy != 0 && left > 0)
+        {
+            var lead = new RectI(_view.X0 - RingPx, dy > 0 ? _view.Y1 : _view.Y0 - RingPx, _view.X1 + RingPx, dy > 0 ? _view.Y1 + RingPx : _view.Y0);
+            left -= Chunks.PrefetchPages(in lead, Pages, Frame, left);
+        }
+        RingPrefetched += RingPrefetchPagesPerFrame - left;
+    }
+
+    /// <summary>asset_prefetch_on_packet: queues the animation pages of (body, action) before the first draw needs them:
+    /// UO direction <paramref name="dir"/> first, then the other seven (turns). <paramref name="body"/> as the host resolved
+    /// it (Body.def applied). Returns the pages queued.</summary>
+    public int PrefetchAnim(int body, int action, int dir)
+    {
+        // the distinct pages of the drawn direction and of all eight (resident or not): how much the turns add
+        Span<int> seen = stackalloc int[64];
+        int distinct = 0;
+        int queued = PrefetchAnimDir(body, action, dir & 7, seen, ref distinct);
+        int dirPages = distinct;
+        for (int d = 0; d < 8; d++)
+            if (d != (dir & 7)) queued += PrefetchAnimDir(body, action, d, seen, ref distinct);
+        if (distinct != 0)
+        {
+            AnimPrefetchLooks++;
+            AnimPrefetchPagesDir += dirPages;
+            AnimPrefetchPagesAll += distinct;
+            AnimPrefetchQueued += queued;
+        }
+        return queued;
+    }
+
+    /// <summary>asset_prefetch_on_packet's measure (totals): looks prefetched, the distinct pages of their drawn direction
+    /// and of all eight directions (a page counted once per look; past 64 distinct pages per look, the rest are counted
+    /// per frame), and the pages queued (not resident or queued already).</summary>
+    public long AnimPrefetchLooks, AnimPrefetchPagesDir, AnimPrefetchPagesAll, AnimPrefetchQueued;
+
+    /// <summary>The bytes of one animation page with its mips.</summary>
+    public long AnimPageBytes => AnimPages?.ChainBytes ?? 0;
+
+    int PrefetchAnimDir(int body, int action, int dir, Span<int> seen, ref int distinct)
+    {
+        if (!TryGetAnimDir(body, action, dir, out uint first, out int count)) return 0;
+        int queued = 0;
+        for (int f = 0; f < count; f++)
+        {
+            ref readonly var sp = ref Pack.AnimFrames[first + f].Sprite;
+            if (!sp.Present) continue;
+            if (seen.Slice(0, Math.Min(distinct, seen.Length)).IndexOf(sp.Page) < 0)
+            {
+                if (distinct < seen.Length) seen[distinct] = sp.Page;
+                distinct++;
+            }
+            if (AnimPages!.Prefetch(sp.Page, Frame)) queued++;
+        }
+        return queued;
+    }
+
+    /// <summary>asset_prefetch_on_packet: queues the page of static art <paramref name="graphic"/> (an item's look). True when
+    /// queued now.</summary>
+    public bool PrefetchArt(int graphic)
+    {
+        int i = graphic + 0x4000;
+        if (Pack.Sprites == null || (uint)i >= (uint)Pack.Sprites.Length) return false;
+        ref readonly var sp = ref Pack.Sprites[i];
+        return sp.Present && Pages.Prefetch(sp.Page, Frame);
+    }
+
+    /// <summary>The page of static art <paramref name="graphic"/> is resident (or it has none).</summary>
+    public bool ArtResident(int graphic)
+    {
+        int i = graphic + 0x4000;
+        if (Pack.Sprites == null || (uint)i >= (uint)Pack.Sprites.Length) return true;
+        ref readonly var sp = ref Pack.Sprites[i];
+        return !sp.Present || Pages.IsResident(sp.Page);
+    }
+
+    /// <summary>Every frame page of (body, action, UO direction) is resident (or it has no frames): its draw is complete.</summary>
+    public bool AnimResident(int body, int action, int dir)
+    {
+        if (!TryGetAnimDir(body, action, dir & 7, out uint first, out int count)) return true;
+        for (int f = 0; f < count; f++)
+        {
+            ref readonly var sp = ref Pack.AnimFrames[first + f].Sprite;
+            if (sp.Present && !AnimPages!.IsResident(sp.Page)) return false;
+        }
+        return true;
+    }
+
+    bool TryGetAnimDir(int body, int action, int dir, out uint first, out int count)
+    {
+        first = 0; count = 0;
+        if (AnimPages == null || Pack.AnimBodies == null || (uint)body >= (uint)Pack.AnimBodies.Length) return false;
+        ref readonly var b = ref Pack.AnimBodies[body];
+        if ((uint)action >= b.ActionCount) return false;
+        long di = b.FirstDir + (long)action * 8 + dir;
+        if (di >= Pack.AnimDirs.Length) return false;
+        ref readonly var de = ref Pack.AnimDirs[di];
+        if (de.FirstFrame + (long)de.FrameCount > Pack.AnimFrames.Length) return false;
+        first = de.FirstFrame;
+        count = de.FrameCount;
+        return count != 0;
+    }
+
+    /// <summary>A chunk bake, chunk upload or page load is queued or running (a later frame can draw more).</summary>
+    public bool LoadsPending => Chunks.PendingChunks != 0 || Chunks.UploadQueueLength != 0 || Pages.Pending || (AnimPages != null && AnimPages.Pending);
 
     // ---- dynamic sprites
 
@@ -555,6 +687,7 @@ public sealed unsafe class WorldRenderer : IDisposable
 
         // dynamic: page residency, translucent list, one more chunk-table entry for the reserved range
         DynamicDrawn = _dynCount;
+        DynamicMissingArt = DynamicMissingAnim = DynamicMissingPixels = 0;
         int ownBlend = 0;
         if (_dynCount > 0)
         {
@@ -566,8 +699,16 @@ public sealed unsafe class WorldRenderer : IDisposable
                 ref readonly var d = ref _dynamic[i];
                 if (!touched)
                 {
-                    if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
-                    else Pages.Touch(d.Page, Frame);
+                    if ((d.Flags & SpriteInstance.FlagIndexed) != 0)
+                    {
+                        if (AnimPages != null && !AnimPages.IsResident(d.Page - Pack.AnimPageBase)) { DynamicMissingAnim++; DynamicMissingPixels += d.Width * d.Height; }
+                        AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
+                    }
+                    else
+                    {
+                        if (!Pages.IsResident(d.Page)) { DynamicMissingArt++; DynamicMissingPixels += d.Width * d.Height; }
+                        Pages.Touch(d.Page, Frame);
+                    }
                 }
                 if (d.Alpha == 0) continue;
                 // translucent, or opaque with a circle-of-transparency ring to blend (the shader discards the rest)

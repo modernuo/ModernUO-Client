@@ -61,9 +61,12 @@ public struct GrowthPolicy
 
     /// <summary>The client's start sizes and ceilings (layers, layers, instances). The art page array starts at its
     /// ceiling: every login has 13+ pages resident by frame 15 (bench-000035), so a 12-layer start only added a growth
-    /// step and a 384 MiB transient (both arrays alive for that frame). Anim layers and instances still grow on demand.</summary>
+    /// step and a 384 MiB transient (both arrays alive for that frame). Anim layers and instances still grow on demand.
+    /// Anim ceiling 256 (gpu-popin round 6): the all-bodies tour and the large scene's crowd after it uploaded 292 anim
+    /// pages (1 MiB each); at 128 the pool was full when the crowd arrived and each of its 86 new pages first evicted one
+    /// (p5 bench-000999: 128/128 resident, 164-170 evictions by the crowd's end).</summary>
     public const int ArtLayersStart = 24, ArtLayersMax = 24;
-    public const int AnimLayersStart = 32, AnimLayersMax = 128;
+    public const int AnimLayersStart = 32, AnimLayersMax = 256;
     public const int InstancesStart = 256 << 10, InstancesMax = 2 << 20;
 }
 

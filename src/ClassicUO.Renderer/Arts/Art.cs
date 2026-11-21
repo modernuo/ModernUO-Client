@@ -67,6 +67,9 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>Worker decodes requested and not uploaded yet.</summary>
         public int PendingDecodes => _decoder.Pending;
 
+        /// <summary>Decodes finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
+        public int ReadyDecodes => _decoder.ReadyCount;
+
         /// <summary>Worker decodes uploaded so far: a caller waiting on requests only needs to look again when it changed.</summary>
         public int CompletedDecodes => _decoder.Completed;
 
@@ -78,6 +81,9 @@ namespace ClassicUO.Renderer.Arts
 
         /// <summary>As <see cref="RequestLand"/>, for static art <paramref name="idx"/>.</summary>
         public bool RequestArt(uint idx) => Request(idx + 0x4000);
+
+        /// <summary>Static art <paramref name="idx"/> has a worker decode queued or running (not uploaded yet).</summary>
+        public bool IsDecodePending(uint idx) => _decoder.IsRequested(idx + 0x4000);
 
         private bool Request(uint idx)
         {
