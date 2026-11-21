@@ -104,6 +104,7 @@ namespace ClassicUO
             Sounds = new Renderer.Sounds.Sound(FileManager.Sounds);
             FontGlyphAtlas = new Renderer.FontGlyphAtlas(FileManager.Fonts, game.GraphicsDevice);
             ClassicUO.Game.AtlasLruSetup.Enable(this);
+            ClassicUO.Game.TextStringCache.Enable();
 
             LightColors.LoadLights();
 

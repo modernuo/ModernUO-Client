@@ -544,10 +544,13 @@ namespace ClassicUO.Assets
         public FontCharacterData GetAsciiGlyph(byte font, int index) => AsciiRow(font)[index];
 
         /// <summary> Get the index in ASCII fonts of a character. </summary>
+        // ASCII fonts are indexed by the Cp1252 byte (fonts 5-7 hold the typographic glyphs at 0x82-0x9F, fonts 4 and 8
+        // moon phases at 0x80-0x87), while strings are decoded from Cp1252 to Unicode; map the char back to its byte instead
+        // of truncating (U+2026 would otherwise index 0x26 '&').
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int GetASCIIIndex(char c)
+        internal static int GetASCIIIndex(char c)
         {
-            byte ch = (byte)c; // ASCII fonts cover only 256 characters
+            byte ch = Cp1252.ToGlyphByte(c);
 
             if (ch < NOPRINT_CHARS)
             {
@@ -961,7 +964,7 @@ namespace ClassicUO.Assets
                     for (int i = 0; i < count; i++)
                     {
                         ref var item = ref dataSpan[i];
-                        byte index = (byte)item.Item;
+                        byte index = Cp1252.ToGlyphByte(item.Item);
 
                         int offsY = GetFontOffsetY(font, index);
 
@@ -4079,7 +4082,7 @@ namespace ClassicUO.Assets
                     Width = 0,
                     Height = 0,
                     BearingX = 0,
-                    BearingY = GetFontOffsetY(font, (byte)c),
+                    BearingY = GetFontOffsetY(font, Cp1252.ToGlyphByte(c)),
                     AdvanceWidth = dw
                 };
             }
@@ -4111,7 +4114,7 @@ namespace ClassicUO.Assets
                 Width = dw,
                 Height = dh,
                 BearingX = 0,
-                BearingY = GetFontOffsetY(font, (byte)c),
+                BearingY = GetFontOffsetY(font, Cp1252.ToGlyphByte(c)),
                 AdvanceWidth = dw
             };
         }

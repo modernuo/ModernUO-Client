@@ -15,6 +15,7 @@ here outside its GPL under agreement from its author, Kamron Batman.
 | `src/Uo.Buffers/PooledRefQueue.cs` | `Projects/Server/Collections/PooledRefQueue.cs` | ebaf10493 |
 | `src/Uo.Buffers/ValueStringBuilder.cs` | `Projects/Server/Buffers/ValueStringBuilder.cs` | 61e41df00 |
 | `src/Uo.Buffers/CollectionThrowStrings.cs` | `Projects/Server/Collections/CollectionThrowStrings.cs` | e1e1a7c64 |
+| `src/ClassicUO.Utility/Cp1252.cs` | `Projects/Server/Text/TextEncoding.cs` (GetStringLatin1's single-allocation decode and safe-mode pre-scan, adapted to Windows-1252 and the client's safe rule; span encoders) | 8e2ddc7ab |
 
 ## .NET runtime (MIT)
 
