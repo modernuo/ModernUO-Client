@@ -20,10 +20,6 @@ namespace ClassicUO.UnitTests.Network.Packets
         private const uint MOB = 0x0000_0200;
         private const uint ITEM = 0x4000_0100;
 
-        public IncomingWorldTests()
-        {
-            typeof(ProfileManager).GetProperty(nameof(ProfileManager.CurrentProfile))!.SetValue(null, new Profile());
-        }
 
         public void Dispose() => SpanBuffers.ModeOverride = null;
 
