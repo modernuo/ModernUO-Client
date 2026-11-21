@@ -73,7 +73,7 @@ namespace ClassicUO
 
         public Scene Scene { get; private set; }
         public AudioManager Audio { get; private set; }
-        public UltimaOnline UO { get; } = new UltimaOnline();
+        public UltimaOnline UO { get; private set; } = new UltimaOnline();
         public GraphicsDeviceManager GraphicManager { get; }
 
         public Rectangle ClientBounds
@@ -430,6 +430,11 @@ namespace ClassicUO
             _windowTitle = title;
             _titleShowsLegacy = !Settings.GlobalSettings.UseGpuWorldRenderer;
 
+            if (Window == null)
+            {
+                return; // a controller from CreateForTests has no window
+            }
+
             // dev builds say so in the title, so nobody mistakes Compatibility frames for the Gpu renderer's
 #if CUO_DEVTOOLS
             string legacy = _titleShowsLegacy ? " [Compatibility renderer]" : "";
@@ -457,6 +462,22 @@ namespace ClassicUO
 
         private string _windowTitle;
         private bool _titleShowsLegacy;
+
+        /// <summary>
+        /// Test seam (see Client.UseForTests): a controller without a window, graphics device or game loop; its constructor is
+        /// not run. It carries <paramref name="uo"/>, a silent AudioManager and no scene.
+        /// </summary>
+        internal static GameController CreateForTests(UltimaOnline uo)
+        {
+            var game = (GameController)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(GameController));
+            game.UO = uo;
+            game.Audio = AudioManager.CreateSilentForTests();
+
+            return game;
+        }
+
+        /// <summary>Test seam: makes <paramref name="scene"/> current without loading it (no UI, no music).</summary>
+        internal void SetSceneForTests(Scene scene) => Scene = scene;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public T GetScene<T>() where T : Scene

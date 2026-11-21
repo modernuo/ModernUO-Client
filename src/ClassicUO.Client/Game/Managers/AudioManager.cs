@@ -24,6 +24,9 @@ namespace ClassicUO.Game.Managers
         public int LoginMusicIndex { get; private set; }
         public int DeathMusicIndex { get; } = 42;
 
+        /// <summary>Test seam (GameController.CreateForTests): plays nothing, as on a machine without audio hardware.</summary>
+        internal static AudioManager CreateSilentForTests() => new AudioManager { _canReproduceAudio = false };
+
         public void Initialize()
         {
             try

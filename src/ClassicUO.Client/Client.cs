@@ -46,6 +46,15 @@ namespace ClassicUO
 
         }
 
+        /// <summary>Test seam (see Client.UseForTests): the fields Load sets that packet handlers read, without loading anything.</summary>
+        internal void SetForTests(ClientVersion version, string versionText, UOFileManager fileManager, GameCursor cursor)
+        {
+            Version = version;
+            VersionText = versionText;
+            FileManager = fileManager;
+            GameCursor = cursor;
+        }
+
         public unsafe void Load(GameController game)
         {
             LoadUOFiles();
@@ -236,6 +245,12 @@ namespace ClassicUO
     internal static class Client
     {
         public static GameController Game { get; private set; }
+
+        /// <summary>
+        /// Test seam: installs a GameController made by <see cref="GameController.CreateForTests"/> (no window, device or audio)
+        /// so packet handlers that reach Client.Game run in unit tests. Run never calls it.
+        /// </summary>
+        internal static void UseForTests(GameController game) => Game = game;
 
 
         public static void Run()

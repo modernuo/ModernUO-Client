@@ -85,13 +85,17 @@ namespace ClassicUO.Game
         private readonly Tooltip _tooltip;
         private readonly World _world;
 
-        public GameCursor(World world, float dpiScale)
+        public GameCursor(World world, float dpiScale) : this(world)
+        {
+            CreateGraphic(dpiScale);
+        }
+
+        /// <summary>Without the SDL cursors (no art loaded): for tests (Client.UseForTests).</summary>
+        internal GameCursor(World world)
         {
             _world = world;
             _tooltip = new Tooltip(world);
             _aura = new Aura(30);
-
-            CreateGraphic(dpiScale);
         }
 
         public void CreateGraphic(float dpiScale) {
