@@ -279,15 +279,18 @@ public ref partial struct SpanWriter
         var src = value[..charLength];
 
         var byteLength = encoding.GetByteLengthForEncoding();
-        var byteCount = encoding.GetByteCount(src);
-        if (fixedLength > src.Length)
-        {
-            byteCount += (fixedLength - src.Length) * byteLength;
-        }
+        var padding = fixedLength > src.Length ? (fixedLength - src.Length) * byteLength : 0;
 
-        if (byteCount == 0)
+        if (src.IsEmpty && padding == 0)
         {
             return;
+        }
+
+        // The worst-case size needs no pass over the text; count exactly only when it would force a grow
+        var byteCount = encoding.GetMaxByteCount(src.Length) + padding;
+        if (_position + byteCount > _buffer.Length)
+        {
+            byteCount = encoding.GetByteCount(src) + padding;
         }
 
         GrowIfNeeded(byteCount);
