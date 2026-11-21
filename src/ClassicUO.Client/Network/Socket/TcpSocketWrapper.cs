@@ -66,6 +66,45 @@ sealed class TcpSocketWrapper : SocketWrapper
         stream.Flush();
     }
 
+    public override void Send(ReadOnlySpan<byte> data)
+    {
+        if (_eventSelect)
+        {
+            SendNonBlocking(data);
+
+            return;
+        }
+
+        var stream = _socket.GetStream();
+        stream.Write(data);
+        stream.Flush();
+    }
+
+    private void SendNonBlocking(ReadOnlySpan<byte> data)
+    {
+        var client = _socket.Client;
+        long deadline = Environment.TickCount64 + 5000;
+
+        while (!data.IsEmpty)
+        {
+            int sent = client.Send(data, SocketFlags.None, out var error);
+
+            if (error == SocketError.Success)
+            {
+                data = data.Slice(sent);
+
+                continue;
+            }
+
+            if (error != SocketError.WouldBlock || Environment.TickCount64 - deadline > 0)
+            {
+                throw new SocketException((int)(error == SocketError.WouldBlock ? SocketError.TimedOut : error));
+            }
+
+            client.Poll(100_000, SelectMode.SelectWrite);
+        }
+    }
+
     // The socket is non-blocking: a full send buffer returns WouldBlock, so wait for it to drain (up to 5 s in all) and go on.
     private void SendNonBlocking(byte[] buffer, int offset, int count)
     {
@@ -176,8 +215,12 @@ sealed class TcpSocketWrapper : SocketWrapper
     // socket, so a read is either bounded by what Available says is queued (cannot block), or, when nothing is queued but the
     // socket reports readable (a FIN or an error, or a spurious wake-up), a one-byte probe with the socket switched to
     // non-blocking for that call only.
-    public override int Read(byte[] buffer)
+    public override int Read(byte[] buffer) => Read(buffer, buffer.Length);
+
+    public override int Read(byte[] buffer, int count)
     {
+        count = Math.Min(count, buffer.Length);
+
         var client = _socket?.Client;
 
         if (client == null || !client.Connected)
@@ -189,7 +232,7 @@ sealed class TcpSocketWrapper : SocketWrapper
 
             if (queued > 0)
             {
-                var read = client.Receive(buffer, 0, Math.Min(buffer.Length, queued), SocketFlags.None, out var error);
+                var read = client.Receive(buffer, 0, Math.Min(count, queued), SocketFlags.None, out var error);
 
                 return Finish(read, error);
             }

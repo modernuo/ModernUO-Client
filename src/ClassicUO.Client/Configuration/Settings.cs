@@ -333,6 +333,13 @@ namespace ClassicUO.Configuration
         // (2026-11-21: per-packet and pipe tests pass unchanged in both states; the old path stays for a while).
         [JsonPropertyName("span_reader")] public bool SpanReader { get; set; } = true;
 
+        // net_ring (net-rework step 3): received bytes are decoded into a double-mapped ring per connection and framed and read
+        // in place; sends go through a bounded ring that ends the connection when the socket takes nothing for 5 s
+        // (Network/NetRing, NetRings). Read once at startup (CUO_NET_RING=1|0 overrides it and CUO_NET_RING_CHECK=1 frames
+        // every slice with the CircularBuffer path too and logs differences, in developer builds). A platform that cannot map
+        // the ring keeps the CircularBuffer path (one log line). Default off.
+        [JsonPropertyName("net_ring")] public bool NetRing { get; set; }
+
         // text_string_cache: server Cp1252 strings are decoded through a bounded cache keyed by their bytes (2048 strings of
         // up to 64 chars), so repeated names and lines allocate nothing (Game/TextStringCache). CUO_TEXT_STRING_CACHE=1|0
         // overrides it and CUO_TEXT_CACHE_CHECK=1 compares every cached string with a fresh decode, in developer builds.

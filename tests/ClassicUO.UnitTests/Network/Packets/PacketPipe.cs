@@ -22,7 +22,19 @@ namespace ClassicUO.UnitTests.Network.Packets
         Random,
 
         /// <summary>Each read fills the read buffer.</summary>
-        Max
+        Max,
+
+        /// <summary>net_ring: one byte per read into the 256 KB receive ring.</summary>
+        RingByte,
+
+        /// <summary>net_ring: random reads into the 256 KB receive ring.</summary>
+        RingRandom,
+
+        /// <summary>net_ring: full reads into the 256 KB receive ring.</summary>
+        RingMax,
+
+        /// <summary>net_ring: random reads into the smallest ring that holds the largest packet twice, so it wraps every few packets.</summary>
+        TinyRing
     }
 
     /// <summary>
@@ -42,6 +54,9 @@ namespace ClassicUO.UnitTests.Network.Packets
 
             /// <summary>What the handlers sent back through NetClient.Socket (the pipe's client while it delivers), flushed.</summary>
             public byte[] Sent = Array.Empty<byte>();
+
+            /// <summary>The client received through the net_ring receive ring (false: the CircularBuffer path).</summary>
+            public bool Ring;
         }
 
         private static readonly PropertyInfo StaticSocket = typeof(NetClient).GetProperty(nameof(NetClient.Socket))!;
@@ -74,6 +89,43 @@ namespace ClassicUO.UnitTests.Network.Packets
         public static Result Deliver(World world, SpanBufferMode mode, PipeRead read, bool compressed, Action<PacketHandlers> setup, int splitAt, params byte[][] packets)
         {
             SpanBuffers.ModeOverride = mode;
+            bool ring = read >= PipeRead.RingByte;
+            NetRings.OnOverride = ring;
+            NetRings.ReceiveSizeOverride = read == PipeRead.TinyRing ? TinySize(packets) : null;
+
+            try
+            {
+                return DeliverOnce(world, read, compressed, setup, splitAt, packets);
+            }
+            finally
+            {
+                NetRings.OnOverride = null;
+                NetRings.ReceiveSizeOverride = null;
+            }
+        }
+
+        private static int TinySize(byte[][] packets)
+        {
+            int largest = 0;
+
+            foreach (byte[] p in packets)
+            {
+                largest = Math.Max(largest, p.Length);
+            }
+
+            int size = NetRing.MinimumSize;
+
+            // a partial packet plus one decoded slice (4 bytes per compressed byte) must fit
+            while (size <= largest * 2 + 64)
+            {
+                size *= 2;
+            }
+
+            return size;
+        }
+
+        private static Result DeliverOnce(World world, PipeRead read, bool compressed, Action<PacketHandlers> setup, int splitAt, byte[][] packets)
+        {
             byte[] plain = packets.SelectMany(p => p).ToArray();
             byte[] wire = compressed ? NetDrainTests.HuffmanEncode(plain) : plain;
 
@@ -127,6 +179,7 @@ namespace ClassicUO.UnitTests.Network.Packets
             }
 
             result.Sent = socket.Sent.ToArray();
+            result.Ring = client.ReceiveRing != null;
 
             return result;
         }
@@ -167,8 +220,8 @@ namespace ClassicUO.UnitTests.Network.Packets
 
                 int want = _read switch
                 {
-                    PipeRead.Byte => 1,
-                    PipeRead.Random => _rng.Next(1, buffer.Length + 1),
+                    PipeRead.Byte or PipeRead.RingByte => 1,
+                    PipeRead.Random or PipeRead.RingRandom or PipeRead.TinyRing => _rng.Next(1, buffer.Length + 1),
                     _ => buffer.Length
                 };
                 if (_pos < _splitAt)
