@@ -14,6 +14,9 @@ namespace ClassicUO.Game
         public static BaseGameObject LastLeftDownObject;
         public static Entity HealthbarObject;
         public static Item SelectedContainer;
+        // G1: SelectedContainer latched for the UI pass. The world draw reads SelectedContainer and GameController nulls it
+        // before the UI pass, so the container gump's own highlight of the hovered sub-container reads this copy.
+        public static uint UiSelectedContainerSerial;
         public static Item CorpseObject;
 
         private static readonly bool[,] _InternalArea = new bool[44, 44];
