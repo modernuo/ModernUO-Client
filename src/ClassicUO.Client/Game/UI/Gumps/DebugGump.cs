@@ -204,18 +204,17 @@ namespace ClassicUO.Game.UI.Gumps
         // FpsDisplay.Shown; never the idle draw rate), and the zoom unless it is at the default step
         internal static int FormatSmall(Span<char> destination, uint shownRate, bool showZoom, float zoom)
         {
-            int written;
+            int n = 0;
+            UiFormat.Put(destination, ref n, "FPS: ");
+            UiFormat.Put(destination, ref n, shownRate);
 
             if (showZoom)
             {
-                destination.TryWrite($"FPS: {shownRate}\nZoom: {zoom:0.00}", out written);
-            }
-            else
-            {
-                destination.TryWrite($"FPS: {shownRate}", out written);
+                UiFormat.Put(destination, ref n, "\nZoom: ");
+                UiFormat.Put(destination, ref n, zoom, "0.00");
             }
 
-            return written;
+            return n;
         }
 
         // the selected object's line; returns its length

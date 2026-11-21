@@ -279,23 +279,27 @@ namespace ClassicUO.Game.UI.Gumps
         // the countdown under the icon: "+Nhr", "m:ss" or "sss" (two-digit seconds and an s)
         internal static int FormatTimeLeft(Span<char> destination, TimeSpan span)
         {
-            int written;
+            int n = 0;
 
             if (span.Hours > 0)
             {
+                // once an hour; the resource text decides the layout
                 _hoursFormat ??= CompositeFormat.Parse(ResGumps.Span0Hours);
-                destination.TryWrite(null, _hoursFormat, out written, span.Hours);
+                destination.TryWrite(null, _hoursFormat, out n, span.Hours);
             }
             else if (span.Minutes > 0)
             {
-                destination.TryWrite($"{span.Minutes}:{span.Seconds:00}", out written);
+                UiFormat.Put(destination, ref n, span.Minutes);
+                UiFormat.Put(destination, ref n, ":");
+                UiFormat.Put(destination, ref n, span.Seconds, "00");
             }
             else
             {
-                destination.TryWrite($"{span.Seconds:00}s", out written);
+                UiFormat.Put(destination, ref n, span.Seconds, "00");
+                UiFormat.Put(destination, ref n, "s");
             }
 
-            return written;
+            return n;
         }
 
         private enum GumpDirection

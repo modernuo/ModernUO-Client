@@ -151,7 +151,10 @@ namespace ClassicUO.Network
                 }
             }
 
-            destination.TryWrite($"{Math.Round(num, 2):0.##} {arg}", out written);
+            written = 0;
+            ClassicUO.Game.UI.UiFormat.Put(destination, ref written, Math.Round(num, 2), "0.##");
+            ClassicUO.Game.UI.UiFormat.Put(destination, ref written, " ");
+            ClassicUO.Game.UI.UiFormat.Put(destination, ref written, arg);
         }
     }
 }

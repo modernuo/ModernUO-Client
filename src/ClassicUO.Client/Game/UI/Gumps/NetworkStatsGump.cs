@@ -110,22 +110,28 @@ namespace ClassicUO.Game.UI.Gumps
         // the shown text: "Ping: N ms", plus the received and sent rates when expanded; returns its length
         internal static int FormatText(Span<char> destination, bool minimized, uint ping, uint received, uint sent)
         {
-            int written;
+            int n = 0;
+            UiFormat.Put(destination, ref n, "Ping: ");
+            UiFormat.Put(destination, ref n, ping);
+            UiFormat.Put(destination, ref n, " ms");
 
             if (minimized)
             {
-                destination.TryWrite($"Ping: {ping} ms", out written);
-
-                return written;
+                return n;
             }
 
-            Span<char> rx = stackalloc char[48], tx = stackalloc char[48];
-            NetStatistics.FormatSizeAdaptive(received, rx, out int rxLength);
-            NetStatistics.FormatSizeAdaptive(sent, tx, out int txLength);
-            ReadOnlySpan<char> rxText = rx.Slice(0, rxLength), txText = tx.Slice(0, txLength);
-            destination.TryWrite($"Ping: {ping} ms\nIn: {rxText,-6} Out: {txText,-6}", out written);
+            UiFormat.Put(destination, ref n, "\nIn: ");
+            int start = n;
+            NetStatistics.FormatSizeAdaptive(received, destination.Slice(n), out int written);
+            n += written;
+            UiFormat.PadRight(destination, ref n, start, 6);
+            UiFormat.Put(destination, ref n, " Out: ");
+            start = n;
+            NetStatistics.FormatSizeAdaptive(sent, destination.Slice(n), out written);
+            n += written;
+            UiFormat.PadRight(destination, ref n, start, 6);
 
-            return written;
+            return n;
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
