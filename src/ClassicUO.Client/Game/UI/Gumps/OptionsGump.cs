@@ -101,7 +101,7 @@ namespace ClassicUO.Game.UI.Gumps
                          _chatShiftEnterCheckbox,
                          _enableCaveBorder;
         private Label _presentModeLabel;
-        private Checkbox _holdShiftForContext, _holdShiftToSplitStack, _reduceFPSWhenInactive, _uncapFPS, _vsync, _sallosEasyGrab, _partyInviteGump, _objectsFading, _textFading, _holdAltToMoveGumps;
+        private Checkbox _holdShiftForContext, _holdShiftToSplitStack, _reduceFPSWhenInactive, _vsync, _sallosEasyGrab, _partyInviteGump, _objectsFading, _textFading, _holdAltToMoveGumps;
         private Combobox _hpComboBox, _healtbarType, _fieldsType, _hpComboBoxShowWhen;
 
         // infobar
@@ -1584,25 +1584,15 @@ namespace ClassicUO.Game.UI.Gumps
             (
                 rightArea,
                 Constants.MIN_FPS,
-                Constants.MAX_FPS,
-                Settings.GlobalSettings.FPS > 0 ? Settings.GlobalSettings.FPS : 240,
+                FrameLimitSlider.Off,
+                FrameLimitSlider.FromSetting(Settings.GlobalSettings.FPS),
                 startX,
                 startY,
                 250
             );
+            _sliderFPS.ValueText = v => v >= FrameLimitSlider.Off ? ResGumps.FPSLimitOff : v.ToString();
 
             startY += text.Bounds.Bottom + 5;
-
-            _uncapFPS = AddCheckBox
-            (
-                rightArea,
-                ResGumps.UncapFPS,
-                Settings.GlobalSettings.FPS <= 0,
-                startX,
-                startY
-            );
-
-            startY += _uncapFPS.Height + 2;
 
             _vsync = AddCheckBox
             (
@@ -3626,8 +3616,7 @@ namespace ClassicUO.Game.UI.Gumps
             switch (ActivePage)
             {
                 case 1: // general
-                    _sliderFPS.Value = 240;
-                    _uncapFPS.IsChecked = true;
+                    _sliderFPS.Value = FrameLimitSlider.Off;
                     _vsync.IsChecked = false;
                     _reduceFPSWhenInactive.IsChecked = true;
                     _highlightObjects.IsChecked = true;
@@ -3862,7 +3851,7 @@ namespace ClassicUO.Game.UI.Gumps
             WorldViewportGump vp = UIManager.GetGump<WorldViewportGump>();
 
             // general
-            int fps = _uncapFPS.IsChecked ? 0 : _sliderFPS.Value;
+            int fps = FrameLimitSlider.ToSetting(_sliderFPS.Value);
 
             if (Settings.GlobalSettings.FPS != fps)
             {

@@ -27,6 +27,9 @@ namespace ClassicUO.Renderer
         public RenderTarget2D LightRenderTarget { get => _lightRenderTarget; }
         public RenderTarget2D WorldRenderTarget { get => _worldRenderTarget; }
 
+        /// <summary>Where the world and light targets are drawn in the back buffer (window pixels).</summary>
+        public Rectangle WorldSceneOnScreen => _gameWorldSceneOnScreen;
+
         /// <summary>B8: the scene UI and gumps without the cursor, kept between frames (null until the first <see cref="EnsureSizes"/>).</summary>
         public RenderTarget2D UiCacheRenderTarget { get => _uiCacheRenderTarget; }
 

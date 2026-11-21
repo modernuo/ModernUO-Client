@@ -48,6 +48,9 @@ namespace ClassicUO
     //   pickscan:CxR:pick_records hovers a C x R grid of the game view and compares picking from the T7b extract's records
     //   (SpritePickTable) off and on (both renderers); pickscan:CxR without it (the baked-object skipping off and on) is skipped;
     //   cot:on|off switches the circle of transparency
+    //   altlights:on|off switches the alternative lights option; lightframes:N logs N consecutive frames of the light pass
+    //   and reads back the light target and the composited world ([light-frames], LightFrameLog; never measure with it);
+    //   CUO_LIGHT_FRAMES=N does the same for the first N frames of every measured scene (walk, travel, ...)
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
     //   CUO_WORLD_HOLD=0    never hold the last world frame after a discontinuity (observe only: the before/after baseline)
@@ -74,6 +77,9 @@ namespace ClassicUO
             (1823, 2821), (2899, 676), (2498, 392), (542, 985), (596, 2138), (4442, 1172), (1495, 1629)
         };
         private static int _planIndex, _travelIndex, _windowsAtStart;
+        private static bool _lightFramesStarted;
+        // CUO_LIGHT_FRAMES=N: every measured plan scene logs its first N frames' light pass (LightFrameLog)
+        private static readonly int _lightFramesScene = int.TryParse(Environment.GetEnvironmentVariable("CUO_LIGHT_FRAMES"), out int lf) ? lf : 0;
         private static ushort _ghostRestore, _bodyRestore;
         private static int _bodyNext, _bodiesShown, _glideX, _bwalkLegs, _bwalkDenies = -1;
         private static int _equipNext, _equipShown;
@@ -2017,6 +2023,7 @@ namespace ClassicUO
                     Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
                              $"{_planFrames * (double)sec / (now - _planStart):0} loops/s, {(game.PresentedFrameCount - _presentsAtStart) * (double)sec / (now - _planStart):0} presented fps, {(Renderer.UltimaBatcher2D.EffectApplies - _appliesAtStart) / (double)Math.Max(1UL, game.PresentedFrameCount - _presentsAtStart):0.0} effect applies/present");
                     LogSettle(gs, _plan[_planIndex]);
+                    Game.Scenes.LightFrameLog.Stop();
                     _planIndex++;
                     _step = 1;
                     _stepAt = now + sec;
@@ -2069,6 +2076,35 @@ namespace ClassicUO
                         Log.Info($"[bench] vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, present interval {game.GraphicsDevice.PresentationParameters.PresentationInterval}, present mode {game.PresentMode}");
                         _planIndex++;
                         _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("altlights:") && Configuration.ProfileManager.CurrentProfile is { } altProfile)
+                    {
+                        altProfile.UseAlternativeLights = _plan[_planIndex] == "altlights:on";
+                        Log.Info($"[bench] alternative lights {altProfile.UseAlternativeLights}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("lightframes:"))
+                    {
+                        // waits in place until the probe has logged its frames (Game.Scenes.LightFrameLog)
+                        if (!Game.Scenes.LightFrameLog.Active && !_lightFramesStarted)
+                        {
+                            Game.Scenes.LightFrameLog.Start(int.Parse(_plan[_planIndex].Substring(12)));
+                            _lightFramesStarted = true;
+                        }
+                        else if (!Game.Scenes.LightFrameLog.Active)
+                        {
+                            _lightFramesStarted = false;
+                            _planIndex++;
+                        }
+
+                        _stepAt = now + sec / 10;
 
                         break;
                     }
@@ -2609,6 +2645,12 @@ namespace ClassicUO
 
                     Log.Info($"[bench] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs?.Camera.Zoom:0.0}, mobiles {world.Mobiles.Count}, items {world.Items.Count}; measuring");
                     _windowsAtStart = ClassicUO.FrameStats.WindowsReported;
+
+                    if (_lightFramesScene > 0)
+                    {
+                        Game.Scenes.LightFrameLog.Start(_lightFramesScene);
+                    }
+
                     _travelAt = now;
                     _planStart = now;
                     _planFrames = 0;

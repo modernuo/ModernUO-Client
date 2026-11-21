@@ -1692,11 +1692,11 @@ namespace ClassicUO.Resources {
         }
 
         /// <summary>
-        ///   Looks up a localized string similar to Uncapped FPS (no frame limiter).
+        ///   Looks up a localized string similar to Off.
         /// </summary>
-        public static string UncapFPS {
+        public static string FPSLimitOff {
             get {
-                return ResourceManager.GetString("UncapFPS", resourceCulture);
+                return ResourceManager.GetString("FPSLimitOff", resourceCulture);
             }
         }
 
