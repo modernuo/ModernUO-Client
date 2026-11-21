@@ -25,6 +25,7 @@ namespace ClassicUO.Game.UI.Controls
         private readonly HSliderBarStyle _style;
         private readonly RenderedText _text;
         private int _value = -1;
+        private Func<int, string> _valueText;
 
         public HSliderBar(
             int x,
@@ -102,10 +103,7 @@ namespace ClassicUO.Game.UI.Controls
                         _value = MaxValue;
                     }
 
-                    if (_text != null)
-                    {
-                        _text.Text = Value.ToString();
-                    }
+                    UpdateText();
 
                     if (_value != oldValue)
                     {
@@ -119,7 +117,26 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
+        /// <summary>The text shown for a value (null: the number), e.g. "Off" at the frame limit's top step.</summary>
+        public Func<int, string> ValueText
+        {
+            get => _valueText;
+            set
+            {
+                _valueText = value;
+                UpdateText();
+            }
+        }
+
         public event EventHandler ValueChanged;
+
+        private void UpdateText()
+        {
+            if (_text != null)
+            {
+                _text.Text = _valueText != null ? _valueText(_value) : _value.ToString();
+            }
+        }
 
         public override void Update()
         {
@@ -216,11 +233,7 @@ namespace ClassicUO.Game.UI.Controls
         {
             _value = value;
             CalculateOffset();
-
-            if (_text != null)
-            {
-                _text.Text = Value.ToString();
-            }
+            UpdateText();
         }
 
         protected override void OnMouseDown(int x, int y, MouseButtonType button)
