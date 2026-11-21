@@ -37,6 +37,13 @@ namespace ClassicUO.Game
         private uint _held;
         private uint _logoutAt;
         private bool _ownsMouse;
+        // target: a staff command's cursor can arrive after the script's fixed wait (a busy shard), so `target` retries
+        // until the cursor is up or TargetCursorWaitMs passes, instead of failing at once (bench2-000069: "[add Brazier"
+        // never placed)
+        internal const uint TargetCursorWaitMs = 5000;
+        internal const uint TargetCursorPollMs = 50;
+        private uint _targetWaitUntil;
+        private bool _retryLine;
 
         private EcsSessionDriver(string[] lines)
         {
@@ -45,6 +52,38 @@ namespace ClassicUO.Game
 
         // Tests: a driver over in-memory lines (no file, no world).
         internal static EcsSessionDriver FromLines(string[] lines) => new EcsSessionDriver(lines);
+
+        // Tests: the next line to run.
+        internal int ProgramCounter => _pc;
+
+        // true: the current line runs again after TargetCursorPollMs (no cursor yet, still within TargetCursorWaitMs)
+        internal bool RetryForTargetCursor(bool targeting, uint now)
+        {
+            if (targeting)
+            {
+                _targetWaitUntil = 0;
+
+                return false;
+            }
+
+            if (_targetWaitUntil == 0)
+            {
+                _targetWaitUntil = now + TargetCursorWaitMs;
+            }
+
+            if (now < _targetWaitUntil)
+            {
+                _pc--;
+                _retryLine = true;
+                _waitUntil = now + TargetCursorPollMs;
+
+                return true;
+            }
+
+            _targetWaitUntil = 0;
+
+            return false;
+        }
 
         // The script's `mouse` override is the driver's: set only by `mouse`, released when the script ends (EOF, quit,
         // logout), when the driver gump goes away or the world leaves the game (disconnect), and if a line throws, so a
@@ -178,7 +217,12 @@ namespace ClassicUO.Game
                         continue;
                     }
 
-                    Log.Info($"[ECS] driver> {line}");
+                    if (!_retryLine)
+                    {
+                        Log.Info($"[ECS] driver> {line}");
+                    }
+
+                    _retryLine = false;
 
                     // present on change: a script line stands in for input (it opens and closes gumps, spawns and
                     // clears effects, moves the cursor), so the frame after it is drawn like the frame after an input event
@@ -418,9 +462,14 @@ namespace ClassicUO.Game
 
                 // answers a pending target cursor (e.g. after a staff command): self | ground <dx> <dy> | worn <layer>
                 case "target":
+                    if (RetryForTargetCursor(world.TargetManager.IsTargeting, Time.Ticks))
+                    {
+                        return true;
+                    }
+
                     if (!world.TargetManager.IsTargeting)
                     {
-                        Log.Warn("[ECS] driver: no target cursor");
+                        Log.Warn($"[ECS] driver: no target cursor after {TargetCursorWaitMs} ms");
 
                         return true;
                     }
