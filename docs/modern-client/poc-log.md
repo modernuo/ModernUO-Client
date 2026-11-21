@@ -8486,3 +8486,49 @@ Base: bg/net-rework fce1c0ae2; merged poc/modern-client a9e7db370 (f57235284: te
 - **Test fix (poc).** GumpDecodeBudgetTests called the devtools-only GumpBudgetCheck unguarded, so the `-p:CuoDevTools=false` test build failed on poc a9e7db370; the checker parts are now under `#if CUO_DEVTOOLS`.
 - **Verification.** Both client builds OK. Dev suite 4615 passed, 6 skipped. `-p:CuoDevTools=false` suite 4528 passed, 6 skipped, 1 failed (PlayerStepOpenTests corpses alloc check, 1408 B under the parallel run; passes alone, 25/25; not text code). Jobs (set `measure/net-rework-cp1252`, NativeAOT dev builds: branch e5fff781d vs poc a9e7db370, pack CURRENT): gate-gpu bench2-000065 (L1) and gate-legacy bench3-000054 (L2) with span_reader and its checker on; alloc-g bench5-000080 and alloc-l bench5-000081 (L4; arms base, new, span). Results: pending at the time of writing (see the queue's handoff).
 - **Costs.** None: the writes and safe reads allocate less or the same; nothing new is held.
+
+## 2026-11-21 gpu-popin round 6 (bg/gpu-popin): LookPrefetch queues, anim page ceiling 256, PackPages in-flight wait
+
+Round 6 code (c797c6866, on round 5's 7a10a61b6; all default off except the pure fix):
+
+- **PackPages in-flight wait** (750d442ee, pure fix, no switch): a read of a chunk another thread is decoding waits for that
+  decode (Monitor.Wait/PulseAll on the cache lock) instead of decoding it again. Main and a prefetch worker used to decode
+  the same chunk twice. Kept as is through the zstd merge (the wait sits around the new `DecodeChunk`).
+- **Gpu anim page ceiling 128 -> 256** (a11d6b8e5; starts at 32, doubles on demand). Owner, 2026-11-20: keep 256, costs
+  accepted (accepted-costs.md).
+- **LookPrefetch queues** (c797c6866): Mobile+Equip notes (16384) drained before Item notes (32768), 256 resolves per
+  Update, at most 1024 notes looked at; 240 KiB static. The look checker now uses the draw's verdict (a mobile look is
+  complete when its last draw since the note drew it whole), so LookComplete's own recomputation (all layers, its own
+  group) no longer reports looks the draw finished.
+
+Counts (bench-001006 Gpu, bench-001007 Legacy, JIT dev c797c6866, pinned; arms off / on3 = asset_ready_wake +
+asset_prefetch_on_packet + chunk_ring_prefetch / on4 = on3 + anim_async_turn, fps 144, and poc_on4 at fps 0), crowd
+teleport step cw:lswalk, round 5 (bench-000999/001000) -> round 6:
+
+| | Gpu on3 | Gpu on4 | Gpu poc_on4 | Legacy on3 | Legacy on4 | Legacy poc_on4 |
+|---|---|---|---|---|---|---|
+| LookPrefetch notes dropped | ~30k -> 0 | ~30k -> 0 | ~30k -> 0 | ~30k -> 0 | ~30k -> 0 | ~30k -> 0 |
+| queue high water mobile / item | 2384 / 16104 | 2516 / 16155 | 3152 / 19476 | 2772 / 16616 | 2772 / 16300 | 3152 / 19476 |
+| drain_max_ms | 2.89 | 2.90 | 14.75 | 101.63 | 2.82 | 2.60 |
+| first-sight cap hits (of ~2388 looks) | 1149 -> 636 | 1025 -> 704 | 1015 -> 691 | 0 -> 0 | 0 -> 0 | 166 -> 0 |
+| Mobile look p95 / max ms | 145.6 / 1015 -> 81.2 / 97.5 | 92.6 / 108 -> 70.9 / 81.8 | 135.1 / 992 -> 82.0 / 100.7 | 57.6 / 2427 -> 113.6 / 115.5 | 39.2 / 2140 -> 52.9 / 56.6 | 68.2 / 1668 -> 45.4 / 65.4 |
+| hold p99 ms (cap hits) | 49 -> 35 | 43 -> 26 | 58 (73) -> 40 (3) | - | 22 -> 20 | 45 -> 29 |
+
+- Gpu anim pages (end of run): 128/128 with 133-170 evictions -> 241-256/256 with 0 (off), 38 (on3), 7 (on4, poc_on4).
+- Mobile look latencies are not directly comparable: round 6 measures to the first whole draw (the draw's verdict), round 5
+  to the checker's own recomputation, which produced the 1-2.9 s maxima (no partial or blank draw was seen in those steps).
+  "slow" lines: 1 per Gpu arm (off, poc_on4), 0 on Legacy (round 5: Shoes/Beard/Hair/OneHanded and two bodies every arm).
+- anim_async_turn on4: main-thread stalls 0 in every on4 arm (off: Gpu 48, Legacy 306 in the crowd), mismatches 0, turn
+  delay p99 Gpu 26.1 / 49.8 (poc), Legacy 37.4 / 28.6, cap hits 0 (round 5: 2-4 per crowd).
+- Open: Gpu first-sight cap hits stay at ~640-700 per crowd arrival; round 5's profile puts them in long draw frames
+  (text collisions, FillGameObjectList), not decode throughput. Legacy on3's drain_max_ms 101.6 ms (one Update; on4 and
+  poc 2.6-2.8 ms) and Gpu poc_on4's 14.75 ms are single outliers not explained yet (a resolve that loads synchronously,
+  or a GC inside the drain window).
+- Gates (AOT dev c797c6866 vs base 1bf5fef77, gpu-popin-6-lanes): gate-gpu bench2-000058 and gate-legacy bench3-000049
+  T9S11 PASS. Alloc (round 5's 7a10a61b6, bench5-000071 Gpu, bench5-000072 Legacy): main-thread p50 B/frame 0 in every
+  window and arm; gen0/gen1 0 except one gen0 + one gen1 in the "on" arm's last ls_walk window on both renderers (base and
+  new 0 there).
+- Merged poc/modern-client a9e7db370 (buffer-pools, zstd pack classic-1.6, shared-tables, text-encoding, water-depth) as
+  4a086499d: one conflict (Animation.cs DirectionJob fields, both kept); the PackPages concurrency test writes a zstd page.
+  Unit tests 4466 passed, 6 skipped. Lane set gpu-popin-7-lanes (AOT dev 4a086499d vs base a9e7db370, pack classic-1.6):
+  results in the branch handoff.

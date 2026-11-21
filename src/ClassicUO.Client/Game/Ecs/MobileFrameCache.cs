@@ -77,6 +77,37 @@ namespace ClassicUO.Game
         public Entry[] Entries = new Entry[8];
         public int Count;
 
+        /// <summary>asset_prefetch_on_packet: Time.Ticks of the first frame that kept drawing the recorded look because the
+        /// new one was not loaded (0: not holding; LookPrefetch.HoldMaxMs bounds it).</summary>
+        public uint HoldSince;
+
+        /// <summary>asset_prefetch_on_packet: the hold that started at <see cref="HoldSince"/> reached
+        /// LookPrefetch.HoldMaxMs (the new look draws as far as it is loaded until it completes).</summary>
+        public bool HoldCapped;
+
+        /// <summary>asset_prefetch_on_packet: the mobile was drawn with its whole look loaded at least once (no first-sight
+        /// wait after that).</summary>
+        public bool EverComplete;
+
+        /// <summary>asset_prefetch_on_packet: Time.Ticks of the first frame the mobile would have been drawn with layers
+        /// missing and no complete look before (0: none); it is drawn as nothing until its look is loaded, at most
+        /// LookPrefetch.FirstSightMaxMs, then as far as it is loaded (<see cref="FirstSightCapped"/>).</summary>
+        public uint FirstSightSince;
+
+        public bool FirstSightCapped;
+
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the Gpu recording was made with animation pages missing (1: a complete look
+        /// existed before; 2: first sight); 0 once they are all resident.</summary>
+        public byte EmitIncomplete;
+
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: the frame (LookPrefetch.DrawSeq) of this mobile's last draw, and whether that
+        /// draw drew its whole look (no layer missing, not held, not waiting for first sight): the checker's completeness
+        /// test, so it agrees with the draw (p4/p5: recomputing the look counted covered layers and other groups).</summary>
+        public uint CheckDrawSeq;
+        public bool CheckDrawComplete;
+#endif
+
         /// <summary>An instance relative to the draw origin; depth = Kind == 0 ? baseDepth : (baseDepth + 1f) + Add, as
         /// MobileSpriteExtract writes it.</summary>
         public struct Entry
@@ -249,6 +280,12 @@ namespace ClassicUO.Game
             LightCount = 0;
             LegacyCount = 0;
             LegacyLightCount = 0;
+            HoldSince = 0;
+            EmitIncomplete = 0;
+#if CUO_DEVTOOLS
+            CheckDrawSeq = 0;
+            CheckDrawComplete = false;
+#endif
             Pack = null;
             LegacySource = null;
             Key = default;

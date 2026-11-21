@@ -150,6 +150,8 @@ namespace ClassicUO.Assets
     /// costs only the chunks its rows touch; decoded chunks stay in an LRU bounded by <c>cacheBytes</c>.
     /// Thread-safe: a chunk decodes outside the lock (several threads can decode at once) into a buffer reused from an
     /// evicted chunk, and every copy out of a cached chunk happens under the lock, so an evicted buffer is never in use.
+    /// A chunk another thread is decoding is waited for, not decoded a second time (the main thread and a prefetch worker
+    /// asking for the same direction decoded it twice).
     /// </summary>
     public sealed class PackPages
     {
@@ -162,8 +164,10 @@ namespace ClassicUO.Assets
         private readonly Dictionary<long, LinkedListNode<Chunk>> _chunks = new Dictionary<long, LinkedListNode<Chunk>>();
         private readonly LinkedList<Chunk> _lru = new LinkedList<Chunk>();
         private readonly object _sync = new object();
+        // chunks a thread is decoding now (under _sync); readers of one wait on _sync, the decoder pulses when it publishes
+        private readonly HashSet<long> _decoding = new HashSet<long>();
         private long _cachedBytes;
-        private int _decodedChunks;
+        private int _decodedChunks, _waitedChunks;
 
         public PackPages(string dir, long cacheBytes)
         {
@@ -173,6 +177,9 @@ namespace ClassicUO.Assets
 
         public long CachedBytes => _cachedBytes;
         public int DecodedChunks => _decodedChunks;
+
+        /// <summary>Reads that waited for another thread's decode of the same chunk instead of decoding it again.</summary>
+        public int WaitedChunks => _waitedChunks;
 
         public PageHeader GetHeader(int page) => GetPage(page).Header;
 
@@ -267,31 +274,64 @@ namespace ClassicUO.Assets
                 int within = (int)(offset - (long)index * info.ChunkBytes);
                 long key = ((long)page << 32) | (uint)index;
                 int n;
+                bool decode = false;
 
                 lock (_sync)
                 {
-                    n = TryCopyLocked(key, within, dst, touchOnly);
+                    while ((n = TryCopyLocked(key, within, dst, touchOnly)) < 0 && _decoding.Contains(key))
+                    {
+                        // another thread decodes this chunk: woken when it publishes (or fails), then copy or decode
+                        _waitedChunks++;
+                        Monitor.Wait(_sync);
+                    }
+
+                    if (n < 0)
+                    {
+                        _decoding.Add(key);
+                        decode = true;
+                    }
                 }
 
-                if (n < 0)
+                if (decode)
                 {
-                    // miss: decode outside the lock, then publish (another thread may have published it meanwhile)
-                    var buffer = RentBuffer(info.ChunkBytes);
-                    int length = DecodeChunk(info, page, index, buffer);
-                    Interlocked.Increment(ref _decodedChunks);
+                    // miss: decode outside the lock, then publish and wake the readers waiting above
+                    byte[] buffer = null;
+                    int length = 0;
 
-                    lock (_sync)
+                    try
                     {
-                        if (_chunks.ContainsKey(key))
-                        {
-                            ReturnBufferLocked(buffer);
-                        }
-                        else
-                        {
-                            InsertLocked(key, buffer, length);
-                        }
+                        buffer = RentBuffer(info.ChunkBytes);
+                        length = DecodeChunk(info, page, index, buffer);
+                        Interlocked.Increment(ref _decodedChunks);
+                    }
+                    catch
+                    {
+                        buffer = null;
 
-                        n = TryCopyLocked(key, within, dst, touchOnly);
+                        throw;
+                    }
+                    finally
+                    {
+                        lock (_sync)
+                        {
+                            _decoding.Remove(key);
+
+                            if (buffer != null)
+                            {
+                                if (_chunks.ContainsKey(key))
+                                {
+                                    ReturnBufferLocked(buffer);
+                                }
+                                else
+                                {
+                                    InsertLocked(key, buffer, length);
+                                }
+
+                                n = TryCopyLocked(key, within, dst, touchOnly);
+                            }
+
+                            Monitor.PulseAll(_sync);
+                        }
                     }
                 }
 

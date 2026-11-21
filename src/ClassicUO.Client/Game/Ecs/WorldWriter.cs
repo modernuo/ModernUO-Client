@@ -493,6 +493,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(item?.Serial ?? 0, LookPrefetch.Kind.Item);
+
             // a mobile's placement is not an item placement (it stays outstanding for its PlaceMobile)
             if (item == null || !Consume(placement))
             {
@@ -993,6 +995,8 @@ namespace ClassicUO.Game
                 return null;
             }
 
+            LookPrefetch.Note(serial, LookPrefetch.Kind.Equip);
+
             // T9 slice B2: an attach to the wearer (one exists once the item does) that would close a loop is refused before
             // anything is created or written: the item keeps its values and its place
             {
@@ -1268,6 +1272,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(owner.Serial, LookPrefetch.Kind.Equip);
+
             ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
             mirror.BeginWornBatch(owner.Serial);
 
@@ -1473,6 +1479,9 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(placement.Subject?.Serial ?? 0, LookPrefetch.Kind.Mobile);
+            AnimAsyncTurn.Note(placement.Subject?.Serial ?? 0);
+
             if (mobile == null || !Consume(placement))
             {
                 Reject(Violation.Placement, $"WorldWriter.PlaceMobile: 0x{placement.Subject?.Serial ?? 0:X8} is not an outstanding mobile placement (used twice, superseded, abandoned, an item's or never issued)");
@@ -1552,6 +1561,8 @@ namespace ClassicUO.Game
             {
                 return;
             }
+
+            LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
 
             bool detached = !Holds(mobile);
 
@@ -1656,6 +1667,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
+
             bool detached = !Holds(mobile);
 
             if (detached && !IsDetachedPlayer(mobile))
@@ -1706,6 +1719,8 @@ namespace ClassicUO.Game
             {
                 return;
             }
+
+            AnimAsyncTurn.Note(mobile.Serial);
 
             if (!Holds(mobile) && !IsDetachedPlayer(mobile))
             {
@@ -2820,6 +2835,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            AnimAsyncTurn.Note(mobile.Serial);
+
             bool detached = !Holds(mobile);
 
             using (Open(mobile, detached ? null : mobile))
@@ -3383,6 +3400,8 @@ namespace ClassicUO.Game
                 return false;
             }
 
+            AnimAsyncTurn.Note(player.Serial);
+
             if (player.World != _world || !ReferenceEquals(player, _world.Player))
             {
                 Reject(Violation.NotHeld, $"WorldWriter.QueuePlayerStep: 0x{player.Serial:X8} is not this World's player", rejected: true);
@@ -3415,6 +3434,8 @@ namespace ClassicUO.Game
             {
                 return false;
             }
+
+            AnimAsyncTurn.Note(player.Serial);
 
             if (player.World != _world || !ReferenceEquals(player, _world.Player))
             {

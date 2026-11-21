@@ -26,6 +26,10 @@ public sealed class WorkerPool : IDisposable
         }
     }
 
+    /// <summary>asset_ready_wake: called on the worker after each job is on the completion queue (the host wakes its
+    /// event-loop wait so the frame that uses the result is drawn). Null: nobody listens.</summary>
+    public static Action? JobCompleted;
+
     public int InFlight => Volatile.Read(ref _inFlight);
 
     public void Enqueue(Job job, bool high)
@@ -62,6 +66,7 @@ public sealed class WorkerPool : IDisposable
             job.RunTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             lock (_done) _done.Enqueue(job);
             lock (_lock) _inFlight--;
+            Volatile.Read(ref JobCompleted)?.Invoke();
         }
     }
 

@@ -737,6 +737,11 @@ namespace ClassicUO.Game.Scenes
             long loopStart = FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
             map.DrawPending = 0;
 
+            if (Map.Map.RingPrefetch)
+            {
+                map.RequestRing(minChunkX, minChunkY, maxChunkX, maxChunkY, Time.Ticks);
+            }
+
             // FrameStats per chunk (masks, walk, hidden) only for the Gpu world and in detail mode. Legacy times the whole
             // chunk loop as PrepWalk, without two timestamps per chunk (~1,400 chunks at the 4K zoom-out, each
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
@@ -1451,6 +1456,29 @@ namespace ClassicUO.Game.Scenes
                     // visited (a chunk still in the ChunkLoadQueue has no dynamic objects or overrides yet)
                     bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
                     _settle.End(visibleReady);
+                    // asset_ready_wake: a held or partial frame is followed by one as soon as a load it waits for completes
+                    var gw = gpu.World;
+                    // asset_prefetch_on_packet: a mobile kept its previous look, or drew nothing at first sight, while its pages load
+                    bool lookWait = LookPrefetch.FrameHeld != 0 || LookPrefetch.FrameFirstSightWait != 0;
+                    AssetWake.SceneIncomplete = (hold || !visibleReady || lookWait) && (gw.LoadsPending || _world.Map.DrawPending != 0);
+
+                    if (AssetWake.SceneIncomplete)
+                    {
+                        AssetWake.SceneCauses |= (gw.Chunks.PendingChunks != 0 || gw.Chunks.UploadQueueLength != 0 ? AssetWake.CauseChunks : 0)
+                            | (gw.Pages.Pending ? AssetWake.CausePages : 0) | (gw.AnimPages != null && gw.AnimPages.Pending ? AssetWake.CauseAnimPages : 0)
+                            | (_world.Map.DrawPending != 0 ? AssetWake.CauseMapDraw : 0) | (lookWait ? AssetWake.CauseHeld : 0);
+                    }
+                    AssetWake.SceneStale = gw.Pages.LoadedNotPlaced + (gw.AnimPages?.LoadedNotPlaced ?? 0);
+#if CUO_DEVTOOLS
+                    if (hold || _settle.Episode != WorldDiscontinuity.None)
+                    {
+                        PopInStats.EndRun();
+                    }
+                    else
+                    {
+                        PopInStats.OnWalkingFrame(visibleReady, gpu.World, _world.Map.DrawPending);
+                    }
+#endif
 
                     if (Map.MapWarmup.CollectPending)
                     {
