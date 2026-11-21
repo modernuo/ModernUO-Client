@@ -97,6 +97,12 @@ namespace ClassicUO.UnitTests.Renderer
 
             string packDir = Path.Combine(@"C:\Repositories\uo-packs", File.ReadAllText(current).Trim());
 
+            // revision 1.6 (zstd): a Brotli CURRENT (1.5 or older) is refused by this client; use 1.6 until CURRENT flips
+            if (Directory.Exists(@"C:\Repositories\uo-packs\classic-1.6") && string.CompareOrdinal(Path.GetFileName(packDir), "classic-1.6") < 0)
+            {
+                packDir = @"C:\Repositories\uo-packs\classic-1.6";
+            }
+
             if (!File.Exists(Path.Combine(packDir, "manifest.json")))
             {
                 return;

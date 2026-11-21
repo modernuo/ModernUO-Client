@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 using Uo.Buffers;
@@ -23,10 +22,11 @@ public static class StoreConst
     public const uint MagicGumps = 0x504D5547; // "GUMP"
     public const string GumpsFile = "gumps/gumps.bin";
 
-    /// <summary>StoreRecord.Codec: the payload as is.</summary>
-    public const ushort CodecRaw = 0;
-    /// <summary>StoreRecord.Codec: one Brotli stream (quality 9, window 22 in the ship profile).</summary>
-    public const ushort CodecBrotli = 1;
+    /// <summary>StoreRecord.Codec: the payload as is (<see cref="PackCodec.Raw"/>).</summary>
+    public const ushort CodecRaw = PackCodec.Raw;
+    /// <summary>StoreRecord.Codec: one zstd frame (<see cref="PackCodec.Zstd"/>, level 19 in the ship profile). Revision 1.6;
+    /// codec 1 (Brotli) is retired and rejected.</summary>
+    public const ushort CodecZstd = PackCodec.Zstd;
 
     /// <summary>Gumps StoreHeader.Flags bit 0: converted from gumpartLegacyMUL.uop (ClassicUO GumpsLoader.UseUOPGumps; the status gump's layout depends on it).</summary>
     public const uint GumpFlagUop = 1;
@@ -92,6 +92,15 @@ public sealed class RecordStoreWriter
         _records[index] = (r, stored);
     }
 
+    /// <summary>Replaces record <paramref name="index"/>'s stored payload and its codec (raw size and meta stay).</summary>
+    public void SetPayload(int index, byte[] stored, ushort codec)
+    {
+        var (r, _) = _records[index];
+        r.StoredBytes = (uint)stored.Length;
+        r.Codec = codec;
+        _records[index] = (r, stored);
+    }
+
     public void Write(string path, uint magic, uint flags)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -113,18 +122,26 @@ public sealed class RecordStoreWriter
         fs.Commit();
     }
 
-    public static byte[] Encode(ReadOnlySpan<byte> raw, ushort codec, int quality = 9)
+    public static byte[] Encode(ReadOnlySpan<byte> raw, ushort codec, int? level = null) => PackCodec.Encode(codec, raw, level);
+
+    /// <summary>
+    /// Encodes <paramref name="raw"/> in <paramref name="codec"/> unless that does not pay: when the encoded payload is
+    /// not smaller than the raw one, the record is stored raw. Returns the payload and sets <paramref name="codec"/> to
+    /// the codec it is stored in.
+    /// </summary>
+    public static byte[] EncodeOrRaw(ReadOnlySpan<byte> raw, ref ushort codec, int? level = null)
     {
         if (codec == StoreConst.CodecRaw) return raw.ToArray();
-        var buf = new byte[BrotliEncoder.GetMaxCompressedLength(raw.Length)];
-        if (!BrotliEncoder.TryCompress(raw, buf, out int n, quality, 22)) throw new InvalidOperationException("brotli");
-        return buf.AsSpan(0, n).ToArray();
+        var payload = PackCodec.Encode(codec, raw, level);
+        if (payload.Length < raw.Length) return payload;
+        codec = StoreConst.CodecRaw;
+        return raw.ToArray();
     }
 }
 
 /// <summary>
 /// A record store opened for reading. The tables are in memory; the file handle stays open until <see cref="Dispose"/>.
-/// <see cref="Read"/> is thread-safe (positional reads, a stateless decoder, pooled compressed buffers).
+/// <see cref="Read"/> is thread-safe (positional reads, the calling thread's decoder, pooled compressed buffers).
 /// </summary>
 public sealed class RecordStore : IDisposable
 {
@@ -207,7 +224,8 @@ public sealed class RecordStore : IDisposable
             ref readonly var r = ref Records[i];
             if (r.Offset < (ulong)payloadStart || r.Offset > len || r.StoredBytes > len - r.Offset)
                 throw new InvalidDataException($"'{path}': record {i} lies outside the payload area");
-            if (r.Codec > StoreConst.CodecBrotli || (r.Codec == StoreConst.CodecRaw && r.StoredBytes != r.RawBytes))
+            PackCodec.Check(r.Codec, path);
+            if ((r.Codec == StoreConst.CodecRaw && r.StoredBytes != r.RawBytes))
                 throw new InvalidDataException($"'{path}': record {i} has a bad codec or size");
         }
     }
@@ -246,8 +264,9 @@ public sealed class RecordStore : IDisposable
         {
             var src = compressed.AsSpan(0, (int)record.StoredBytes);
             ReadExactly(_file, src, (long)record.Offset);
-            if (!BrotliDecoder.TryDecompress(src, raw, out int written) || written != raw.Length)
-                throw new InvalidDataException($"corrupt record at offset {record.Offset}");
+            try { PackCodec.ForThread(record.Codec).Decode(src, raw); }
+            catch (InvalidDataException e) { throw new InvalidDataException($"corrupt record at offset {record.Offset}", e); }
+            PackDecodeCounts.Record(raw.Length);
         }
         finally
         {

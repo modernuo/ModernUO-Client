@@ -32,15 +32,11 @@ public static class ConvertOptions
     public static HashSet<int>? Facets;
     /// <summary>Packed rect alignment (incl. gutter). 4 for BC formats so no 4x4 block straddles two sprites at mip0.</summary>
     public static int Align => Format == PackPixelFormat.Bc7 ? 4 : 1;
-    /// <summary>Measure-only experiment: Brotli(q5) size of every written page.</summary>
-    public static bool MeasurePageBrotli = false;
-    /// <summary>--compress-pages: write pages as Kind=1 (Brotli) instead of the default Kind=2.</summary>
-    public static bool CompressPages;
-    /// <summary>--compress-pages=chunked: write pages as Kind=2 (chunked Brotli, --chunk-bytes per chunk).</summary>
+    /// <summary>Pages are chunked zstd (--chunk-bytes per chunk) unless --raw-pages.</summary>
     public static bool ChunkedPages = true;
-    public static int ChunkBytes = ChunkedBrotli.DefaultChunkBytes;
-    public static ushort PageKind => ChunkedPages ? FileKind.ChunkedBrotli : CompressPages ? FileKind.Brotli : FileKind.Raw;
-    public static bool AnyPageCompression => ChunkedPages || CompressPages;
+    public static int ChunkBytes = ChunkedFile.DefaultChunkBytes;
+    public static ushort PageKind => ChunkedPages ? FileKind.ChunkedZstd : FileKind.Raw;
+    public static bool AnyPageCompression => ChunkedPages;
     /// <summary>--page-size: art and tex page side. --anim-page-size: anim page side (defaults to --page-size).</summary>
     public static int PageSize = PackConst.PageSize;
     public static int? AnimPageSizeOverride = 1024;

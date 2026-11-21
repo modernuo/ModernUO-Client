@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -7,8 +6,8 @@ namespace Uo.Pack;
 
 // text/cliloc.bin (docs/modern-client/pack-format.md, "text/cliloc.bin"): a record store with one record per language
 // and at most one record of the shard's own strings (Clilocs.txt folded in by the converter). Every record holds a
-// ClilocTable payload: sorted ids, string ends, and the UTF-8 strings as one blob (the record itself may be Brotli
-// compressed whole, --cliloc-brotli). A block-compressed layout (meta2 bit 8) was tried and dropped (owner, 2026-10-31);
+// ClilocTable payload: sorted ids, string ends, and the UTF-8 strings as one blob (the record itself may be
+// compressed whole, --cliloc-compress). A block-compressed layout (meta2 bit 8) was tried and dropped (owner, 2026-10-31);
 // a store using it is rejected.
 
 /// <summary>
@@ -270,7 +269,7 @@ public static class ClilocStore
     }
 
     /// <summary>
-    /// Reads and parses one record (any thread). Null, with the reason, when its size is impossible, its read or Brotli
+    /// Reads and parses one record (any thread). Null, with the reason, when its size is impossible, its read or
     /// decode fails, or its payload is malformed; never throws for bad input.
     /// </summary>
     public static ClilocTable? ReadTable(RecordStore store, int record, out string? error)
@@ -282,7 +281,7 @@ public static class ClilocStore
             return null;
         }
         if (r.RawBytes < ClilocTable.HeaderBytes || r.RawBytes > ClilocTable.MaxRawBytes ||
-            (r.Codec == StoreConst.CodecBrotli && r.StoredBytes > BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes)))
+            r.StoredBytes > PackCodec.MaxStoredBytes(r.Codec, r.RawBytes))
         {
             error = $"an impossible size ({r.RawBytes} bytes)";
             return null;
