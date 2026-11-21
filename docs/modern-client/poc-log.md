@@ -8439,7 +8439,7 @@ Cp1252 strings (names, 0x1C, 0xC1 affixes, every `ReadASCII`/`WriteASCII`) paid 
   0x26 and drew '&' for '...' (every 0x80-0x9F char mapping above U+00FF). `Cp1252.ToGlyphByte` maps back (identity up
   to 0xFF, the 27 typographic chars to their bytes, else '?'); the glyph Y offset uses it too. Bug fix, no switch.
 - **TextEdit.InsertChars:** Rune instead of a string per inserted char.
-- **text_string_cache** (default off) + `CUO_TEXT_CACHE_CHECK`: decoded-string cache keyed by the bytes, 1024 sets x 2
+- **text_string_cache** (default on since 0b1a10a76, see Final results) + `CUO_TEXT_CACHE_CHECK`: decoded-string cache keyed by the bytes, 1024 sets x 2
   ways, strings <= 64 bytes, game thread only; a hit allocates nothing. Memory held: <= 2048 strings of <= 64 chars
   (~0.3 MB worst case, typically < 0.1 MB) + 12 KB arrays. Benchmark: a hit costs ~28-33 ns vs ~18-23 ns for a decode of
   a 6-25 char name, and saves its 56 B.
@@ -8451,4 +8451,17 @@ Cp1252 strings (names, 0x1C, 0xC1 affixes, every `ReadASCII`/`WriteASCII`) paid 
 - Verification: both builds; unit tests 4319 passed, 6 skipped (new: Cp1252Tests, Cp1252VariantAndCacheTests,
   AsciiGlyphIndexTests, TextStringCacheTests). Lane jobs (AOT dev 09bc4d912 vs base 1bf5fef77): gates with the cache and
   its checker on, Gpu bench2-000052 and Legacy bench3-000044; alloc base/new/cache (+cachechk for hit rate and the length
-  histogram), Gpu bench5-000065 and Legacy bench5-000066. Results: pending at the time of writing (handoff).
+  histogram), Gpu bench5-000065 and Legacy bench5-000066.
+- **Final results.** Gates TXENC PASS on both renderers (cache and checker on: 0 mismatches). Alloc (bench5-000065 Gpu,
+  bench5-000066 Legacy): main-thread p50 B/frame equal to base in every window and arm, except Gpu corpses (new and cache
+  132, base 0). That was scene noise, not a per-frame allocation: 132 is the median of a 0 window and a 264 window that ran
+  9 frames in 4.33 s (the loop idle between packet frames); base has the same 264 B frames (p95 264); the cachechk arm, same
+  binary, ran 0 there at 49-59 fps. Confirmed by bench5-000075 (corpses section twice per run, base/new interleaved x3:
+  both 0 at n12, probe 0 at n4) and by the base arm of water-depth's alloc jobs. Cache numbers (cachechk arm): Gpu 4481
+  hits / 752 misses (85.6 %), ~166 KiB not allocated per tour, 681 of 2048 entries; Legacy 4460/751 (85.6 %), ~165 KiB,
+  676 entries; 10,444 checked, 0 mismatches; lengths 79 % 1-8 chars, 21 % 9-16, 20 strings 17-32, none longer.
+  **text_string_cache default on** (coordinator, 2026-11-20; code 0b1a10a76): ~45 KiB held per client, at most ~0.3 MB
+  (accepted-costs.md). The switch and `CUO_TEXT_CACHE_CHECK` stay until it has been on a while. The saving is small
+  (well under one gen0 budget per tour), so it will not move pause counts alone; no alloc window got worse with it. After
+  merging poc 03131d73a: unit tests 4426 passed, 6 skipped; final gates at the new default (no `CUO_TEXT_STRING_CACHE`,
+  checker on), set measure/text-encoding-final: see the handoff for job ids.
