@@ -53,51 +53,26 @@ public static class SpanText
 
     public static string GetStringLittleUni(ReadOnlySpan<byte> bytes, bool safeString) => Filter(UnicodeLE.GetString(bytes), safeString);
 
-    /// <summary>Cp1252, as the server's "ASCII" strings are read by the client (StringHelper.Cp1252ToString).</summary>
-    public static string GetStringCp1252(ReadOnlySpan<byte> bytes, bool safeString) =>
-        bytes.IsEmpty ? string.Empty : Filter(StringHelper.Cp1252ToString(bytes), safeString);
+    /// <summary>
+    /// Cp1252, as the server's "ASCII" strings are read by the client. With text_string_cache on, a safe read filters the
+    /// cached string (the same instance when nothing is dropped); with it off, one decode that drops the unsafe chars.
+    /// </summary>
+    public static string GetStringCp1252(ReadOnlySpan<byte> bytes, bool safeString)
+    {
+        if (bytes.IsEmpty)
+        {
+            return string.Empty;
+        }
+
+        if (!safeString || StringHelper.Cp1252Cache != null)
+        {
+            return Filter(StringHelper.Cp1252ToString(bytes), safeString);
+        }
+
+        return StringHelper.Cp1252ToString(bytes, true);
+    }
 
     /// <summary>StackDataReader's safe filter: every char that is not <see cref="StringHelper.IsSafeChar"/> is dropped.</summary>
-    public static string Filter(string result, bool safeString)
-    {
-        if (!safeString)
-        {
-            return result;
-        }
-
-        ReadOnlySpan<char> chars = result.AsSpan();
-        int first = -1;
-
-        for (int i = 0; i < chars.Length; i++)
-        {
-            if (!StringHelper.IsSafeChar(chars[i]))
-            {
-                first = i;
-
-                break;
-            }
-        }
-
-        if (first < 0)
-        {
-            return result;
-        }
-
-        Span<char> buff = stackalloc char[256];
-        var sb = new ValueStringBuilder(buff);
-        sb.Append(chars.Slice(0, first));
-
-        for (int i = first + 1; i < chars.Length; i++)
-        {
-            if (StringHelper.IsSafeChar(chars[i]))
-            {
-                sb.Append(chars[i]);
-            }
-        }
-
-        string filtered = sb.ToString();
-        sb.Dispose();
-
-        return filtered;
-    }
+    public static string Filter(string result, bool safeString) =>
+        safeString ? StringHelper.RemoveUnsafeChars(result) : result;
 }
