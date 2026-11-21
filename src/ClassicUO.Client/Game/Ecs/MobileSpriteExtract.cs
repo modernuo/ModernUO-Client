@@ -125,6 +125,7 @@ namespace ClassicUO.Game
         {
             _atlas = null;
             _geo = Scenes.DepthModel.On;
+            _submerged = false;
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
@@ -501,7 +502,7 @@ namespace ClassicUO.Game
             {
                 if (strips[i].H > 0)
                 {
-                    Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, i * 2);
+                    Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, _submerged ? 0 : i * 2);
                 }
             }
         }
@@ -599,6 +600,10 @@ namespace ClassicUO.Game
 
         // clip-2: depth_model (DepthModel.On) at Begin; MobileFrameCache.Geo keys recorded instances on it
         private bool _geo;
+
+        // wet_surface_depth (key mode): the mobile is under a wet surface (MobileFrameCache.Submerged, part of the select key),
+        // so every strip takes the upper strip's + 1 and the water ahead hides the feet with the legs
+        private bool _submerged;
 #if CUO_DEVTOOLS
         // CUO_CLIP_ORDER_CHECK: the mobile's tile y and whether it stands still (ClipOrderCheck.Layer)
         private int _objY;
@@ -646,6 +651,8 @@ namespace ClassicUO.Game
         /// </summary>
         public void Emit(EcsEntity e, in EcsRow data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
+            _submerged = cache != null && cache.Submerged;
+
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
                 if (cache != null)
@@ -1070,6 +1077,7 @@ namespace ClassicUO.Game
             in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
             BeginSelect(src);
+            _submerged = cache != null && cache.Submerged;
 
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {

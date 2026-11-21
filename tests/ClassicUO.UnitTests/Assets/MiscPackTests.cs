@@ -47,14 +47,14 @@ namespace ClassicUO.UnitTests.Assets
         // ------------------------------------------------------------------ string lists
 
         [Fact]
-        public void String_List_Round_Trips_Raw_And_Brotli()
+        public void String_List_Round_Trips_Raw_And_Zstd()
         {
             var entries = new List<(uint, string)> { (1, "Alchemy"), (0, ""), (7, "Ñandú ✓"), (0, new string('x', 5000)) };
 
-            foreach (bool brotli in new[] { false, true })
+            foreach (bool compress in new[] { false, true })
             {
-                var path = Path.Combine(_pack, $"list_{brotli}.bin");
-                StringListFile.Write(path, MiscConst.MagicSkills, entries, brotli);
+                var path = Path.Combine(_pack, $"list_{compress}.bin");
+                StringListFile.Write(path, MiscConst.MagicSkills, entries, compress);
                 StringListFile.Read(path, MiscConst.MagicSkills).Should().Equal(entries);
                 Action wrongMagic = () => StringListFile.Read(path, MiscConst.MagicStringDict);
                 wrongMagic.Should().Throw<InvalidDataException>();
@@ -122,7 +122,7 @@ namespace ClassicUO.UnitTests.Assets
             want.Load();
             want.SkillsCount.Should().Be(3);
             StringListFile.Write(Path.Combine(_pack, MiscConst.SkillsFile), MiscConst.MagicSkills,
-                want.Skills.Select(s => (s.HasAction ? MiscConst.SkillHasAction : 0u, s.Name)).ToList(), brotli: false);
+                want.Skills.Select(s => (s.HasAction ? MiscConst.SkillHasAction : 0u, s.Name)).ToList(), compress: false);
 
             var got = PackManager().Skills;
             got.Load();
@@ -190,7 +190,7 @@ namespace ClassicUO.UnitTests.Assets
             Action open = () => PackAssets.Open(_pack).Dispose();
             open.Should().Throw<FileNotFoundException>().WithMessage("*skills.bin*format 1.2*Uo.Converter*");
 
-            StringListFile.Write(Path.Combine(_pack, MiscConst.SkillsFile), MiscConst.MagicSkills, new List<(uint, string)> { (0, "Alchemy") }, brotli: false);
+            StringListFile.Write(Path.Combine(_pack, MiscConst.SkillsFile), MiscConst.MagicSkills, new List<(uint, string)> { (0, "Alchemy") }, compress: false);
             open.Should().NotThrow();
         }
 
@@ -235,7 +235,7 @@ namespace ClassicUO.UnitTests.Assets
             for (int i = 0; i < sources.Length; i++)
             {
                 var raw = File.ReadAllBytes(sources[i]);
-                ushort codec = i == 1 ? StoreConst.CodecBrotli : StoreConst.CodecRaw;
+                ushort codec = i == 1 ? StoreConst.CodecZstd : StoreConst.CodecRaw;
                 int rec = w.Add(RecordStoreWriter.Encode(raw, codec), (uint)raw.Length, codec, 0, 0);
                 w.Slots[i] = new StoreSlot { Record = (uint)rec + 1 };
             }
@@ -272,9 +272,9 @@ namespace ClassicUO.UnitTests.Assets
         public void A_Forged_Multimap_Size_Is_Refused_Before_Allocating()
         {
             var w = new RecordStoreWriter(2);
-            var tiny = RecordStoreWriter.Encode(new byte[16], StoreConst.CodecBrotli);
+            var tiny = RecordStoreWriter.Encode(new byte[16], StoreConst.CodecZstd);
             w.Slots[0] = new StoreSlot { Record = (uint)w.Add(new byte[] { 1, 0, 0, 0, 1, 0, 0, 0, 0x81 }, 9, StoreConst.CodecRaw, 0, 0) + 1 };
-            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(tiny, 0x7FFFFFFF, StoreConst.CodecBrotli, 1, 0) + 1 };
+            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(tiny, 0x7FFFFFFF, StoreConst.CodecZstd, 1, 0) + 1 };
             w.Write(Path.Combine(_pack, MiscConst.MultiMapFile), MiscConst.MagicMultiMap, 0);
 
             var m = PackManager().MultiMaps;
@@ -290,7 +290,7 @@ namespace ClassicUO.UnitTests.Assets
         public void String_Dictionary_From_The_Pack()
         {
             StringListFile.Write(Path.Combine(_pack, MiscConst.StringDictFile), MiscConst.MagicStringDict,
-                new List<(uint, string)> { (0, "a"), (0, "b c"), (0, "") }, brotli: true);
+                new List<(uint, string)> { (0, "a"), (0, "b c"), (0, "") }, compress: true);
             var d = PackManager().StringDictionary;
             d.Load();
             d.TryGetString(1, out var s).Should().BeTrue();

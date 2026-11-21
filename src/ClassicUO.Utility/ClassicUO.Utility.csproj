@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\external\FNA\FNA.Core.csproj" />
+    <ProjectReference Include="..\Uo.Buffers\Uo.Buffers.csproj" />
   </ItemGroup>
 
 </Project>

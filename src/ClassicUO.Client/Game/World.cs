@@ -179,6 +179,9 @@ namespace ClassicUO.Game
         // created at the first use
         private ItemPool _itemPool;
 
+        /// <summary>The item pool if it was created (stats lines; reading it does not create it).</summary>
+        internal ItemPool ItemPoolIfCreated => _itemPool;
+
         // every removal of a destroyed item from Items: the item is offered to the pool
         private void DropItem(uint serial)
         {

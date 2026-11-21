@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using Microsoft.Xna.Framework;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer
 {
@@ -13,7 +14,7 @@ namespace ClassicUO.Renderer
     /// <list type="bullet">
     /// <item><see cref="Request"/> (main thread) queues a decode of a sprite that has no texture yet, once.</item>
     /// <item>The worker decodes into a pooled buffer (and computes what it can from the pixels alone); it touches only the
-    /// loader's immutable sprite table, the thread-safe pack pages and ArrayPool.</item>
+    /// loader's immutable sprite table, the thread-safe pack pages and the buffer pools.</item>
     /// <item><see cref="Drain"/> (main thread) hands finished decodes to the owner's upload callback (atlas, picker,
     /// bounds) until the deadline, at least one per call.</item>
     /// <item>A decode that failed (or had nothing to upload) is <see cref="IsFailed"/> for good: requests are speculative,
@@ -33,8 +34,10 @@ namespace ClassicUO.Renderer
             public FirstSightDecoder Owner;
             public uint Index;
 
-            // filled by the worker; Pixels is rented from ArrayPool<uint>.Shared (returned by Drain), null if it failed
+            // filled by the worker; Pixels is rented with BufferPool.RentShared (returned by Drain), null if it failed
             public uint[] Pixels;
+            // the pooled bytes Pixels holds, counted in the owner's HeldBytes from the decode to ReturnPixels
+            internal long HeldBytes;
             public int Width, Height, TrimX, TrimY, TrimW, TrimH;
             public Rectangle Bounds;
 
@@ -51,9 +54,15 @@ namespace ClassicUO.Renderer
                     {
                         // cancelled while it waited in the budget or the pool queue: nothing to decode
                     }
-                    else if (!Owner._decode(this))
+                    else
                     {
-                        ReturnPixels();
+                        bool decoded = Owner._decode(this);
+                        Owner.TrackHeld(this);
+
+                        if (!decoded)
+                        {
+                            ReturnPixels();
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -70,7 +79,13 @@ namespace ClassicUO.Renderer
             {
                 if (Pixels != null)
                 {
-                    System.Buffers.ArrayPool<uint>.Shared.Return(Pixels);
+                    if (HeldBytes != 0)
+                    {
+                        Interlocked.Add(ref Owner._heldBytes, -HeldBytes);
+                        HeldBytes = 0;
+                    }
+
+                    BufferPool.ReturnShared(Pixels);
                     Pixels = null;
                 }
             }
@@ -83,9 +98,55 @@ namespace ClassicUO.Renderer
         private readonly Action<Job> _upload;
         private readonly DecodeQueue<Job> _queue;
         private readonly Stack<Job> _free = new Stack<Job>();
+
+        // recycled jobs kept: enough for a burst of requests; above it a finished job goes to the GC
+        private const int MaxFreeJobs = 256;
+
+        /// <summary>Jobs dropped because <see cref="MaxFreeJobs"/> were already kept (counter).</summary>
+        public int FreeJobsDropped { get; private set; }
+
+        private void RecycleJob(Job job)
+        {
+            if (_free.Count < MaxFreeJobs)
+            {
+                _free.Push(job);
+            }
+            else
+            {
+                FreeJobsDropped++;
+            }
+        }
         private readonly byte[] _state;
         private readonly Func<uint, long> _bytesOf;
         private readonly Action<Job> _retire;
+        private long _heldBytes, _peakHeldBytes;
+
+        /// <summary>Pooled bytes decoded pixels hold now (worker decode to upload or drop), budgeted or not.</summary>
+        public long HeldBytes => Volatile.Read(ref _heldBytes);
+
+        /// <summary>The most <see cref="HeldBytes"/> seen (racy maximum, for stats and CUO_GUMP_BUDGET_CHECK).</summary>
+        public long PeakHeldBytes => Volatile.Read(ref _peakHeldBytes);
+
+        /// <summary>The budget this decoder's requests are counted in, or null when they bypass it.</summary>
+        public DecodeBudget CountedIn => _bytesOf != null ? _queue.Budget : null;
+
+        // worker: counts what the decode left in job.Pixels
+        private void TrackHeld(Job job)
+        {
+            if (job.Pixels == null)
+            {
+                return;
+            }
+
+            job.HeldBytes = job.Pixels.Length * 4L;
+            long now = Interlocked.Add(ref _heldBytes, job.HeldBytes);
+
+            if (now > Volatile.Read(ref _peakHeldBytes))
+            {
+                Volatile.Write(ref _peakHeldBytes, now);
+            }
+        }
+
         // requested sprites and their jobs, for TryTakeReady (main thread)
         private readonly Dictionary<uint, Job> _inFlight = new Dictionary<uint, Job>();
 
@@ -131,6 +192,7 @@ namespace ClassicUO.Renderer
             var job = _free.Count > 0 ? _free.Pop() : new Job { Owner = this };
             job.Index = idx;
             job.Pixels = null;
+            job.HeldBytes = 0;
             job.Finished = false;
             job.Taken = false;
             _inFlight[idx] = job;
@@ -297,7 +359,7 @@ namespace ClassicUO.Renderer
                 {
                     // uploaded and accounted by TryTakeReady: recycle only (and it doesn't count as this drain's upload)
                     job.Taken = false;
-                    _free.Push(job);
+                    RecycleJob(job);
 
                     continue;
                 }
@@ -327,7 +389,7 @@ namespace ClassicUO.Renderer
                     job.ReturnPixels();
                     _queue.Release(job); // exactly once: nothing if the cancelled worker already released it
                     Completed++;
-                    _free.Push(job);
+                    RecycleJob(job);
                 }
             }
 
@@ -346,7 +408,7 @@ namespace ClassicUO.Renderer
             if (job.Taken)
             {
                 job.Taken = false;
-                _free.Push(job);
+                RecycleJob(job);
 
                 return;
             }
@@ -354,7 +416,7 @@ namespace ClassicUO.Renderer
             Forget(job);
             _state[job.Index] = StateNone;
             Pending--;
-            _free.Push(job);
+            RecycleJob(job);
         }
 
         /// <summary>Tests only: runs on the worker inside the publish step, before its epoch check.</summary>

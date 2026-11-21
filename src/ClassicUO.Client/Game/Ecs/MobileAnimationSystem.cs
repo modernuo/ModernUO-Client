@@ -167,6 +167,8 @@ namespace ClassicUO.Game
 #endif
             MobileFrameCache.SelectKey key = default;
             bool cacheable = (s.Flags & AnimStateFlags.HasSteps) == 0;
+            // wet_surface_depth: part of the key, so the recorded strips' depths follow a flip of the rule
+            cache.Submerged = Scenes.WetSurfaceDepth.KeySubmerged(m, cache);
 
             if (cacheable)
             {
@@ -182,6 +184,7 @@ namespace ClassicUO.Game
                 key.X = m.X;
                 key.Y = m.Y;
                 key.Z = m.Z;
+                key.Submerged = cache.Submerged;
                 key.Season = (byte)world.Season;
                 key.Tile = m.TileChunk;
                 key.TileVersion = m.TileChunk?.ContentVersion ?? 0;

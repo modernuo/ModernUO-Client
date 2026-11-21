@@ -18,7 +18,7 @@ namespace ClassicUO.UnitTests.Renderer
     // reaches the upload callback (which then decodes synchronously).
     public class FirstSightDecoderTests
     {
-        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.0";
+        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.6"; // revision 1.6: older packs are Brotli
 
         private static bool FillPattern(FirstSightDecoder.Job job)
         {

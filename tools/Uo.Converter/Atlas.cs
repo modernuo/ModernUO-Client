@@ -120,8 +120,8 @@ public sealed class AtlasResult
     public double Occupancy;
     public int Packed;
     public int Aliased;
-    /// <summary>PageBytes is the raw size; this is the Brotli(q5) size (the actual files with --compress-pages).</summary>
-    public long PageBytesBrotli;
+    /// <summary>PageBytes is the raw size; this is the size of the page files as written (compressed pages).</summary>
+    public long PageBytesStored;
 }
 
 public static class AtlasBuilder
@@ -182,7 +182,7 @@ public static class AtlasBuilder
         }
 
         int chainBytes = AtlasPage.ChainBytes(S, mips);
-        long fileBytes = 0, brotliBytes = 0;
+        long fileBytes = 0, storedBytes = 0;
         // BC7 parallelises over block rows inside a page, so pages go one at a time to respect --threads.
         int dop = format == PixelFormat.Bc7 ? 1 : ConvertOptions.Threads;
         Parallel.For(0, pages.Count, new ParallelOptions { MaxDegreeOfParallelism = dop }, p =>
@@ -211,14 +211,7 @@ public static class AtlasBuilder
             var pagePath = PackConst.PagePath(dir, p);
             AtlasPage.Write(pagePath, S, mips, format, data, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
             Interlocked.Add(ref fileBytes, data.Length + 32);
-            if (ConvertOptions.AnyPageCompression) Interlocked.Add(ref brotliBytes, new FileInfo(pagePath).Length);
-            if (ConvertOptions.MeasurePageBrotli && !ConvertOptions.AnyPageCompression)
-            {
-                using var ms = new MemoryStream();
-                using (var br = new System.IO.Compression.BrotliStream(ms, new System.IO.Compression.BrotliCompressionOptions { Quality = 5 }, leaveOpen: true))
-                    br.Write(data);
-                Interlocked.Add(ref brotliBytes, ms.Length + 32);
-            }
+            if (ConvertOptions.AnyPageCompression) Interlocked.Add(ref storedBytes, new FileInfo(pagePath).Length);
         });
 
         long used = 0;
@@ -226,7 +219,7 @@ public static class AtlasBuilder
         return new AtlasResult
         {
             Entries = entries, PageCount = pages.Count, Packed = packed, Aliased = aliased,
-            PageBytes = fileBytes, PageBytesBrotli = brotliBytes,
+            PageBytes = fileBytes, PageBytesStored = storedBytes,
             Occupancy = used / (double)((long)pages.Count * S * S),
         };
     }

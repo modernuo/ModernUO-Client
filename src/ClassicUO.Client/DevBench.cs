@@ -2044,6 +2044,7 @@ namespace ClassicUO
                     {
                         LogSettle(gs, "plan done");
                         Log.Info("[bench] plan done");
+                        Log.Info($"[pack] decodes: {Uo.Pack.PackDecodeCounts.Summary()}");
                         _step = 99;
 
                         if (_exit)

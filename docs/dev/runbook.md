@@ -248,6 +248,7 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `compatibility` (or `legacy`) |
+| `gump_decode_budget` | `false` | Count gump worker decodes in their own 32 MiB in-flight budget ([buffer-pools.md](buffer-pools.md)) |
 | `event_loop_macos` | `false` | macOS: wait between frames in SDL's Cocoa wait, ended by a kqueue over the socket and the cross-thread wake, instead of the legacy loop. Windows always uses its event loop and ignores the key |
 
 ## Environment variables
@@ -266,6 +267,7 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_ANIM_SYNC=1`, `CUO_ART_SYNC=1`, `CUO_CHUNK_SYNC=1` | Decode animations, art or map chunks synchronously |
 | `CUO_RENDERER_PROBE_FAIL=device\|world`, `CUO_RENDERER_LEGACY_DRIVER=OpenGL` | Force the renderer selection fallbacks for testing |
 | `CUO_SIMULATE_DEVICE_LOST=<s>`, `CUO_DEVICE_LOST_NOEXIT=1` | Device-loss handler tests |
+| `CUO_POOL_AUDIT=1`, `CUO_GUMP_BUDGET_CHECK=1`, `CUO_GUMP_DECODE_BUDGET=1\|0` | Dev. Buffer pool audit, gump decode budget checker and switch override ([buffer-pools.md](buffer-pools.md)) |
 | `CUO_MEM_LOG=<seconds>` | Dev. Log the GC heap every N seconds |
 | `CUO_NET_TRACE=1` | Track per-frame network parse cost |
 | `CUO_FRAMESTATS=1` | Dev. Per-phase frame timings every 5 s (see DevBench) |

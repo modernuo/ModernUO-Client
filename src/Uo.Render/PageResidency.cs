@@ -4,12 +4,10 @@ using static SDL3.SDL;
 namespace Uo.Render;
 
 /// <summary>Reads one atlas page file straight into a mapped GPU transfer buffer (no main-thread memcpy).
-/// Kind 0: raw read into the mapped buffer. Kind 1 (Brotli): the compressed payload is read into a reusable per-job
-/// buffer and decoded with BrotliDecoder directly into the mapped buffer (no full-size intermediate copy).
-/// Expand (16-bit pack, GPU without 16-bit sampling): the page is read or decoded in pieces into a reusable scratch
-/// buffer and each piece is expanded to RGBA8 into the mapped buffer (the whole chain doubles, so mip offsets double).
-/// Kind 2 (chunked Brotli): a decoder rented from <see cref="ChunkedPageReader"/> decodes the chunks in parallel straight
-/// into the mapped buffer, or into the lease's scratch when expanding.</summary>
+/// Kind 0: raw read into the mapped buffer. Expand (16-bit pack, GPU without 16-bit sampling): the page is read in pieces
+/// into a reusable scratch buffer and each piece is expanded to RGBA8 into the mapped buffer (the whole chain doubles, so
+/// mip offsets double). Chunked (zstd): a decoder rented from <see cref="ChunkedPageReader"/> decodes the chunks in
+/// parallel straight into the mapped buffer, or into the lease's scratch when expanding.</summary>
 public sealed unsafe class PageJob : Job
 {
     public int Page, Slot;
@@ -21,7 +19,6 @@ public sealed unsafe class PageJob : Job
     public int Mips, Size;
     public PixelFormat Format;
     public long ReadTicks, DecodeTicks, ExpandTicks, WaitTicks, FileBytes;
-    byte[] _compressed = new byte[1 << 20];
     byte[] _scratch;
     ChunkedPageReader.Lease _own;
 
@@ -65,46 +62,10 @@ public sealed unsafe class PageJob : Job
             }
             ReadTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t0 - ExpandTicks;
         }
-        else if (fh.Kind == FileKind.Brotli)
+        else if (FileKind.IsChunked(fh.Kind))
         {
             Compressed = true;
-            int n = (int)(FileBytes - 16);
-            if (_compressed.Length < n) _compressed = new byte[n + (n >> 3)];
-            if (!ReadAt(fh0, _compressed.AsSpan(0, n), ref pos)) return;
-            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
-            ReadTicks = t1 - t0;
-            var dec = new System.IO.Compression.BrotliDecoder();
-            try
-            {
-                var src = new ReadOnlySpan<byte>(_compressed, 0, n);
-                // 1) the PageHeader (16 bytes) into a stack span
-                if (!Decode(ref src, ref dec, phb)) return;
-                ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
-                if (!Fits(ph)) return;
-                int total = (int)ph.DataBytes;
-                if (!Expand)
-                {
-                    // 2) the mip chain straight into the mapped transfer buffer
-                    if (!Decode(ref src, ref dec, new Span<byte>(Dst, total))) return;
-                }
-                else
-                {
-                    // 2) pieces into scratch, each expanded into the mapped transfer buffer
-                    for (int done = 0; done < total;)
-                    {
-                        int k = Math.Min(_scratch.Length, total - done);
-                        if (!Decode(ref src, ref dec, _scratch.AsSpan(0, k))) return;
-                        ExpandPiece(k, done);
-                        done += k;
-                    }
-                }
-            }
-            finally { dec.Dispose(); }
-            DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1 - ExpandTicks;
-        }
-        else if (fh.Kind == FileKind.ChunkedBrotli)
-        {
-            Compressed = true;
+            ushort codec = PackCodec.OfFileKind(fh.Kind, Path);
             var cr = ChunkedPageReader.Instance;
             long tw = System.Diagnostics.Stopwatch.GetTimestamp();
             ReadTicks = tw - t0;
@@ -120,7 +81,7 @@ public sealed unsafe class PageJob : Job
                 WaitTicks = t1 - tw;
                 if (!Expand)
                 {
-                    lease.Decoder.Decode(fh0, 16, ch, new Span<byte>(Dst, Capacity), 16, phb); // ch read above: no second header read
+                    lease.Decoder.Decode(fh0, 16, ch, codec, new Span<byte>(Dst, Capacity), 16, phb); // ch read above: no second header read
                     ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
                     if (!Fits(ph)) return;
                     DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1;
@@ -128,7 +89,7 @@ public sealed unsafe class PageJob : Job
                 else
                 {
                     if (lease.Scratch.Length < Capacity / 2) lease.Scratch = new byte[Capacity / 2];
-                    lease.Decoder.Decode(fh0, 16, ch, lease.Scratch.AsSpan(0, Capacity / 2), 16, phb);
+                    lease.Decoder.Decode(fh0, 16, ch, codec, lease.Scratch.AsSpan(0, Capacity / 2), 16, phb);
                     ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
                     if (!Fits(ph)) return;
                     long te = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -154,19 +115,6 @@ public sealed unsafe class PageJob : Job
         ExpandTicks += System.Diagnostics.Stopwatch.GetTimestamp() - te;
     }
 
-    static bool Decode(ref ReadOnlySpan<byte> src, ref System.IO.Compression.BrotliDecoder dec, scoped Span<byte> dst)
-    {
-        int total = 0;
-        while (total < dst.Length)
-        {
-            var st = dec.Decompress(src, dst[total..], out int used, out int wrote);
-            src = src[used..];
-            total += wrote;
-            if (st == System.Buffers.OperationStatus.InvalidData || (used == 0 && wrote == 0)) return false;
-        }
-        return true;
-    }
-
     static bool ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle h, Span<byte> dst, ref long pos)
     {
         while (dst.Length > 0)
@@ -180,13 +128,13 @@ public sealed unsafe class PageJob : Job
     }
 }
 
-/// <summary>A small process-wide pool of <see cref="ChunkedBrotliDecoder"/>s for multi-chunk Kind=2 pages. Each page job
+/// <summary>A small process-wide pool of <see cref="ChunkedDecoder"/>s for multi-chunk pages. Each page job
 /// rents one for its Decode (its threads plus the calling worker decode that page's chunks in parallel), so a burst of
 /// pages decodes <see cref="Decoders"/> at a time instead of queueing on one decoder; single-chunk pages skip the pool.
 /// The lease's scratch serves the RGBA8 expansion path.</summary>
 public sealed class ChunkedPageReader
 {
-    /// <summary>Pool size and threads per decoder (cores/2, 2..8, as the old single decoder); set before the first Kind=2
+    /// <summary>Pool size and threads per decoder (cores/2, 2..8, as the old single decoder); set before the first chunked
     /// page loads. Two decoders keep a lone page's latency and raise burst throughput ~1.7x (page-decode-bench --parallel 4).</summary>
     public static int Decoders = 2;
     public static int ThreadsPerDecoder = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
@@ -204,7 +152,7 @@ public sealed class ChunkedPageReader
 
     public sealed class Lease(int threads)
     {
-        public readonly ChunkedBrotliDecoder Decoder = new(threads);
+        public readonly ChunkedDecoder Decoder = new(threads);
         public byte[] Scratch = [];
     }
 
@@ -471,7 +419,7 @@ public sealed unsafe class PageResidency
 
     public void OnLoaded(PageJob job)
     {
-        ReadStats.Add(job); // worker: file read (+ Brotli decode) straight into the mapped staging buffer
+        ReadStats.Add(job); // worker: file read (+ chunk decode) straight into the mapped staging buffer
         ReadTicksSum += job.ReadTicks;
         DecodeTicksSum += job.DecodeTicks;
         ExpandTicksSum += job.ExpandTicks;

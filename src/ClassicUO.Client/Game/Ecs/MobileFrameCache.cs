@@ -36,10 +36,12 @@ namespace ClassicUO.Game
             public ushort Body, Graphic, X, Y;
             public byte ServerGroup, Facing, Frame, Season;
             public sbyte Z;
+            // wet_surface_depth (Scenes.WetSurfaceDepth.KeySubmerged): the strips' depths the recorded draws carry
+            public bool Submerged;
             public Chunk Tile;
 
             public bool Equals(SelectKey o) =>
-                Flags == o.Flags && NextFrameTime == o.NextFrameTime && TileVersion == o.TileVersion && Body == o.Body && Graphic == o.Graphic &&
+                Submerged == o.Submerged && Flags == o.Flags && NextFrameTime == o.NextFrameTime && TileVersion == o.TileVersion && Body == o.Body && Graphic == o.Graphic &&
                 EquipVersion == o.EquipVersion && X == o.X && Y == o.Y && ServerGroup == o.ServerGroup && Facing == o.Facing && Frame == o.Frame &&
                 Season == o.Season && Z == o.Z && ReferenceEquals(Tile, o.Tile);
 
@@ -47,6 +49,16 @@ namespace ClassicUO.Game
 
             public override int GetHashCode() => (int)(NextFrameTime ^ (uint)Flags ^ ((uint)X << 16 | Y));
         }
+
+        // wet_surface_depth: the last tile scan (Scenes.WetSurfaceDepth.KeySubmerged), by position and tile content, and the
+        // key-mode rule's result for this frame's selection (MobileSpriteExtract's strips)
+        public bool WetValid, WetUnder;
+        public ushort WetX, WetY;
+        public sbyte WetZ;
+        public int WetSurfaceZ;
+        public uint WetVersion;
+        public Chunk WetChunk;
+        public bool Submerged;
 
         // selection
         public bool SelectValid;
@@ -174,6 +186,11 @@ namespace ClassicUO.Game
         private const int MAX_POOLED = 32;
         private static readonly System.Collections.Generic.Stack<MobileFrameCache> _pool = new System.Collections.Generic.Stack<MobileFrameCache>();
 
+        /// <summary>Stats line ([objpools]): caches pooled now, rents that allocated, returns left out (pool full).</summary>
+        public static int PoolCount => _pool.Count;
+        public const int PoolMax = MAX_POOLED;
+        public static long PoolMisses, PoolDropped;
+
         internal static MobileFrameCache Rent()
         {
             MobileFrameCache c = null;
@@ -186,7 +203,11 @@ namespace ClassicUO.Game
                 }
             }
 
-            c ??= new MobileFrameCache();
+            if (c == null)
+            {
+                c = new MobileFrameCache();
+                PoolMisses++;
+            }
 #if CUO_DEVTOOLS
             c.InPool = false;
 #endif
@@ -243,6 +264,8 @@ namespace ClassicUO.Game
                 }
             }
 
+            PoolDropped++;
+
             return false;
         }
 
@@ -267,12 +290,15 @@ namespace ClassicUO.Game
             LegacySource = null;
             Key = default;
             Selected = default;
+            WetChunk = null;
+            Submerged = false;
             Array.Clear(LegacyEntries);
         }
 
         public void Invalidate()
         {
             SelectValid = false;
+            WetValid = false;
             EmitValid = false;
             AbsValid = false;
             LegacyValid = false;

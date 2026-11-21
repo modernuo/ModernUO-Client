@@ -749,6 +749,8 @@ namespace ClassicUO.Game.Scenes
             int nTiles = 0;
             // clip-4: meshes built with the other depth_model setting are rebuilt (their vertices carry the shapes or not)
             bool meshGeo = DepthModel.On;
+            // wet_surface_depth changes only the geo meshes' wet flats
+            bool meshWet = WetSurfaceDepth.On;
             // atlas_lru: a Legacy mesh drawing from a freed art/texmap page is rebuilt (the Gpu world doesn't draw meshes)
             int atlasEpoch = ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch;
 
@@ -768,7 +770,7 @@ namespace ClassicUO.Game.Scenes
                         continue;
 
                     // Build chunk mesh if dirty
-                    if (chunk.Mesh.IsDirty || chunk.Mesh.BuiltGeo != meshGeo ||
+                    if (chunk.Mesh.IsDirty || chunk.Mesh.BuiltGeo != meshGeo || (meshGeo && chunk.Mesh.BuiltWet != meshWet) ||
                         (chunk.Mesh.AtlasEpoch != atlasEpoch && _gpuWorld == null && chunk.Mesh.HoldsFreedPage(atlasEpoch)))
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);

@@ -7,6 +7,7 @@ using SDL3;
 using System;
 using System.Buffers;
 using System.Diagnostics;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Arts
 {
@@ -241,7 +242,7 @@ namespace ClassicUO.Renderer.Arts
         }
 
         // Worker thread. Touches only the loader's sprite table (immutable after Load), the pack pages (thread-safe) and
-        // ArrayPool, plus the job; the atlas, the picker, the bounds and the sprite infos stay on the main thread.
+        // the buffer pools, plus the job; the atlas, the picker, the bounds and the sprite infos stay on the main thread.
         private bool DecodeOnWorker(FirstSightDecoder.Job job)
         {
             int count = _artLoader.PixelCount(job.Index);
@@ -251,7 +252,7 @@ namespace ClassicUO.Renderer.Arts
                 return false;
             }
 
-            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            job.Pixels = BufferPool.RentShared<uint>(count);
             var artInfo = _artLoader.GetArt(job.Index, job.Pixels);
 
             if (artInfo.Pixels.IsEmpty)
@@ -396,7 +397,7 @@ namespace ClassicUO.Renderer.Arts
                 }
 
                 // the untrimmed image only lives until the atlas upload: decode into a pooled buffer
-                var buffer = ArrayPool<uint>.Shared.Rent(Math.Max(1, _artLoader.PixelCount(idx)));
+                var buffer = BufferPool.Rent<uint>(Math.Max(1, _artLoader.PixelCount(idx)));
 
                 try
                 {
@@ -438,7 +439,7 @@ namespace ClassicUO.Renderer.Arts
                 }
                 finally
                 {
-                    ArrayPool<uint>.Shared.Return(buffer);
+                    BufferPool.Return(buffer);
                     long syncTicks = Stopwatch.GetTimestamp() - syncStart;
                     FrameSyncTicks += syncTicks;
                     TotalSyncLoads++;
@@ -470,7 +471,7 @@ namespace ClassicUO.Renderer.Arts
             int srcHeight = artInfo.Height;
 
             // Make a copy of pixels to avoid modifying the original
-            var rentedBuffer = ArrayPool<uint>.Shared.Rent(artInfo.Pixels.Length);
+            var rentedBuffer = BufferPool.Rent<uint>(artInfo.Pixels.Length);
             try
             {
                 var pixelsCopy = rentedBuffer.AsSpan(0, artInfo.Pixels.Length);
@@ -562,7 +563,7 @@ namespace ClassicUO.Renderer.Arts
             }
             finally
             {
-                ArrayPool<uint>.Shared.Return(rentedBuffer);
+                BufferPool.Return(rentedBuffer);
             } 
         }
 

@@ -18,7 +18,8 @@ namespace ClassicUO.UnitTests.Assets
     // path is checked against the code it replaced. Tests that need the real pack skip when it is not on this machine.
     public class PackLoadingTests
     {
-        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.0";
+        // revision 1.6 (zstd): older packs are Brotli, which the client refuses
+        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.6";
 
         private static bool HavePack => File.Exists(Path.Combine(PackDir, "manifest.json"));
 
@@ -252,8 +253,8 @@ namespace ClassicUO.UnitTests.Assets
                 {
                     sources[p] = new byte[side * side * 2];
                     rnd.NextBytes(sources[p]);
-                    // Kind 2 with 4 KiB chunks (many chunk boundaries), Kind 1 and Kind 0
-                    ushort kind = p == 0 ? FileKind.ChunkedBrotli : p == 1 ? FileKind.Brotli : FileKind.Raw;
+                    // chunked zstd with 4 KiB chunks (many chunk boundaries) and Kind 0
+                    ushort kind = p == 2 ? FileKind.Raw : FileKind.ChunkedZstd;
                     AtlasPage.Write(PackConst.PagePath(dir, p), side, 1, PixelFormat.B5G5R5A1, sources[p], kind, 4096);
                 }
 
@@ -299,7 +300,7 @@ namespace ClassicUO.UnitTests.Assets
                 const int side = 128;
                 var source = new byte[side * side * 2];
                 new Random(11).NextBytes(source);
-                AtlasPage.Write(PackConst.PagePath(dir, 0), side, 1, PixelFormat.B5G5R5A1, source, FileKind.ChunkedBrotli, 4096);
+                AtlasPage.Write(PackConst.PagePath(dir, 0), side, 1, PixelFormat.B5G5R5A1, source, FileKind.ChunkedZstd, 4096);
 
                 var single = new PackPages(dir, 1 << 20);
                 single.ReadRect(0, 0, 0, side, side, new byte[source.Length]);
@@ -347,7 +348,7 @@ namespace ClassicUO.UnitTests.Assets
                 new Random(3).NextBytes(chain);
                 int i = 0;
 
-                foreach (ushort kind in new[] { FileKind.Raw, FileKind.Brotli, FileKind.ChunkedBrotli })
+                foreach (ushort kind in new[] { FileKind.Raw, FileKind.ChunkedZstd })
                 {
                     string path = PackConst.PagePath(dir, i++);
                     AtlasPage.Write(path, 256, 3, PixelFormat.B5G5R5A1, chain, kind, 8192);
@@ -391,27 +392,8 @@ namespace ClassicUO.UnitTests.Assets
 
         // ---- RegionFile.DecompressInto: one pooled buffer, no stream copies ----
 
-        private static byte[] OldDecompressBrotli(byte[] fileBytes)
-        {
-            // RegionFile.Decompress's Kind 1 branch before the change
-            int hs = StructIo.SizeOf<FileHeader>();
-            using var outMs = new MemoryStream(fileBytes.Length * 6);
-            outMs.Write(fileBytes, 0, hs);
-
-            using (var br = new System.IO.Compression.BrotliStream(new MemoryStream(fileBytes, hs, fileBytes.Length - hs, false), System.IO.Compression.CompressionMode.Decompress))
-            {
-                br.CopyTo(outMs);
-            }
-
-            var logical = outMs.ToArray();
-            logical[6] = 0;
-            logical[7] = 0;
-
-            return logical;
-        }
-
         [Fact]
-        public void DecompressInto_Matches_Old_Decode_And_Reuses_Buffer()
+        public void DecompressInto_Matches_Raw_And_Reuses_Buffer()
         {
             string dir = Path.Combine(Path.GetTempPath(), "cuo-region-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
@@ -440,23 +422,25 @@ namespace ClassicUO.UnitTests.Assets
                     blocks[b] = new BlockData(land, statics);
                 }
 
-                string raw = Path.Combine(dir, "raw.bin"), brotli = Path.Combine(dir, "brotli.bin");
+                string raw = Path.Combine(dir, "raw.bin"), packed = Path.Combine(dir, "zstd.bin");
                 RegionFile.Write(raw, header, blocks, false);
-                RegionFile.Write(brotli, header, blocks, true);
+                RegionFile.Write(packed, header, blocks, true);
                 var rawBytes = File.ReadAllBytes(raw);
-                var brotliBytes = File.ReadAllBytes(brotli);
+                var packedBytes = File.ReadAllBytes(packed);
+                System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(packedBytes).Kind.Should().Be(FileKind.ChunkedZstd);
+                // one chunk: a region decodes as one zstd frame
+                System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(packedBytes.AsSpan(16)).ChunkCount.Should().Be(1u);
 
                 // a too-small buffer grows, a big one is reused as is
                 byte[] buffer = new byte[16];
-                int n = RegionFile.DecompressInto(brotliBytes, ref buffer);
-                buffer.AsSpan(0, n).SequenceEqual(OldDecompressBrotli(brotliBytes)).Should().BeTrue();
+                int n = RegionFile.DecompressInto(packedBytes, ref buffer);
                 buffer.AsSpan(0, n).SequenceEqual(rawBytes).Should().BeTrue();
 
                 var big = new byte[n * 3];
                 var same = big;
                 RegionFile.DecompressInto(rawBytes, ref big).Should().Be(rawBytes.Length);
                 big.Should().BeSameAs(same);
-                RegionFile.Decompress(brotliBytes).Should().Equal(rawBytes);
+                RegionFile.Decompress(packedBytes).Should().Equal(rawBytes);
             }
             finally
             {
@@ -465,7 +449,7 @@ namespace ClassicUO.UnitTests.Assets
         }
 
         [Fact]
-        public void DecompressInto_Matches_Old_Decode_On_Pack_Regions()
+        public void DecompressInto_Matches_Decompress_On_Pack_Regions()
         {
             if (!HavePack)
             {
@@ -479,7 +463,7 @@ namespace ClassicUO.UnitTests.Assets
                 var path = PackConst.RegionPath(Path.Combine(PackDir, "map", "0"), rx, ry);
                 var file = File.ReadAllBytes(path);
                 int n = RegionFile.DecompressInto(file, ref buffer);
-                var expected = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(file).Kind == FileKind.Brotli ? OldDecompressBrotli(file) : RegionFile.Decompress(file);
+                var expected = RegionFile.Decompress(file);
                 buffer.AsSpan(0, n).SequenceEqual(expected).Should().BeTrue(path);
             }
         }

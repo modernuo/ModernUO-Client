@@ -10,6 +10,7 @@ using ClassicUO.Network;
 using ClassicUO.Utility;
 using System;
 using System.Collections.Generic;
+using Uo.Buffers;
 
 namespace ClassicUO.Game.Managers
 {
