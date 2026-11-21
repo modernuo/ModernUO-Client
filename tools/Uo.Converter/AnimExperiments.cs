@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO.Compression;
 using System.Runtime.InteropServices;
 using Uo.Pack;
 
@@ -7,7 +6,7 @@ namespace Uo.Converter;
 
 /// <summary>
 /// Animation storage investigation (docs/modern-client/pack-format-v0.md, "Animation storage investigation"):
-/// chunked Brotli sizes and decode latency, per-creature page footprints, Indexed8 losslessness, and a CPU reference
+/// chunked zstd sizes and decode latency, per-creature page footprints, Indexed8 losslessness, and a CPU reference
 /// of the manual bilinear filter an Indexed8 shader would use.
 /// </summary>
 public static class AnimExperiments
@@ -25,7 +24,7 @@ public static class AnimExperiments
         return b;
     }
 
-    /// <summary>--bench-chunked &lt;anim dir&gt; [out dir]: Kind 1 vs Kind 2 sizes over every page; decode latency on a sample.</summary>
+    /// <summary>--bench-chunked &lt;anim dir&gt; [out dir]: one zstd frame per page vs chunked sizes over every page; decode latency on a sample.</summary>
     public static int BenchChunked(string dir, string? outDir)
     {
         var files = Directory.GetFiles(dir, "page_*.bin").OrderBy(f => f, StringComparer.Ordinal).ToArray();
@@ -40,47 +39,48 @@ public static class AnimExperiments
         Parallel.ForEach(files, ConvertOptions.Par, f =>
         {
             var logical = Logical(f);
-            var buf = new byte[BrotliEncoder.GetMaxCompressedLength(logical.Length)];
-            if (!BrotliEncoder.TryCompress(logical, buf, out int n1, ChunkedBrotli.Quality, ChunkedBrotli.Window)) throw new InvalidOperationException();
+            int n1 = PackCodec.Encode(PackCodec.Zstd, logical).Length;
             Interlocked.Add(ref raw, logical.Length + 16);
             Interlocked.Add(ref onDisk, new FileInfo(f).Length);
             Interlocked.Add(ref k1, n1 + 16);
             for (int c = 0; c < ChunkSizes.Length; c++)
             {
                 using var ms = new MemoryStream();
-                StructIo.WriteHeader(ms, PackConst.MagicPage, FileKind.ChunkedBrotli);
-                ChunkedBrotli.Write(ms, logical, ChunkSizes[c]);
+                StructIo.WriteHeader(ms, PackConst.MagicPage, FileKind.ChunkedZstd);
+                ChunkedFile.Write(ms, logical, PackCodec.Zstd, ChunkSizes[c]);
                 Interlocked.Add(ref k2[c], ms.Length);
-                if (ChunkSizes[c] == ChunkedBrotli.DefaultChunkBytes)
+                if (ChunkSizes[c] == ChunkedFile.DefaultChunkBytes)
                     ReplacingFile.WriteAllBytes(Path.Combine(outDir, Path.GetFileName(f)), ms.ToArray());
             }
         });
         Console.WriteLine($"{files.Length} pages from {dir} ({sw.Elapsed.TotalSeconds:F0}s): raw {raw / 1048576.0:F1} MiB, on disk {onDisk / 1048576.0:F1} MiB");
-        Console.WriteLine($"  Kind 1 (one stream, q5 lgwin22): {k1 / 1048576.0:F1} MiB ({100.0 * k1 / raw:F2}% of raw)");
+        Console.WriteLine($"  one zstd frame per page (level {PackCodec.WriteLevel}): {k1 / 1048576.0:F1} MiB ({100.0 * k1 / raw:F2}% of raw)");
         for (int c = 0; c < ChunkSizes.Length; c++)
-            Console.WriteLine($"  Kind 2 chunks {ChunkSizes[c] >> 10,5} KiB: {k2[c] / 1048576.0:F1} MiB ({100.0 * k2[c] / raw:F2}% of raw, {100.0 * (k2[c] - k1) / k1:+0.00;-0.00}% vs Kind 1)");
+            Console.WriteLine($"  chunked, chunks {ChunkSizes[c] >> 10,5} KiB: {k2[c] / 1048576.0:F1} MiB ({100.0 * k2[c] / raw:F2}% of raw, {100.0 * (k2[c] - k1) / k1:+0.00;-0.00}% vs one frame)");
 
         // Decode latency: 32 pages spread over the set, warm file cache, each timed 5x (median).
         var sample = Enumerable.Range(0, Math.Min(32, files.Length)).Select(i => files[(int)((long)i * files.Length / Math.Min(32, files.Length))]).ToArray();
         var dst = new byte[sample.Max(f => Logical(f).Length)];
         var kind1Ms = new List<double>();
-        foreach (var f in sample)
-        {
-            var bytes = File.ReadAllBytes(f);
-            var times = new double[5];
-            for (int r = 0; r < times.Length; r++)
+        using (var one = PackCodec.Create(PackCodec.Zstd))
+            foreach (var f in sample)
             {
-                var t = Stopwatch.StartNew();
-                if (!BrotliDecoder.TryDecompress(Brotli(bytes), dst, out _)) throw new InvalidDataException(f);
-                times[r] = t.Elapsed.TotalMilliseconds;
+                var logical = Logical(f);
+                var frame = PackCodec.Encode(PackCodec.Zstd, logical);
+                var times = new double[5];
+                for (int r = 0; r < times.Length; r++)
+                {
+                    var t = Stopwatch.StartNew();
+                    one.Decode(frame, dst.AsSpan(0, logical.Length));
+                    times[r] = t.Elapsed.TotalMilliseconds;
+                }
+                Array.Sort(times);
+                kind1Ms.Add(times[2]);
             }
-            Array.Sort(times);
-            kind1Ms.Add(times[2]);
-        }
-        Console.WriteLine($"  decode Kind 1, 1 thread (in-memory one-shot): median {Median(kind1Ms):F1} ms, mean {kind1Ms.Average():F1} ms per page");
+        Console.WriteLine($"  decode one frame, 1 thread (in-memory one-shot): median {Median(kind1Ms):F1} ms, mean {kind1Ms.Average():F1} ms per page");
         foreach (int workers in new[] { 1, 2, 4, 8 })
         {
-            using var dec = new ChunkedBrotliDecoder(workers);
+            using var dec = new ChunkedDecoder(workers);
             var ms = new List<double>();
             long alloc = 0;
             foreach (var f in sample)
@@ -99,11 +99,11 @@ public static class AnimExperiments
                 Array.Sort(times);
                 ms.Add(times[2]);
             }
-            Console.WriteLine($"  decode Kind 2 (1 MiB chunks, file read + decode), {workers} worker(s): median {Median(ms):F1} ms, mean {ms.Average():F1} ms per page; " +
+            Console.WriteLine($"  decode chunked (1 MiB chunks, file read + decode), {workers} worker(s): median {Median(ms):F1} ms, mean {ms.Average():F1} ms per page; " +
                               $"managed alloc {alloc / (sample.Length * 5.0):F0} B per page read");
         }
         // Correctness: Kind 2 decode == logical payload.
-        using (var dec = new ChunkedBrotliDecoder(8))
+        using (var dec = new ChunkedDecoder(8))
             foreach (var f in sample.Take(4))
             {
                 var logical = Logical(f);
@@ -111,15 +111,8 @@ public static class AnimExperiments
                 if (!dst.AsSpan(0, (int)h.DataBytes).SequenceEqual(logical.AsSpan(16)) || h.DataBytes != logical.Length - 16) throw new InvalidDataException($"kind 2 mismatch {f}");
                 if (!Logical(Path.Combine(outDir, Path.GetFileName(f))).AsSpan().SequenceEqual(logical)) throw new InvalidDataException($"kind 2 stream mismatch {f}");
             }
-        Console.WriteLine("  Kind 2 round trip (parallel and stream readers) bit-exact on 4 sample pages");
+        Console.WriteLine("  chunked round trip (parallel and stream readers) bit-exact on 4 sample pages");
         return 0;
-    }
-
-    private static ReadOnlySpan<byte> Brotli(byte[] file)
-    {
-        var fh = MemoryMarshal.Read<FileHeader>(file);
-        if (fh.Kind != FileKind.Brotli) throw new InvalidDataException("expected Kind 1 pages for the Kind 1 timing");
-        return file.AsSpan(16);
     }
 
     private static double Median(List<double> l) { var c = l.ToArray(); Array.Sort(c); return c[c.Length / 2]; }
@@ -172,16 +165,11 @@ public static class AnimExperiments
             }
             long pageTexels = (long)files.Length * S * S;
             long palBytes = File.Exists(Path.Combine(dir, AnimPaletteFile.FileName)) ? new FileInfo(Path.Combine(dir, AnimPaletteFile.FileName)).Length : 0;
-            long palBrotli = 0;
+            long palCompressed = 0;
             if (palBytes > 0)
-            {
-                var pb = File.ReadAllBytes(Path.Combine(dir, AnimPaletteFile.FileName));
-                var cb = new byte[BrotliEncoder.GetMaxCompressedLength(pb.Length)];
-                BrotliEncoder.TryCompress(pb, cb, out int n, ChunkedBrotli.Quality, ChunkedBrotli.Window);
-                palBrotli = n;
-            }
+                palCompressed = PackCodec.Encode(PackCodec.Zstd, File.ReadAllBytes(Path.Combine(dir, AnimPaletteFile.FileName))).Length;
             Console.WriteLine($"{pack}: {files.Length} anim pages of {S}^2 ({fmt}), raw {pages.Sum(x => x.Raw) / 1048576.0:F1} MiB + mips sidecar {pages.Sum(x => x.MipRaw) / 1048576.0:F1} MiB, " +
-                              $"on disk {pages.Sum(x => x.File) / 1048576.0:F1} + {pages.Sum(x => x.MipFile) / 1048576.0:F1} MiB, palettes.bin {palBytes / 1024.0:F0} KiB (Brotli {palBrotli / 1024.0:F0} KiB); " +
+                              $"on disk {pages.Sum(x => x.File) / 1048576.0:F1} + {pages.Sum(x => x.MipFile) / 1048576.0:F1} MiB, palettes.bin {palBytes / 1024.0:F0} KiB (zstd {palCompressed / 1024.0:F0} KiB); " +
                               $"sprite texels/page texels {100.0 * spriteTexels / pageTexels:F1}%, cells incl. gutter {100.0 * cellTexels / pageTexels:F1}%");
 
             HashSet<int> Touched(int body, int[]? actions)

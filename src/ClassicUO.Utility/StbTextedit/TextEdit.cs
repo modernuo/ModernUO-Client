@@ -3,6 +3,7 @@
 using System;
 using System.Text;
 using ClassicUO.Utility;
+using Uo.Buffers;
 
 namespace StbTextEditSharp
 {
@@ -112,7 +113,9 @@ namespace StbTextEditSharp
             ValueStringBuilder sb = new ValueStringBuilder(count);
             for (int i = start; i < count; ++i)
             {
-                sb.Append(char.ConvertFromUtf32(codepoints[i]));
+                // Rune throws on an invalid code point as char.ConvertFromUtf32 did, without a string per char.
+                Rune rune = new Rune(codepoints[i]);
+                rune.EncodeToUtf16(sb.AppendSpan(rune.Utf16SequenceLength));
             }
 
             InsertChars(pos, sb.ToString());

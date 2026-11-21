@@ -353,6 +353,7 @@ namespace ClassicUO.Game.Scenes
         {
             SetLandSeason(season);
             _world.GeometricDepth = DepthModel.On;
+            _world.WetSurfaceDepth = WetSurfaceDepth.On;
             UpdateWaterWobble();
         }
 
@@ -723,6 +724,10 @@ namespace ClassicUO.Game.Scenes
 
         private bool Emit(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode)
         {
+            // anim_atlas_lru / atlas_lru: the Gpu world draws from the pack pages, but the client atlas page this sprite was
+            // looked up in stays in use while the object is drawn (its sizes and the pick masks come from it)
+            ClassicUO.Renderer.Animations.AtlasPageClock.Touch(texture);
+
             if (!PackSpriteMap.TryFind(texture, source, out uint packRef, out Point origin))
             {
                 return Fallback(texture, position, source, hue, flip, depth, mode);
@@ -880,7 +885,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         private static void GeoTile(ref SpriteInstance inst, GameObject obj, ref StaticTiles td) =>
-            inst.GeoTile(obj.X, obj.Y, obj.Z, td.Height, SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.Height));
+            inst.GeoTile(obj.X, obj.Y, obj.Z, td.Height, SpriteInstance.GeoShapeBits(td.IsWall, td.IsBackground, td.IsSurface, td.IsWet, td.Height));
 
         /// <summary>The last Render drew everything its view needs (WorldRenderer.VisibleReady).</summary>
         public bool VisibleReady => _world != null && _world.VisibleReady;

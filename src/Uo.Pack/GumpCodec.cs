@@ -16,7 +16,7 @@ namespace Uo.Pack;
 /// </summary>
 public static class GumpCodec
 {
-    /// <summary>StoreRecord.Meta2 of a gump: w·h B5G5R5A1 texels, row-major (the ship profile, with Brotli).</summary>
+    /// <summary>StoreRecord.Meta2 of a gump: w·h B5G5R5A1 texels, row-major (the ship profile: images over the small-record limit).</summary>
     public const ushort LayoutTexels = 0;
     /// <summary>StoreRecord.Meta2 of a gump: run-length rows (<see cref="EncodeRle"/>; --raw-gumps, stored uncompressed).</summary>
     public const ushort LayoutRle = 1;

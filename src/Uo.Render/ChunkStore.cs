@@ -185,7 +185,7 @@ public sealed unsafe class ChunkStore
             _regionList[i] = null;
             if (r.Loaded && r.Pins == 0)
             {
-                r.Data = null;
+                r.ReleaseData();
                 _regionPool.Push(r);
             }
         }
@@ -315,7 +315,7 @@ public sealed unsafe class ChunkStore
             var reg = _regionList[victim];
             _regions.Remove(reg.Ry * 4096 + reg.Rx);
             _regionList[victim] = _regionList[--_regionCount];
-            reg.Data = null;
+            reg.ReleaseData();
             _regionPool.Push(reg);
         }
     }
@@ -384,7 +384,11 @@ public sealed unsafe class ChunkStore
         _uqCount++;
     }
 
-    void ReturnJob(BakeJob job) => _jobPool.Push(job);
+    void ReturnJob(BakeJob job)
+    {
+        job.TrimGrown();
+        _jobPool.Push(job);
+    }
 
     /// <summary>Copies baked chunks into the mapped frame transfer buffer (up to the budgets) and records GPU uploads.</summary>
     public int StageUploads(byte* mapped, ref uint offset, uint capacity, int maxChunks)

@@ -14,7 +14,7 @@ namespace ClassicUO.UnitTests.Game.GameObjects
     // under the mouse). The reject must never change a pick: wherever it rejects, the picker misses too.
     public class StaticPickBoundsTests
     {
-        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.0";
+        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.6"; // revision 1.6: older packs are Brotli
 
         [Theory]
         [InlineData(44, 44)]

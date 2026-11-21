@@ -12,6 +12,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -274,7 +275,7 @@ namespace ClassicUO.Assets
         }
 
         // Type checks of the pack's records (RecordStore checked extents and codecs): a size a font record can have, a
-        // Brotli payload no larger than Brotli's bound. A failing record is absent for the session.
+        // compressed payload no larger than its codec's bound. A failing record is absent for the session.
         private void CheckRecords()
         {
             int asciiRecords = _asciiStore.Records.Length;
@@ -308,7 +309,7 @@ namespace ClassicUO.Assets
                 return false;
             }
 
-            return r.Codec != StoreConst.CodecBrotli || r.StoredBytes <= System.IO.Compression.BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes);
+            return r.StoredBytes <= PackCodec.MaxStoredBytes(r.Codec, r.RawBytes);
         }
 
         private void MarkBad(int index, string why)
@@ -390,7 +391,7 @@ namespace ClassicUO.Assets
             if (store != null && store.TryGet(font, out var slot, out var rec) && Volatile.Read(ref _badRecords[slot.Record - 1]) == 0)
             {
                 int bad = (int)slot.Record - 1;
-                byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+                byte[] buf = BufferPool.Rent<byte>((int)rec.RawBytes);
 
                 try
                 {
@@ -415,7 +416,7 @@ namespace ClassicUO.Assets
                 }
                 finally
                 {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                    BufferPool.Return(buf);
                 }
             }
 
@@ -491,7 +492,7 @@ namespace ClassicUO.Assets
                 return _emptyPage;
             }
 
-            byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+            byte[] buf = BufferPool.Rent<byte>((int)rec.RawBytes);
 
             try
             {
@@ -527,7 +528,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                BufferPool.Return(buf);
             }
         }
 
@@ -543,10 +544,13 @@ namespace ClassicUO.Assets
         public FontCharacterData GetAsciiGlyph(byte font, int index) => AsciiRow(font)[index];
 
         /// <summary> Get the index in ASCII fonts of a character. </summary>
+        // ASCII fonts are indexed by the Cp1252 byte (fonts 5-7 hold the typographic glyphs at 0x82-0x9F, fonts 4 and 8
+        // moon phases at 0x80-0x87), while strings are decoded from Cp1252 to Unicode; map the char back to its byte instead
+        // of truncating (U+2026 would otherwise index 0x26 '&').
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int GetASCIIIndex(char c)
+        internal static int GetASCIIIndex(char c)
         {
-            byte ch = (byte)c; // ASCII fonts cover only 256 characters
+            byte ch = Cp1252.ToGlyphByte(c);
 
             if (ch < NOPRINT_CHARS)
             {
@@ -960,7 +964,7 @@ namespace ClassicUO.Assets
                     for (int i = 0; i < count; i++)
                     {
                         ref var item = ref dataSpan[i];
-                        byte index = (byte)item.Item;
+                        byte index = Cp1252.ToGlyphByte(item.Item);
 
                         int offsY = GetFontOffsetY(font, index);
 
@@ -2030,7 +2034,7 @@ namespace ClassicUO.Assets
                 int linkStartX = 0;
                 int linkStartY = 0;
                 int linesCount = 0;
-                using var links = new PooledList<WebLinkRect>(8);
+                using var links = PooledRefList<WebLinkRect>.Create(8);
 
                 // Captured before the walk because `info` is reassigned to
                 // each segment as we iterate. The head node carries the
@@ -2565,7 +2569,7 @@ namespace ClassicUO.Assets
                 fi.Width = width;
                 fi.Height = height;
                 fi.Data = pData;
-                fi.Links = links.Count == 0 ? null : links.AsSpan.ToArray();
+                fi.Links = links.Count == 0 ? null : links.AsSpan().ToArray();
                 fi.HtmlBackgroundColor = (IsUsingHTML && _htmlStatus.IsHtmlBackgroundColored && _htmlStatus.BackgroundColor != 0)
                     ? HuesHelper.RgbaToArgb(_htmlStatus.BackgroundColor | 0xFF)
                     : 0;
@@ -2855,7 +2859,7 @@ namespace ClassicUO.Assets
                 Link = 0
             };
 
-            using var stack = new PooledList<HTMLDataInfo>(8);
+            using var stack = PooledRefList<HTMLDataInfo>.Create(8);
             stack.Add(info);
             HTMLDataInfo currentInfo = info;
 
@@ -2923,7 +2927,7 @@ namespace ClassicUO.Assets
                         }
                     }
 
-                    GetCurrentHTMLInfo(stack.AsSpan, ref currentInfo);
+                    GetCurrentHTMLInfo(stack.AsSpan(), ref currentInfo);
 
                     switch (tag)
                     {
@@ -4078,7 +4082,7 @@ namespace ClassicUO.Assets
                     Width = 0,
                     Height = 0,
                     BearingX = 0,
-                    BearingY = GetFontOffsetY(font, (byte)c),
+                    BearingY = GetFontOffsetY(font, Cp1252.ToGlyphByte(c)),
                     AdvanceWidth = dw
                 };
             }
@@ -4110,7 +4114,7 @@ namespace ClassicUO.Assets
                 Width = dw,
                 Height = dh,
                 BearingX = 0,
-                BearingY = GetFontOffsetY(font, (byte)c),
+                BearingY = GetFontOffsetY(font, Cp1252.ToGlyphByte(c)),
                 AdvanceWidth = dw
             };
         }

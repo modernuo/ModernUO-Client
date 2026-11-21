@@ -77,8 +77,8 @@ public struct StringListRecord
 
 /// <summary>
 /// A list of strings with a u32 value each, kept as a record store (<see cref="RecordStore"/>) with exactly one slot
-/// whose record (raw or Brotli) is the list: count u32, blobBytes u32, <c>StringListRecord[count]</c>, then the UTF-8
-/// blob. skills.bin (raw) and text/stringdict.bin (Brotli).
+/// whose record (raw or compressed) is the list: count u32, blobBytes u32, <c>StringListRecord[count]</c>, then the UTF-8
+/// blob. skills.bin (raw) and text/stringdict.bin (zstd).
 /// </summary>
 public static class StringListFile
 {
@@ -132,16 +132,11 @@ public static class StringListFile
         return result;
     }
 
-    public static void Write(string path, uint magic, IReadOnlyList<(uint Value, string Text)> entries, bool brotli)
+    public static void Write(string path, uint magic, IReadOnlyList<(uint Value, string Text)> entries, bool compress)
     {
         var raw = Encode(entries);
-        ushort codec = brotli ? StoreConst.CodecBrotli : StoreConst.CodecRaw;
-        var payload = RecordStoreWriter.Encode(raw, codec);
-        if (brotli && payload.Length >= raw.Length)
-        {
-            codec = StoreConst.CodecRaw;
-            payload = raw;
-        }
+        ushort codec = compress ? StoreConst.CodecZstd : StoreConst.CodecRaw;
+        var payload = RecordStoreWriter.EncodeOrRaw(raw, ref codec);
         var w = new RecordStoreWriter(1);
         int rec = w.Add(payload, (uint)raw.Length, codec, 0, 0);
         w.Slots[0] = new StoreSlot { Record = (uint)rec + 1 };

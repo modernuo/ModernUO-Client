@@ -10,6 +10,7 @@ using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Animations
 {
@@ -214,6 +215,12 @@ namespace ClassicUO.Renderer.Animations
                     // anim_atlas_lru: an evicted direction loads again through the async first-sight path
                     _lru.OnReload(evictedAt, AtlasPageClock.NowMs);
                     sprites = LoadDirection(id, action, dir, sync, evicted: true);
+
+                    if (_pendingSprites.Contains(sprites))
+                    {
+                        _lru.AsyncReloads++;
+                        _pendingReloads.Add(sprites);
+                    }
 #if CUO_DEVTOOLS
                     if (LruCheck)
                     {
@@ -232,12 +239,19 @@ namespace ClassicUO.Renderer.Animations
                 // masks now, so decode here and supersede the job; Complete drops its result without uploading
                 var loaded = LoadDirection(id, action, dir, true);
                 _pendingSprites.Remove(sprites);
+                _pendingReloads.Remove(sprites);
                 sprites = loaded;
             }
 
             if (_lru != null && sprites.Length != 0)
             {
                 TouchPages(sprites);
+
+                if (_pendingReloads.Count != 0 && _blinkMs != AtlasPageClock.NowMs && _pendingReloads.Contains(sprites))
+                {
+                    _blinkMs = AtlasPageClock.NowMs;
+                    _lru.BlinkFrames++;
+                }
             }
 
             return sprites;
@@ -334,10 +348,10 @@ namespace ClassicUO.Renderer.Animations
                     {
                         if (buffer != null)
                         {
-                            ArrayPool<uint>.Shared.Return(buffer);
+                            BufferPool.Return(buffer);
                         }
 
-                        buffer = ArrayPool<uint>.Shared.Rent(count);
+                        buffer = BufferPool.Rent<uint>(count);
                     }
 
                     _animationLoader.DecodeFrame(index, buffer);
@@ -348,7 +362,7 @@ namespace ClassicUO.Renderer.Animations
             {
                 if (buffer != null)
                 {
-                    ArrayPool<uint>.Shared.Return(buffer);
+                    BufferPool.Return(buffer);
                 }
             }
 
@@ -397,25 +411,28 @@ namespace ClassicUO.Renderer.Animations
 
         // ---- anim_atlas_lru: a budgeted LRU over the atlas pages (Tick, once per frame) ----
 
-        private AnimAtlasLruPolicy _lru;
+        private AtlasLruPolicy _lru;
         // (body, action, dir) of the evicted directions not loaded again yet, with the eviction time
         private readonly Dictionary<uint, long> _evictedAt = new Dictionary<uint, long>();
         private long[] _lruUse = Array.Empty<long>();
         private int[] _lruVictims = Array.Empty<int>();
         private long _lruLogAt, _lruLogged = -1;
+        // evicted directions reloading on a worker (no texture yet), for the blink counters
+        private readonly HashSet<SpriteInfo[]> _pendingReloads = new HashSet<SpriteInfo[]>(ReferenceEqualityComparer.Instance);
+        private long _blinkMs = -1;
 
-        /// <summary>Bumped when a page is freed: cached draws that hold atlas textures (MobileFrameCache's Legacy replay) are
-        /// stale.</summary>
-        public static int AtlasEpoch;
+        /// <summary>Changes when any atlas frees a page (<see cref="AtlasPageClock.FreedEpoch"/>): cached draws that hold
+        /// atlas textures (MobileFrameCache's Legacy replay, anim and art) are stale.</summary>
+        public static int AtlasEpoch => AtlasPageClock.FreedEpoch;
 
-        public AnimAtlasLruPolicy Lru => _lru;
+        public AtlasLruPolicy Lru => _lru;
 
         public int AtlasPages => _atlas.TexturesCount;
 
         public long AtlasPageBytes => _atlas.PageBytes;
 
         /// <summary>anim_atlas_lru on: call before the first direction loads.</summary>
-        public void EnableLru(AnimAtlasLruPolicy policy)
+        public void EnableLru(AtlasLruPolicy policy)
         {
             _lru = policy;
             _atlas.TrackPages = true;
@@ -524,7 +541,7 @@ namespace ClassicUO.Renderer.Animations
             PackSpriteMap.Unregister(texture);
             _atlas.RemovePage(index);
             _lru.EvictedPages++;
-            AtlasEpoch++;
+            AtlasPageClock.FreedEpoch++;
             TextureUploads.Changed();
         }
 
@@ -543,7 +560,7 @@ namespace ClassicUO.Renderer.Animations
 
         private void LogLru(long nowMs)
         {
-            long changes = _lru.EvictedPages + _lru.Reloads + _lru.Grows + _lru.Shrinks;
+            long changes = _lru.EvictedPages + _lru.Reloads + _lru.Grows + _lru.Shrinks + _lru.BlinkFrames;
             bool check = false;
 #if CUO_DEVTOOLS
             check = LruCheck;
@@ -559,7 +576,7 @@ namespace ClassicUO.Renderer.Animations
             long mib = _atlas.PageBytes >> 20;
             Log.Info(
                 $"[anim-lru] pages {pages} ({pages * mib} MiB), budget {_lru.BudgetPages} (low {_lru.LowWater}, floor {_lru.FloorPages}, ceiling {_lru.CeilingPages}; page {mib} MiB), " +
-                $"evicted {_lru.EvictedPages} pages / {_lru.EvictedDirections} directions, reloads {_lru.Reloads} (thrash {_lru.ThrashReloads}), grows {_lru.Grows}, shrinks {_lru.Shrinks}"
+                $"evicted {_lru.EvictedPages} pages / {_lru.EvictedDirections} directions, reloads {_lru.Reloads} (thrash {_lru.ThrashReloads}, async {_lru.AsyncReloads}, blink frames {_lru.BlinkFrames}), grows {_lru.Grows}, shrinks {_lru.Shrinks}"
             );
 #if CUO_DEVTOOLS
             if (check)
@@ -682,6 +699,8 @@ namespace ClassicUO.Renderer.Animations
 
             Interlocked.Decrement(ref _pendingJobs);
 
+            _pendingReloads.Remove(job.Sprites);
+
             if (!_pendingSprites.Remove(job.Sprites))
             {
                 // superseded by a sync load of the same direction (already uploaded, with its masks): drop the result
@@ -722,6 +741,7 @@ namespace ClassicUO.Renderer.Animations
             Interlocked.Decrement(ref _pendingJobs);
             job.Buffers.ReturnAll();
             _pendingSprites.Remove(job.Sprites);
+            _pendingReloads.Remove(job.Sprites);
             ForgetCached(job);
         }
 
@@ -775,7 +795,7 @@ namespace ClassicUO.Renderer.Animations
             public readonly byte Action, Dir;
             public readonly AnimDirEntry Entry;
             public readonly SpriteInfo[] Sprites;
-            public readonly FrameBuffers Buffers; // rented from ArrayPool<uint>.Shared; returned by Upload, ReturnAll or Decode's failure
+            public readonly FrameBuffers Buffers; // rented from the shared family (BufferPool.RentShared); returned by Upload, ReturnAll or Decode's failure
 
             public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
             {
@@ -785,7 +805,7 @@ namespace ClassicUO.Renderer.Animations
                 Dir = dir;
                 Entry = entry;
                 Sprites = sprites;
-                Buffers = new FrameBuffers(sprites.Length, ArrayPool<uint>.Shared);
+                Buffers = new FrameBuffers(sprites.Length, SharedFamilyPool<uint>.Instance);
             }
 
             public override void Execute()

@@ -3,13 +3,13 @@
 using ClassicUO.IO;
 using ClassicUO.Utility.Logging;
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Uo.Buffers;
 using Uo.Pack;
 
 namespace ClassicUO.Assets
@@ -29,8 +29,27 @@ namespace ClassicUO.Assets
         private FacetInfo[] _facets = Array.Empty<FacetInfo>();
 
         // regions being decoded on the thread pool (PrefetchRegion); adopted into the cache by the next lookup that needs
-        // them, under _sync, so the cache itself is only changed by callers of the lookups (the main thread)
-        private readonly Dictionary<long, Task<RegionData>> _pending = new Dictionary<long, Task<RegionData>>();
+        // them, under _sync, so the cache itself is only changed by callers of the lookups (the main thread). Entries
+        // nobody adopts (the player turned away or changed facet) are dropped by PrunePendingLocked and on LoadMap, and
+        // their buffers go back to the pool.
+        private readonly Dictionary<long, PendingLoad> _pending = new Dictionary<long, PendingLoad>();
+
+        private readonly struct PendingLoad
+        {
+            public readonly Task<RegionData> Task;
+            public readonly long StartedMs;
+
+            public PendingLoad(Task<RegionData> task, long startedMs)
+            {
+                Task = task;
+                StartedMs = startedMs;
+            }
+        }
+
+        // a completed prefetch not adopted within this time is dropped; more than MaxPending entries drop the oldest
+        // completed ones (a 3x3 block neighbourhood touches at most 4 regions)
+        private const long PendingMaxAgeMs = 10_000;
+        public const int MaxPending = 8;
 
         /// <summary>
         /// False (CUO_CHUNK_SYNC=1) turns prefetching off: every region decodes on the calling thread when first needed,
@@ -40,7 +59,7 @@ namespace ClassicUO.Assets
 
         /// <summary>Statistics for FrameStats and the tests: regions decoded by a lookup (not prefetched), prefetches
         /// started, lookups that had to wait for a prefetch still decoding, and the time spent waiting (Stopwatch ticks).</summary>
-        public int SyncLoads, PrefetchesStarted, PrefetchWaits;
+        public int SyncLoads, PrefetchesStarted, PrefetchWaits, PendingDropped;
         public long PrefetchWaitTicks;
 
         public MapLoader(UOFileManager fileManager) : base(fileManager)
@@ -117,6 +136,20 @@ namespace ClassicUO.Assets
             if (!HasMap(map))
             {
                 Log.Warn($"Map {map} is not in the asset pack");
+            }
+
+            // a facet change: prefetches of the other facets are never adopted
+            lock (_sync)
+            {
+                long facetKey = HasMap(map) ? _facets[map].Index : -1;
+
+                foreach (var kv in _pending)
+                {
+                    if ((kv.Key >> 40) != facetKey)
+                    {
+                        DropPendingLocked(kv.Key, kv.Value.Task);
+                    }
+                }
             }
         }
 
@@ -298,9 +331,9 @@ namespace ClassicUO.Assets
                             continue;
                         }
 
-                        if (_pending.TryGetValue(key, out var task))
+                        if (_pending.TryGetValue(key, out var pending))
                         {
-                            if (task.IsCompleted)
+                            if (pending.Task.IsCompleted)
                             {
                                 GetRegion(facet, rx, ry); // adopts it without waiting
 
@@ -359,8 +392,74 @@ namespace ClassicUO.Assets
                 return;
             }
 
+            PrunePendingLocked();
             PrefetchesStarted++;
-            _pending[key] = StartLoad(facet, rx, ry);
+            _pending[key] = new PendingLoad(StartLoad(facet, rx, ry), Environment.TickCount64);
+        }
+
+        // under _sync: drops completed prefetches older than PendingMaxAgeMs, then the oldest completed ones while
+        // MaxPending or more are pending. Running ones stay (dropped on LoadMap, or adopted).
+        private void PrunePendingLocked()
+        {
+            if (_pending.Count == 0)
+            {
+                return;
+            }
+
+            long now = Environment.TickCount64;
+
+            foreach (var kv in _pending)
+            {
+                if (kv.Value.Task.IsCompleted && now - kv.Value.StartedMs > PendingMaxAgeMs)
+                {
+                    DropPendingLocked(kv.Key, kv.Value.Task);
+                }
+            }
+
+            while (_pending.Count >= MaxPending)
+            {
+                long oldestKey = 0, oldestMs = long.MaxValue;
+
+                foreach (var kv in _pending)
+                {
+                    if (kv.Value.Task.IsCompleted && kv.Value.StartedMs < oldestMs)
+                    {
+                        oldestMs = kv.Value.StartedMs;
+                        oldestKey = kv.Key;
+                    }
+                }
+
+                if (oldestMs == long.MaxValue)
+                {
+                    return;
+                }
+
+                DropPendingLocked(oldestKey, _pending[oldestKey].Task);
+            }
+        }
+
+        // under _sync: forgets a prefetch and returns its buffer to the pool, now or when its decode finishes
+        private void DropPendingLocked(long key, Task<RegionData> task)
+        {
+            _pending.Remove(key);
+            PendingDropped++;
+
+            if (task.IsCompleted)
+            {
+                ReleasePrefetch(task);
+            }
+            else
+            {
+                task.ContinueWith(static t => ReleasePrefetch(t), TaskScheduler.Default);
+            }
+        }
+
+        private static void ReleasePrefetch(Task<RegionData> task)
+        {
+            if (task.IsCompletedSuccessfully)
+            {
+                ReturnBuffer(task.Result.Release());
+            }
         }
 
         // out of line: a lambda in StartPrefetch made it allocate its closure on entry, on every call (several per frame,
@@ -370,6 +469,16 @@ namespace ClassicUO.Assets
         public RegionData ReadRegion(int map, int rx, int ry)
         {
             return HasMap(map) ? LoadRegion(_facets[map], rx, ry) : null;
+        }
+
+        /// <summary>Returns the buffer of a region from <see cref="ReadRegion"/> to the pool; the region is unusable after.</summary>
+        public void ReleaseRegion(RegionData region)
+        {
+            if (region != null)
+            {
+                region.Live = false;
+                ReturnBuffer(region.Release());
+            }
         }
 
         public int RegionBlocks(int map) => HasMap(map) ? _facets[map].RegionBlocks : PackConst.RegionBlocks;
@@ -405,8 +514,16 @@ namespace ClassicUO.Assets
                     region.Live = false;
                 }
 
-                // decodes still running finish into buffers nobody adopts; the GC takes them
-                _pending.Clear();
+                foreach (var kv in _pending)
+                {
+                    DropPendingLocked(kv.Key, kv.Value.Task);
+                }
+
+                foreach (var region in _lru)
+                {
+                    ReturnBuffer(region.Release());
+                }
+
                 _regions.Clear();
                 _lru.Clear();
                 _zCache = null;
@@ -428,8 +545,9 @@ namespace ClassicUO.Assets
 
             RegionData region;
 
-            if (_pending.Remove(key, out var task))
+            if (_pending.Remove(key, out var pending))
             {
+                var task = pending.Task;
                 // a prefetch: adopt it, waiting for the rest of its decode if it is still running. The wait is never longer
                 // than decoding here would take, and LoadRegion takes no lock this thread holds.
                 if (!task.IsCompleted)
@@ -465,33 +583,9 @@ namespace ClassicUO.Assets
             return region;
         }
 
-        // logical region buffers (about 1.2 MB each) reused across loads
-        private readonly Stack<byte[]> _freeBuffers = new Stack<byte[]>();
-        private const int MaxFreeBuffers = 4;
-
-        private byte[] RentBuffer()
-        {
-            lock (_freeBuffers)
-            {
-                return _freeBuffers.Count > 0 ? _freeBuffers.Pop() : null;
-            }
-        }
-
-        private void ReturnBuffer(byte[] buffer)
-        {
-            if (buffer == null)
-            {
-                return;
-            }
-
-            lock (_freeBuffers)
-            {
-                if (_freeBuffers.Count < MaxFreeBuffers)
-                {
-                    _freeBuffers.Push(buffer);
-                }
-            }
-        }
+        // logical region buffers (1.2-3.3 MB) come from the large pool: rented by a prefetch task, returned on the main
+        // thread at eviction
+        private static void ReturnBuffer(byte[] buffer) => BufferPool.ReturnShared(buffer, LargeUse.Region);
 
         // thread-safe: called by lookups and by prefetch tasks
         private RegionData LoadRegion(FacetInfo facet, int rx, int ry)
@@ -508,19 +602,19 @@ namespace ClassicUO.Assets
             // File.ReadAllBytes, MemoryStream or ToArray copies (those were about 3.9 MB of garbage per region)
             using var fh = File.OpenHandle(path);
             int size = (int)RandomAccess.GetLength(fh);
-            var file = ArrayPool<byte>.Shared.Rent(size);
+            var file = BufferPool.Rent<byte>(size);
 
             try
             {
                 RandomAccess.Read(fh, file.AsSpan(0, size), 0);
-                var logical = RentBuffer();
-                int length = RegionFile.DecompressInto(file.AsSpan(0, size), ref logical);
+                byte[] logical = null;
+                int length = RegionFile.DecompressInto(file.AsSpan(0, size), ref logical, pooled: true);
 
                 return new RegionData(key, logical, length);
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(file);
+                BufferPool.Return(file);
             }
         }
 

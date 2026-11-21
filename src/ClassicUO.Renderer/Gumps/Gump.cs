@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Diagnostics;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework.Graphics;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Gumps
 {
@@ -34,20 +35,28 @@ namespace ClassicUO.Renderer.Gumps
         public static int TotalSyncLoads;
         public static long TotalSyncTicks;
 
-        public Gump(GumpsLoader gumpsLoader, GraphicsDevice device)
+        /// <param name="decodeBudget">Switch gump_decode_budget (read at startup): worker decodes are counted in
+        /// <see cref="DecodeBudget.Gumps"/> (32 MiB in flight) and wait for room there. Off: not counted, as before.</param>
+        public Gump(GumpsLoader gumpsLoader, GraphicsDevice device, bool decodeBudget = false)
         {
             _gumpsLoader = gumpsLoader;
-            _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
+            int page = TextureAtlas.PageSize(4096, 2048);
+            _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[gumpsLoader.Count];
             _picker = new PixelPicker(_spriteInfos.Length);
-            _decoder = new FirstSightDecoder("gump", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
+            _decoder = CreateDecoder(_spriteInfos.Length, DecodeOnWorker, UploadDecoded, decodeBudget ? PooledBytesOf : null);
         }
 
-        public void Reload()
-        {
-            System.Array.Clear(_spriteInfos);
-            _picker.Clear();
-        }
+        /// <summary>The gump decoder: counted in <see cref="DecodeBudget.Gumps"/> when <paramref name="bytesOf"/> is given
+        /// (switch gump_decode_budget on), else outside any budget. Tests build it without a device.</summary>
+        internal static FirstSightDecoder CreateDecoder(int count, Func<FirstSightDecoder.Job, bool> decode, Action<FirstSightDecoder.Job> upload,
+            Func<uint, long> bytesOf, DecodeBudget budget = null) =>
+            new FirstSightDecoder("gump", count, decode, upload, bytesOf, bytesOf != null ? budget ?? DecodeBudget.Gumps : null);
+
+        private long PooledBytesOf(uint idx) => DecodeBudget.PooledBytes(_gumpsLoader.PixelCount(idx));
+
+        /// <summary>Whether worker decodes are counted in <see cref="DecodeBudget.Gumps"/> (switch gump_decode_budget).</summary>
+        public bool DecodeBudgetOn => _decoder.CountedIn != null;
 
         /// <summary>Worker decodes requested and not uploaded yet.</summary>
         public int PendingDecodes => _decoder.Pending;
@@ -244,6 +253,13 @@ namespace ClassicUO.Renderer.Gumps
         /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
         public void DrainReady(long deadline)
         {
+#if CUO_DEVTOOLS
+            if (GumpBudgetCheck.Enabled)
+            {
+                GumpBudgetCheck.Observe(_decoder);
+            }
+#endif
+
             if (_decoder.HasReady)
             {
                 long t0 = Stopwatch.GetTimestamp();
@@ -256,7 +272,7 @@ namespace ClassicUO.Renderer.Gumps
         public void CancelPending() => _decoder.Cancel();
 
         // Worker thread: touches only the loader's pack store and size table (immutable after Load, reads thread-safe),
-        // the hue table (immutable) and ArrayPool, plus the job.
+        // the hue table (immutable) and the buffer pools, plus the job.
         private bool DecodeOnWorker(FirstSightDecoder.Job job)
         {
             int count = _gumpsLoader.PixelCount(job.Index);
@@ -266,7 +282,7 @@ namespace ClassicUO.Renderer.Gumps
                 return false;
             }
 
-            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            job.Pixels = BufferPool.RentShared<uint>(count);
             var info = _gumpsLoader.GetGump(job.Index, job.Pixels);
 
             if (info.Pixels.IsEmpty)
@@ -297,6 +313,7 @@ namespace ClassicUO.Renderer.Gumps
         private void Upload(uint idx, ref SpriteInfo spriteInfo, ReadOnlySpan<uint> pixels, int width, int height)
         {
             spriteInfo.Texture = _atlas.AddSprite(pixels, width, height, out spriteInfo.UV);
+            _lru?.Uploaded(spriteInfo.Texture, idx, width, height);
             // the whole image is the "trim rect": SetTrimmed gives Set's mask with the SIMD run scan
             _picker.SetTrimmed(idx, width, height, 0, 0, width, height, pixels);
         }
@@ -344,7 +361,7 @@ namespace ClassicUO.Renderer.Gumps
                 {
                     FrameSyncLoads++;
                     // the image only lives until the atlas upload: decode into a pooled buffer
-                    var buffer = ArrayPool<uint>.Shared.Rent(count);
+                    var buffer = BufferPool.Rent<uint>(count);
 
                     try
                     {
@@ -357,7 +374,7 @@ namespace ClassicUO.Renderer.Gumps
                     }
                     finally
                     {
-                        ArrayPool<uint>.Shared.Return(buffer);
+                        BufferPool.Return(buffer);
                     }
                 }
 
@@ -374,5 +391,43 @@ namespace ClassicUO.Renderer.Gumps
         }
 
         public bool PixelCheck(uint idx, int x, int y) => _picker.Get(idx, x, y);
+
+        // ---- atlas_lru: the gump atlas's page LRU ----
+
+        private AtlasPageLru _lru;
+
+        public AtlasPageLru Lru => _lru;
+
+        public long AtlasPageBytes => _atlas.PageBytes;
+
+        /// <summary>atlas_lru on: call before the first sprite loads.</summary>
+        public void EnableLru(Animations.AtlasLruPolicy policy)
+        {
+            _atlas.TrackPages = true;
+            _lru = new AtlasPageLru("gump", _atlas, _atlas.PageBytes, policy, DropPage);
+        }
+
+        /// <summary>Once per frame before anything is drawn (atlas_lru on): frees pages above the budget.</summary>
+        public void TickLru(long nowMs, bool unfocused) => _lru?.Tick(nowMs, unfocused);
+
+        // the entries on a page about to be freed load again on their next lookup
+        private void DropPage(Texture2D page, System.Collections.Generic.List<uint> keys)
+        {
+            if (keys == null)
+            {
+                return;
+            }
+
+            foreach (uint idx in keys)
+            {
+                ref var spriteInfo = ref _spriteInfos[idx];
+
+                if (ReferenceEquals(spriteInfo.Texture, page))
+                {
+                    _lru.Forgot(idx, spriteInfo.UV.Width, spriteInfo.UV.Height);
+                    spriteInfo = default;
+                }
+            }
+        }
     }
 }

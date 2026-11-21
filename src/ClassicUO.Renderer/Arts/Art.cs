@@ -7,6 +7,7 @@ using SDL3;
 using System;
 using System.Buffers;
 using System.Diagnostics;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Arts
 {
@@ -23,7 +24,8 @@ namespace ClassicUO.Renderer.Arts
         {
             _artLoader = artLoader;
             _huesLoader = huesLoader;
-            _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
+            int page = TextureAtlas.PageSize(4096, 1024);
+            _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
             _picker = new PixelPicker(_spriteInfos.Length);
@@ -51,7 +53,7 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>Main-thread decodes and their time since start (never reset; for scripted measurements).</summary>
         public static int TotalSyncLoads;
         public static long TotalSyncTicks;
-        /// <summary>Sprites found missing from the pack and logged (once per id until <see cref="Reload"/>; never reset).</summary>
+        /// <summary>Sprites found missing from the pack and logged (once per id; never reset).</summary>
         public static int TotalMissingLogs;
 #if CUO_DEVTOOLS
         /// <summary>Lookups that took a finished worker decode instead of decoding again (FrameStats resets the frame count).</summary>
@@ -234,7 +236,7 @@ namespace ClassicUO.Renderer.Arts
         }
 
         // Worker thread. Touches only the loader's sprite table (immutable after Load), the pack pages (thread-safe) and
-        // ArrayPool, plus the job; the atlas, the picker, the bounds and the sprite infos stay on the main thread.
+        // the buffer pools, plus the job; the atlas, the picker, the bounds and the sprite infos stay on the main thread.
         private bool DecodeOnWorker(FirstSightDecoder.Job job)
         {
             int count = _artLoader.PixelCount(job.Index);
@@ -244,7 +246,7 @@ namespace ClassicUO.Renderer.Arts
                 return false;
             }
 
-            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            job.Pixels = BufferPool.RentShared<uint>(count);
             var artInfo = _artLoader.GetArt(job.Index, job.Pixels);
 
             if (artInfo.Pixels.IsEmpty)
@@ -283,6 +285,7 @@ namespace ClassicUO.Renderer.Arts
             var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
             spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
             PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+            _lru?.Uploaded(spriteInfo.Texture, idx, job.Width, job.Height);
 
             if (idx > 0x4000)
             {
@@ -292,21 +295,6 @@ namespace ClassicUO.Renderer.Arts
 
             FrameAsyncUploads++;
         }
-
-        public void Reload()
-        {
-            Array.Clear(_spriteInfos);
-            Array.Clear(_realArtBounds);
-            Array.Clear(_missing);
-            _picker.Clear();
-            Generation++;
-        }
-
-        /// <summary>
-        /// Bumped whenever sprites that were in the atlas may be gone again (<see cref="Reload"/>): a caller that remembered
-        /// "these sprites are ready" must look again.
-        /// </summary>
-        public int Generation { get; private set; }
 
         /// <summary>Scene teardown: drops finished worker decodes and returns their buffers (see FirstSightDecoder.Cancel).</summary>
         public void CancelPending()
@@ -403,7 +391,7 @@ namespace ClassicUO.Renderer.Arts
                 }
 
                 // the untrimmed image only lives until the atlas upload: decode into a pooled buffer
-                var buffer = ArrayPool<uint>.Shared.Rent(Math.Max(1, _artLoader.PixelCount(idx)));
+                var buffer = BufferPool.Rent<uint>(Math.Max(1, _artLoader.PixelCount(idx)));
 
                 try
                 {
@@ -430,6 +418,7 @@ namespace ClassicUO.Renderer.Arts
                     );
 
                     PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+                    _lru?.Uploaded(spriteInfo.Texture, idx, artInfo.Width, artInfo.Height);
 
                     if (idx > 0x4000)
                     {
@@ -444,7 +433,7 @@ namespace ClassicUO.Renderer.Arts
                 }
                 finally
                 {
-                    ArrayPool<uint>.Shared.Return(buffer);
+                    BufferPool.Return(buffer);
                     long syncTicks = Stopwatch.GetTimestamp() - syncStart;
                     FrameSyncTicks += syncTicks;
                     TotalSyncLoads++;
@@ -476,7 +465,7 @@ namespace ClassicUO.Renderer.Arts
             int srcHeight = artInfo.Height;
 
             // Make a copy of pixels to avoid modifying the original
-            var rentedBuffer = ArrayPool<uint>.Shared.Rent(artInfo.Pixels.Length);
+            var rentedBuffer = BufferPool.Rent<uint>(artInfo.Pixels.Length);
             try
             {
                 var pixelsCopy = rentedBuffer.AsSpan(0, artInfo.Pixels.Length);
@@ -568,7 +557,7 @@ namespace ClassicUO.Renderer.Arts
             }
             finally
             {
-                ArrayPool<uint>.Shared.Return(rentedBuffer);
+                BufferPool.Return(rentedBuffer);
             } 
         }
 
@@ -578,5 +567,43 @@ namespace ClassicUO.Renderer.Arts
                 : _realArtBounds[idx];
 
         public bool PixelCheck(uint idx, int x, int y) => _picker.Get(idx, x, y);
+
+        // ---- atlas_lru: the art atlas's page LRU (land and static art; picker masks and bounds stay) ----
+
+        private AtlasPageLru _lru;
+
+        public AtlasPageLru Lru => _lru;
+
+        public long AtlasPageBytes => _atlas.PageBytes;
+
+        /// <summary>atlas_lru on: call before the first sprite loads.</summary>
+        public void EnableLru(Animations.AtlasLruPolicy policy)
+        {
+            _atlas.TrackPages = true;
+            _lru = new AtlasPageLru("art", _atlas, _atlas.PageBytes, policy, DropPage);
+        }
+
+        /// <summary>Once per frame before anything is drawn (atlas_lru on): frees pages above the budget.</summary>
+        public void TickLru(long nowMs, bool unfocused) => _lru?.Tick(nowMs, unfocused);
+
+        // the entries on a page about to be freed load again on their next lookup (synchronously, or through a request)
+        private void DropPage(Texture2D page, System.Collections.Generic.List<uint> keys)
+        {
+            if (keys == null)
+            {
+                return;
+            }
+
+            foreach (uint idx in keys)
+            {
+                ref var spriteInfo = ref _spriteInfos[idx];
+
+                if (ReferenceEquals(spriteInfo.Texture, page))
+                {
+                    _lru.Forgot(idx, spriteInfo.UV.Width, spriteInfo.UV.Height);
+                    spriteInfo = default;
+                }
+            }
+        }
     }
 }

@@ -451,14 +451,14 @@ namespace ClassicUO.UnitTests.Assets
 
             for (int i = 0; i < 50; i++)
             {
-                c.Reload();
+                c.Load();
             }
 
             // a reload that fails (the file is gone, or truncated) keeps the old strings
             File.Delete(pack);
-            c.Reload();
+            c.Load();
             File.WriteAllBytes(pack, new byte[10]);
-            c.Reload();
+            c.Load();
             stop.Cancel();
             reader.Wait();
             misses.Should().Be(0);
@@ -466,7 +466,7 @@ namespace ClassicUO.UnitTests.Assets
 
             // the replacement is published once it is complete
             WriteClilocStore("cliloc.bin", Lang("enu", Table((1, "uno"))));
-            c.Reload();
+            c.Load();
             c.GetString(1).Should().Be("uno");
         }
 
@@ -482,7 +482,7 @@ namespace ClassicUO.UnitTests.Assets
 
             // enu gone while deu stays: the new state would lose every English-only number
             WriteClilocStore("cliloc.bin", Lang("deu", Table((2, "zwei"))));
-            c.Reload();
+            c.Load();
             c.GetString(1).Should().Be("one");
             c.GetString(2).Should().Be("zwei");
             c.EnglishTable.Should().NotBeNull();
@@ -512,7 +512,7 @@ namespace ClassicUO.UnitTests.Assets
 
             using (new FileStream(P(ClilocOverrides.FileName), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                c.Reload();
+                c.Load();
             }
 
             c.GetString(2).Should().Be("ours");
@@ -520,7 +520,7 @@ namespace ClassicUO.UnitTests.Assets
 
             // a Clilocs.txt that is absent is optional: the reload publishes without it
             File.Delete(P(ClilocOverrides.FileName));
-            c.Reload();
+            c.Load();
             c.LooseOverrides.Should().BeNull();
             c.GetString(2).Should().Be("dos");
             c.GetString(1).Should().Be("uno");
@@ -538,7 +538,7 @@ namespace ClassicUO.UnitTests.Assets
             c.GetString(2).Should().Be("two");
 
             File.WriteAllText(P(ClilocOverrides.FileName), "2 ours" + Environment.NewLine);
-            c.Reload();
+            c.Load();
             c.GetString(2).Should().Be("ours");
 
             // a directory where the file should be: it exists but can't be read (deterministic, no ACLs)
@@ -549,7 +549,7 @@ namespace ClassicUO.UnitTests.Assets
             try
             {
                 // a reload keeps the whole old state, not an absent-overrides one
-                c.Reload();
+                c.Load();
                 c.GetString(2).Should().Be("ours");
                 c.GetString(1).Should().Be("one");
 
@@ -586,7 +586,7 @@ namespace ClassicUO.UnitTests.Assets
 
             // without the loose file, the packed override serves
             File.Delete(P(ClilocOverrides.FileName));
-            c.Reload();
+            c.Load();
             c.GetString(4).Should().Be("ovr4");
             c.LooseOverrides.Should().BeNull();
 
@@ -602,7 +602,7 @@ namespace ClassicUO.UnitTests.Assets
             var enu = Table((1, "enu1"), (3, "enu3"));
             var malformed = Table((3, "ovr3"));
             malformed[4] = 200; // blobBytes no longer adds up
-            var corruptBrotli = (Table((3, "ovr3")), ClilocStore.KindOverrides, (string)null, false, StoreConst.CodecBrotli);
+            var corruptZstd = (Table((3, "ovr3")), ClilocStore.KindOverrides, (string)null, false, StoreConst.CodecZstd);
 
             var cases = new[]
             {
@@ -620,11 +620,11 @@ namespace ClassicUO.UnitTests.Assets
                 c.GetString(3).Should().Be("enu3", Path.GetFileName(path));
             }
 
-            // a Brotli overrides record whose stream is corrupt
+            // a zstd overrides record whose frame is corrupt
             var w = new RecordStoreWriter(2);
             var (m0, m1) = ClilocTable.PackLanguage("enu");
             w.Slots[0] = new StoreSlot { Record = (uint)w.Add(enu, (uint)enu.Length, StoreConst.CodecRaw, m0, m1, 0) + 1 };
-            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(new byte[] { 1, 2, 3, 4 }, (uint)corruptBrotli.Item1.Length, StoreConst.CodecBrotli, 0, 0, ClilocStore.KindOverrides) + 1 };
+            w.Slots[1] = new StoreSlot { Record = (uint)w.Add(new byte[] { 1, 2, 3, 4 }, (uint)corruptZstd.Item1.Length, StoreConst.CodecZstd, 0, 0, ClilocStore.KindOverrides) + 1 };
             w.Write(P("o4.bin"), TextConst.MagicCliloc, 0);
             var b = Cliloc(P("o4.bin"));
             b.Load("enu");

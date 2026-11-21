@@ -72,6 +72,19 @@ namespace ClassicUO.Game.Map
         /// Computes prefix-sum offsets from the counts. Returns total sprite count.
         /// After this, GetNextIndex() can be called during pass 2.
         /// </summary>
+        public bool AnyDisposed()
+        {
+            for (int i = 0; i < _bucketCount; i++)
+            {
+                if (_textures[i] != null && _textures[i].IsDisposed)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public int ComputeOffsets()
         {
             int offset = 0;
@@ -110,8 +123,31 @@ namespace ClassicUO.Game.Map
         /// <summary>clip-4: built with depth_model on (the vertices carry the geometric shapes, LegacyGeo); a flip rebuilds.</summary>
         public bool BuiltGeo;
 
-        // depth_model at this Build
-        private bool _geo;
+        /// <summary>Built with wet_surface_depth on (wet flats' shapes drop GeoDepth.WetDrop); a flip rebuilds geo meshes.</summary>
+        public bool BuiltWet;
+
+        /// <summary>atlas_lru: AtlasPageClock.FreedEpoch at the last Build or <see cref="HoldsFreedPage"/> check.</summary>
+        public int AtlasEpoch;
+
+        /// <summary>
+        /// atlas_lru: after an atlas freed a page (<paramref name="epoch"/> changed), whether this mesh draws from a freed page
+        /// and must be rebuilt; otherwise it is current for <paramref name="epoch"/>. Only meshes that are drawn ask (Legacy),
+        /// and only once per freed-page event: a few texture tests per mesh.
+        /// </summary>
+        public bool HoldsFreedPage(int epoch)
+        {
+            if (_landBuckets.AnyDisposed() || _staticsBuckets.AnyDisposed())
+            {
+                return true;
+            }
+
+            AtlasEpoch = epoch;
+
+            return false;
+        }
+
+        // depth_model and wet_surface_depth at this Build
+        private bool _geo, _wet;
 
         private bool _animatedWaterEffect;
         private TextureBucketTracker _landBuckets = new(16);
@@ -130,6 +166,8 @@ namespace ClassicUO.Game.Map
             Statics.Reset();
             IsDirty = false;
             BuiltGeo = _geo = Scenes.DepthModel.On;
+            BuiltWet = _wet = Scenes.WetSurfaceDepth.On;
+            AtlasEpoch = ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch;
 
             var profile = ProfileManager.CurrentProfile;
             if (profile == null)
@@ -458,7 +496,7 @@ namespace ClassicUO.Game.Map
             {
                 // clip-4: the static's shape in world pixels (the mesh draws through the world offset); map statics under
                 // their tile's land are buried, as the Gpu baker marks them; multi pieces are not
-                uint bits = Scenes.LegacyGeoDepth.Bits(ref itemData);
+                uint bits = Scenes.LegacyGeoDepth.Bits(ref itemData, _wet);
                 bool buried = obj is Static st && Scenes.LegacyGeoDepth.TileLandZ(st, out int landZ) &&
                               Scenes.LegacyGeoDepth.Buried(obj.Z, itemData.Height, bits, landZ, true);
                 Scenes.LegacyGeoDepth.ApplyTile(ref Statics.Vertices[idx], true, obj.X, obj.Y, obj.Z, itemData.Height, bits, buried);

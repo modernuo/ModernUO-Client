@@ -46,7 +46,9 @@ for (int i = 0; i < args.Length; i++)
         case "--no-music": music = false; break;
         case "--raw-text": TextConvert.Raw = true; break;
         case "--text-small": TextConvert.SmallRaw = int.Parse(args[++i]); break;
-        case "--cliloc-brotli": TextConvert.ClilocBrotli = true; break;
+        case "--cliloc-compress": TextConvert.ClilocCompress = true; break;
+        case "--zstd-level": PackCodec.WriteLevel = int.Parse(args[++i]); break;
+        case "--zstd-checksum": PackCodec.WriteChecksum = true; break;
         case "--cliloc-skip": foreach (var s in args[++i].Split(',')) TextConvert.ClilocSkip.Add(s.Trim()); break;
         case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--cliloc-overrides": TextConvert.ClilocOverridesPath = args[++i]; break;
@@ -75,9 +77,8 @@ for (int i = 0; i < args.Length; i++)
         case "--bc7-quality": ConvertOptions.Bc7Quality = Enum.Parse<BCnEncoder.Encoder.CompressionQuality>(args[++i], ignoreCase: true); break;
         case "--compress-regions": ConvertOptions.CompressRegions = true; break;
         case "--raw-regions": ConvertOptions.CompressRegions = false; break;
-        case "--compress-pages": ConvertOptions.CompressPages = true; ConvertOptions.ChunkedPages = false; break;
-        case "--compress-pages=chunked": ConvertOptions.ChunkedPages = true; break;
-        case "--raw-pages": ConvertOptions.CompressPages = false; ConvertOptions.ChunkedPages = false; break;
+        case "--compress-pages": ConvertOptions.ChunkedPages = true; break;
+        case "--raw-pages": ConvertOptions.ChunkedPages = false; break;
         case "--chunk-bytes": ConvertOptions.ChunkBytes = int.Parse(args[++i]); break;
         case "--page-size": ConvertOptions.PageSize = PageSide(args[++i]); break;
         case "--anim-page-size": ConvertOptions.AnimPageSizeOverride = PageSide(args[++i]); break;
@@ -102,7 +103,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages] [--zstd-level 19] [--zstd-checksum] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-compress] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -173,14 +174,14 @@ if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(
     using (var ps = AtlasPage.OpenChain(p0, out var ph)) ConvertOptions.Format = ph.Format;
     using var hs = File.OpenRead(p0);
     var kind = StructIo.ReadHeaderFull(hs, PackConst.MagicPage).Kind;
-    ConvertOptions.ChunkedPages = kind == FileKind.ChunkedBrotli;
-    ConvertOptions.CompressPages = kind == FileKind.Brotli;
+    // a Brotli pack (revision 1.5 or older) cannot be extended: OfFileKind refuses it with the convert-again message
+    ConvertOptions.ChunkedPages = PackCodec.OfFileKind(kind, p0) != PackCodec.Raw;
 }
 
 var total = Stopwatch.StartNew();
 if (!readOnlyReport) Directory.CreateDirectory(debugDir); // the read-only reports write nothing, not even this folder
 ConvertOptions.DebugDir = debugDir;
-Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked ({ConvertOptions.ChunkBytes} B)" : ConvertOptions.CompressPages.ToString())}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
+Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked zstd ({ConvertOptions.ChunkBytes} B)" : "raw")}, zstd level {PackCodec.WriteLevel}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
                   (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +
                   (ConvertOptions.Facets != null ? $", facets {string.Join(",", ConvertOptions.Facets)}" : "") +
                   (ConvertOptions.MaxRegions != int.MaxValue ? $", first {ConvertOptions.MaxRegions} regions" : "") +
@@ -190,7 +191,8 @@ T Stage<T>(string name, Func<T> f)
 {
     var sw = Stopwatch.StartNew();
     var r = f();
-    Console.WriteLine($"[{sw.Elapsed.TotalSeconds,7:F2}s] {name}: {r}");
+    using (var self = Process.GetCurrentProcess())
+        Console.WriteLine($"[{sw.Elapsed.TotalSeconds,7:F2}s] {name}: {r} (process peak working set {self.PeakWorkingSet64 >> 20} MiB)");
     return r;
 }
 

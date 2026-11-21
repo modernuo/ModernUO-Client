@@ -742,6 +742,8 @@ namespace ClassicUO
 
         private int ParseSlice(ArraySegment<byte> data) => PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
 
+        private uint _poolTrimTick;
+
         protected override void Update(GameTime gameTime)
         {
 #if CUO_DEVTOOLS
@@ -778,15 +780,28 @@ namespace ClassicUO
             if (Network.Harness.NetHarness.On) Network.Harness.NetHarness.Frame();
 #endif
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // the large buffer pool keeps free buffers up to its per-use caps (LargePoolCaps); General and Page ones idle for
+            // 180 s go back to the GC, Region ones stay (one teleport's swap set)
+            if (Time.Ticks - _poolTrimTick >= 5000)
+            {
+                _poolTrimTick = Time.Ticks;
+                Uo.Buffers.LargeBufferPool.TrimIdle(Uo.Buffers.LargeBufferPool.DefaultIdleMs);
+            }
+
             VisualDue.BeginUpdate();
             VisualDue.Tracking = LoopTiming.TracksVisualDue(_tickMode, _displayCapActive);
             Time.Frame++;
             _totalUpdates++;
             // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
             UO.Arts?.AdvanceFrame();
-            // anim_atlas_lru: the page clock, and with the switch on the budget and evictions (nothing holds atlas textures
-            // between frames except MobileFrameCache's Legacy replays, which check Animations.AtlasEpoch)
-            UO.Animations?.Tick(ClassicUO.Renderer.Animations.AtlasPageClock.MonotonicMs(), FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive));
+            // anim_atlas_lru / atlas_lru: the page clock, and with the switches on the budgets and evictions, before anything
+            // is drawn. Holders of atlas textures between frames check AtlasPageClock.FreedEpoch (MobileFrameCache's Legacy
+            // replays, Legacy chunk meshes, Map's art waits) or IsDisposed (RenderedText's quad runs, recorded UI passes).
+            long atlasNowMs = ClassicUO.Renderer.Animations.AtlasPageClock.MonotonicMs();
+            bool atlasUnfocused = FocusRule.IsInactive(IsActive, FocusRule.Automation, FocusRule.ForceInactive);
+            UO.Animations?.Tick(atlasNowMs, atlasUnfocused);
+            AtlasLruSetup.Tick(UO, atlasNowMs, atlasUnfocused);
 
             // the renderer can be switched at runtime (-worldrenderer command, DevBench world:legacy)
             if (_titleShowsLegacy == Settings.GlobalSettings.UseGpuWorldRenderer)
@@ -1652,6 +1667,7 @@ namespace ClassicUO
             if (Diagnostics.On) Diagnostics.Stop();
 #endif
             Scene?.Dispose();
+            Log.Info($"[pack] decodes: {Uo.Pack.PackDecodeCounts.Summary()}");
 
             Volatile.Write(ref NetClient.SendQueuedWake, null); // a captured wake after this is a no-op (Wake checks disposal)
             _waiter?.Dispose();

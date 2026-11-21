@@ -28,6 +28,12 @@ namespace ClassicUO.Utility
 
         public int Remains => MaxSize - _pool.Count;
 
+        /// <summary>Objects created because the pool was empty, and returns dropped because it was full (counters).</summary>
+        public int Misses, Dropped;
+
+        /// <summary>Objects the pool holds now (at most <see cref="MaxSize"/>).</summary>
+        public int Count => _pool.Count;
+
         public T GetOne()
         {
             T result;
@@ -39,6 +45,7 @@ namespace ClassicUO.Utility
             else
             {
                 result = new T();
+                Misses++;
             }
 
             _on_pickup?.Invoke(result);
@@ -48,9 +55,19 @@ namespace ClassicUO.Utility
 
         public void ReturnOne(T obj)
         {
-            if (obj != null)
+            if (obj == null)
+            {
+                return;
+            }
+
+            // capped at MaxSize: a burst above the prefill no longer keeps its peak alive for the session
+            if (_pool.Count < MaxSize)
             {
                 _pool.Push(obj);
+            }
+            else
+            {
+                Dropped++;
             }
         }
 

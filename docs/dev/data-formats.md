@@ -108,7 +108,7 @@ Art, texmaps and gump pages are stored as `B5G5R5A1` by default (`--format`). Tr
 
 - Reads `gumpartLegacyMUL.uop` or `gumpart.mul`/`gumpidx.mul`, `gump.def` fallbacks and loose `Gumps/*.gump` files. `--gump-def <file>` reads the `gump.def` fallbacks from another file.
 - Writes one record per distinct image to `gumps/gumps.bin`. Ids map to records, and a `gump.def` hue rides on the id's slot.
-- Records are Brotli-compressed raw texels by default. An image whose run-length payload is at most 65,536 bytes is stored run-length and uncompressed (`--gump-small <n>`, 0 turns this off). `--raw-gumps` stores every record run-length and uncompressed.
+- Records are zstd-compressed (level 19) raw texels by default. An image whose run-length payload is at most 65,536 bytes is stored run-length, also zstd-compressed (`--gump-small <n>`, 0 turns this off). A record that zstd does not shrink is stored raw. `--raw-gumps` stores every record run-length and uncompressed.
 
 ### 3.6 Hues and radar colours
 
@@ -136,7 +136,7 @@ Art, texmaps and gump pages are stored as `B5G5R5A1` by default (`--format`). Tr
 - Felucca and Trammel are 7168 or 6144 tiles wide, chosen from the size of the `map0.mul` file for MUL maps (`ClientLoad.ApplyLegacyMapRules`), not from the client version.
 - Static index entries are read signed. An entry with a negative offset or a length of 0 or less is an empty block. An entry whose range lies outside the statics file is also read as empty. Offset 0 is valid. At most 1,024 statics are read per block. Statics with graphic 0 or 0xFFFF, or x or y above 7, are dropped.
 - Map patches are merged into the maps during conversion, as ModernUO's `TileMatrixPatch` serves them. The land family (`mapdifl<N>.mul` and `mapdif<N>.mul`) is applied below 6.0.0.0. The statics family (`stadifl<N>.mul`, `stadifi<N>.mul` and `stadif<N>.mul`) is applied below 7.0.9.0. Each family is applied when all of its own files exist, independently of the other. Entries are applied in order, so later entries win. `--no-map-diffs` skips both families. The pack never holds a patch and the client never applies one.
-- Output: per facet, `map/<facet>/facet.json` (index, width, height, block counts, region size) and region files `r_<rx>_<ry>.bin`. A region is 64 by 64 blocks (`PackConst.RegionBlocks`). Each block holds 64 land cells (tile id, z) and its statics list (graphic, x, y, z, hue). Regions are Brotli-compressed by default (`--raw-regions` turns that off).
+- Output: per facet, `map/<facet>/facet.json` (index, width, height, block counts, region size) and region files `r_<rx>_<ry>.bin`. A region is 64 by 64 blocks (`PackConst.RegionBlocks`). Each block holds 64 land cells (tile id, z) and its statics list (graphic, x, y, z, hue). Regions are zstd-compressed (level 19, one chunk per region) by default (`--raw-regions` turns that off).
 - `--regions <n>` converts only the first `n` regions of each facet. It is a debugging aid.
 
 ### 3.10 Lights
@@ -153,7 +153,7 @@ Art, texmaps and gump pages are stored as `B5G5R5A1` by default (`--format`). Tr
 ### 3.12 Text
 
 - Fonts: `fonts.mul` (ASCII fonts, 224 glyphs each) to `text/fonts.bin`; `unifont*.mul` (1-bit glyphs) to `text/unifont.bin`, stored as 256-character pages that identical fonts share. A glyph whose data runs past the end of its file is stored as no glyph.
-- Cliloc: every `Cliloc.<lang>` file in the install folder whose name has a 1 to 4 letter or digit extension and whose content is a cliloc table (BWT-compressed, or a raw table that adds up to the file size). `Cliloc.enu` is required. Two files for one language are an error. The shard's `Clilocs.txt`, if present in the install folder, is stored as an extra record in `text/cliloc.bin`; `--cliloc-overrides <file>` folds that file instead (it wins over the folder's, and must exist) for a shard that keeps it outside the install. `--no-cliloc-overrides` leaves both out, `--cliloc-skip ext,ext` skips extensions that are not languages, and `--cliloc-brotli` compresses the language records (they are stored raw by default).
+- Cliloc: every `Cliloc.<lang>` file in the install folder whose name has a 1 to 4 letter or digit extension and whose content is a cliloc table (BWT-compressed, or a raw table that adds up to the file size). `Cliloc.enu` is required. Two files for one language are an error. The shard's `Clilocs.txt`, if present in the install folder, is stored as an extra record in `text/cliloc.bin`; `--cliloc-overrides <file>` folds that file instead (it wins over the folder's, and must exist) for a shard that keeps it outside the install. `--no-cliloc-overrides` leaves both out, `--cliloc-skip ext,ext` skips extensions that are not languages, and `--cliloc-compress` compresses the language records with zstd (they are stored raw by default).
 - Speech: `speech.mul` to `text/speech.bin`.
 - `--raw-text` stores every text record uncompressed. `--text-small <n>` sets the size below which a record is stored uncompressed (default 16,384 bytes).
 - `--no-fonts`, `--no-cliloc` and `--no-speech` skip these stages.
@@ -255,11 +255,12 @@ The `layers` stage is part of a full run but is not listed in the converter's bu
 | `--anim-page-size <n>` | `1024` | Animation page side. Same limits. |
 | `--anim-format indexed8\|page` | `indexed8` | `page` uses `--format` for animations instead. |
 | `--indexed-mips none\|b16` | `none` | With Indexed8, write a `B5G5R5A1` mip sidecar or none. |
-| `--compress-pages=chunked` / `--compress-pages` / `--raw-pages` | chunked | Chunked Brotli pages, whole-file Brotli pages, or raw pages. |
+| `--compress-pages` / `--raw-pages` | chunked | Chunked zstd pages, or raw pages. |
+| `--zstd-level <n>` | 19 | zstd level for every compressed file and record (other levels are for size and time comparisons). |
 | `--chunk-bytes <n>` | 1 MiB | Chunk size for chunked pages. |
 | `--compress-regions` / `--raw-regions` | compressed | Map region compression. |
 | `--raw-gumps`, `--gump-small <n>` | | Gump record encoding (3.5). |
-| `--raw-text`, `--text-small <n>`, `--cliloc-brotli`, `--cliloc-skip <exts>`, `--no-cliloc-overrides`, `--cliloc-overrides <file>` | | Text record encoding and cliloc discovery (3.12). |
+| `--raw-text`, `--text-small <n>`, `--cliloc-compress`, `--cliloc-skip <exts>`, `--no-cliloc-overrides`, `--cliloc-overrides <file>` | | Text record encoding and cliloc discovery (3.12). |
 | `--threads <n>` | half the logical cores | Worker thread cap. |
 | `--pages a-b` | all | Encode, write and verify only atlas pages `a` to `b` (packing is still global). |
 | `--regions <n>` | all | Convert only the first `n` map regions of each facet. |

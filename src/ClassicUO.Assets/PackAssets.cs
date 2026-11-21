@@ -2,12 +2,12 @@
 
 using ClassicUO.Utility.Logging;
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -109,9 +109,29 @@ namespace ClassicUO.Assets
                 throw new FileNotFoundException($"Incomplete asset pack: '{MiscConst.SkillsFile}' is missing (format 1.2 required: convert the client again with Uo.Converter).", Path.Combine(root, MiscConst.SkillsFile));
             }
 
+            // revision 1.6: pages, regions and records are zstd; Brotli packs are refused at startup with the convert-again
+            // message (every reader refuses them too, PackCodec.OfFileKind / PackCodec.Check)
+            CheckCodecRevision(PackConst.PagePath(Path.Combine(root, "art"), 0));
+
             Log.Trace($"Asset pack: {root} (format {manifest.Version}, from {manifest.SourceClientVersion})");
 
             return new PackAssets(root, manifest);
+        }
+
+        private static void CheckCodecRevision(string page)
+        {
+            if (!File.Exists(page))
+            {
+                return;
+            }
+
+            using var fh = File.OpenHandle(page);
+            FileHeader header = default;
+
+            if (RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<FileHeader>(ref header)), 0) == StructIo.SizeOf<FileHeader>())
+            {
+                PackCodec.OfFileKind(header.Kind, page);
+            }
         }
 
         /// <summary>Tests: a pack folder without the files <see cref="Open"/> requires.</summary>
@@ -126,7 +146,7 @@ namespace ClassicUO.Assets
     }
 
     /// <summary>
-    /// Mip-0 texel access to a folder of atlas pages. Kind 2 pages are decoded one 1 MiB chunk at a time, so a sprite
+    /// Mip-0 texel access to a folder of atlas pages. Chunked pages are decoded one 1 MiB chunk at a time, so a sprite
     /// costs only the chunks its rows touch; decoded chunks stay in an LRU bounded by <c>cacheBytes</c>.
     /// Thread-safe: a chunk decodes outside the lock (several threads can decode at once) into a buffer reused from an
     /// evicted chunk, and every copy out of a cached chunk happens under the lock, so an evicted buffer is never in use.
@@ -136,15 +156,11 @@ namespace ClassicUO.Assets
         private static readonly int FileHeaderSize = StructIo.SizeOf<FileHeader>();
         private static readonly int PageHeaderSize = StructIo.SizeOf<PageHeader>();
 
-        // evicted chunk buffers kept for the next decodes (one size class: the pack's chunk size)
-        private const int MaxFreeBuffers = 4;
-
         private readonly string _dir;
         private readonly long _cacheBytes;
         private readonly Dictionary<int, PageInfo> _pages = new Dictionary<int, PageInfo>();
         private readonly Dictionary<long, LinkedListNode<Chunk>> _chunks = new Dictionary<long, LinkedListNode<Chunk>>();
         private readonly LinkedList<Chunk> _lru = new LinkedList<Chunk>();
-        private readonly Stack<byte[]> _free = new Stack<byte[]>();
         private readonly object _sync = new object();
         private long _cachedBytes;
         private int _decodedChunks;
@@ -215,10 +231,14 @@ namespace ClassicUO.Assets
         {
             lock (_sync)
             {
+                foreach (var chunk in _lru)
+                {
+                    ReturnBufferLocked(chunk.Data);
+                }
+
                 _chunks.Clear();
                 _lru.Clear();
                 _pages.Clear();
-                _free.Clear();
                 _cachedBytes = 0;
             }
         }
@@ -334,26 +354,10 @@ namespace ClassicUO.Assets
             }
         }
 
-        private byte[] RentBuffer(int size)
-        {
-            lock (_sync)
-            {
-                if (_free.Count > 0 && _free.Peek().Length == size)
-                {
-                    return _free.Pop();
-                }
-            }
+        // Chunk buffers come from the large pool: decoded on any thread, returned at eviction on any thread.
+        private static byte[] RentBuffer(int size) => BufferPool.RentShared<byte>(size, LargeUse.Page);
 
-            return new byte[size];
-        }
-
-        private void ReturnBufferLocked(byte[] buffer)
-        {
-            if (_free.Count < MaxFreeBuffers && (_free.Count == 0 || _free.Peek().Length == buffer.Length))
-            {
-                _free.Push(buffer);
-            }
-        }
+        private static void ReturnBufferLocked(byte[] buffer) => BufferPool.ReturnShared(buffer, LargeUse.Page);
 
         // decodes chunk `index` into `buffer` (capacity info.ChunkBytes) and returns its length
         private int DecodeChunk(PageInfo info, int page, int index, byte[] buffer)
@@ -363,44 +367,36 @@ namespace ClassicUO.Assets
             int length = (int)Math.Min(info.ChunkBytes, info.LogicalBytes - start);
             var dst = buffer.AsSpan(0, length);
 
-            switch (info.Kind)
+            if (info.Codec == PackCodec.Raw)
             {
-                case FileKind.Raw:
-                    RandomAccess.Read(fh, dst, FileHeaderSize + start);
+                RandomAccess.Read(fh, dst, FileHeaderSize + start);
 
-                    break;
+                return length;
+            }
 
-                case FileKind.ChunkedBrotli:
-                {
-                    int size = (int)info.ChunkSizes[index];
-                    var compressed = ArrayPool<byte>.Shared.Rent(size);
+            int size = (int)info.ChunkSizes[index];
 
-                    try
-                    {
-                        RandomAccess.Read(fh, compressed.AsSpan(0, size), info.ChunkOffsets[index]);
+            if (size > PackCodec.MaxStoredBytes(info.Codec, length))
+            {
+                throw new InvalidDataException($"page {page}: corrupt chunk {index}");
+            }
 
-                        if (!System.IO.Compression.BrotliDecoder.TryDecompress(compressed.AsSpan(0, size), dst, out int written) || written != length)
-                        {
-                            throw new InvalidDataException($"page {page}: corrupt chunk {index}");
-                        }
-                    }
-                    finally
-                    {
-                        ArrayPool<byte>.Shared.Return(compressed);
-                    }
+            var compressed = BufferPool.Rent<byte>(size);
 
-                    break;
-                }
-
-                case FileKind.Brotli:
-                {
-                    using var fs = new FileStream(fh, FileAccess.Read);
-                    fs.Position = FileHeaderSize;
-                    using var br = new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress);
-                    br.ReadExactly(dst);
-
-                    break;
-                }
+            try
+            {
+                RandomAccess.Read(fh, compressed.AsSpan(0, size), info.ChunkOffsets[index]);
+                // the decoding thread's codec context: chunks decode on any worker
+                PackCodec.ForThread(info.Codec).Decode(compressed.AsSpan(0, size), dst);
+                PackDecodeCounts.PageChunk(length);
+            }
+            catch (InvalidDataException e)
+            {
+                throw new InvalidDataException($"page {page}: corrupt chunk {index}", e);
+            }
+            finally
+            {
+                BufferPool.Return(compressed);
             }
 
             return length;
@@ -429,51 +425,32 @@ namespace ClassicUO.Assets
                     throw new InvalidDataException($"'{path}' is not a supported pack page");
                 }
 
-                info = new PageInfo { Kind = fileHeader.Kind };
+                // the codec is resolved once per page file; a Brotli page (revision 1.5 or older) is refused here
+                info = new PageInfo { Codec = PackCodec.OfFileKind(fileHeader.Kind, path) };
 
-                switch (fileHeader.Kind)
+                if (info.Codec == PackCodec.Raw)
                 {
-                    case FileKind.Raw:
-                        info.LogicalBytes = RandomAccess.GetLength(fh) - FileHeaderSize;
-                        info.ChunkBytes = 1 << 20;
+                    info.LogicalBytes = RandomAccess.GetLength(fh) - FileHeaderSize;
+                    info.ChunkBytes = 1 << 20;
+                }
+                else
+                {
+                    ChunkedHeader ch = default;
+                    RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref ch)), FileHeaderSize);
+                    ChunkedFile.Check(ch);
+                    info.LogicalBytes = (long)ch.LogicalBytes;
+                    info.ChunkBytes = (int)ch.ChunkBytes;
+                    info.ChunkSizes = new uint[ch.ChunkCount];
+                    long table = FileHeaderSize + ChunkedFile.HeaderBytes;
+                    RandomAccess.Read(fh, MemoryMarshal.AsBytes(info.ChunkSizes.AsSpan()), table);
+                    info.ChunkOffsets = new long[ch.ChunkCount];
+                    long offset = table + 4L * ch.ChunkCount;
 
-                        break;
-
-                    case FileKind.ChunkedBrotli:
+                    for (int i = 0; i < info.ChunkSizes.Length; i++)
                     {
-                        ChunkedHeader ch = default;
-                        RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref ch)), FileHeaderSize);
-                        info.LogicalBytes = (long)ch.LogicalBytes;
-                        info.ChunkBytes = (int)ch.ChunkBytes;
-                        info.ChunkSizes = new uint[ch.ChunkCount];
-                        long table = FileHeaderSize + ChunkedBrotli.HeaderBytes;
-                        RandomAccess.Read(fh, MemoryMarshal.AsBytes(info.ChunkSizes.AsSpan()), table);
-                        info.ChunkOffsets = new long[ch.ChunkCount];
-                        long offset = table + 4L * ch.ChunkCount;
-
-                        for (int i = 0; i < info.ChunkSizes.Length; i++)
-                        {
-                            info.ChunkOffsets[i] = offset;
-                            offset += info.ChunkSizes[i];
-                        }
-
-                        break;
+                        info.ChunkOffsets[i] = offset;
+                        offset += info.ChunkSizes[i];
                     }
-
-                    case FileKind.Brotli:
-                    {
-                        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                        fs.Position = FileHeaderSize;
-                        using var br = new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress);
-                        var header = StructIo.Read<PageHeader>(br);
-                        info.LogicalBytes = PageHeaderSize + header.DataBytes;
-                        info.ChunkBytes = (int)info.LogicalBytes;
-
-                        break;
-                    }
-
-                    default:
-                        throw new InvalidDataException($"'{path}': unknown kind {fileHeader.Kind}");
                 }
             }
 
@@ -502,7 +479,7 @@ namespace ClassicUO.Assets
 
         private sealed class PageInfo
         {
-            public ushort Kind;
+            public ushort Codec;
             public long LogicalBytes;
             public int ChunkBytes;
             public uint[] ChunkSizes;

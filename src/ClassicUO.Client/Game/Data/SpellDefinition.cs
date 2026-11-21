@@ -6,6 +6,7 @@ using System.Text;
 using ClassicUO.Game.Managers;
 using ClassicUO.Resources;
 using ClassicUO.Utility;
+using Uo.Buffers;
 
 namespace ClassicUO.Game.Data
 {

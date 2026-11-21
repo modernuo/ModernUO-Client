@@ -25,7 +25,7 @@ namespace ClassicUO.UnitTests.Assets
     public class TextPackTests
     {
         private const string UoDir = @"C:\Ultima Online Classic";
-        private const string DefaultPack = @"C:\Repositories\uo-packs\classic-1.0";
+        private const string DefaultPack = @"C:\Repositories\uo-packs\classic-1.6"; // revision 1.6: older packs are Brotli
 
         private static string TextPackDir()
         {
@@ -335,7 +335,7 @@ namespace ClassicUO.UnitTests.Assets
             clilocs.Load("enu");
             clilocs.Revision.Should().Be(r0 + 1);
 
-            clilocs.Reload();
+            clilocs.Load();
             clilocs.Revision.Should().Be(r0 + 2);
 
             clilocs.ClearResources();
@@ -489,7 +489,7 @@ namespace ClassicUO.UnitTests.Assets
                 var asciiPath = Path.Combine(tmp, "fonts.bin");
                 aw.Write(asciiPath, TextConst.MagicFontsAscii, 0);
 
-                // unicode font 0: page 0 good, page 1 malformed, page 2 corrupt Brotli, page 3 a 1 GiB raw size
+                // unicode font 0: page 0 good, page 1 malformed, page 2 corrupt zstd, page 3 a 1 GiB raw size
                 var glyphs = new UnicodeGlyph[256];
                 glyphs[65] = new UnicodeGlyph(0, 1, 8, 2, new byte[] { 0xFF, 0x81 });
                 var page = UnicodePageCodec.Encode(glyphs);
@@ -498,8 +498,8 @@ namespace ClassicUO.UnitTests.Assets
                 var uw = new RecordStoreWriter(TextConst.UnicodeSlots);
                 uw.Slots[0] = new StoreSlot { Record = (uint)uw.Add(page, (uint)page.Length, StoreConst.CodecRaw, 0, 0, 1) + 1 };
                 uw.Slots[1] = new StoreSlot { Record = (uint)uw.Add(malformed, (uint)malformed.Length, StoreConst.CodecRaw, 0, 1, 1) + 1 };
-                uw.Slots[2] = new StoreSlot { Record = (uint)uw.Add(new byte[] { 1, 2, 3, 4, 5 }, (uint)page.Length, StoreConst.CodecBrotli, 0, 2, 1) + 1 };
-                uw.Slots[3] = new StoreSlot { Record = (uint)uw.Add(new byte[] { 1, 2, 3 }, 1u << 30, StoreConst.CodecBrotli, 0, 3, 1) + 1 };
+                uw.Slots[2] = new StoreSlot { Record = (uint)uw.Add(new byte[] { 1, 2, 3, 4, 5 }, (uint)page.Length, StoreConst.CodecZstd, 0, 2, 1) + 1 };
+                uw.Slots[3] = new StoreSlot { Record = (uint)uw.Add(new byte[] { 1, 2, 3 }, 1u << 30, StoreConst.CodecZstd, 0, 3, 1) + 1 };
                 var uniPath = Path.Combine(tmp, "unifont.bin");
                 uw.Write(uniPath, TextConst.MagicFontsUnicode, 1);
 

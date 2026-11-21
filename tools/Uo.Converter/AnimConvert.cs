@@ -33,7 +33,7 @@ public sealed class AnimWorker : IDisposable
 public static class AnimConvert
 {
     public sealed record Stats(int Bodies, int WithFrames, int Aliased, int UopBodies, int DirRecords, int UniqueDirs, int Frames, int Packed, int ContentDupes,
-        int Pages, double Occupancy, long Bytes, long BytesBrotli, double DecodeSeconds, long InvalidMulBlocks, string Extra);
+        int Pages, double Occupancy, long Bytes, long BytesStored, double DecodeSeconds, long InvalidMulBlocks, string Extra);
 
     /// <summary>Bodies scanned: ClassicUO's initial index size; raised to cover every id named in the def files.</summary>
     public const int MinBodyCount = 2048;
@@ -595,11 +595,11 @@ public static class AnimConvert
             var palPath = Path.Combine(dir, AnimPaletteFile.FileName);
             AnimPaletteFile.Write(palPath, framePal.ToArray(), flat);
             extra += $"; indexed8: source palettes {srcPalInstances} ({srcPalIds.Count} distinct by content), canonical after dedupe {palList.Count}, overflow (>255 colours) {overflow}, " +
-                     $"palettes.bin {new FileInfo(palPath).Length} B ({flat.Length * 2} B palettes); mips sidecar raw {atlas.MipBytes} B, file {atlas.MipBytesBrotli} B; " +
+                     $"palettes.bin {new FileInfo(palPath).Length} B ({flat.Length * 2} B palettes); mips sidecar raw {atlas.MipBytes} B, file {atlas.MipBytesStored} B; " +
                      $"self-check vs B5G5R5A1 mip0: {atlas.IndexedMismatch} mismatching texels";
         }
         return new Stats(bodyCount, withFrames, aliased, uopBodies, dirRecords, jobs.Count, frameArr.Length, packed, dupes,
-            atlas.PageCount, atlas.Occupancy, atlas.PageBytes, atlas.PageBytesBrotli, decodeSw.Elapsed.TotalSeconds, InvalidBlocks, extra);
+            atlas.PageCount, atlas.Occupancy, atlas.PageBytes, atlas.PageBytesStored, decodeSw.Elapsed.TotalSeconds, InvalidBlocks, extra);
     }
 
     /// <summary>Console notes: converted bodies whose drawn groups follow their target's AnimationSequence, and a ModernUO bodyTable.cfg line per extra.</summary>
@@ -806,7 +806,7 @@ public sealed class StreamingAtlas
     private readonly List<int> _closed = new();
     private int _cur, _prev = -1;
     private long _used, _spriteArea;
-    public long PageBytes, PageBytesBrotli, MipBytes, MipBytesBrotli, IndexedMismatch;
+    public long PageBytes, PageBytesStored, MipBytes, MipBytesStored, IndexedMismatch;
     public int PageCount => _pages.Count;
     public int Size => S;
     public int Mips => _mips;
@@ -884,7 +884,7 @@ public sealed class StreamingAtlas
         };
         AtlasPage.Write(path, S, _mips, format, data, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
         Interlocked.Add(ref PageBytes, data.Length + 32);
-        Interlocked.Add(ref PageBytesBrotli, new FileInfo(path).Length);
+        Interlocked.Add(ref PageBytesStored, new FileInfo(path).Length);
     }
 
     private void WriteIndexed(int p, byte[] chain, string path)
@@ -904,12 +904,12 @@ public sealed class StreamingAtlas
         if (bad != 0) Interlocked.Add(ref IndexedMismatch, bad);
         AtlasPage.Write(path, S, 1, PixelFormat.Indexed8, idx, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
         Interlocked.Add(ref PageBytes, idx.Length + 32);
-        Interlocked.Add(ref PageBytesBrotli, new FileInfo(path).Length);
+        Interlocked.Add(ref PageBytesStored, new FileInfo(path).Length);
         if (!ConvertOptions.IndexedMips || _mips < 2) return;
         var mips = PageCodec.EncodeB5G5R5A1(chain.AsSpan(AtlasPage.MipBytes(S, 0)), S / 2, _mips - 1);
         var mp = AnimConst.MipsPath(_dir, p);
         AtlasPage.Write(mp, S / 2, _mips - 1, PixelFormat.B5G5R5A1, mips, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
         Interlocked.Add(ref MipBytes, mips.Length + 32);
-        Interlocked.Add(ref MipBytesBrotli, new FileInfo(mp).Length);
+        Interlocked.Add(ref MipBytesStored, new FileInfo(mp).Length);
     }
 }

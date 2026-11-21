@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Diagnostics;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework.Graphics;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Texmaps
 {
@@ -16,7 +17,8 @@ namespace ClassicUO.Renderer.Texmaps
         public Texmap(TexmapsLoader texmapsLoader, GraphicsDevice device)
         {
             _texmapsLoader = texmapsLoader;
-            _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
+            int page = TextureAtlas.PageSize(2048, 512);
+            _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[texmapsLoader.Count];
             _decoder = new FirstSightDecoder("texmap", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
                 idx => _texmapsLoader.Exists((int)idx) ? DecodeBudget.PooledBytes(_texmapsLoader.PackSpriteEntries[idx].OrigW * _texmapsLoader.PackSpriteEntries[idx].OrigH) : 0L);
@@ -49,6 +51,7 @@ namespace ClassicUO.Renderer.Texmaps
                         texmapInfo.Height,
                         out spriteInfo.UV
                     );
+                    _lru?.Uploaded(spriteInfo.Texture, idx, texmapInfo.Width, texmapInfo.Height);
                 }
 
                 Arts.Art.FrameSyncTicks += Stopwatch.GetTimestamp() - t0;
@@ -88,7 +91,7 @@ namespace ClassicUO.Renderer.Texmaps
             }
         }
 
-        // worker thread: the loader's sprite table (immutable after Load), the pack pages (thread-safe), ArrayPool
+        // worker thread: the loader's sprite table (immutable after Load), the pack pages (thread-safe), the buffer pools
         private bool DecodeOnWorker(FirstSightDecoder.Job job)
         {
             if (!_texmapsLoader.Exists((int)job.Index))
@@ -98,7 +101,7 @@ namespace ClassicUO.Renderer.Texmaps
 
             ref readonly var sprite = ref _texmapsLoader.PackSpriteEntries[job.Index];
             int count = sprite.OrigW * sprite.OrigH;
-            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            job.Pixels = BufferPool.RentShared<uint>(count);
             PackSprites.DecodeColor(_texmapsLoader.FileManager.Pack.Tex, in sprite, job.Pixels);
             job.Width = sprite.OrigW;
             job.Height = sprite.OrigH;
@@ -118,7 +121,46 @@ namespace ClassicUO.Renderer.Texmaps
 
             var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
             spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
+            _lru?.Uploaded(spriteInfo.Texture, job.Index, job.Width, job.Height);
             Arts.Art.FrameAsyncUploads++;
+        }
+
+        // ---- atlas_lru: the texmap atlas's page LRU ----
+
+        private AtlasPageLru _lru;
+
+        public AtlasPageLru Lru => _lru;
+
+        public long AtlasPageBytes => _atlas.PageBytes;
+
+        /// <summary>atlas_lru on: call before the first sprite loads.</summary>
+        public void EnableLru(Animations.AtlasLruPolicy policy)
+        {
+            _atlas.TrackPages = true;
+            _lru = new AtlasPageLru("texmap", _atlas, _atlas.PageBytes, policy, DropPage);
+        }
+
+        /// <summary>Once per frame before anything is drawn (atlas_lru on): frees pages above the budget.</summary>
+        public void TickLru(long nowMs, bool unfocused) => _lru?.Tick(nowMs, unfocused);
+
+        // the entries on a page about to be freed load again on their next lookup
+        private void DropPage(Texture2D page, System.Collections.Generic.List<uint> keys)
+        {
+            if (keys == null)
+            {
+                return;
+            }
+
+            foreach (uint idx in keys)
+            {
+                ref var spriteInfo = ref _spriteInfos[idx];
+
+                if (ReferenceEquals(spriteInfo.Texture, page))
+                {
+                    _lru.Forgot(idx, spriteInfo.UV.Width, spriteInfo.UV.Height);
+                    spriteInfo = default;
+                }
+            }
         }
     }
 }

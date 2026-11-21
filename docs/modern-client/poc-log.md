@@ -8018,6 +8018,49 @@ region 1.00 vs 2.45 ms, art chunk 0.55 vs 1.83 ms, anim chunk 0.26 vs 0.98 ms, a
 0.23 vs 0.57 ms (q9), small raw gump record (7 KB) zstd 19 10.7 us (zstd 9 7.8 us) vs copy 0.1 us. zstd 19 is smaller than
 Brotli as built on every set. Confirms the busy-machine ranking.
 
+## 2026-11-19 buffer-pools (bg/buffer-pools): one buffer pool facade (Uo.Buffers), ModernUO ref collections, bounded LOH retention
+
+Base 519f6a4e3, poc ecdf36f42 merged. Plan and microbenchmark: cuo-poc-state/surveys/buffer-pools-2026-11-19.md. Owner go
+2026-11-19 (decisions in briefs/buffer-pools-2.md).
+
+What changed:
+- `src/Uo.Buffers` (new, dependency-free): `BufferPool` facade. Same-thread rents up to 64 KiB use the calling thread's
+  `STArrayPool` (ModernUO port); cross-thread rents up to 64 KiB use `ArrayPool.Shared`; everything above 64 KiB goes to
+  `LargeBufferPool` (4 size classes per octave, at most 48 MiB of free buffers, LRU eviction, idle trim after 30 s, counters).
+  `CUO_POOL_AUDIT=1` (dev) logs double, foreign and wrong-thread returns with the stack.
+- ModernUO copies (licence: THIRD-PARTY-NOTICES.md): `PooledRefList` replaces `PooledList`, `ValueStringBuilder` replaces the
+  client's (ToString no longer disposes; every site disposes after ToString), `PooledRefQueue` added. Coordinator change: their
+  rents go through the facade, so an oversized collection lands in the large pool, never in a per-thread pool. The packet code is
+  not edited (network rework); a csproj alias points its `ValueStringBuilder` at the copy.
+- Conversions: pack/asset decode scratch, PackPages chunk buffers (own free stack removed), MapLoader region buffers (4 spares
+  removed; prefetches not adopted within 10 s or beyond 8 are dropped, all dropped on LoadMap), Uo.Render region parse (H4: two
+  LOH arrays of garbage per region load now pooled), bake job arrays trimmed above 2048 on return (M4), renderer decode outputs
+  (`RentShared`), LogFile, world map cursor, Gpu item cache growth.
+- `gump_decode_budget` (default off, `CUO_GUMP_BUDGET_CHECK`): gump worker decodes counted in their own 32 MiB budget (H5).
+- Object pools: QueuedPool capped (RenderedText clears its text on return), FirstSightDecoder job stack capped at 256,
+  `DynamicTileIndex.EntryPool` capped at 4 MiB in all; counters on the `[bufpools]` and new `[objpools]` log lines.
+
+Verification (part 1 at 8e98e1d49, NativeAOT dev builds base 519f6a4e3 / new): gate Gpu with the audit, the gump checker and
+the switch on bench2-000039 PASS; golden bench6-000053 PASS (0 px); gate Legacy bench3-000030 failed only on
+`[mobile-cache-check]` dead-mobile lines (fixed on poc in ecdf36f42, merged). Alloc bench5-000043 (Gpu) / 000044 (Legacy),
+arms base, new, gumpon: 72 of 84 windows have the same main-thread p50; the 12 others differ by one step of the steady idle
+allocation (0/264/536/704/824/944 B), which also changes between rounds of the base arm (tour ls_idle base 536 then 704); traced
+separately (alloc-counters). GC per session (tour, 60 s): 7 collections / 2 gen2 (Gpu) and 5 / 2 (Legacy) in every arm.
+
+Large pool in the tour scene (teleports, Gpu, new arm): 460-590 rents, about half hits, 150-180 MiB allocated over the run,
+outstanding high-water 95-110 MiB, free 3-14 MiB of the 48 MiB budget at the 60 s lines; idle ls scenes: high-water 48-51 MiB,
+60-89 MiB allocated. Per-thread pools: 24 pools, 0.6-1.2 MiB free in all.
+
+Memory (per client): large pool at most 48 MiB of free buffers (measured 3-17 MiB held at the stats lines); per-thread pools
+about 1 MiB in all; gump budget 32 MiB in flight when on; tile entry pool at most 4 MiB. Removed: MapLoader's 4 spare region
+buffers (up to 13 MiB), PackPages' 4 spare chunks (4 MiB). Benefit: LOH retention has a known ceiling (ArrayPool.Shared kept the
+whole burst peak until its age trim), region parses stop producing LOH garbage, and oversized ref collections cannot pin memory
+per thread.
+
+Second part (this round): ref collections through the facade (test: a >64 KiB rent from each lands in the large pool); client
+migrated to the copies; first PooledRefList users outside the fonts (custom house stair delete); facade sites LogFile, world map
+cursor, Gpu item cache; object-pool counters. Jobs for this head: see the handoff (gates both renderers, golden, alloc).
+
 ## 2026-11-19 meshlayer-growth (bg/meshlayer-growth): pooled chunks no longer keep their high-water mesh arrays
 
 Known issue: Legacy `MeshLayer` arrays keep growing in reused chunks. Re-measured on a NativeAOT dev build of 519f6a4e3 plus a
@@ -8096,6 +8139,333 @@ Commits on `bg/worldmap-audit` after 13a60e10f, code first:
 - **P-8 (3254b1154), owner decision.** The facet texture is Bgra5551: the task converts the RGBA8 image (nearest 5-bit level, alpha from 128 up) before posting, so the upload and the handover image are half size and nothing runs per frame. Chosen once at device creation: Bgra5551 unless FNA3D runs on SDL_GPU without B5G5R5A1 sampling support (then RGBA8, as before). The upload line names the format and the gump rectangle.
 - **Verification.** Dev and `-p:CuoDevTools=false` client builds OK. Dev suite 4271 pass + 6 skipped. Dev `-p:CuoDevTools=false` suite 4208 pass + 6 skipped. Jobs on a dev JIT build of 3254b1154 (`worldmap-audit/bin2`; `measure/worldmap-audit/`): gate2-gpu bench-000952 / gate2-legacy bench-000953 (the gate above on the new binary; "WMAUDIT PASS"), alloc2 bench-000954 (base, branch, branch with `worldmap_idle_loop` on; both renderers), pixel-p8 bench-000955 (base vs branch shots with the map open: 0 px differ outside the map gump, at most 4 per channel inside; "P8 PIXEL PASS"), idle-count bench-000956 (updates/s with the map open, switch off vs on, both checkers, mismatches 0; "IDLE COUNT PASS"). The first-round jobs bench-000946/947/948 (c7b75d640) never started; they were cancelled as superseded by 952-954, which run the same scripts on a binary containing those commits. **Results (bench-000952..956, 3254b1154).** gate2 (952 Gpu, 953 Legacy) failed only on two harness rules; part 2 had no failures on either renderer. Part 3 counted "7 texture uploads (expected 4..6)": 7 decodes, 7 uploads, 0 dropped, one upload per open or facet change (5 opens, 2 changes). The closes 3 s and 1 s after an open no longer land mid-load (a load takes about 1 s), the same 7 as bench-000390/391. Part 4 counted the intended warning for the CSV line "1,2" as an exception line: `world map markers: ...wmaudit.csv line 5: Arg_IndexOutOfRangeException` is the exception message (the type name under the trimmed resource keys), at Warning level, without a stack trace. The rules are fixed: `measure/worldmap-audit/part3.sh` (a copy of worldmap-texture's) allows 4..7 uploads, with uploads <= decodes. part4.sh requires exactly the four expected bad-line warnings (CSV lines 4 and 5, UOAM lines 3 and 4), twice each, at Warning level, and fails on any other exception line, a stack trace, or a marker line at another level. Both runs' logs pass the new rules offline. alloc2 (954, dev JIT, checkers off; arms base / branch / branch with `worldmap_idle_loop` on): the arms match within window noise and gc0/1/2 are 0 in every window. Map-open window: Gpu 1261 / 1241 / 1261 B/frame, Legacy 630 / 630 / 1261. stand: Gpu 1217-1261, Legacy 820-1261. closed: 558-790. Each window holds only 7-23 presented frames (the loop presents on change), so these absolute figures cannot be compared with perf-alloc-3b's NativeAOT numbers; they compare the arms. pixel-p8 (955) failed 4 comparisons, all from the script. The `_screen` shots are backbuffer pixels at UI scale 1.5 (960x720 against the 640x480 `_ui` shot), and the gump rectangle from the log is in UI coordinates. Every differing pixel lies inside the scaled gump (bbox x 155..743, y 155..719, within 150..750), with a max channel diff of 4. In the `_ui` shots, 42,485 px differ inside the gump (max 4) and 0 outside. One branch world-layer shot (Gpu b4 map_b) differs from b2 by 979 px of the player sprite (an idle fidget frame). Its other comparisons are equal, and the world layer does not contain the gump. `p8shots/wm-pixel-cmp.py` now scales the rectangle for `_screen` shots and only notes the world and light layers; on bench-000955's shots all 8 comparisons pass. idle-count (956) PASS: `[worldmap-idle-check]` mismatches are 0 in every window. With the map open and the switch off: 62.9-63.5 updates/s (the loop busy on WorldMap about 315 times per 5 s). With the switch on: 9.2-12.6 updates/s (idle_updates/s 4.0-7.8); late_image, late_query and state_after_idle are 0. With the map closed, both settle at about 7-10 updates/s. With the switch on, `[loop-idle-check]` reported 2-6 `untracked_send` per 5 s (packet 0xF0, the party/guild position query, gap 250.x ms). The query's 250 ms deadline equals `event_loop_idle_max_wait_ms`, so that wait counts as a cap wait, and the checker recorded no deadline for it. The query goes out on time (late_query 0). Checker fixed in 0dae76dfd: a cap wake records the deadline, with a test for both switch states. The job's rule had not read `[loop-idle-check]`; idle-count2 fails on 0xF0 untracked sends or WorldMap late_due. One `untracked_send` 0x06 at login in every arm (both switch states) predates this branch and is not world-map work. **Round 3** (2c4d39b5d merges poc ecdf36f42; 0dae76dfd adds the checker fix): dev suite 4276 pass + 6 skipped; `-p:CuoDevTools=false` suite 4208 pass + 6 skipped; both client builds OK. Jobs on a dev JIT build of 0dae76dfd (`worldmap-audit/bin3`): gate3-gpu bench-000959, gate3-legacy bench-000960 ("WMAUDIT PASS"), pixel-p8b bench-000961 ("P8 PIXEL PASS"), idle-count2 bench-000962 ("IDLE COUNT PASS"). Results: pending at the time of writing.
 - **Costs.** None per frame. Memory: the facet texture halves (Felucca/Trammel 117.5 -> 58.8 MB per client while the map is open); the first build no longer holds a second 117.5 MB decode buffer.
+
+## 2026-11-19 atlas-lru (bg/atlas-lru): anim_atlas_lru validated in busy play; `atlas_lru` for Art/Gump/Texmap/Light/glyph atlases (default off)
+
+Base 519f6a4e3, merged poc ecdf36f42. Owner 2026-11-19: test the anim LRU in normal and busy play, extend it to the
+other atlases, fix the reload leak.
+
+**Reload leak (H3):** the Options "reload our assets" button is deleted with Art/Gump/Sound/Cliloc Reload (rule: the
+client assumes no client file changes at runtime), so no atlas pages are left behind.
+
+**Phase 1, anim_atlas_lru results** (NativeAOT dev 3c281b06a, switch and CUO_ANIM_LRU_CHECK on):
+- busy-small (bench-000938; 2048^2 pages = 16 MiB, budget 32 MiB = 2 pages, ceiling 4, min age 5 s; large scene,
+  lswalk, bodies wrap x2, Britain walk, glide, teleports): 0 checker mismatches (89.6 M uses, 828 reloads compared in
+  Gpu). Final Gpu: pages 5 (80 MiB), evicted 9 pages / 943 directions, reloads 505 (thrash 225, async 323, blink frames
+  144); Legacy: pages 6, evicted 14 / 2077, reloads 1553 (thrash 798, async 980, blink frames 313), grows 0.
+  - Pages above the ceiling: the ceiling bounds the budget, not residency. A page is evicted only when not drawn for the
+    min age and not the open page; in the large scene and the bodies wrap every resident page is drawn within 5 s, so
+    residency = the last 5 s's working set + the open page (by design: evicting a page in use reloads it every frame).
+  - Thrash (45 %, Gpu): mostly the forced budget (a 2-page budget against a 5-6 page working set), made worse by a bug:
+    grows stayed 0. `MemoryAllowsGrowth` subtracted the machine-wide memory load (19.5 GiB) from
+    `TotalAvailableMemoryBytes`, which is the 8 GiB heap limit under `GCHeapHardLimit` (every job sets one), so growth
+    was always refused. Fixed (62f2eddd5): headroom = high-load threshold minus load (both physical). No thrash loop:
+    evicted pages rose 14 in 5.5 min, not every 5 s line.
+  - Blink frames: frames in which an evicted direction reloading on a worker was asked for before its upload (upper
+    bound: dimension queries count too). Legacy: 313 in ~5.5 min (~1-2 % of frames, each a mobile or layer missing for
+    one or a few frames, only under the forced budget). Gpu: the world draws from the pack pages, so anim atlas blinks
+    are not visible there (only picking/dimensions use it).
+- busy-default (bench-000939, 256 MiB): no evictions; peak 4 pages (256 MiB) Legacy, 3 Gpu.
+- golden (bench6-000051) base vs switch on (default budget): GOLDEN SAME, 0 px. gate-gpu (bench2-000038): ALRU PASS.
+- gate-legacy (bench3-000029) failed only on `[mobile-cache-check] frame cache of 0x0006D6F0 used by 0x8006D6F0`
+  (the dead-bit re-key false mismatch fixed on poc in ecdf36f42); anim LRU checker 0 failures. Rerun after the merge.
+- pick (bench6-000052) failed in the harness: the plain `pickscan:8x6` mode is gone; the job now runs
+  `pickscan:8x6:pick_records` on both renderers. Rerun.
+- alloc (bench5-000041/42, base 519f6a4e3 / new / newon): main-thread p50 B/frame equal in every window of both
+  renderers (536-824 B; one Legacy ls_idle window base 704 vs new 536). Window averages differ only by one-off spikes.
+  The table has no per-update column.
+
+**Phase 2, `atlas_lru`** (approved 2026-11-19; default off):
+- One policy type (`AtlasLruPolicy`, the renamed anim policy) and `AtlasPageLru` per atlas: Art 256/128/1024 MiB
+  (budget/floor/ceiling; 64 MiB pages), Gump 192/128/768 (64 MiB), Texmap 64/32/256, Light 32/16/64, font glyphs
+  32/16/128 (16 MiB pages). Same times as the anim LRU (min age 45 s, thrash window 60 s, shrink 180 s / 45 s unfocused).
+- Pages are touched per draw call (batcher InternalDraw/DrawDirectIndexed, Gpu Emit: one type test per draw call) and
+  freed only in the per-frame Tick before drawing. The owner forgets the entries on a freed page (sprite infos cleared;
+  picker masks and art bounds stay; PackSpriteMap unregistered); they load again on their next lookup.
+- Cross-frame holders: `AtlasPageClock.FreedEpoch` (any freed page) replaces Animations.AtlasEpoch for
+  MobileFrameCache's Legacy replays; a Legacy chunk mesh rebuilds when it holds a freed page (checked once per freed-page
+  event; the Gpu world doesn't draw meshes); Map's art waits rescan (generation includes the epoch); RenderedText's quad
+  runs and recorded UI passes already reject disposed pages.
+- M2: the glyph atlas drops the `_cache`/`_coloredCache` entries of a freed page (and blank coloured entries), so the
+  coloured-glyph cache is bounded by the resident pages.
+- `CUO_ATLAS_LRU_CHECK`: a reloaded sprite has its size before eviction; no batcher draw names a freed page.
+  Developer overrides: CUO_ATLAS_LRU=1|0, CUO_ATLAS_LRU_BUDGET_MB/_FLOOR_MB/_CEILING_MB/_MIN_AGE_S, CUO_ATLAS_PAGE.
+- TextureAtlas.Dispose no longer throws for an atlas that never opened a page.
+- Memory: switch off, none. Switch on, it caps what was unbounded (the atlases only grew); per-page tag lists ~4 B per
+  sprite; evicted-key maps pruned past the thrash window. Unit tests: 12 new (policy over fake pages, thrash grow,
+  checker, switch states, Dispose).
+- Phase 2 jobs: see the atlas-lru handoff (gates off/on, forced small busy, golden off 0 px, alloc, pick).
+
+**Phase 2 results** (NativeAOT dev e91239169; base ecdf36f42):
+- Switches off: gate-b Legacy (bench4-000008) and gate-pool Gpu (bench2-000041) ATLAS OFF PASS; golden base vs new
+  (bench6-000055) GOLDEN SAME, 0 px, and the forced-small arm (atlas + anim) matched too.
+- Gates with the switches on, forced small (bench3-000033 Legacy, bench2-000040 Gpu): every gate check passed, 0
+  `[atlas-lru-check]` mismatches, but 0 pages evicted, so the eviction path was not exercised. Cause: the gate scenes
+  are one client per spot, and each atlas fit on one page (art stays on 1024^2 pages, its smallest size). The atlas
+  never evicts its open page, so a 1-page working set can't evict whatever the budget. The env reached the client (the
+  state lines show 4 MiB pages and the forced budgets). Fix in the jobs, not the code: 512^2 pages for texmap, light and
+  font, a 1-page budget, floor and ceiling, 2 s min age, plus a part 3 per gate. Part 3 travels on the lane's facet
+  (Minoc, Vesper, Trinsic, then Minoc and Vesper again) and must evict pages and compare reloads. Rerun as
+  bench3-000039 / bench2-000047.
+- pick (bench6-000056): Gpu passed (3 scans, 0 different; art evicted 1 page, 24 reloads). Legacy did not run: the
+  largescene lock timed out after 1500 s behind other lanes' jobs (harness). Rerun as bench6-000058, now with the
+  atlas checker summary per run.
+- Busy, forced small (bench-000966): art evicted pages in both renderers (Legacy 5 pages / 1284 sprites, 364 reloads;
+  Gpu 7 / 1904, 1183 reloads), 0 checker mismatches. Every art reload counted as thrash, because the 5 s min age is
+  well inside the 60 s window while travelling. Budget grew 2 to 4 (ceiling). Gump, texmap, light and font never
+  evicted (each at most 2 pages, within their budget). Anim, same run: Legacy evicted 13 pages, 1402 reloads (thrash
+  268, blink frames 258); Gpu evicted 9 pages, 230 reloads (thrash 190, blink frames 19).
+- Busy, default budgets (bench-000967): no atlas or anim evictions. Peak use: art 1 page (64 MiB), gump 1 (64), texmap
+  1 (16), font 1 (16), light 0. Each budget shrank once, after 180 s quiet, toward its floor.
+- Anim grow fix (62f2eddd5), busy-small rerun bench-000963 vs bench-000938: grows 0 -> 2 (budget 2 -> 4 pages, the
+  ceiling) in both renderers. Legacy thrash 798 -> 242, reloads 1553 -> 1386, blink frames 313 -> 219. Gpu thrash
+  225 -> 199, reloads 505 -> 404, blink frames 144 -> 60. 0 checker mismatches. Anim gate rerun bench3-000032: ALRU
+  PASS, no anim evictions in the gate scenes, only the 0-mismatch `[mobile-cache-check]` summaries.
+- Alloc (bench5-000046 Legacy, bench5-000047 Gpu; base / new switches off / newon atlas_lru on at default): main-thread
+  p50 B/frame 0 in every window of every arm. The one exception is a Legacy corpses window at 264 B (newon), inside
+  the known idle quantum. Window averages and p95 differ only by single-window spikes, which hit every arm (base
+  worldmap 5080, new town_idle 5083, newon gumps 8018). GC counts are equal.
+
+## 2026-11-20 water-depth (bg/water-depth): `wet_surface_depth`, mobiles under a water surface (default off)
+
+Owner go 2026-11-20 for both parts of the water-feet fix (investigation: cuo-poc-state measure/quiet-next/water-feet/README.md).
+Case: Felucca 1675 1705, water statics (Background|Impassable|Wet, height 0) at z -5 over sea-bed land at z -15; a plain
+`[go` puts the player at z -15. Key mode drew a V-cut body with floating feet; depth_model hid the feet but put the
+waterline 7 px above the feet instead of ~40 px (wet flats got FlatDrop, 33 px).
+
+- Switch `wet_surface_depth` (default off; `CUO_WET_SURFACE_DEPTH=1|0` dev override; checker `CUO_WET_DEPTH_CHECK=1` logs
+  every mobile found under a wet surface with the rule it got, plus a 5 s summary). Game/Scenes/WetSurfaceDepth.
+- Part 1, depth_model on, both renderers: wet flats carry `SpriteInstance.ZGeoWet` (Corners bit 24, baked with the shape
+  bits whenever depth_model is on, so a flip needs no rebake); with the frame's `FrameUniforms.DepthModelWet` bit the GEO
+  VS drops them by `GeoDepth.WetDrop` = 0.1 instead of FlatDrop 1.5. Legacy: LegacyGeoDepth.Tile drops WetDrop when the
+  caller passes the bit (WetMask; geo chunk meshes rebuild on a flip). Waterline (unit test, anchor column): 10 z under
+  38 px above the centre row (true 40; was 7), 5 z under 17 px (true 20; was none). A mobile at the water's own z still
+  wins on its own tile's front faces by MobileBias; outside them, its rows more than 2.2 px below its centre row lose to
+  same-z static water ahead (FlatDrop kept 33 px). Land water keeps FlatDrop (no bit on land: a mobile is never under it,
+  and stretched land has no spare Corners bits). Only vsgeo shaders change.
+- Part 2, depth_model off (key mode, both renderers): when the mobile's tile has a wet static (or wet land) above its z,
+  every strip takes + 1 (the upper strip's key), so the water ahead hides the feet with the legs; the V-cut stays.
+  The tile scan runs once per position / tile-content change (cached in MobileFrameCache); its result is part of the
+  select key, so recorded strips follow a flip.
+- Item and captured-static geo bits widen to ushort (ItemSpriteInput.TileGeoBits, DynamicSprite.GeoBits; the
+  DynamicSprite fields were reordered so its size is unchanged).
+- Shadow on the water over a submerged mobile (depth_model on): shadows keep the key fallback; with WetDrop the water's
+  depth is above the shadow's key, so it is expected hidden with the switch on (see shots).
+- Driver command `wetdepth on|off`. Unit tests: 21 (WetSurfaceDepthTests: bits, bake, GeoTile, Gpu waterline maths,
+  same-z mobile wins, Legacy decode with the switch on/off, key-mode scan by switch x depth_model x height, strips + 1,
+  seated unchanged, select key).
+- Memory: none per client beyond ~24 B per MobileFrameCache. Cost: one per-vertex branch in the GEO VS; a cached scan per
+  mobile in key mode with the switch on; nothing with it off.
+
+## 2026-11-20 buffer-pools: LargeBufferPool budget 112 MiB, idle trim 180 s with a 16 MiB floor
+
+Owner decision. The large pool's default free-buffer budget is 112 MiB (was 48 MiB): the measured teleport peak is 95-110 MiB
+outstanding, so a budget of that size lets a teleport run without LOH reallocation. `TrimIdle` now drops buffers idle for 180 s
+(was 30 s; still checked every 5 s) and never goes below a 16 MiB floor of free buffers (about one region set), trimming size
+classes that never had a hit first. Memory cost: up to ~64 MiB more held per client than before; the later memory-cap setting
+scales it (Low uses less). No env override exists for the budget (SetBudget is the code hook). Tests: floor respected, defaults.
+
+## 2026-11-20 buffer-pools round 4: LargeBufferPool per-use caps instead of the flat 112 MiB
+
+Owner decision (supersedes the 112 MiB budget): the flat budget mixed outstanding buffers (mostly resident regions, 24 per
+region cache x 1.2-3.3 MB) with free retention. The large pool now keeps free buffers per use (`LargeUse`), each under a cap
+the client derives at startup (`LargePoolCaps`, logged as `[bufpools] caps`; 24-core box):
+- General (scoped scratch, worker decode outputs): DecodeBudget.Shared 16 MiB (+ DecodeBudget.Gumps 32 MiB with
+  gump_decode_budget) + 1 MiB compressed input x 19 scratch threads (main 2, Uo.Render workers clamp(cores/2-1,2,8) = 8,
+  MapLoader MaxPending 8 + 1 sync load) = 35 MiB (67 MiB). Uo.Render page decoders keep their own buffers (not pooled).
+- Region (logical region buffers): one teleport's swap in both caches, 2 x 4 = 8 buffers, at most 32 MiB. A cache's loaded
+  area (GPU view + prefetch ring; client PrefetchRadius 104 tiles + one block) is under 512 tiles, so at most 2 x 2 regions.
+  A region rent may take a free buffer up to two classes (25 % each) larger, since region sizes spread over several classes.
+  Not idle-trimmed: it replaces the 16 MiB floor.
+- Page (PackPages chunk buffers): 3 lanes x 2 decodes in flight = 6 chunks, 6 MiB.
+Ordering: both region caches load before they evict, by design (MapLoader prefetches up to 8 regions ahead and evicts on
+adoption; ChunkStore evicts regions idle 120 frames, every 64 frames, and bake jobs pin theirs), so evicting first is not
+possible without changing the caches; the Region cap keeps exactly the buffers one teleport's evictions return for the next
+teleport. The first loads after login (caches filling up to 24 regions each) always miss: they are outstanding growth, not
+pool misses. Counters: `[bufpools]` lines print per use rents/hits/misses/allocated, outstanding and free count/MB with
+high-waters, cap, drops and evictions; FrameStats also logs them at each teleport (map change or a jump over 32 tiles) and
+5 s after it. Tests: per-use isolation, region count cap, region fit, idle trim keeps Region, facade with use, cap derivation.
+## 2026-11-20 zstd-pack: pack revision classic-1.6, Brotli -> BCL zstd 19 (bg/zstd-pack)
+
+Owner go 2026-11-20. Base bg/buffer-pools f06578c21. Survey: cuo-poc-state/surveys/zstd-pack-2026-11-20.md.
+
+- **Format.** The codec is pack data: `FileHeader.Kind` 3 = chunked zstd (pages 1 MiB chunks; a region is one chunk),
+  `StoreRecord.Codec` 2 = zstd. Level 19, no dictionaries, content size in each frame. Kinds 1/2 and codec 1 (Brotli)
+  are retired: every reader refuses them and `PackAssets.Open` checks `art/page_0000.bin` at startup, with "... pack
+  revision older than 1.6 ... Convert the client again with Uo.Converter." Small run-length gump records are now
+  compressed too (3,915 small; 44 records kept raw where zstd does not shrink them).
+- **One seam.** `Uo.Pack.PackCodec`: `OfFileKind`, `Check`, `MaxStoredBytes`, `Create` (per worker), `ForThread`
+  ([ThreadStatic], for record stores, page chunks, region parse). Loaders hold no codec branches.
+  `ChunkedBrotli*` became `ChunkedFile`/`ChunkedStream`/`ChunkedDecoder` with a decoder per worker. Brotli is gone from
+  `src/` (the Kind 1 page path and its 1 MiB per-PageJob buffer are deleted, not pooled).
+- **Decision: the client requires 1.6** (no Brotli decoder kept). 1.5 stays published and immutable for 1.5 binaries;
+  the coordinator flips CURRENT after the gates pass and once no queued job runs a pre-1.6 binary on CURRENT.
+- **Pack.** `uo-packs/classic-1.6` published (converted in scratch, moved in, `--verify-only` all checks passed;
+  CURRENT untouched). 1,174.9 -> 1,112.3 MiB (-62.5 MiB, -5.3 %): art -8 %, tex -9 %, anim -4 %, map -13 %, gumps
+  58.2 -> 37.0 MiB, multimap -10 %, text/audio unchanged (raw by design). Conversion (busy machine, 24 threads):
+  230 s, peak working set 3.3 GB (anims stage); `--zstd-level 9` for comparison 130 s, 2.6 GB, 1,173.4 MiB.
+- **AOT.** zstd is statically linked on win-x64 (built), linux-x64 and osx-arm64 (runtime packs: `libzstd.a`, linked
+  by the ILCompiler Unix targets unless `UseSystemZstd`). Exe (win-x64 dev) 19,937,280 -> 19,439,104 B (-498 KB:
+  Brotli no longer linked).
+- **Memory.** A zstd context is ~80 KiB native, reused; decodes allocate 0 managed bytes (tests). A Brotli decode held
+  ~1 MiB transient per decode. A streaming zstd decode would grow a context to ~1.2 MiB, so the client always decodes
+  whole frames into exact-size buffers. Net per client: about -1 MiB per PageJob (buffer deleted) plus ~80 KiB per
+  decoding thread or chunk worker (about 2.5 MB worst case with 2x8 chunk workers and ~16 decoding pool threads).
+- **Verification.** Release builds both variants OK; unit tests 4340 pass + 6 skipped; converter tests 141 + 1
+  skipped. New tests: the seam, per-kind round trips, raw fallback, refusal of Brotli files/records/packs, 0-alloc
+  decodes. Jobs (pending at hand-off): bench-000975 gate-gpu, 000976 gate-legacy, 000977 golden (1.5 base vs 1.6 new,
+  0 px expected), 000978/000979 alloc, 000980/000981 pop-in/settle counts, 000982 codec sampling profile (phase-1 item
+  1). Parked: measure/zstd-pack/job-timing-PARKED.sh.
+
+### 2026-11-20 zstd-pack round 2: profile explained, decode counts, owner questions
+
+Merged poc/modern-client 1bf5fef77 (Gump.cs conflict: buffer-pools' decoder helpers kept, atlas-lru's Reload deletion kept).
+New commit 0caffd884 counts decoded units per reader kind (`[pack] decodes: page chunks, chunked file bodies, chunked
+spans, records`, logged at plan done and exit; one interlocked add per unit). Base arm for jobs: c48ac2538, detached
+(f06578c21 + poc 1bf5fef77 + the same counters, measure/zstd-pack/base-decode-counts.patch).
+
+**bench-000982 was misread by its own script** (codec_share.py, fixed):
+- Gpu "OTHERS busy 94,071 vs 2,620": 89,150 of the base's samples were the finalizer thread parked in native code
+  (`UNMANAGED_CODE_TIME` under `GC.RunFinalizers`/`Gen2GcCallback.Finalize`); in the new run that thread was not sampled.
+  Idle, not work. The script now counts the finalizer thread as wait.
+- Legacy "zstd decodes on the main thread where Brotli did not": the JIT inlines `BrotliDecoder.TryDecompress`'s P/Invoke
+  into `PackPages.DecodeChunk`, so base page-chunk decodes had no Brotli frame and the regex missed them. Counted
+  (`UNMANAGED_CODE_TIME` directly under a decode site), base Legacy decoded on the main thread too, more than zstd does.
+  The main-thread site is the same in both: `Animations.LoadDirection` -> `AnimationsLoader.DecodeFrame` ->
+  `PackSprites.DecodeIndexed` -> `PackPages.DecodeChunk`, the deliberate sync load of a further direction/action of a
+  body already drawn (no blink when a visible mobile turns), when the worker prefetch has not cached the chunk yet. Not a
+  zstd regression, so not changed here (see perf opportunities).
+
+**Rerun bench-000987** (JIT dev, TieredCompilation=0, EventPipe sampling, same plan; sample counts, not timing). Same work:
+| arm | page chunks | chunked bodies | spans (regions) | records |
+|---|---|---|---|---|
+| Gpu base / new | 623 / 643 | 253 / 259 | 38 / 35 | 12 / 85 |
+| Legacy base / new | 950 / 919 | 0 / 0 | 22 / 22 | 12 / 85 |
+(±3 %: the bodies scene showed 177/192/192/176 bodies; records: the small gumps are compressed in 1.6.)
+| arm | MAIN codec samples (% of main busy) | OTHERS codec samples | main sync anim loads: p90 / max burst ms, bursts >= 16 ms |
+|---|---|---|---|
+| Gpu base | 211 (1.13 %) | 3,601 | 22.2 / 86.2, 5 |
+| Gpu new | 102 (0.50 %) | 1,038 | 8.9 / 13.3, 0 |
+| Legacy base | 1,071 (3.72 %) | 2,412 | 26.2 / 88.1, 25 |
+| Legacy new | 300 (1.45 %) | 844 | 16.7 / 36.3, 10 |
+Codec samples drop about 70 % on both threads for the same decoded MiB. Burst ms come from sample intervals (busy
+machine, JIT): indicative only.
+
+Other round-1 jobs: alloc bench-000978/979: gen0/gen1/gen2 0 in every window both arms, alloc/frame within run-to-run
+noise (no new allocations). Pop-in bench-000980 (Gpu): unsettled/presented 3.75 %, 3.53 % base vs 3.73 %, 3.54 % new
+(equal); bench-000981 (Legacy) clean runs only (settle accounting is Gpu-only). bench-000975 gate-gpu failure: not a
+binary/template mismatch; the vendor mobile arrived after `vendor buy` (mobiles=1 at the say), so no buy list, no horse,
+and `rename`'s FindNamed guard fell through to "unknown command". Rerun in round 2.
+
+Owner questions (not decided):
+- Frame checksums: optional commit a044b6bc0 `--zstd-checksum` (converter only, off; zstd verifies a checksum whenever a
+  frame carries one, so readers need nothing). Cost: 4 B per frame (~35 KB pack-wide) and XXH64 over decoded bytes
+  (decode cost: measure/zstd-pack/job-checksum-micro-PARKED.sh, quiet queue 6b). Benefit: a corrupted unit fails as
+  "corrupt" instead of decoding to wrong pixels (zstd catches most structural damage without it, not literal-byte
+  damage). Taking it means a new pack revision (1.6 is published).
+- Small text records: no code needed (flags exist). `--text-small 0 --cliloc-compress` on 7.0.103: unifont 7.9 -> 3.2
+  MB, cliloc 16.3 -> 3.7 MB, fonts/speech/stringdict unchanged: text -17.3 MB (pack 1,112 -> ~1,095 MiB). Cost: cliloc
+  decodes its language record at startup (~15 MB raw; the Brotli version cost 7 ms; zstd timing parked) and 866 unifont
+  page records decode on first use (~11 us each, on the thread drawing text, usually main).
+
+## 2026-11-20 shared-tables: `shared_cliloc` (cliloc read in place from memory shared between instances, default off) and the resident-table survey (bg/shared-tables)
+
+Branch bg/shared-tables from bg/zstd-pack ad2121353. Survey: cuo-poc-state/surveys/shared-tables-2026-11-20.md.
+
+**Survey ranking (MB of physical memory saved with 4 clients if read in place from one shared mapping):** anim tables
+(anim.bin) ~78, cliloc ~14 (enu only; ~25-27 for a jpn/kor client), frame palette ids ~12, tiledata ~9-11 (plus an
+in-process duplicate: PackSet reads tiledata.bin a second time), lights ~9 (needn't be resident at all), multis ~6, art
+sprite table ~5, record store tables 3-6, the rest under 2 each. No pack table is mapped today. The top five are byte
+copies of Pack=1 layouts except tiledata (derived structs with names).
+
+**What `shared_cliloc` does** (Settings `shared_cliloc`, CUO_SHARED_CLILOC=1|0, checker CUO_SHARED_CLILOC_CHECK=1):
+- A raw cliloc record (the ship profile) is mapped straight from the pack's text/cliloc.bin. A compressed one
+  (`--cliloc-compress`) is decoded once into `<cache root>/ModernUO/cache/<pack key>/cliloc-<lang>.bin` (pack key = first
+  128 bits of manifest.json's sha256; root %LOCALAPPDATA%, $XDG_CACHE_HOME or ~/.cache, ~/Library/Caches;
+  CUO_SHARED_CACHE_DIR overrides). The file has a 64-byte header (source record: pack file size, offset, stored/raw size,
+  codec; payload sha256/128): short, damaged or foreign files are rebuilt, never used. Built in a temp file (decoded
+  straight into a read-write mapping of it, no heap buffer) and moved in without replacing: the loser of two builders
+  maps the winner's file.
+- Every instance holds a shared lock on `<pack key>/.inuse` (FileShare.ReadWrite; flock LOCK_SH on Unix); startup deletes
+  other packs' folders only when it can lock them exclusively (Windows also refuses deleting a mapped file), and temp files
+  older than 10 min. Cap 512 MiB on the root (a file past it is not written). Every failure falls back to the heap path.
+  `AllowDiskCache = false` is the hook for protected packs (no plaintext on disk; not implemented).
+- Lookups read through spans over the view's base pointer, acquired once at load and released only at process end (the
+  coordinator's requirement: no MemoryMappedViewAccessor on a lookup path). Mappings are never released while the process
+  runs, since tables may be read on any thread. A mapped table keeps its string cache in 256-slot blocks made on first use
+  (enu: a 3.7 KB block table + 2 KB per touched block) instead of a 0.94 MB slot array. The pages are prefaulted on a
+  thread-pool worker after load.
+
+**Lookup latency (owner bar: not slower than the heap path).** research/cliloc-bench, classic-1.6 enu (117,725 strings,
+3.88 MB), pinned, busy machine (indicative). NativeAOT, 3 interleaved rounds, per lookup, warm (batches of 256): tooltip
+stream (synthetic Zipf over 600 OPL-range ids) heap 44.5-47.3 ns, mapping 44.9-46.9 ns; random ids heap 87-128 ns,
+mapping 85-127 ns: within noise. JIT TC=0 (3 rounds): tooltip 52.0 vs 52.0-52.3 ns, random 87.9-89.1 vs 88.7-91.0 ns.
+MemoryMappedViewAccessor: 248-297 ns (5x, rejected). UTF-8 decoded per lookup instead of cached: 72-77 / 136-158 ns and
+~85 bytes allocated per lookup (rejected). Cold first touch (first 4,000 lookups of a fresh load), AOT: without prefault,
+random p90 1.6-1.9 us vs heap 0.4-0.6 us (soft faults); with the prefault 0.4-0.5 us, tooltip p99 0.7-0.8 us vs heap
+1.6-1.8 us. Load: heap 1.3-1.5 ms (read 3.9 MB), mapping 0.7 ms (index check touches 0.94 MB), mapping + prefault 1.9 ms
+(the prefault runs on a worker in the client). A second instance holding the mapping changed nothing measurable on
+Windows (the pages come from the file cache either way). JIT TC=0 loads were 5-7 ms for the mapping (JIT time).
+Quiet versions: measure/shared-tables/job-clilocbench-PARKED.sh, job-startup-PARKED.sh (quiet-next.md).
+
+**Memory cost / benefit.** Cost: none held beyond today's (mapped pages are shared file pages; 3.7 KB block table plus
+the touched blocks per table). Benefit per client: the 3.88 MB enu payload (and a non-enu language's) leaves the GC heap
+(LOH) and private bytes, and the 0.94 MB slot array shrinks to the touched blocks; with 4 clients one copy is resident.
+Disk: the cache holds one decoded copy per language a client used, per pack (enu 3.9 MB; all 8 languages 15.6 MB), only
+for compressed packs. Measured per-process numbers with 1/2/4 clients: job memshare (pending at hand-off).
+
+**Test pack:** classic-1.6 hard-linked, `--only cliloc --cliloc-compress`: text/cliloc.bin 16.3 -> 3.72 MB (verify exact,
+941,936 strings); published files untouched (link counts checked).
+
+Tests: SharedClilocTests (build once then reuse, damaged/truncated/empty/foreign file rebuilt, stale folders deleted
+unless locked and the in-use one deleted once released, old temps, two racing builders, cap, no-disk-cache hook, lookups
+equal with the switch on and off over raw and zstd packs incl. the checker's counts, mapped parse rejects what the heap
+parse rejects). Unit tests 2,799 passed, 6 skipped. Both build variants build.
+
+## 2026-11-20: text-encoding (bg/text-encoding, base 1bf5fef77)
+
+Cp1252 strings (names, 0x1C, 0xC1 affixes, every `ReadASCII`/`WriteASCII`) paid a string per byte on read
+(`char.ConvertFromUtf32`) and an iterator plus `ConvertToUtf32` per char on write.
+
+- **Codec** (`src/ClassicUO.Utility/Cp1252.cs`, adapted from ModernUO TextEncoding 8e2ddc7ab under the author's
+  agreement; THIRD-PARTY-NOTICES.md created): reads allocate only the result. `GetString` dispatches by length from a
+  pinned benchmark: a 256-entry table up to 16 bytes, above that one vectorized scan for 0x80-0x9F, then Latin1.GetString
+  or `string.Create` + Latin1 widen + table patch. Safe reads pre-scan C0+C1 with SearchValues. Writes: `GetBytesCp1252`
+  / `GetBytesCp1252Fixed` (span, Ascii.FromUtf16 one-pass prefix, scalar remap after it); `StringToCp1252Bytes` keeps its
+  name and returns a struct enumerable, so StackDataWriter and the net rework's SpanWriter compile unchanged and stop
+  allocating. Output identical to the old code for all 256 bytes, random strings, the safe filter and a write corpus with
+  surrogate pairs, 0x80-0x9F code points and typographic chars; a lone surrogate now writes '?' (the old iterator threw).
+  No switch: an allocation fix with identical output.
+- **Fonts:** ASCII fonts are indexed by Cp1252 byte, but text arrives decoded, so `GetASCIIIndex` truncated U+2026 to
+  0x26 and drew '&' for '...' (every 0x80-0x9F char mapping above U+00FF). `Cp1252.ToGlyphByte` maps back (identity up
+  to 0xFF, the 27 typographic chars to their bytes, else '?'); the glyph Y offset uses it too. Bug fix, no switch.
+- **TextEdit.InsertChars:** Rune instead of a string per inserted char.
+- **text_string_cache** (default on since 0b1a10a76, see Final results) + `CUO_TEXT_CACHE_CHECK`: decoded-string cache keyed by the bytes, 1024 sets x 2
+  ways, strings <= 64 bytes, game thread only; a hit allocates nothing. Memory held: <= 2048 strings of <= 64 chars
+  (~0.3 MB worst case, typically < 0.1 MB) + 12 KB arrays. Benchmark: a hit costs ~28-33 ns vs ~18-23 ns for a decode of
+  a 6-25 char name, and saves its 56 B.
+- **Benchmark** (busy machine, indicative; pinned; `measure/text-encoding/run-bench.sh`, quiet rerun
+  `job-bench-PARKED.sh`), JIT TC=0 / NativeAOT ns per string: decode old 90/63 (8 chars), 238/223 (30), 1471/1340 (200)
+  and 232/808/5224 B; new 16-17 (8), 20-24 (30), 57-67 (200), 72-75 with a C1 byte, result string only. Encode old
+  75-90 / 236-256 / 1490-1452 ns and a 56 B enumerator; new 8.5 / 11 / 16 ns ASCII, 0 B; the struct foreach the writers
+  still use is 15-24 / 40-80 / 210-480 ns, 0 B.
+- Verification: both builds; unit tests 4319 passed, 6 skipped (new: Cp1252Tests, Cp1252VariantAndCacheTests,
+  AsciiGlyphIndexTests, TextStringCacheTests). Lane jobs (AOT dev 09bc4d912 vs base 1bf5fef77): gates with the cache and
+  its checker on, Gpu bench2-000052 and Legacy bench3-000044; alloc base/new/cache (+cachechk for hit rate and the length
+  histogram), Gpu bench5-000065 and Legacy bench5-000066.
+- **Final results.** Gates TXENC PASS on both renderers (cache and checker on: 0 mismatches). Alloc (bench5-000065 Gpu,
+  bench5-000066 Legacy): main-thread p50 B/frame equal to base in every window and arm, except Gpu corpses (new and cache
+  132, base 0). That was scene noise, not a per-frame allocation: 132 is the median of a 0 window and a 264 window that ran
+  9 frames in 4.33 s (the loop idle between packet frames); base has the same 264 B frames (p95 264); the cachechk arm, same
+  binary, ran 0 there at 49-59 fps. Confirmed by bench5-000075 (corpses section twice per run, base/new interleaved x3:
+  both 0 at n12, probe 0 at n4) and by the base arm of water-depth's alloc jobs. Cache numbers (cachechk arm): Gpu 4481
+  hits / 752 misses (85.6 %), ~166 KiB not allocated per tour, 681 of 2048 entries; Legacy 4460/751 (85.6 %), ~165 KiB,
+  676 entries; 10,444 checked, 0 mismatches; lengths 79 % 1-8 chars, 21 % 9-16, 20 strings 17-32, none longer.
+  **text_string_cache default on** (coordinator, 2026-11-20; code 0b1a10a76): ~45 KiB held per client, at most ~0.3 MB
+  (accepted-costs.md). The switch and `CUO_TEXT_CACHE_CHECK` stay until it has been on a while. The saving is small
+  (well under one gen0 budget per tour), so it will not move pause counts alone; no alloc window got worse with it. After
+  merging poc 03131d73a: unit tests 4426 passed, 6 skipped; final gates at the new default (no `CUO_TEXT_STRING_CACHE`,
+  checker on), set measure/text-encoding-final: see the handoff for job ids.
 
 ## 2026-11-20 net-rework steps 1-2: receive-path parity harness; SpanReader/SpanWriter behind `span_reader` (bg/net-rework)
 
