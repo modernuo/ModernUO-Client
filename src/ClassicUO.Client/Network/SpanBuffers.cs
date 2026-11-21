@@ -28,7 +28,7 @@ namespace ClassicUO.Network
     /// StackDataReader / StackDataWriter (<see cref="NetReader"/>, <see cref="NetWriter"/>). With it on, a packet a handler
     /// reads past its end throws, and the dispatch drops the connection with the packet logged (PacketHandlers.AnalyzePacket).
     /// Read once at startup (CUO_SPAN_READER=1|0 overrides it in developer builds; CUO_SPAN_READER_CHECK=1 runs the old and
-    /// the new reader on every read and the old and the new writer on every outgoing packet, and logs differences). Default off.
+    /// the new reader on every read and the old and the new writer on every outgoing packet, and logs differences). Default on.
     /// </summary>
     internal static class SpanBuffers
     {
@@ -37,7 +37,7 @@ namespace ClassicUO.Network
         {
             "1" => true,
             "0" => false,
-            _ => Settings.GlobalSettings?.SpanReader ?? false
+            _ => Settings.GlobalSettings?.SpanReader ?? true
         };
 
         private static readonly bool s_check = Environment.GetEnvironmentVariable("CUO_SPAN_READER_CHECK") == "1";
@@ -46,7 +46,7 @@ namespace ClassicUO.Network
             ? (s_on ? SpanBufferMode.CheckNew : SpanBufferMode.CheckOld)
             : (s_on ? SpanBufferMode.New : SpanBufferMode.Old);
 #else
-        private static readonly SpanBufferMode s_mode = Settings.GlobalSettings?.SpanReader ?? false ? SpanBufferMode.New : SpanBufferMode.Old;
+        private static readonly SpanBufferMode s_mode = Settings.GlobalSettings?.SpanReader ?? true ? SpanBufferMode.New : SpanBufferMode.Old;
 #endif
 
         /// <summary>Tests: the mode (null: the setting and the checker variable).</summary>
