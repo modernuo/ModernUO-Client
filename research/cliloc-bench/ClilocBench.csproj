@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- shared-tables: cliloc lookup latency, heap vs a shared mapping (span over the base pointer) vs a view accessor.
+       JIT: DOTNET_TieredCompilation=0. NativeAOT: dotnet publish -c Release -p:BenchAot=true. Run pinned (benchpin). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Optimize>true</Optimize>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishAot Condition="'$(BenchAot)' == 'true'">true</PublishAot>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained Condition="'$(BenchAot)' != 'true'">false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ClassicUO.Assets\ClassicUO.Assets.csproj" />
+  </ItemGroup>
+
+</Project>
