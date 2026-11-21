@@ -55,6 +55,20 @@ namespace ClassicUO
             GameCursor = cursor;
         }
 
+        /// <summary>
+        /// Test seam: the renderer's asset front ends on the real loaders of <see cref="FileManager"/>, without a graphics device.
+        /// An asset the loaders have no pixels for is missing (no texture), as in a pack without it; one with pixels would need a device,
+        /// so the test passes the gump front end it built and makes the gumps it needs resident (Renderer.Gumps.Gump.SetResidentForTests).
+        /// </summary>
+        internal void SetRendererForTests(Renderer.Gumps.Gump gumps)
+        {
+            Arts = new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, null);
+            Gumps = gumps;
+            MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, null);
+            Animations = new Renderer.Animations.Animations(FileManager.Animations, null);
+            FontGlyphAtlas = new Renderer.FontGlyphAtlas(FileManager.Fonts, null);
+        }
+
         public unsafe void Load(GameController game)
         {
             LoadUOFiles();

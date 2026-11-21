@@ -38,11 +38,17 @@ namespace ClassicUO.Renderer.Gumps
         /// <param name="decodeBudget">Switch gump_decode_budget (read at startup): worker decodes are counted in
         /// <see cref="DecodeBudget.Gumps"/> (32 MiB in flight) and wait for room there. Off: not counted, as before.</param>
         public Gump(GumpsLoader gumpsLoader, GraphicsDevice device, bool decodeBudget = false)
+            : this(gumpsLoader, device, gumpsLoader.Count, decodeBudget)
+        {
+        }
+
+        /// <summary>Test seam: room for <paramref name="count"/> gumps whatever the loader holds (see <see cref="SetResidentForTests"/>).</summary>
+        internal Gump(GumpsLoader gumpsLoader, GraphicsDevice device, int count, bool decodeBudget = false)
         {
             _gumpsLoader = gumpsLoader;
             int page = TextureAtlas.PageSize(4096, 2048);
             _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[gumpsLoader.Count];
+            _spriteInfos = new SpriteInfo[count];
             _picker = new PixelPicker(_spriteInfos.Length);
             _decoder = CreateDecoder(_spriteInfos.Length, DecodeOnWorker, UploadDecoded, decodeBudget ? PooledBytesOf : null);
         }
@@ -391,6 +397,17 @@ namespace ClassicUO.Renderer.Gumps
             }
 
             return ref spriteInfo;
+        }
+
+        /// <summary>
+        /// Test seam: gump <paramref name="idx"/> as if it were in the atlas already, <paramref name="width"/> x <paramref name="height"/>
+        /// on <paramref name="texture"/> (a texture without a device: tests have none). GetGump then returns it without a decode.
+        /// </summary>
+        internal void SetResidentForTests(uint idx, Texture2D texture, int width, int height)
+        {
+            ref var spriteInfo = ref _spriteInfos[idx];
+            spriteInfo.Texture = texture;
+            spriteInfo.UV = new Microsoft.Xna.Framework.Rectangle(0, 0, width, height);
         }
 
         public bool PixelCheck(uint idx, int x, int y) => _picker.Get(idx, x, y);

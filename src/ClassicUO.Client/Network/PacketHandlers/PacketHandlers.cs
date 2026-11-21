@@ -29,19 +29,6 @@ namespace ClassicUO.Network
 
         private static uint _requestedGridLoot;
 
-        private static readonly TextFileParser _parser = new TextFileParser(
-            string.Empty,
-            new[] { ' ' },
-            new char[] { },
-            new[] { '{', '}' }
-        );
-        private static readonly TextFileParser _cmdparser = new TextFileParser(
-            string.Empty,
-            new[] { ' ', ',' },
-            new char[] { },
-            new[] { '@', '@' }
-        );
-
         private readonly OplRequestList _oplList = new OplRequestList();
         private OplRequestQueue _oplQueue;
         private static readonly OplBatchSink s_oplSink = SendOplBatch;

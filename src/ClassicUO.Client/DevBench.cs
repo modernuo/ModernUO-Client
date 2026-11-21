@@ -1064,7 +1064,7 @@ namespace ClassicUO
             var g = new Game.UI.Gumps.Gump(world, 0, 0) { X = 600, Y = 100, CanMove = true, CanCloseWithRightClick = true };
             int x = 0;
             var ids = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(list.Split(',', StringSplitOptions.RemoveEmptyEntries), h => (uint)Convert.ToUInt16(h, 16)));
-            // what the server gump path does before building its controls (PacketHandlers.PrefetchLayoutGumps)
+            // what the server gump path does before building its controls (GumpFactory.PrefetchLayoutGumps)
             Client.Game.UO.Gumps.Prefetch(ids);
 
             foreach (var id in ids)

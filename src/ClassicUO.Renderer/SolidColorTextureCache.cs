@@ -12,6 +12,9 @@ namespace ClassicUO.Renderer
 
         private static GraphicsDevice _device;
 
+        /// <summary>Test seam: makes the texture of a color when no device was set (controls take one at construction). Only a cache miss reads it.</summary>
+        internal static System.Func<Color, Texture2D> TextureWithoutDeviceForTests;
+
         public static void Initialize(GraphicsDevice device)
         {
             _device = device;
@@ -21,6 +24,14 @@ namespace ClassicUO.Renderer
         {
             if (_textures.TryGetValue(color, out Texture2D texture))
             {
+                return texture;
+            }
+
+            if (_device == null && TextureWithoutDeviceForTests != null)
+            {
+                texture = TextureWithoutDeviceForTests(color);
+                _textures[color] = texture;
+
                 return texture;
             }
 
