@@ -22,13 +22,11 @@ public static class SpanText
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetByteLengthForEncoding(this Encoding encoding) =>
-        encoding.BodyName switch
+        encoding switch
         {
-            "utf-16BE" => 2,
-            "utf-16"   => 2,
-            "utf-32BE" => 3,
-            "utf-32"   => 3,
-            _          => 1
+            UnicodeEncoding => 2,
+            UTF32Encoding   => 4,
+            _               => 1
         };
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
