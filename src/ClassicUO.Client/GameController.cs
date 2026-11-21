@@ -1253,6 +1253,9 @@ namespace ClassicUO
 
             _renderTargets.Draw(_uoSpriteBatch);
             FrameStats.End(FramePhase.Composite);
+#if CUO_DEVTOOLS
+            Game.Scenes.LightFrameLog.AfterComposite(GraphicsDevice, _renderTargets, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight);
+#endif
 
             if (_worldShotPath != null)
             {

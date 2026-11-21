@@ -210,8 +210,8 @@
   <data name="FPSInactive" xml:space="preserve">
     <value>Reduce FPS when game is inactive</value>
   </data>
-  <data name="UncapFPS" xml:space="preserve">
-    <value>Uncapped FPS (no frame limiter)</value>
+  <data name="FPSLimitOff" xml:space="preserve">
+    <value>Off</value>
   </data>
   <data name="VSync" xml:space="preserve">
     <value>VSync</value>

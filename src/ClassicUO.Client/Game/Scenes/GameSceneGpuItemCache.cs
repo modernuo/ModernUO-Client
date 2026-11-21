@@ -1414,7 +1414,7 @@ namespace ClassicUO.Game.Scenes
             bool updatePosition = UpdateDrawPosition;
             var foliage = FoliageIndex;
             long alphaTimer = _alphaTimer;
-            int lightBase = _lightCount;
+            int lightBase = LightCount;
             int alphaSteps = _gpuAlphaSteps;
             int fallbacks = _gpuItemFallbackTotal;
             int uploads = ClassicUO.Renderer.TextureUploads.Epoch;
@@ -1508,7 +1508,7 @@ namespace ClassicUO.Game.Scenes
 
                 got.CopyTo(st.Inst);
                 _gpuProbeInstCount = got.Length;
-                _gpuProbeLightCount = _lightCount - lightBase;
+                _gpuProbeLightCount = LightCount - lightBase;
                 _gpuProbeLightBase = lightBase;
 
                 if (st.Lights.Length < _gpuProbeLightCount)
@@ -1690,7 +1690,7 @@ namespace ClassicUO.Game.Scenes
                 _gpuItemCheckSample ??= $"collected: statics {_gpuProbeStatics}/{_gpuStatics.Count}, multis {_gpuProbeMultis}/{_gpuMeshMultis.Count}, foliage {_gpuProbeFoliage}/{_gpuFoliage.Count} (served/full)";
             }
 
-            int refLights = _lightCount - _gpuProbeLightBase;
+            int refLights = LightCount - _gpuProbeLightBase;
             bool lightsDiffer = refLights != _gpuProbeLightCount;
 
             for (int i = 0; !lightsDiffer && i < _gpuProbeLightCount; i++)
