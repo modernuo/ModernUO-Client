@@ -329,8 +329,9 @@ namespace ClassicUO.Configuration
         // span_reader (net-rework step 2): packets are read with ModernUO's SpanReader and built with its SpanWriter instead of
         // StackDataReader / StackDataWriter (Network/NetReader, NetWriter, SpanBuffers). A packet a handler reads past its end
         // then ends the connection, logged with its bytes. Read once at startup (CUO_SPAN_READER=1|0 overrides it and
-        // CUO_SPAN_READER_CHECK=1 runs both readers and writers and logs differences, in developer builds). Default off.
-        [JsonPropertyName("span_reader")] public bool SpanReader { get; set; }
+        // CUO_SPAN_READER_CHECK=1 runs both readers and writers and logs differences, in developer builds). Default on
+        // (2026-11-21: per-packet and pipe tests pass unchanged in both states; the old path stays for a while).
+        [JsonPropertyName("span_reader")] public bool SpanReader { get; set; } = true;
 
         // text_string_cache: server Cp1252 strings are decoded through a bounded cache keyed by their bytes (2048 strings of
         // up to 64 chars), so repeated names and lines allocate nothing (Game/TextStringCache). CUO_TEXT_STRING_CACHE=1|0

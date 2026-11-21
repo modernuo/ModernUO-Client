@@ -109,7 +109,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             files.Should().Contain(new[]
             {
-                "src/ClassicUO.Client/Network/PacketHandlers.cs",
+                "src/ClassicUO.Client/Network/PacketHandlers/PacketHandlers.cs",
                 "src/ClassicUO.Client/Game/World.cs",
                 "src/ClassicUO.Client/Game/GameObjects/GameObject.cs",
                 "src/ClassicUO.Client/Game/GameObjects/Entity.cs",
