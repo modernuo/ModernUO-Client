@@ -17,6 +17,7 @@ using ClassicUO.Utility.Logging;
 using ClassicUO.Utility.Platforms;
 using Microsoft.Xna.Framework;
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Text;
 
@@ -24,7 +25,7 @@ namespace ClassicUO.Network
 {
     sealed class PacketHandlers
     {
-        public delegate void OnPacketBufferReader(World world, ref StackDataReader p);
+        public delegate void OnPacketBufferReader(World world, ref NetReader p);
 
         private static uint _requestedGridLoot;
 
@@ -66,6 +67,11 @@ namespace ClassicUO.Network
         private readonly DiagReceiveTimeline _diagReads = Diagnostics.On ? new() : null;
 #endif
         private int _generation;
+#if CUO_DEVTOOLS
+
+        /// <summary>net-rework harness: the trace every dispatched packet is written to (null when no trace runs).</summary>
+        internal Harness.NetTrace Trace;
+#endif
 
         /// <summary>Times parsing stopped at a packet whose bytes had not all arrived yet (a header or body cut by a read).</summary>
         public int PartialPacketWaits { get; private set; }
@@ -198,41 +204,101 @@ namespace ClassicUO.Network
 
                 PacketLogger.Default?.Log(packetBuffer.AsSpan(0, packetlength), false);
 
+                bool dispatched;
 #if CUO_DEVTOOLS
                 var previousDispatch = Diagnostics.On ? Diagnostics.EnterDispatch(socket.Statistics,
                     packetlength == 2 && packetBuffer[0] == 0x73 && packetBuffer[1] == diagPingIndex ? diagPingIndex : -1,
                     diagRead, diagDequeued) : default;
+                var trace = Trace;
+                trace?.BeginPacket(packetBuffer.AsSpan(0, packetlength));
                 try
                 {
 #endif
-                    AnalyzePacket(world, packetBuffer.AsSpan(0, packetlength), offset);
+                    dispatched = AnalyzePacket(socket, world, packetBuffer.AsSpan(0, packetlength), offset);
 #if CUO_DEVTOOLS
                 }
                 finally
                 {
+                    trace?.EndPacket(world);
                     if (Diagnostics.On) Diagnostics.LeaveDispatch(previousDispatch);
                 }
 #endif
                 ++packetsCount;
+
+                if (!dispatched)
+                {
+                    break;
+                }
             }
+#if CUO_DEVTOOLS
+
+            SpanBuffers.LogSummary();
+#endif
 
             return packetsCount;
         }
 
-        private void AnalyzePacket(World world, ReadOnlySpan<byte> data, int offset)
+        // False when the packet failed (span_reader: a read past its end) and the connection was dropped.
+        private bool AnalyzePacket(NetClient socket, World world, ReadOnlySpan<byte> data, int offset)
         {
             if (data.IsEmpty)
-                return;
+                return true;
 
             var bufferReader = _handlers[data[0]];
 
             if (bufferReader != null)
             {
-                var buffer = new StackDataReader(data);
-                buffer.Seek(offset);
+                var mode = SpanBuffers.Mode;
+#if CUO_DEVTOOLS
+                if (mode >= SpanBufferMode.CheckOld)
+                {
+                    SpanBuffers.Packet(data);
+                }
+#endif
+                var buffer = new NetReader(data, mode);
+                buffer.Seek(offset, SeekOrigin.Begin);
 
-                bufferReader(world, ref buffer);
+                if (mode is SpanBufferMode.Old or SpanBufferMode.CheckOld)
+                {
+                    bufferReader(world, ref buffer);
+
+                    return true;
+                }
+
+                // span_reader: a packet is read as the server sent it, and a read past its end throws. Like ModernUO's
+                // NetState.HandleReceive, the dispatch catches it once: the packet is logged and the connection dropped.
+                try
+                {
+                    bufferReader(world, ref buffer);
+                }
+                catch (Exception e)
+                {
+                    Log.Error($"[net] packet 0x{data[0]:X2} length {data.Length} failed: {e.GetType().Name}: {e.Message}; bytes {HexDump(data)}{Environment.NewLine}{e.StackTrace}");
+                    socket.ProtocolError($"Invalid packet 0x{data[0]:X2} ({data.Length} bytes) from the server");
+
+                    return false;
+                }
             }
+
+            return true;
+        }
+
+        private static string HexDump(ReadOnlySpan<byte> data)
+        {
+            int n = Math.Min(data.Length, 4096);
+            var sb = new StringBuilder(n * 2 + 16);
+
+            for (int i = 0; i < n; i++)
+            {
+                sb.Append(data[i].ToString("X2"));
+            }
+
+            if (n < data.Length)
+            {
+                sb.Append($"..(+{data.Length - n} bytes)");
+            }
+
+            return sb.ToString();
         }
 
         // False when the header is not complete yet: a variable-length packet needs 3 bytes to know its length.
@@ -586,12 +652,12 @@ namespace ClassicUO.Network
             return entity == null ? -1 : entity.Distance;
         }
 
-        private static void TargetCursor(World world, ref StackDataReader p)
+        private static void TargetCursor(World world, ref NetReader p)
         {
             world.TargetManager.SetTargeting(
-                (CursorTarget)p.ReadUInt8(),
-                p.ReadUInt32BE(),
-                (TargetType)p.ReadUInt8()
+                (CursorTarget)p.ReadByte(),
+                p.ReadUInt32(),
+                (TargetType)p.ReadByte()
             );
 
             if (world.Party.PartyHealTimer < Time.Ticks && world.Party.PartyHealTarget != 0)
@@ -602,20 +668,20 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void SecureTrading(World world, ref StackDataReader p)
+        private static void SecureTrading(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            byte type = p.ReadUInt8();
-            uint serial = p.ReadUInt32BE();
+            byte type = p.ReadByte();
+            uint serial = p.ReadUInt32();
 
             if (type == 0)
             {
-                uint id1 = p.ReadUInt32BE();
-                uint id2 = p.ReadUInt32BE();
+                uint id1 = p.ReadUInt32();
+                uint id2 = p.ReadUInt32();
 
                 // standard client doesn't allow the trading system if one of the traders is invisible (=not sent by server)
                 if (world.Get(id1) == null || world.Get(id2) == null)
@@ -623,12 +689,12 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                bool hasName = p.ReadBool();
+                bool hasName = p.ReadBoolean();
                 string name = string.Empty;
 
                 if (hasName && p.Position < p.Length)
                 {
-                    name = p.ReadASCII();
+                    name = p.ReadCp1252();
                 }
 
                 UIManager.Add(new TradingGump(world, serial, name, id1, id2));
@@ -639,8 +705,8 @@ namespace ClassicUO.Network
             }
             else if (type == 2)
             {
-                uint id1 = p.ReadUInt32BE();
-                uint id2 = p.ReadUInt32BE();
+                uint id1 = p.ReadUInt32();
+                uint id2 = p.ReadUInt32();
 
                 TradingGump trading = UIManager.GetTradingGump(serial);
 
@@ -660,21 +726,21 @@ namespace ClassicUO.Network
                 {
                     if (type == 4)
                     {
-                        trading.Gold = p.ReadUInt32BE();
-                        trading.Platinum = p.ReadUInt32BE();
+                        trading.Gold = p.ReadUInt32();
+                        trading.Platinum = p.ReadUInt32();
                     }
                     else
                     {
-                        trading.HisGold = p.ReadUInt32BE();
-                        trading.HisPlatinum = p.ReadUInt32BE();
+                        trading.HisGold = p.ReadUInt32();
+                        trading.HisPlatinum = p.ReadUInt32();
                     }
                 }
             }
         }
 
-        private static void ClientTalk(World world, ref StackDataReader p)
+        private static void ClientTalk(World world, ref NetReader p)
         {
-            switch (p.ReadUInt8())
+            switch (p.ReadByte())
             {
                 case 0x78:
                     break;
@@ -690,18 +756,18 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void Damage(World world, ref StackDataReader p)
+        private static void Damage(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            Entity entity = world.Get(p.ReadUInt32BE());
+            Entity entity = world.Get(p.ReadUInt32());
 
             if (entity != null)
             {
-                ushort damage = p.ReadUInt16BE();
+                ushort damage = p.ReadUInt16();
 
                 if (damage > 0)
                 {
@@ -710,14 +776,14 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void CharacterStatus(World world, ref StackDataReader p)
+        private static void CharacterStatus(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             Entity entity = world.Get(serial);
 
             if (entity == null)
@@ -726,9 +792,9 @@ namespace ClassicUO.Network
             }
 
             string oldName = entity.Name;
-            string name = p.ReadASCII(30);
-            ushort hits = p.ReadUInt16BE();
-            ushort hitsMax = p.ReadUInt16BE();
+            string name = p.ReadCp1252(30);
+            ushort hits = p.ReadUInt16();
+            ushort hitsMax = p.ReadUInt16();
 
             // T1 (funnel part 6): the name, the hits and the hits request
             world.Writer.SetStatus(entity, name, hits, hitsMax);
@@ -742,12 +808,12 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                bool renamable = p.ReadBool();
-                byte type = p.ReadUInt8();
+                bool renamable = p.ReadBoolean();
+                byte type = p.ReadByte();
                 bool extended = type > 0 && p.Position + 1 <= p.Length;
 
                 // IsRenamable, then (the extended part) IsFemale, an input
-                world.Writer.SetMobileStatus(mobile, renamable, extended, extended && p.ReadBool());
+                world.Writer.SetMobileStatus(mobile, renamable, extended, extended && p.ReadBoolean());
 
                 if (extended)
                 {
@@ -760,18 +826,18 @@ namespace ClassicUO.Network
                             Client.Game.SetWindowTitle(world.Player.Name);
                         }
 
-                        ushort str = p.ReadUInt16BE();
-                        ushort dex = p.ReadUInt16BE();
-                        ushort intell = p.ReadUInt16BE();
-                        ushort stamina = p.ReadUInt16BE();
-                        ushort staminaMax = p.ReadUInt16BE();
-                        ushort mana = p.ReadUInt16BE();
-                        ushort manaMax = p.ReadUInt16BE();
+                        ushort str = p.ReadUInt16();
+                        ushort dex = p.ReadUInt16();
+                        ushort intell = p.ReadUInt16();
+                        ushort stamina = p.ReadUInt16();
+                        ushort staminaMax = p.ReadUInt16();
+                        ushort mana = p.ReadUInt16();
+                        ushort manaMax = p.ReadUInt16();
                         world.Writer.SetStamina(world.Player, staminaMax, stamina);
                         world.Writer.SetMana(world.Player, manaMax, mana);
-                        world.PlayerState.Gold = p.ReadUInt32BE();
-                        world.PlayerState.PhysicalResistance = (short)p.ReadUInt16BE();
-                        world.PlayerState.Weight = p.ReadUInt16BE();
+                        world.PlayerState.Gold = p.ReadUInt32();
+                        world.PlayerState.PhysicalResistance = (short)p.ReadUInt16();
+                        world.PlayerState.Weight = p.ReadUInt16();
 
                         if (
                             world.PlayerState.Strength != 0
@@ -845,8 +911,8 @@ namespace ClassicUO.Network
 
                         if (type >= 5) //ML
                         {
-                            world.PlayerState.WeightMax = p.ReadUInt16BE();
-                            byte race = p.ReadUInt8();
+                            world.PlayerState.WeightMax = p.ReadUInt16();
+                            byte race = p.ReadByte();
 
                             if (race == 0)
                             {
@@ -871,55 +937,55 @@ namespace ClassicUO.Network
 
                         if (type >= 3) //Renaissance
                         {
-                            world.PlayerState.StatsCap = (short)p.ReadUInt16BE();
-                            world.PlayerState.Followers = p.ReadUInt8();
-                            world.PlayerState.FollowersMax = p.ReadUInt8();
+                            world.PlayerState.StatsCap = (short)p.ReadUInt16();
+                            world.PlayerState.Followers = p.ReadByte();
+                            world.PlayerState.FollowersMax = p.ReadByte();
                         }
 
                         if (type >= 4) //AOS
                         {
-                            world.PlayerState.FireResistance = (short)p.ReadUInt16BE();
-                            world.PlayerState.ColdResistance = (short)p.ReadUInt16BE();
-                            world.PlayerState.PoisonResistance = (short)p.ReadUInt16BE();
-                            world.PlayerState.EnergyResistance = (short)p.ReadUInt16BE();
-                            world.PlayerState.Luck = p.ReadUInt16BE();
-                            world.PlayerState.DamageMin = (short)p.ReadUInt16BE();
-                            world.PlayerState.DamageMax = (short)p.ReadUInt16BE();
-                            world.PlayerState.TithingPoints = p.ReadUInt32BE();
+                            world.PlayerState.FireResistance = (short)p.ReadUInt16();
+                            world.PlayerState.ColdResistance = (short)p.ReadUInt16();
+                            world.PlayerState.PoisonResistance = (short)p.ReadUInt16();
+                            world.PlayerState.EnergyResistance = (short)p.ReadUInt16();
+                            world.PlayerState.Luck = p.ReadUInt16();
+                            world.PlayerState.DamageMin = (short)p.ReadUInt16();
+                            world.PlayerState.DamageMax = (short)p.ReadUInt16();
+                            world.PlayerState.TithingPoints = p.ReadUInt32();
                         }
 
                         if (type >= 6)
                         {
                             world.PlayerState.MaxPhysicResistence =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.MaxFireResistence =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.MaxColdResistence =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.MaxPoisonResistence =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.MaxEnergyResistence =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.DefenseChanceIncrease =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.MaxDefenseChanceIncrease =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.HitChanceIncrease =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.SwingSpeedIncrease =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.DamageIncrease =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.LowerReagentCost =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.SpellDamageIncrease =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.FasterCastRecovery =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.FasterCasting =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                             world.PlayerState.LowerManaCost =
-                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
+                                p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16();
                         }
                     }
                 }
@@ -933,13 +999,13 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void FollowR(World world, ref StackDataReader p)
+        private static void FollowR(World world, ref NetReader p)
         {
-            uint tofollow = p.ReadUInt32BE();
-            uint isfollowing = p.ReadUInt32BE();
+            uint tofollow = p.ReadUInt32();
+            uint isfollowing = p.ReadUInt32();
         }
 
-        private static void NewHealthbarUpdate(World world, ref StackDataReader p)
+        private static void NewHealthbarUpdate(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
@@ -951,14 +1017,14 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32());
 
             if (mobile == null)
             {
                 return;
             }
 
-            ushort count = p.ReadUInt16BE();
+            ushort count = p.ReadUInt16();
 
             // T1 (funnel part 6): the list folds into the final flags and SA poison (before T1 each entry was a write, then
             // a Sync), written by one operation
@@ -967,8 +1033,8 @@ namespace ClassicUO.Network
 
             for (int i = 0; i < count; i++)
             {
-                ushort type = p.ReadUInt16BE();
-                bool enabled = p.ReadBool();
+                ushort type = p.ReadUInt16();
+                bool enabled = p.ReadBoolean();
 
                 if (type == 1)
                 {
@@ -1006,14 +1072,14 @@ namespace ClassicUO.Network
             world.Writer.SetHealthbar(mobile, flags, setSAPoison, saPoison);
         }
 
-        private static void UpdateItem(World world, ref StackDataReader p)
+        private static void UpdateItem(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             ushort count = 0;
             byte graphicInc = 0;
             byte direction = 0;
@@ -1027,24 +1093,24 @@ namespace ClassicUO.Network
                 count = 1;
             }
 
-            ushort graphic = p.ReadUInt16BE();
+            ushort graphic = p.ReadUInt16();
 
             if ((graphic & 0x8000) != 0)
             {
                 graphic &= 0x7FFF;
-                graphicInc = p.ReadUInt8();
+                graphicInc = p.ReadByte();
             }
 
             if (count > 0)
             {
-                count = p.ReadUInt16BE();
+                count = p.ReadUInt16();
             }
             else
             {
                 count++;
             }
 
-            ushort x = p.ReadUInt16BE();
+            ushort x = p.ReadUInt16();
 
             if ((x & 0x8000) != 0)
             {
@@ -1052,7 +1118,7 @@ namespace ClassicUO.Network
                 direction = 1;
             }
 
-            ushort y = p.ReadUInt16BE();
+            ushort y = p.ReadUInt16();
 
             if ((y & 0x8000) != 0)
             {
@@ -1068,19 +1134,19 @@ namespace ClassicUO.Network
 
             if (direction != 0)
             {
-                direction = p.ReadUInt8();
+                direction = p.ReadByte();
             }
 
-            sbyte z = p.ReadInt8();
+            sbyte z = p.ReadSByte();
 
             if (hue != 0)
             {
-                hue = p.ReadUInt16BE();
+                hue = p.ReadUInt16();
             }
 
             if (flags != 0)
             {
-                flags = p.ReadUInt8();
+                flags = p.ReadByte();
             }
 
             //if (graphic != 0x2006)
@@ -1110,18 +1176,18 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void EnterWorld(World world, ref StackDataReader p)
+        private static void EnterWorld(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             world.CreatePlayer(serial);
 
             p.Skip(4);
             // T1 (funnel part 5): the body graphic and CheckGraphicChange's sex and race (ECS and GameObject)
-            world.Writer.SetMobileGraphic(world.Player, p.ReadUInt16BE(), checkBody: true);
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            sbyte z = (sbyte)p.ReadUInt16BE();
+            world.Writer.SetMobileGraphic(world.Player, p.ReadUInt16(), checkBody: true);
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            sbyte z = (sbyte)p.ReadUInt16();
 
             if (world.Map == null)
             {
@@ -1131,7 +1197,7 @@ namespace ClassicUO.Network
             world.Map?.Prefetch(x, y);
             // T1: the position and the tile, with the player's position callbacks; then the direction (its door check)
             world.Writer.MoveMobile(world.Player, x, y, z);
-            world.Writer.SetMobileDirection(world.Player, (Direction)(p.ReadUInt8() & 0x7));
+            world.Writer.SetMobileDirection(world.Player, (Direction)(p.ReadByte() & 0x7));
             world.RangeSize.X = x;
             world.RangeSize.Y = y;
 
@@ -1182,21 +1248,21 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void Talk(World world, ref StackDataReader p)
+        private static void Talk(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             Entity entity = world.Get(serial);
-            ushort graphic = p.ReadUInt16BE();
-            MessageType type = (MessageType)p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            ushort font = p.ReadUInt16BE();
-            string name = p.ReadASCII(30);
+            ushort graphic = p.ReadUInt16();
+            MessageType type = (MessageType)p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            ushort font = p.ReadUInt16();
+            string name = p.ReadCp1252(30);
             string text;
 
             if (p.Length > 44)
             {
-                p.Seek(44);
-                text = p.ReadASCII();
+                p.Seek(44, SeekOrigin.Begin);
+                text = p.ReadCp1252();
             }
             else
             {
@@ -1241,14 +1307,14 @@ namespace ClassicUO.Network
             world.MessageManager.HandleMessage(entity, text, name, hue, type, (byte)font, text_type);
         }
 
-        private static void DeleteObject(World world, ref StackDataReader p)
+        private static void DeleteObject(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             if (world.Player == serial)
             {
@@ -1378,40 +1444,40 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdatePlayer(World world, ref StackDataReader p)
+        private static void UpdatePlayer(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort graphic = p.ReadUInt16BE();
-            byte graphic_inc = p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            Flags flags = (Flags)p.ReadUInt8();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            ushort serverID = p.ReadUInt16BE();
-            Direction direction = (Direction)p.ReadUInt8();
-            sbyte z = p.ReadInt8();
+            uint serial = p.ReadUInt32();
+            ushort graphic = p.ReadUInt16();
+            byte graphic_inc = p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            Flags flags = (Flags)p.ReadByte();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            ushort serverID = p.ReadUInt16();
+            Direction direction = (Direction)p.ReadByte();
+            sbyte z = p.ReadSByte();
 
             UpdatePlayer(world, serial, graphic, graphic_inc, hue, flags, x, y, z, serverID, direction);
         }
 
-        private static void DenyWalk(World world, ref StackDataReader p)
+        private static void DenyWalk(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            byte seq = p.ReadUInt8();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            Direction direction = (Direction)p.ReadUInt8();
+            byte seq = p.ReadByte();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            Direction direction = (Direction)p.ReadByte();
             direction &= Direction.Up;
-            sbyte z = p.ReadInt8();
+            sbyte z = p.ReadSByte();
 
             world.Player.Walker.DenyWalk(seq, x, y, z);
             // T1 (funnel part 5): the direction (ECS and GameObject; its door check)
@@ -1420,15 +1486,15 @@ namespace ClassicUO.Network
             world.Weather.Reset();
         }
 
-        private static void ConfirmWalk(World world, ref StackDataReader p)
+        private static void ConfirmWalk(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            byte seq = p.ReadUInt8();
-            byte noto = (byte)(p.ReadUInt8() & ~0x40);
+            byte seq = p.ReadByte();
+            byte noto = (byte)(p.ReadByte() & ~0x40);
 
             if (noto == 0 || noto >= 8)
             {
@@ -1442,20 +1508,20 @@ namespace ClassicUO.Network
             world.Player.AddToTile();
         }
 
-        private static void DragAnimation(World world, ref StackDataReader p)
+        private static void DragAnimation(World world, ref NetReader p)
         {
-            ushort graphic = p.ReadUInt16BE();
-            graphic += p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            ushort count = p.ReadUInt16BE();
-            uint source = p.ReadUInt32BE();
-            ushort sourceX = p.ReadUInt16BE();
-            ushort sourceY = p.ReadUInt16BE();
-            sbyte sourceZ = p.ReadInt8();
-            uint dest = p.ReadUInt32BE();
-            ushort destX = p.ReadUInt16BE();
-            ushort destY = p.ReadUInt16BE();
-            sbyte destZ = p.ReadInt8();
+            ushort graphic = p.ReadUInt16();
+            graphic += p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            ushort count = p.ReadUInt16();
+            uint source = p.ReadUInt32();
+            ushort sourceX = p.ReadUInt16();
+            ushort sourceY = p.ReadUInt16();
+            sbyte sourceZ = p.ReadSByte();
+            uint dest = p.ReadUInt32();
+            ushort destX = p.ReadUInt16();
+            ushort destY = p.ReadUInt16();
+            sbyte destZ = p.ReadSByte();
 
             if (graphic == 0x0EED)
             {
@@ -1528,15 +1594,15 @@ namespace ClassicUO.Network
             //}
         }
 
-        private static void OpenContainer(World world, ref StackDataReader p)
+        private static void OpenContainer(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort graphic = p.ReadUInt16BE();
+            uint serial = p.ReadUInt32();
+            ushort graphic = p.ReadUInt16();
 
             if (graphic == 0xFFFF)
             {
@@ -1755,31 +1821,33 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdateContainedItem(World world, ref StackDataReader p)
+        private static void UpdateContainedItem(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort graphic = (ushort)(p.ReadUInt16BE() + p.ReadUInt8());
-            ushort amount = Math.Max((ushort)1, p.ReadUInt16BE());
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.ContainedItem(p.Buffer),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_6017 ? PacketLayouts.ContainedGrid : PacketLayouts.ContainedNoGrid);
+            uint serial = p.ReadUInt32();
+            ushort graphic = (ushort)(p.ReadUInt16() + p.ReadByte());
+            ushort amount = Math.Max((ushort)1, p.ReadUInt16());
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
 
-            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_6017)
+            if (layout == PacketLayouts.ContainedGrid)
             {
                 p.Skip(1);
             }
 
-            uint containerSerial = p.ReadUInt32BE();
-            ushort hue = p.ReadUInt16BE();
+            uint containerSerial = p.ReadUInt32();
+            ushort hue = p.ReadUInt16();
 
             AddItemToContainer(world, serial, graphic, amount, x, y, hue, containerSerial);
         }
 
-        private static void DenyMoveItem(World world, ref StackDataReader p)
+        private static void DenyMoveItem(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
@@ -1894,7 +1962,7 @@ namespace ClassicUO.Network
             //if (result != null && !result.IsDestroyed)
             //    result.AllowedToDraw = true;
 
-            byte code = p.ReadUInt8();
+            byte code = p.ReadByte();
 
             if (code < 5)
             {
@@ -1910,7 +1978,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void EndDraggingItem(World world, ref StackDataReader p)
+        private static void EndDraggingItem(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
@@ -1921,7 +1989,7 @@ namespace ClassicUO.Network
             Client.Game.UO.GameCursor.ItemHold.Dropped = false;
         }
 
-        private static void DropItemAccepted(World world, ref StackDataReader p)
+        private static void DropItemAccepted(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
@@ -1932,10 +2000,10 @@ namespace ClassicUO.Network
             Client.Game.UO.GameCursor.ItemHold.Dropped = false;
         }
 
-        private static void DeathScreen(World world, ref StackDataReader p)
+        private static void DeathScreen(World world, ref NetReader p)
         {
             // todo
-            byte action = p.ReadUInt8();
+            byte action = p.ReadByte();
 
             if (action != 1)
             {
@@ -1952,9 +2020,9 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void MobileAttributes(World world, ref StackDataReader p)
+        private static void MobileAttributes(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             Entity entity = world.Get(serial);
 
@@ -1963,8 +2031,8 @@ namespace ClassicUO.Network
                 return;
             }
 
-            ushort hitsMax = p.ReadUInt16BE();
-            ushort hits = p.ReadUInt16BE();
+            ushort hitsMax = p.ReadUInt16();
+            ushort hits = p.ReadUInt16();
 
             // T1 (funnel part 6)
             world.Writer.SetHits(entity, hitsMax, hits);
@@ -1978,10 +2046,10 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                ushort manaMax = p.ReadUInt16BE();
-                ushort mana = p.ReadUInt16BE();
-                ushort staminaMax = p.ReadUInt16BE();
-                ushort stamina = p.ReadUInt16BE();
+                ushort manaMax = p.ReadUInt16();
+                ushort mana = p.ReadUInt16();
+                ushort staminaMax = p.ReadUInt16();
+                ushort stamina = p.ReadUInt16();
                 world.Writer.SetMana(mobile, manaMax, mana);
                 world.Writer.SetStamina(mobile, staminaMax, stamina);
 
@@ -1994,18 +2062,18 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void EquipItem(World world, ref StackDataReader p)
+        private static void EquipItem(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort graphic = (ushort)(p.ReadUInt16BE() + p.ReadInt8());
-            Layer layer = (Layer)p.ReadUInt8();
-            uint container = p.ReadUInt32BE();
-            ushort hue = p.ReadUInt16BE();
+            uint serial = p.ReadUInt32();
+            ushort graphic = (ushort)(p.ReadUInt16() + p.ReadSByte());
+            Layer layer = (Layer)p.ReadByte();
+            uint container = p.ReadUInt32();
+            ushort hue = p.ReadUInt16();
 
             // T1: the item (found or created), out of its old container unless it is new or a backpack, the packet's values,
             // then at the end of the wearer's child list
@@ -2048,7 +2116,7 @@ namespace ClassicUO.Network
             //}
         }
 
-        private static void Swing(World world, ref StackDataReader p)
+        private static void Swing(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
@@ -2057,14 +2125,14 @@ namespace ClassicUO.Network
 
             p.Skip(1);
 
-            uint attackers = p.ReadUInt32BE();
+            uint attackers = p.ReadUInt32();
 
             if (attackers != world.Player)
             {
                 return;
             }
 
-            uint defenders = p.ReadUInt32BE();
+            uint defenders = p.ReadUInt32();
 
             const int TIME_TURN_TO_LASTTARGET = 2000;
 
@@ -2101,33 +2169,33 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void Unknown_0x32(World world, ref StackDataReader p) { }
+        private static void Unknown_0x32(World world, ref NetReader p) { }
 
-        private static void UpdateSkills(World world, ref StackDataReader p)
+        private static void UpdateSkills(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            byte type = p.ReadUInt8();
+            byte type = p.ReadByte();
             bool haveCap = type != 0u && type <= 0x03 || type == 0xDF;
             bool isSingleUpdate = type == 0xFF || type == 0xDF;
 
             if (type == 0xFE)
             {
-                int count = p.ReadUInt16BE();
+                int count = p.ReadUInt16();
 
                 Client.Game.UO.FileManager.Skills.Skills.Clear();
                 Client.Game.UO.FileManager.Skills.SortedSkills.Clear();
 
                 for (int i = 0; i < count; i++)
                 {
-                    bool haveButton = p.ReadBool();
-                    int nameLength = p.ReadUInt8();
+                    bool haveButton = p.ReadBoolean();
+                    int nameLength = p.ReadByte();
 
                     Client.Game.UO.FileManager.Skills.Skills.Add(
-                        new SkillEntry(i, p.ReadASCII(nameLength), haveButton)
+                        new SkillEntry(i, p.ReadCp1252(nameLength), haveButton)
                     );
                 }
 
@@ -2174,7 +2242,7 @@ namespace ClassicUO.Network
 
                 while (p.Position < p.Length)
                 {
-                    ushort id = p.ReadUInt16BE();
+                    ushort id = p.ReadUInt16();
 
                     if (p.Position >= p.Length)
                     {
@@ -2191,14 +2259,14 @@ namespace ClassicUO.Network
                         id--;
                     }
 
-                    ushort realVal = p.ReadUInt16BE();
-                    ushort baseVal = p.ReadUInt16BE();
-                    Lock locked = (Lock)p.ReadUInt8();
+                    ushort realVal = p.ReadUInt16();
+                    ushort baseVal = p.ReadUInt16();
+                    Lock locked = (Lock)p.ReadByte();
                     ushort cap = 1000;
 
                     if (haveCap)
                     {
-                        cap = p.ReadUInt16BE();
+                        cap = p.ReadUInt16();
                     }
 
                     if (id < world.PlayerState.Skills.Length)
@@ -2257,44 +2325,46 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void Pathfinding(World world, ref StackDataReader p)
+        private static void Pathfinding(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            ushort z = p.ReadUInt16BE();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            ushort z = p.ReadUInt16();
 
             world.Player.Pathfinder.WalkTo(x, y, z, 0);
         }
 
-        private static void UpdateContainedItems(World world, ref StackDataReader p)
+        private static void UpdateContainedItems(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            ushort count = p.ReadUInt16BE();
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.ContainedItems(p.Buffer, Client.Game.UO.Version),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_6017 ? PacketLayouts.ContainedGrid : PacketLayouts.ContainedNoGrid);
+            ushort count = p.ReadUInt16();
 
             for (int i = 0; i < count; i++)
             {
-                uint serial = p.ReadUInt32BE();
-                ushort graphic = (ushort)(p.ReadUInt16BE() + p.ReadUInt8());
-                ushort amount = Math.Max(p.ReadUInt16BE(), (ushort)1);
-                ushort x = p.ReadUInt16BE();
-                ushort y = p.ReadUInt16BE();
+                uint serial = p.ReadUInt32();
+                ushort graphic = (ushort)(p.ReadUInt16() + p.ReadByte());
+                ushort amount = Math.Max(p.ReadUInt16(), (ushort)1);
+                ushort x = p.ReadUInt16();
+                ushort y = p.ReadUInt16();
 
-                if (Client.Game.UO.Version >= Utility.ClientVersion.CV_6017)
+                if (layout == PacketLayouts.ContainedGrid)
                 {
                     p.Skip(1);
                 }
 
-                uint containerSerial = p.ReadUInt32BE();
-                ushort hue = p.ReadUInt16BE();
+                uint containerSerial = p.ReadUInt32();
+                ushort hue = p.ReadUInt16();
 
                 if (i == 0)
                 {
@@ -2310,28 +2380,28 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void CloseVendorInterface(World world, ref StackDataReader p)
+        private static void CloseVendorInterface(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             UIManager.GetGump<ShopGump>(serial)?.Dispose();
         }
 
-        private static void PersonalLightLevel(World world, ref StackDataReader p)
+        private static void PersonalLightLevel(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            if (world.Player == p.ReadUInt32BE())
+            if (world.Player == p.ReadUInt32())
             {
-                byte level = p.ReadUInt8();
+                byte level = p.ReadByte();
 
                 if (level > 0x1E)
                 {
@@ -2347,14 +2417,14 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void LightLevel(World world, ref StackDataReader p)
+        private static void LightLevel(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            byte level = p.ReadUInt8();
+            byte level = p.ReadByte();
 
             if (level > 0x1E)
             {
@@ -2375,7 +2445,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void PlaySoundEffect(World world, ref StackDataReader p)
+        private static void PlaySoundEffect(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
@@ -2384,21 +2454,21 @@ namespace ClassicUO.Network
 
             p.Skip(1);
 
-            ushort index = p.ReadUInt16BE();
-            ushort audio = p.ReadUInt16BE();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            short z = (short)p.ReadUInt16BE();
+            ushort index = p.ReadUInt16();
+            ushort audio = p.ReadUInt16();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            short z = (short)p.ReadUInt16();
 
             Client.Game.Audio.PlaySoundWithDistance(world, index, x, y);
         }
 
-        private static void PlayMusic(World world, ref StackDataReader p)
+        private static void PlayMusic(World world, ref NetReader p)
         {
             if (p.Length == 3) // Play Midi Music packet (0x6D, 0x10, index)
             {
-                byte cmd = p.ReadUInt8();
-                byte index = p.ReadUInt8();
+                byte cmd = p.ReadByte();
+                byte index = p.ReadByte();
 
                 // Check for stop music packet (6D 1F FF)
                 if (cmd == 0x1F && index == 0xFF)
@@ -2412,12 +2482,12 @@ namespace ClassicUO.Network
             }
             else
             {
-                ushort index = p.ReadUInt16BE();
+                ushort index = p.ReadUInt16();
                 Client.Game.Audio.PlayMusic(index);
             }
         }
 
-        private static void LoginComplete(World world, ref StackDataReader p)
+        private static void LoginComplete(World world, ref NetReader p)
         {
             if (world.Player != null && Client.Game.Scene is LoginScene)
             {
@@ -2456,26 +2526,26 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void MapData(World world, ref StackDataReader p)
+        private static void MapData(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             MapGump gump = UIManager.GetGump<MapGump>(serial);
 
             if (gump != null)
             {
-                switch ((MapMessageType)p.ReadUInt8())
+                switch ((MapMessageType)p.ReadByte())
                 {
                     case MapMessageType.Add:
                         p.Skip(1);
 
-                        ushort x = p.ReadUInt16BE();
-                        ushort y = p.ReadUInt16BE();
+                        ushort x = p.ReadUInt16();
+                        ushort y = p.ReadUInt16();
 
                         gump.AddPin(x, y);
 
@@ -2497,16 +2567,16 @@ namespace ClassicUO.Network
                         break;
 
                     case MapMessageType.EditResponse:
-                        gump.SetPlotState(p.ReadUInt8());
+                        gump.SetPlotState(p.ReadByte());
 
                         break;
                 }
             }
         }
 
-        private static void SetTime(World world, ref StackDataReader p) { }
+        private static void SetTime(World world, ref NetReader p) { }
 
-        private static void SetWeather(World world, ref StackDataReader p)
+        private static void SetWeather(World world, ref NetReader p)
         {
             GameScene scene = Client.Game.GetScene<GameScene>();
 
@@ -2515,26 +2585,26 @@ namespace ClassicUO.Network
                 return;
             }
 
-            WeatherType type = (WeatherType)p.ReadUInt8();
+            WeatherType type = (WeatherType)p.ReadByte();
 
             if (world.Weather.CurrentWeather != type)
             {
-                byte count = p.ReadUInt8();
-                byte temp = p.ReadUInt8();
+                byte count = p.ReadByte();
+                byte temp = p.ReadByte();
 
                 world.Weather.Generate(type, count, temp);
             }
         }
 
-        private static void BookData(World world, ref StackDataReader p)
+        private static void BookData(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort pageCnt = p.ReadUInt16BE();
+            uint serial = p.ReadUInt32();
+            ushort pageCnt = p.ReadUInt16();
 
             ModernBookGump gump = UIManager.GetGump<ModernBookGump>(serial);
 
@@ -2545,12 +2615,12 @@ namespace ClassicUO.Network
 
             for (int i = 0; i < pageCnt; i++)
             {
-                int pageNum = p.ReadUInt16BE() - 1;
+                int pageNum = p.ReadUInt16() - 1;
                 gump.KnownPages.Add(pageNum);
 
                 if (pageNum < gump.BookPageCount && pageNum >= 0)
                 {
-                    ushort lineCnt = p.ReadUInt16BE();
+                    ushort lineCnt = p.ReadUInt16();
 
                     for (int line = 0; line < lineCnt; line++)
                     {
@@ -2559,8 +2629,8 @@ namespace ClassicUO.Network
                         if (index < gump.BookLines.Length)
                         {
                             gump.BookLines[index] = ModernBookGump.IsNewBook
-                                ? p.ReadUTF8(true)
-                                : p.ReadASCII();
+                                ? p.ReadUTF8Safe()
+                                : p.ReadCp1252();
                         }
                         else
                         {
@@ -2590,21 +2660,21 @@ namespace ClassicUO.Network
             gump.ServerSetBookText();
         }
 
-        private static void CharacterAnimation(World world, ref StackDataReader p)
+        private static void CharacterAnimation(World world, ref NetReader p)
         {
-            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32());
 
             if (mobile == null)
             {
                 return;
             }
 
-            ushort action = p.ReadUInt16BE();
-            ushort frame_count = p.ReadUInt16BE();
-            ushort repeat_count = p.ReadUInt16BE();
-            bool forward = !p.ReadBool();
-            bool repeat = p.ReadBool();
-            byte delay = p.ReadUInt8();
+            ushort action = p.ReadUInt16();
+            ushort frame_count = p.ReadUInt16();
+            ushort repeat_count = p.ReadUInt16();
+            bool forward = !p.ReadBoolean();
+            bool repeat = p.ReadBoolean();
+            byte delay = p.ReadByte();
 
             // T1 (funnel part 6)
             world.Writer.AnimateMobile(
@@ -2619,21 +2689,21 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void GraphicEffect(World world, ref StackDataReader p)
+        private static void GraphicEffect(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            GraphicEffectType type = (GraphicEffectType)p.ReadUInt8();
+            GraphicEffectType type = (GraphicEffectType)p.ReadByte();
 
             if (type > GraphicEffectType.FixedFrom)
             {
                 if (type == GraphicEffectType.ScreenFade && p[0] == 0x70)
                 {
                     p.Skip(8);
-                    ushort val = p.ReadUInt16BE();
+                    ushort val = p.ReadUInt16();
 
                     if (val > 4)
                     {
@@ -2646,36 +2716,36 @@ namespace ClassicUO.Network
                 return;
             }
 
-            uint source = p.ReadUInt32BE();
-            uint target = p.ReadUInt32BE();
-            ushort graphic = p.ReadUInt16BE();
-            ushort srcX = p.ReadUInt16BE();
-            ushort srcY = p.ReadUInt16BE();
-            sbyte srcZ = p.ReadInt8();
-            ushort targetX = p.ReadUInt16BE();
-            ushort targetY = p.ReadUInt16BE();
-            sbyte targetZ = p.ReadInt8();
-            byte speed = p.ReadUInt8();
-            byte duration = p.ReadUInt8();
-            ushort unk = p.ReadUInt16BE();
-            bool fixedDirection = p.ReadBool();
-            bool doesExplode = p.ReadBool();
+            uint source = p.ReadUInt32();
+            uint target = p.ReadUInt32();
+            ushort graphic = p.ReadUInt16();
+            ushort srcX = p.ReadUInt16();
+            ushort srcY = p.ReadUInt16();
+            sbyte srcZ = p.ReadSByte();
+            ushort targetX = p.ReadUInt16();
+            ushort targetY = p.ReadUInt16();
+            sbyte targetZ = p.ReadSByte();
+            byte speed = p.ReadByte();
+            byte duration = p.ReadByte();
+            ushort unk = p.ReadUInt16();
+            bool fixedDirection = p.ReadBoolean();
+            bool doesExplode = p.ReadBoolean();
             uint hue = 0;
             GraphicEffectBlendMode blendmode = 0;
 
             if (p[0] == 0x70) { }
             else
             {
-                hue = p.ReadUInt32BE();
-                blendmode = (GraphicEffectBlendMode)(p.ReadUInt32BE() % 7);
+                hue = p.ReadUInt32();
+                blendmode = (GraphicEffectBlendMode)(p.ReadUInt32() % 7);
 
                 if (p[0] == 0xC7)
                 {
-                    var tileID = p.ReadUInt16BE();
-                    var explodeEffect = p.ReadUInt16BE();
-                    var explodeSound = p.ReadUInt16BE();
-                    var serial = p.ReadUInt32BE();
-                    var layer = p.ReadUInt8();
+                    var tileID = p.ReadUInt16();
+                    var explodeEffect = p.ReadUInt16();
+                    var explodeSound = p.ReadUInt16();
+                    var serial = p.ReadUInt32();
+                    var layer = p.ReadByte();
                     p.Skip(2);
                 }
             }
@@ -2701,24 +2771,24 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void ClientViewRange(World world, ref StackDataReader p)
+        private static void ClientViewRange(World world, ref NetReader p)
         {
-            world.ClientViewRange = p.ReadUInt8();
+            world.ClientViewRange = p.ReadByte();
         }
 
-        private static void BulletinBoardData(World world, ref StackDataReader p)
+        private static void BulletinBoardData(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            switch (p.ReadUInt8())
+            switch (p.ReadByte())
             {
                 case 0: // open
 
                     {
-                        uint serial = p.ReadUInt32BE();
+                        uint serial = p.ReadUInt32();
                         Item item = world.FindItem(serial);
 
                         if (item != null)
@@ -2731,7 +2801,7 @@ namespace ClassicUO.Network
                             int x = (Client.Game.ClientBounds.Width >> 1) - 245;
                             int y = (Client.Game.ClientBounds.Height >> 1) - 205;
 
-                            bulletinBoard = new BulletinBoardGump(world, item, x, y, p.ReadUTF8(22, true)); //p.ReadASCII(22));
+                            bulletinBoard = new BulletinBoardGump(world, item, x, y, p.ReadUTF8Safe(22)); //p.ReadCp1252(22));
                             UIManager.Add(bulletinBoard);
 
                             item.Opened = true;
@@ -2743,27 +2813,27 @@ namespace ClassicUO.Network
                 case 1: // summary msg
 
                     {
-                        uint boardSerial = p.ReadUInt32BE();
+                        uint boardSerial = p.ReadUInt32();
                         BulletinBoardGump bulletinBoard = UIManager.GetGump<BulletinBoardGump>(
                             boardSerial
                         );
 
                         if (bulletinBoard != null)
                         {
-                            uint serial = p.ReadUInt32BE();
-                            uint parendID = p.ReadUInt32BE();
+                            uint serial = p.ReadUInt32();
+                            uint parendID = p.ReadUInt32();
 
                             // poster
-                            int len = p.ReadUInt8();
-                            string text = (len <= 0 ? string.Empty : p.ReadUTF8(len, true)) + " - ";
+                            int len = p.ReadByte();
+                            string text = (len <= 0 ? string.Empty : p.ReadUTF8Safe(len)) + " - ";
 
                             // subject
-                            len = p.ReadUInt8();
-                            text += (len <= 0 ? string.Empty : p.ReadUTF8(len, true)) + " - ";
+                            len = p.ReadByte();
+                            text += (len <= 0 ? string.Empty : p.ReadUTF8Safe(len)) + " - ";
 
                             // datetime
-                            len = p.ReadUInt8();
-                            text += (len <= 0 ? string.Empty : p.ReadUTF8(len, true));
+                            len = p.ReadByte();
+                            text += (len <= 0 ? string.Empty : p.ReadUTF8Safe(len));
 
                             bulletinBoard.AddBulletinObject(serial, text);
                         }
@@ -2774,45 +2844,45 @@ namespace ClassicUO.Network
                 case 2: // message
 
                     {
-                        uint boardSerial = p.ReadUInt32BE();
+                        uint boardSerial = p.ReadUInt32();
                         BulletinBoardGump bulletinBoard = UIManager.GetGump<BulletinBoardGump>(
                             boardSerial
                         );
 
                         if (bulletinBoard != null)
                         {
-                            uint serial = p.ReadUInt32BE();
+                            uint serial = p.ReadUInt32();
 
-                            int len = p.ReadUInt8();
-                            string poster = len > 0 ? p.ReadASCII(len) : string.Empty;
+                            int len = p.ReadByte();
+                            string poster = len > 0 ? p.ReadCp1252(len) : string.Empty;
 
-                            len = p.ReadUInt8();
-                            string subject = len > 0 ? p.ReadUTF8(len, true) : string.Empty;
+                            len = p.ReadByte();
+                            string subject = len > 0 ? p.ReadUTF8Safe(len) : string.Empty;
 
-                            len = p.ReadUInt8();
-                            string dataTime = len > 0 ? p.ReadASCII(len) : string.Empty;
+                            len = p.ReadByte();
+                            string dataTime = len > 0 ? p.ReadCp1252(len) : string.Empty;
 
                             p.Skip(4);
 
-                            byte unk = p.ReadUInt8();
+                            byte unk = p.ReadByte();
 
                             if (unk > 0)
                             {
                                 p.Skip(unk * 4);
                             }
 
-                            byte lines = p.ReadUInt8();
+                            byte lines = p.ReadByte();
 
                             Span<char> span = stackalloc char[256];
                             ValueStringBuilder sb = new ValueStringBuilder(span);
 
                             for (int i = 0; i < lines; i++)
                             {
-                                byte lineLen = p.ReadUInt8();
+                                byte lineLen = p.ReadByte();
 
                                 if (lineLen > 0)
                                 {
-                                    string putta = p.ReadUTF8(lineLen, true);
+                                    string putta = p.ReadUTF8Safe(lineLen);
                                     sb.Append(putta);
                                     sb.Append('\n');
                                 }
@@ -2846,29 +2916,29 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void Warmode(World world, ref StackDataReader p)
+        private static void Warmode(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            world.Writer.SetWarMode(world.Player, p.ReadBool());
+            world.Writer.SetWarMode(world.Player, p.ReadBoolean());
         }
 
-        private static void Ping(World world, ref StackDataReader p)
+        private static void Ping(World world, ref NetReader p)
         {
-            NetClient.Socket.Statistics.PingReceived(p.ReadUInt8());
+            NetClient.Socket.Statistics.PingReceived(p.ReadByte());
         }
 
-        private static void BuyList(World world, ref StackDataReader p)
+        private static void BuyList(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            Item container = world.FindItem(p.ReadUInt32BE());
+            Item container = world.FindItem(p.ReadUInt32());
 
             if (container == null)
             {
@@ -2898,7 +2968,7 @@ namespace ClassicUO.Network
 
             if (container.Layer == Layer.ShopBuyRestock || container.Layer == Layer.ShopBuy)
             {
-                byte count = p.ReadUInt8();
+                byte count = p.ReadByte();
 
                 // T2: the list is the ECS's contents (after the sort, which re-stamps them)
                 ReadOnlySpan<uint> shopContents = world.State.Contents(container.Serial);
@@ -2935,9 +3005,9 @@ namespace ClassicUO.Network
 
                     at += reverse ? -1 : 1;
 
-                    world.Writer.SetPrice(it, p.ReadUInt32BE());
-                    byte nameLen = p.ReadUInt8();
-                    string name = p.ReadASCII(nameLen);
+                    world.Writer.SetPrice(it, p.ReadUInt32());
+                    byte nameLen = p.ReadByte();
+                    string name = p.ReadCp1252(nameLen);
                     string itName;
 
                     if (world.OPL.TryGetNameAndData(it.Serial, out string s, out _))
@@ -2966,14 +3036,14 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdateCharacter(World world, ref StackDataReader p)
+        private static void UpdateCharacter(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             Mobile mobile = world.FindMobile(serial);
 
             if (mobile == null)
@@ -2981,14 +3051,14 @@ namespace ClassicUO.Network
                 return;
             }
 
-            ushort graphic = p.ReadUInt16BE();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            sbyte z = p.ReadInt8();
-            Direction direction = (Direction)p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            Flags flags = (Flags)p.ReadUInt8();
-            NotorietyFlag notoriety = (NotorietyFlag)p.ReadUInt8();
+            ushort graphic = p.ReadUInt16();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            sbyte z = p.ReadSByte();
+            Direction direction = (Direction)p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            Flags flags = (Flags)p.ReadByte();
+            NotorietyFlag notoriety = (NotorietyFlag)p.ReadByte();
 
             // T1: the notoriety of the mobile found above (an input: written, then pushed)
             world.Writer.SetNotoriety(mobile, notoriety);
@@ -3008,22 +3078,25 @@ namespace ClassicUO.Network
         // t3a-fold: 0x78/0xD3's equipment list, read before the operation (grown when a list is longer; the game loop's thread)
         private static WorldWriter.WornEntry[] _wornEntries = new WorldWriter.WornEntry[32];
 
-        private static void UpdateObject(World world, ref StackDataReader p)
+        private static void UpdateObject(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort graphic = p.ReadUInt16BE();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            sbyte z = p.ReadInt8();
-            Direction direction = (Direction)p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            Flags flags = (Flags)p.ReadUInt8();
-            NotorietyFlag notoriety = (NotorietyFlag)p.ReadUInt8();
+            bool wornHue = PacketLayouts.Resolve(ref p, PacketLayouts.WornList(p.Buffer, Client.Game.UO.Version),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_70331 ? PacketLayouts.WornAlwaysHue : PacketLayouts.WornFlagHue)
+                == PacketLayouts.WornAlwaysHue;
+            uint serial = p.ReadUInt32();
+            ushort graphic = p.ReadUInt16();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            sbyte z = p.ReadSByte();
+            Direction direction = (Direction)p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            Flags flags = (Flags)p.ReadByte();
+            NotorietyFlag notoriety = (NotorietyFlag)p.ReadByte();
             bool oldDead = false;
             //bool alreadyExists =world.Get(serial) != null;
 
@@ -3060,7 +3133,7 @@ namespace ClassicUO.Network
                 p.Skip(6);
             }
 
-            uint itemSerial = p.ReadUInt32BE();
+            uint itemSerial = p.ReadUInt32();
             int entryCount = 0;
 
             // t3a-fold: the list is read first (before any change), then cleared and worn in one operation
@@ -3069,18 +3142,18 @@ namespace ClassicUO.Network
                 //if (!SerialHelper.IsItem(itemSerial))
                 //    break;
 
-                ushort itemGraphic = p.ReadUInt16BE();
-                byte layer = p.ReadUInt8();
+                ushort itemGraphic = p.ReadUInt16();
+                byte layer = p.ReadByte();
                 ushort item_hue = 0;
 
-                if (Client.Game.UO.Version >= Utility.ClientVersion.CV_70331)
+                if (wornHue)
                 {
-                    item_hue = p.ReadUInt16BE();
+                    item_hue = p.ReadUInt16();
                 }
                 else if ((itemGraphic & 0x8000) != 0)
                 {
                     itemGraphic &= 0x7FFF;
-                    item_hue = p.ReadUInt16BE();
+                    item_hue = p.ReadUInt16();
                 }
 
                 if (entryCount == _wornEntries.Length)
@@ -3090,7 +3163,8 @@ namespace ClassicUO.Network
 
                 _wornEntries[entryCount++] = new WorldWriter.WornEntry(itemSerial, itemGraphic, (Layer)layer, item_hue);
 
-                itemSerial = p.ReadUInt32BE();
+                // a list without the zero serial ends at the packet's end
+                itemSerial = p.Remaining > 0 ? p.ReadUInt32() : 0;
             }
 
             // T1: the clear, then each entry's values, out of its old container, onto obj (captured once, before the list) at
@@ -3121,20 +3195,27 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void OpenMenu(World world, ref StackDataReader p)
+        private static void OpenMenu(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            ushort id = p.ReadUInt16BE();
-            string name = p.ReadASCII(p.ReadUInt8());
-            int count = p.ReadUInt8();
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.Menu(p.Buffer), PacketLayouts.MenuItems);
+            uint serial = p.ReadUInt32();
+            ushort id = p.ReadUInt16();
+            string name = p.ReadCp1252(p.ReadByte());
+            int count = p.ReadByte();
 
-            ushort menuid = p.ReadUInt16BE();
-            p.Seek(p.Position - 2);
+            // the first item's graphic, peeked; a menu with no items has none
+            ushort menuid = 0;
+
+            if (layout == PacketLayouts.MenuItems && p.Remaining >= 2)
+            {
+                menuid = p.ReadUInt16();
+                p.Seek(p.Position - 2, SeekOrigin.Begin);
+            }
 
             if (menuid != 0)
             {
@@ -3144,9 +3225,9 @@ namespace ClassicUO.Network
 
                 for (int i = 0; i < count; i++)
                 {
-                    ushort graphic = p.ReadUInt16BE();
-                    ushort hue = p.ReadUInt16BE();
-                    name = p.ReadASCII(p.ReadUInt8());
+                    ushort graphic = p.ReadUInt16();
+                    ushort hue = p.ReadUInt16();
+                    name = p.ReadCp1252(p.ReadByte());
 
                     ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(graphic);
 
@@ -3185,7 +3266,7 @@ namespace ClassicUO.Network
                 for (int i = 0; i < count; i++)
                 {
                     p.Skip(4);
-                    name = p.ReadASCII(p.ReadUInt8());
+                    name = p.ReadCp1252(p.ReadByte());
 
                     int addHeight = gump.AddItem(name, offsetY);
 
@@ -3224,17 +3305,17 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void OpenPaperdoll(World world, ref StackDataReader p)
+        private static void OpenPaperdoll(World world, ref NetReader p)
         {
-            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32());
 
             if (mobile == null)
             {
                 return;
             }
 
-            string text = p.ReadASCII(60);
-            byte flags = p.ReadUInt8();
+            string text = p.ReadCp1252(60);
+            byte flags = p.ReadByte();
 
             mobile.Title = text;
 
@@ -3269,14 +3350,14 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void CorpseEquipment(World world, ref StackDataReader p)
+        private static void CorpseEquipment(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             Entity corpse = world.Get(serial);
 
             if (corpse == null)
@@ -3290,31 +3371,31 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Layer layer = (Layer)p.ReadUInt8();
+            Layer layer = (Layer)p.ReadByte();
 
             while (layer != Layer.Invalid && p.Position < p.Length)
             {
-                uint item_serial = p.ReadUInt32BE();
+                uint item_serial = p.ReadUInt32();
 
                 if (layer - 1 != Layer.Backpack)
                 {
                     world.Writer.PlaceCorpseEquipment(corpse, item_serial, layer - 1);
                 }
 
-                layer = (Layer)p.ReadUInt8();
+                layer = (Layer)p.ReadByte();
             }
         }
 
-        private static void DisplayMap(World world, ref StackDataReader p)
+        private static void DisplayMap(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
-            ushort gumpid = p.ReadUInt16BE();
-            ushort startX = p.ReadUInt16BE();
-            ushort startY = p.ReadUInt16BE();
-            ushort endX = p.ReadUInt16BE();
-            ushort endY = p.ReadUInt16BE();
-            ushort width = p.ReadUInt16BE();
-            ushort height = p.ReadUInt16BE();
+            uint serial = p.ReadUInt32();
+            ushort gumpid = p.ReadUInt16();
+            ushort startX = p.ReadUInt16();
+            ushort startY = p.ReadUInt16();
+            ushort endX = p.ReadUInt16();
+            ushort endY = p.ReadUInt16();
+            ushort width = p.ReadUInt16();
+            ushort height = p.ReadUInt16();
 
             MapGump gump = new MapGump(world, serial, gumpid, width, height);
             SpriteInfo multiMapInfo;
@@ -3325,7 +3406,7 @@ namespace ClassicUO.Network
 
                 if (p[0] == 0xF5)
                 {
-                    facet = p.ReadUInt16BE();
+                    facet = p.ReadUInt16();
                 }
 
                 multiMapInfo = Client.Game.UO.MultiMaps.GetMap(facet, width, height, startX, startY, endX, endY);
@@ -3348,15 +3429,15 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void OpenBook(World world, ref StackDataReader p)
+        private static void OpenBook(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             bool oldpacket = p[0] == 0x93;
-            bool editable = p.ReadBool();
+            bool editable = p.ReadBoolean();
 
             if (!oldpacket)
             {
-                editable = p.ReadBool();
+                editable = p.ReadBoolean();
             }
             else
             {
@@ -3367,13 +3448,13 @@ namespace ClassicUO.Network
 
             if (bgump == null || bgump.IsDisposed)
             {
-                ushort page_count = p.ReadUInt16BE();
+                ushort page_count = p.ReadUInt16();
                 string title = oldpacket
-                    ? p.ReadUTF8(60, true)
-                    : p.ReadUTF8(p.ReadUInt16BE(), true);
+                    ? p.ReadUTF8Safe(60)
+                    : p.ReadUTF8Safe(p.ReadUInt16());
                 string author = oldpacket
-                    ? p.ReadUTF8(30, true)
-                    : p.ReadUTF8(p.ReadUInt16BE(), true);
+                    ? p.ReadUTF8Safe(30)
+                    : p.ReadUTF8Safe(p.ReadUInt16());
 
                 UIManager.Add(
                     new ModernBookGump(world, serial, page_count, title, author, editable, oldpacket)
@@ -3390,11 +3471,11 @@ namespace ClassicUO.Network
                 p.Skip(2);
                 bgump.IsEditable = editable;
                 bgump.SetTitle(
-                    oldpacket ? p.ReadUTF8(60, true) : p.ReadUTF8(p.ReadUInt16BE(), true),
+                    oldpacket ? p.ReadUTF8Safe(60) : p.ReadUTF8Safe(p.ReadUInt16()),
                     editable
                 );
                 bgump.SetAuthor(
-                    oldpacket ? p.ReadUTF8(30, true) : p.ReadUTF8(p.ReadUInt16BE(), true),
+                    oldpacket ? p.ReadUTF8Safe(30) : p.ReadUTF8Safe(p.ReadUInt16()),
                     editable
                 );
                 bgump.UseNewHeader = !oldpacket;
@@ -3403,11 +3484,11 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void DyeData(World world, ref StackDataReader p)
+        private static void DyeData(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             p.Skip(2);
-            ushort graphic = p.ReadUInt16BE();
+            ushort graphic = p.ReadUInt16();
 
             ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(0x0906);
 
@@ -3426,26 +3507,26 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void MovePlayer(World world, ref StackDataReader p)
+        private static void MovePlayer(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            Direction direction = (Direction)p.ReadUInt8();
+            Direction direction = (Direction)p.ReadByte();
             world.Player.Walk(direction & Direction.Mask, (direction & Direction.Running) != 0);
         }
 
-        private static void UpdateName(World world, ref StackDataReader p)
+        private static void UpdateName(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            string name = p.ReadASCII();
+            uint serial = p.ReadUInt32();
+            string name = p.ReadCp1252();
 
             WMapEntity wme = world.WMapManager.GetEntity(serial);
 
@@ -3473,51 +3554,51 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void MultiPlacement(World world, ref StackDataReader p)
+        private static void MultiPlacement(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            bool allowGround = p.ReadBool();
-            uint targID = p.ReadUInt32BE();
-            byte flags = p.ReadUInt8();
-            p.Seek(18);
-            ushort multiID = p.ReadUInt16BE();
-            ushort xOff = p.ReadUInt16BE();
-            ushort yOff = p.ReadUInt16BE();
-            ushort zOff = p.ReadUInt16BE();
-            ushort hue = p.ReadUInt16BE();
+            bool allowGround = p.ReadBoolean();
+            uint targID = p.ReadUInt32();
+            byte flags = p.ReadByte();
+            p.Seek(18, SeekOrigin.Begin);
+            ushort multiID = p.ReadUInt16();
+            ushort xOff = p.ReadUInt16();
+            ushort yOff = p.ReadUInt16();
+            ushort zOff = p.ReadUInt16();
+            ushort hue = p.ReadUInt16();
 
             world.TargetManager.SetTargetingMulti(targID, multiID, xOff, yOff, zOff, hue);
         }
 
-        private static void ASCIIPrompt(World world, ref StackDataReader p)
+        private static void ASCIIPrompt(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            world.MessageManager.PromptData = new PromptData(ConsolePrompt.ASCII, p.ReadUInt64BE());
+            world.MessageManager.PromptData = new PromptData(ConsolePrompt.ASCII, p.ReadUInt64());
         }
 
-        private static void SellList(World world, ref StackDataReader p)
+        private static void SellList(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            Mobile vendor = world.FindMobile(p.ReadUInt32BE());
+            Mobile vendor = world.FindMobile(p.ReadUInt32());
 
             if (vendor == null)
             {
                 return;
             }
 
-            ushort countItems = p.ReadUInt16BE();
+            ushort countItems = p.ReadUInt16();
 
             if (countItems <= 0)
             {
@@ -3530,12 +3611,12 @@ namespace ClassicUO.Network
 
             for (int i = 0; i < countItems; i++)
             {
-                uint serial = p.ReadUInt32BE();
-                ushort graphic = p.ReadUInt16BE();
-                ushort hue = p.ReadUInt16BE();
-                ushort amount = p.ReadUInt16BE();
-                ushort price = p.ReadUInt16BE();
-                string name = p.ReadASCII(p.ReadUInt16BE());
+                uint serial = p.ReadUInt32();
+                ushort graphic = p.ReadUInt16();
+                ushort hue = p.ReadUInt16();
+                ushort amount = p.ReadUInt16();
+                ushort price = p.ReadUInt16();
+                string name = p.ReadCp1252(p.ReadUInt16());
                 bool fromcliloc = false;
 
                 if (int.TryParse(name, out int clilocnum))
@@ -3562,17 +3643,17 @@ namespace ClassicUO.Network
             UIManager.Add(gump);
         }
 
-        private static void UpdateHitpoints(World world, ref StackDataReader p)
+        private static void UpdateHitpoints(World world, ref NetReader p)
         {
-            Entity entity = world.Get(p.ReadUInt32BE());
+            Entity entity = world.Get(p.ReadUInt32());
 
             if (entity == null)
             {
                 return;
             }
 
-            ushort hitsMax = p.ReadUInt16BE();
-            ushort hits = p.ReadUInt16BE();
+            ushort hitsMax = p.ReadUInt16();
+            ushort hits = p.ReadUInt16();
 
             // T1 (funnel part 6)
             world.Writer.SetHits(entity, hitsMax, hits);
@@ -3583,17 +3664,17 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdateMana(World world, ref StackDataReader p)
+        private static void UpdateMana(World world, ref NetReader p)
         {
-            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32());
 
             if (mobile == null)
             {
                 return;
             }
 
-            ushort manaMax = p.ReadUInt16BE();
-            world.Writer.SetMana(mobile, manaMax, p.ReadUInt16BE());
+            ushort manaMax = p.ReadUInt16();
+            world.Writer.SetMana(mobile, manaMax, p.ReadUInt16());
 
             if (mobile == world.Player)
             {
@@ -3601,17 +3682,17 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdateStamina(World world, ref StackDataReader p)
+        private static void UpdateStamina(World world, ref NetReader p)
         {
-            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32());
 
             if (mobile == null)
             {
                 return;
             }
 
-            ushort staminaMax = p.ReadUInt16BE();
-            world.Writer.SetStamina(mobile, staminaMax, p.ReadUInt16BE());
+            ushort staminaMax = p.ReadUInt16();
+            world.Writer.SetStamina(mobile, staminaMax, p.ReadUInt16());
 
             if (mobile == world.Player)
             {
@@ -3619,9 +3700,9 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void OpenUrl(World world, ref StackDataReader p)
+        private static void OpenUrl(World world, ref NetReader p)
         {
-            string url = p.ReadASCII();
+            string url = p.ReadCp1252();
 
             if (!string.IsNullOrEmpty(url))
             {
@@ -3629,17 +3710,17 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void TipWindow(World world, ref StackDataReader p)
+        private static void TipWindow(World world, ref NetReader p)
         {
-            byte flag = p.ReadUInt8();
+            byte flag = p.ReadByte();
 
             if (flag == 1)
             {
                 return;
             }
 
-            uint tip = p.ReadUInt32BE();
-            string str = p.ReadASCII(p.ReadUInt16BE())?.Replace('\r', '\n');
+            uint tip = p.ReadUInt32();
+            string str = p.ReadCp1252(p.ReadUInt16())?.Replace('\r', '\n');
 
             int x = 20;
             int y = 20;
@@ -3653,9 +3734,9 @@ namespace ClassicUO.Network
             UIManager.Add(new TipNoticeGump(world, tip, flag, str) { X = x, Y = y });
         }
 
-        private static void AttackCharacter(World world, ref StackDataReader p)
+        private static void AttackCharacter(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             //if (TargetManager.LastAttack != serial && World.InGame)
             //{
@@ -3669,26 +3750,26 @@ namespace ClassicUO.Network
             GameActions.RequestMobileStatus(world, serial);
         }
 
-        private static void TextEntryDialog(World world, ref StackDataReader p)
+        private static void TextEntryDialog(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            byte parentID = p.ReadUInt8();
-            byte buttonID = p.ReadUInt8();
+            uint serial = p.ReadUInt32();
+            byte parentID = p.ReadByte();
+            byte buttonID = p.ReadByte();
 
-            ushort textLen = p.ReadUInt16BE();
-            string text = p.ReadASCII(textLen);
+            ushort textLen = p.ReadUInt16();
+            string text = p.ReadCp1252(textLen);
 
-            bool haveCancel = p.ReadBool();
-            byte variant = p.ReadUInt8();
-            uint maxLength = p.ReadUInt32BE();
+            bool haveCancel = p.ReadBoolean();
+            byte variant = p.ReadByte();
+            uint maxLength = p.ReadUInt32();
 
-            ushort descLen = p.ReadUInt16BE();
-            string desc = p.ReadASCII(descLen);
+            ushort descLen = p.ReadUInt16();
+            string desc = p.ReadCp1252(descLen);
 
             TextEntryDialogGump gump = new TextEntryDialogGump(
                 world,
@@ -3709,7 +3790,7 @@ namespace ClassicUO.Network
             UIManager.Add(gump);
         }
 
-        private static void UnicodeTalk(World world, ref StackDataReader p)
+        private static void UnicodeTalk(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
@@ -3717,18 +3798,18 @@ namespace ClassicUO.Network
 
                 if (scene != null)
                 {
-                    //Serial serial = p.ReadUInt32BE();
-                    //ushort graphic = p.ReadUInt16BE();
-                    //MessageType type = (MessageType)p.ReadUInt8();
-                    //Hue hue = p.ReadUInt16BE();
-                    //MessageFont font = (MessageFont)p.ReadUInt16BE();
-                    //string lang = p.ReadASCII(4);
-                    //string name = p.ReadASCII(30);
+                    //Serial serial = p.ReadUInt32();
+                    //ushort graphic = p.ReadUInt16();
+                    //MessageType type = (MessageType)p.ReadByte();
+                    //Hue hue = p.ReadUInt16();
+                    //MessageFont font = (MessageFont)p.ReadUInt16();
+                    //string lang = p.ReadCp1252(4);
+                    //string name = p.ReadCp1252(30);
                     Log.Warn("UnicodeTalk received during LoginScene");
 
                     if (p.Length > 48)
                     {
-                        p.Seek(48);
+                        p.Seek(48, SeekOrigin.Begin);
                         Log.PushIndent();
                         Log.Warn("Handled UnicodeTalk in LoginScene");
                         Log.PopIndent();
@@ -3738,14 +3819,14 @@ namespace ClassicUO.Network
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             Entity entity = world.Get(serial);
-            ushort graphic = p.ReadUInt16BE();
-            MessageType type = (MessageType)p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            ushort font = p.ReadUInt16BE();
-            string lang = p.ReadASCII(4);
-            string name = p.ReadASCII();
+            ushort graphic = p.ReadUInt16();
+            MessageType type = (MessageType)p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            ushort font = p.ReadUInt16();
+            string lang = p.ReadCp1252(4);
+            string name = p.ReadCp1252();
 
             if (
                 serial == 0
@@ -3809,8 +3890,8 @@ namespace ClassicUO.Network
 
             if (p.Length > 48)
             {
-                p.Seek(48);
-                text = p.ReadUnicodeBE();
+                p.Seek(48, SeekOrigin.Begin);
+                text = p.ReadBigUni();
             }
 
             TextType text_type = TextType.SYSTEM;
@@ -3851,16 +3932,16 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void DisplayDeath(World world, ref StackDataReader p)
+        private static void DisplayDeath(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            uint corpseSerial = p.ReadUInt32BE();
-            uint running = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
+            uint corpseSerial = p.ReadUInt32();
+            uint running = p.ReadUInt32();
 
             Mobile owner = world.FindMobile(serial);
 
@@ -3900,32 +3981,32 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void OpenGump(World world, ref StackDataReader p)
+        private static void OpenGump(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint sender = p.ReadUInt32BE();
-            uint gumpID = p.ReadUInt32BE();
-            int x = (int)p.ReadUInt32BE();
-            int y = (int)p.ReadUInt32BE();
+            uint sender = p.ReadUInt32();
+            uint gumpID = p.ReadUInt32();
+            int x = (int)p.ReadUInt32();
+            int y = (int)p.ReadUInt32();
 
-            ushort cmdLen = p.ReadUInt16BE();
-            string cmd = p.ReadASCII(cmdLen);
+            ushort cmdLen = p.ReadUInt16();
+            string cmd = p.ReadCp1252(cmdLen);
 
-            ushort textLinesCount = p.ReadUInt16BE();
+            ushort textLinesCount = p.ReadUInt16();
 
             string[] lines = new string[textLinesCount];
 
             for (int i = 0; i < textLinesCount; ++i)
             {
-                int length = p.ReadUInt16BE();
+                int length = p.ReadUInt16();
 
                 if (length > 0)
                 {
-                    lines[i] = p.ReadUnicodeBE(length);
+                    lines[i] = p.ReadBigUni(length);
                 }
                 else
                 {
@@ -3960,16 +4041,17 @@ namespace ClassicUO.Network
             CreateGump(world, sender, gumpID, x, y, cmd, lines);
         }
 
-        private static void ChatMessage(World world, ref StackDataReader p)
+        private static void ChatMessage(World world, ref NetReader p)
         {
-            ushort cmd = p.ReadUInt16BE();
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.Chat(p.Buffer), PacketLayouts.ChatFull);
+            ushort cmd = p.ReadUInt16();
 
             switch (cmd)
             {
                 case 0x03E8: // create conference
-                    p.Skip(4);
-                    string channelName = p.ReadUnicodeBE();
-                    bool hasPassword = p.ReadUInt16BE() == 0x31;
+                    SkipChatLanguage(ref p, layout);
+                    string channelName = p.ReadBigUni();
+                    bool hasPassword = p.Remaining > 0 && p.ReadUInt16() == 0x31;
                     world.ChatManager.CurrentChannelName = channelName;
                     world.ChatManager.AddChannel(channelName, hasPassword);
 
@@ -3978,8 +4060,8 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03E9: // destroy conference
-                    p.Skip(4);
-                    channelName = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    channelName = p.ReadBigUni();
                     world.ChatManager.RemoveChannel(channelName);
 
                     UIManager.GetGump<ChatGump>()?.RequestUpdateContents();
@@ -4000,23 +4082,23 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03ED: // username accepted, display chat
-                    p.Skip(4);
-                    string username = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    string username = p.ReadBigUni();
                     world.ChatManager.ChatIsEnabled = ChatStatus.Enabled;
                     NetClient.Socket.Send_ChatJoinCommand("General");
 
                     break;
 
                 case 0x03EE: // add user
-                    p.Skip(4);
-                    ushort userType = p.ReadUInt16BE();
-                    username = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    ushort userType = p.Remaining > 0 ? p.ReadUInt16() : (ushort)0;
+                    username = p.ReadBigUni();
 
                     break;
 
                 case 0x03EF: // remove user
-                    p.Skip(4);
-                    username = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    username = p.ReadBigUni();
 
                     break;
 
@@ -4024,8 +4106,8 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03F1: // you have joined a conference
-                    p.Skip(4);
-                    channelName = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    channelName = p.ReadBigUni();
                     world.ChatManager.CurrentChannelName = channelName;
 
                     UIManager.GetGump<ChatGump>()?.UpdateConference();
@@ -4041,8 +4123,8 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x03F4:
-                    p.Skip(4);
-                    channelName = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    channelName = p.ReadBigUni();
 
                     GameActions.Print(
                         world,
@@ -4057,10 +4139,10 @@ namespace ClassicUO.Network
                 case 0x0025:
                 case 0x0026:
                 case 0x0027:
-                    p.Skip(4);
-                    ushort msgType = p.ReadUInt16BE();
-                    username = p.ReadUnicodeBE();
-                    string msgSent = p.ReadUnicodeBE();
+                    SkipChatLanguage(ref p, layout);
+                    ushort msgType = p.Remaining > 0 ? p.ReadUInt16() : (ushort)0;
+                    username = p.ReadBigUni();
+                    string msgSent = p.ReadBigUni();
 
                     if (!string.IsNullOrEmpty(msgSent))
                     {
@@ -4097,8 +4179,8 @@ namespace ClassicUO.Network
                             return;
                         }
 
-                        p.Skip(4);
-                        string text = p.ReadUnicodeBE();
+                        SkipChatLanguage(ref p, layout);
+                        string text = p.ReadBigUni();
 
                         if (!string.IsNullOrEmpty(text))
                         {
@@ -4133,20 +4215,28 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void Help(World world, ref StackDataReader p) { }
+        private static void SkipChatLanguage(ref NetReader p, int layout)
+        {
+            if (layout != PacketLayouts.ChatNoText)
+            {
+                p.Skip(4);
+            }
+        }
 
-        private static void CharacterProfile(World world, ref StackDataReader p)
+        private static void Help(World world, ref NetReader p) { }
+
+        private static void CharacterProfile(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            string header = p.ReadASCII();
-            string footer = p.ReadUnicodeBE();
+            uint serial = p.ReadUInt32();
+            string header = p.ReadCp1252();
+            string footer = p.ReadBigUni();
 
-            string body = p.ReadUnicodeBE();
+            string body = p.ReadBigUni();
 
             UIManager.GetGump<ProfileGump>(serial)?.Dispose();
 
@@ -4155,17 +4245,19 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void EnableLockedFeatures(World world, ref StackDataReader p)
+        private static void EnableLockedFeatures(World world, ref NetReader p)
         {
             LockedFeatureFlags flags = 0;
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.LockedFeatures(p.Buffer),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_60142 ? PacketLayouts.Features32 : PacketLayouts.Features16);
 
-            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_60142)
+            if (layout == PacketLayouts.Features32)
             {
-                flags = (LockedFeatureFlags)p.ReadUInt32BE();
+                flags = (LockedFeatureFlags)p.ReadUInt32();
             }
             else
             {
-                flags = (LockedFeatureFlags)p.ReadUInt16BE();
+                flags = (LockedFeatureFlags)p.ReadUInt16();
             }
 
             world.ClientLockedFeatures.SetFlags(flags);
@@ -4179,17 +4271,19 @@ namespace ClassicUO.Network
             // Body art does not depend on these flags: the pack holds the body set chosen at import (bodies.json).
         }
 
-        private static void DisplayQuestArrow(World world, ref StackDataReader p)
+        private static void DisplayQuestArrow(World world, ref NetReader p)
         {
-            bool display = p.ReadBool();
-            ushort mx = p.ReadUInt16BE();
-            ushort my = p.ReadUInt16BE();
+            bool display = p.ReadBoolean();
+            ushort mx = p.ReadUInt16();
+            ushort my = p.ReadUInt16();
 
             uint serial = 0;
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.QuestArrow(p.Buffer),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_7090 ? PacketLayouts.QuestArrowSerial : PacketLayouts.QuestArrowNoSerial);
 
-            if (Client.Game.UO.Version >= Utility.ClientVersion.CV_7090)
+            if (layout == PacketLayouts.QuestArrowSerial)
             {
-                serial = p.ReadUInt32BE();
+                serial = p.ReadUInt32();
             }
 
             QuestArrowGump arrow = UIManager.GetGump<QuestArrowGump>(serial);
@@ -4214,17 +4308,17 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UltimaMessengerR(World world, ref StackDataReader p) { }
+        private static void UltimaMessengerR(World world, ref NetReader p) { }
 
-        private static void Season(World world, ref StackDataReader p)
+        private static void Season(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            byte season = p.ReadUInt8();
-            byte music = p.ReadUInt8();
+            byte season = p.ReadByte();
+            byte music = p.ReadByte();
 
             if (season > 4)
             {
@@ -4247,14 +4341,14 @@ namespace ClassicUO.Network
             world.ChangeSeason((Season)season, music);
         }
 
-        private static void ClientVersion(World world, ref StackDataReader p)
+        private static void ClientVersion(World world, ref NetReader p)
         {
             NetClient.Socket.Send_ClientVersion(Client.Game.UO.VersionText);
         }
 
-        private static void AssistVersion(World world, ref StackDataReader p)
+        private static void AssistVersion(World world, ref NetReader p)
         {
-            //uint version = p.ReadUInt32BE();
+            //uint version = p.ReadUInt32();
 
             //string[] parts = Service.GetByLocalSerial<Settings>().ClientVersion.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
             //byte[] clientVersionBuffer =
@@ -4263,9 +4357,9 @@ namespace ClassicUO.Network
             //NetClient.Socket.Send(new PAssistVersion(clientVersionBuffer, version));
         }
 
-        private static void ExtendedCommand(World world, ref StackDataReader p)
+        private static void ExtendedCommand(World world, ref NetReader p)
         {
-            ushort cmd = p.ReadUInt16BE();
+            ushort cmd = p.ReadUInt16();
 
             switch (cmd)
             {
@@ -4277,7 +4371,7 @@ namespace ClassicUO.Network
                 case 1: // fast walk prevention
                     for (int i = 0; i < 6; i++)
                     {
-                        world.Player.Walker.FastWalkStack.SetValue(i, p.ReadUInt32BE());
+                        world.Player.Walker.FastWalkStack.SetValue(i, p.ReadUInt32());
                     }
 
                     break;
@@ -4285,15 +4379,15 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 2: // add key to fast walk stack
-                    world.Player.Walker.FastWalkStack.AddValue(p.ReadUInt32BE());
+                    world.Player.Walker.FastWalkStack.AddValue(p.ReadUInt32());
 
                     break;
 
                 //===========================================================================================
                 //===========================================================================================
                 case 4: // close generic gump
-                    uint ser = p.ReadUInt32BE();
-                    int button = (int)p.ReadUInt32BE();
+                    uint ser = p.ReadUInt32();
+                    int button = (int)p.ReadUInt32();
 
                     LinkedListNode<Gump> first = UIManager.Gumps.First;
 
@@ -4337,28 +4431,28 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 8: // map change
-                    world.MapIndex = p.ReadUInt8();
+                    world.MapIndex = p.ReadByte();
 
                     break;
 
                 //===========================================================================================
                 //===========================================================================================
                 case 0x0C: // close statusbar gump
-                    UIManager.GetGump<HealthBarGump>(p.ReadUInt32BE())?.Dispose();
+                    UIManager.GetGump<HealthBarGump>(p.ReadUInt32())?.Dispose();
 
                     break;
 
                 //===========================================================================================
                 //===========================================================================================
                 case 0x10: // display equip info
-                    Item item = world.FindItem(p.ReadUInt32BE());
+                    Item item = world.FindItem(p.ReadUInt32());
 
                     if (item == null)
                     {
                         return;
                     }
 
-                    uint cliloc = p.ReadUInt32BE();
+                    uint cliloc = p.ReadUInt32();
                     string str = string.Empty;
 
                     if (cliloc > 0)
@@ -4384,24 +4478,24 @@ namespace ClassicUO.Network
 
                     str = string.Empty;
                     ushort crafterNameLen = 0;
-                    uint next = p.ReadUInt32BE();
+                    uint next = p.ReadUInt32();
 
                     Span<char> span = stackalloc char[256];
                     ValueStringBuilder strBuffer = new ValueStringBuilder(span);
                     if (next == 0xFFFFFFFD)
                     {
-                        crafterNameLen = p.ReadUInt16BE();
+                        crafterNameLen = p.ReadUInt16();
 
                         if (crafterNameLen > 0)
                         {
                             strBuffer.Append(ResGeneral.CraftedBy);
-                            strBuffer.Append(p.ReadASCII(crafterNameLen));
+                            strBuffer.Append(p.ReadCp1252(crafterNameLen));
                         }
                     }
 
                     if (crafterNameLen != 0)
                     {
-                        next = p.ReadUInt32BE();
+                        next = p.ReadUInt32();
                     }
 
                     if (next == 0xFFFFFFFC)
@@ -4415,10 +4509,10 @@ namespace ClassicUO.Network
                     {
                         if (count != 0 || next == 0xFFFFFFFD || next == 0xFFFFFFFC)
                         {
-                            next = p.ReadUInt32BE();
+                            next = p.ReadUInt32();
                         }
 
-                        short charges = (short)p.ReadUInt16BE();
+                        short charges = (short)p.ReadUInt16();
                         string attr = Client.Game.UO.FileManager.Clilocs.GetString((int)next);
 
                         if (attr != null)
@@ -4496,8 +4590,8 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x16: // close user interface windows
-                    uint id = p.ReadUInt32BE();
-                    uint serial = p.ReadUInt32BE();
+                    uint id = p.ReadUInt32();
+                    uint serial = p.ReadUInt32();
 
                     switch (id)
                     {
@@ -4532,8 +4626,17 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x18: // enable map patches
+                    uint patchMaps = p.ReadUInt32();
+                    bool patched = false;
 
-                    if (Client.Game.UO.FileManager.Maps.ApplyPatches(ref p))
+                    for (uint i = 0; i < patchMaps && p.Remaining >= 8; i++)
+                    {
+                        uint patchStatics = p.ReadUInt32();
+                        uint patchLand = p.ReadUInt32();
+                        patched |= Client.Game.UO.FileManager.Maps.ApplyPatch((int)i, patchLand, patchStatics);
+                    }
+
+                    if (patched)
                     {
                         //List<GameObject> list = new List<GameObject>();
 
@@ -4571,8 +4674,8 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x19: //extened stats
-                    byte version = p.ReadUInt8();
-                    serial = p.ReadUInt32BE();
+                    byte version = p.ReadByte();
+                    serial = p.ReadUInt32();
 
                     switch (version)
                     {
@@ -4584,7 +4687,7 @@ namespace ClassicUO.Network
                                 break;
                             }
 
-                            bool dead = p.ReadBool();
+                            bool dead = p.ReadBoolean();
                             world.Writer.SetDead(bonded, dead);
 
                             break;
@@ -4593,8 +4696,8 @@ namespace ClassicUO.Network
 
                             if (serial == world.Player)
                             {
-                                byte updategump = p.ReadUInt8();
-                                byte state = p.ReadUInt8();
+                                byte updategump = p.ReadByte();
+                                byte state = p.ReadByte();
 
                                 world.PlayerState.StrLock = (Lock)((state >> 4) & 3);
                                 world.PlayerState.DexLock = (Lock)((state >> 2) & 3);
@@ -4608,18 +4711,18 @@ namespace ClassicUO.Network
                         case 5:
 
                             int pos = p.Position;
-                            byte zero = p.ReadUInt8();
-                            byte type2 = p.ReadUInt8();
+                            byte zero = p.ReadByte();
+                            byte type2 = p.ReadByte();
 
                             if (type2 == 0xFF)
                             {
-                                byte status = p.ReadUInt8();
-                                ushort animation = p.ReadUInt16BE();
-                                ushort frame = p.ReadUInt16BE();
+                                byte status = p.ReadByte();
+                                ushort animation = p.ReadUInt16();
+                                ushort frame = p.ReadUInt16();
 
                                 if (status == 0 && animation == 0 && frame == 0)
                                 {
-                                    p.Seek(pos);
+                                    p.Seek(pos, SeekOrigin.Begin);
                                     goto case 0;
                                 }
 
@@ -4638,7 +4741,7 @@ namespace ClassicUO.Network
                             }
                             else if (world.Player != null && serial == world.Player)
                             {
-                                p.Seek(pos);
+                                p.Seek(pos, SeekOrigin.Begin);
                                 goto case 2;
                             }
 
@@ -4651,19 +4754,19 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 case 0x1B: // new spellbook content
                     p.Skip(2);
-                    uint spellbookSerial = p.ReadUInt32BE();
-                    ushort spellbookGraphic = p.ReadUInt16BE();
-                    ushort type = p.ReadUInt16BE();
+                    uint spellbookSerial = p.ReadUInt32();
+                    ushort spellbookGraphic = p.ReadUInt16();
+                    ushort type = p.ReadUInt16();
                     uint spells0 = 0, spells1 = 0;
 
                     for (int i = 0; i < 4; i++)
                     {
-                        spells0 |= (uint)(p.ReadUInt8() << (i * 8));
+                        spells0 |= (uint)(p.ReadByte() << (i * 8));
                     }
 
                     for (int i = 0; i < 4; i++)
                     {
-                        spells1 |= (uint)(p.ReadUInt8() << (i * 8));
+                        spells1 |= (uint)(p.ReadByte() << (i * 8));
                     }
 
                     // T1 (funnel part 6): the spellbook's graphic, its emptied child list and Sync, then the (detached) entries
@@ -4681,8 +4784,8 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x1D: // house revision state
-                    serial = p.ReadUInt32BE();
-                    uint revision = p.ReadUInt32BE();
+                    serial = p.ReadUInt32();
+                    uint revision = p.ReadUInt32();
 
                     Item multi = world.FindItem(serial);
 
@@ -4717,12 +4820,12 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x20:
-                    serial = p.ReadUInt32BE();
-                    type = p.ReadUInt8();
-                    ushort graphic = p.ReadUInt16BE();
-                    ushort x = p.ReadUInt16BE();
-                    ushort y = p.ReadUInt16BE();
-                    sbyte z = p.ReadInt8();
+                    serial = p.ReadUInt32();
+                    type = p.ReadByte();
+                    ushort graphic = p.ReadUInt16();
+                    ushort x = p.ReadUInt16();
+                    ushort y = p.ReadUInt16();
+                    sbyte z = p.ReadSByte();
 
                     switch (type)
                     {
@@ -4772,11 +4875,11 @@ namespace ClassicUO.Network
                 case 0x22:
                     p.Skip(1);
 
-                    Entity en = world.Get(p.ReadUInt32BE());
+                    Entity en = world.Get(p.ReadUInt32());
 
                     if (en != null)
                     {
-                        byte damage = p.ReadUInt8();
+                        byte damage = p.ReadByte();
 
                         if (damage > 0)
                         {
@@ -4788,8 +4891,8 @@ namespace ClassicUO.Network
 
                 case 0x25:
 
-                    ushort spell = p.ReadUInt16BE();
-                    bool active = p.ReadBool();
+                    ushort spell = p.ReadUInt16();
+                    bool active = p.ReadBoolean();
 
                     foreach (Gump g in UIManager.Gumps)
                     {
@@ -4818,7 +4921,7 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x26:
-                    byte val = p.ReadUInt8();
+                    byte val = p.ReadByte();
 
                     if (val > (int)CharacterSpeedType.FastUnmountAndCantRun)
                     {
@@ -4830,17 +4933,17 @@ namespace ClassicUO.Network
                     break;
 
                 case 0x2A:
-                    bool isfemale = p.ReadBool();
-                    byte race = p.ReadUInt8();
+                    bool isfemale = p.ReadBoolean();
+                    byte race = p.ReadByte();
 
                     UIManager.GetGump<RaceChangeGump>()?.Dispose();
                     UIManager.Add(new RaceChangeGump(world, isfemale, race));
                     break;
 
                 case 0x2B:
-                    serial = p.ReadUInt16BE();
-                    byte animID = p.ReadUInt8();
-                    byte frameCount = p.ReadUInt8();
+                    serial = p.ReadUInt16();
+                    byte animID = p.ReadByte();
+                    byte frameCount = p.ReadByte();
 
                     foreach (Mobile m in world.Mobiles.Values)
                     {
@@ -4857,7 +4960,7 @@ namespace ClassicUO.Network
 
                 case 0xBEEF: // ClassicUO commands
 
-                    type = p.ReadUInt16BE();
+                    type = p.ReadUInt16();
 
                     break;
 
@@ -4868,23 +4971,23 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void DisplayClilocString(World world, ref StackDataReader p)
+        private static void DisplayClilocString(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
             Entity entity = world.Get(serial);
-            ushort graphic = p.ReadUInt16BE();
-            MessageType type = (MessageType)p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            ushort font = p.ReadUInt16BE();
-            uint cliloc = p.ReadUInt32BE();
-            AffixType flags = p[0] == 0xCC ? (AffixType)p.ReadUInt8() : 0x00;
-            string name = p.ReadASCII(30);
-            string affix = p[0] == 0xCC ? p.ReadASCII() : string.Empty;
+            ushort graphic = p.ReadUInt16();
+            MessageType type = (MessageType)p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            ushort font = p.ReadUInt16();
+            uint cliloc = p.ReadUInt32();
+            AffixType flags = p[0] == 0xCC ? (AffixType)p.ReadByte() : 0x00;
+            string name = p.ReadCp1252(30);
+            string affix = p[0] == 0xCC ? p.ReadCp1252() : string.Empty;
 
             string arguments = null;
 
@@ -4905,11 +5008,11 @@ namespace ClassicUO.Network
             {
                 if (p[0] == 0xCC)
                 {
-                    arguments = p.ReadUnicodeBE(remains);
+                    arguments = p.ReadBigUni(remains / 2); // remains is in bytes
                 }
                 else
                 {
-                    arguments = p.ReadUnicodeLE(remains / 2);
+                    arguments = p.ReadLittleUni(remains / 2);
                 }
             }
 
@@ -4981,29 +5084,29 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void UnicodePrompt(World world, ref StackDataReader p)
+        private static void UnicodePrompt(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            world.MessageManager.PromptData = new PromptData(ConsolePrompt.Unicode, p.ReadUInt64BE());
+            world.MessageManager.PromptData = new PromptData(ConsolePrompt.Unicode, p.ReadUInt64());
         }
 
-        private static void Semivisible(World world, ref StackDataReader p) { }
+        private static void Semivisible(World world, ref NetReader p) { }
 
-        private static void InvalidMapEnable(World world, ref StackDataReader p) { }
+        private static void InvalidMapEnable(World world, ref NetReader p) { }
 
-        private static void ParticleEffect3D(World world, ref StackDataReader p) { }
+        private static void ParticleEffect3D(World world, ref NetReader p) { }
 
-        private static void GetUserServerPingGodClientR(World world, ref StackDataReader p) { }
+        private static void GetUserServerPingGodClientR(World world, ref NetReader p) { }
 
-        private static void GlobalQueCount(World world, ref StackDataReader p) { }
+        private static void GlobalQueCount(World world, ref NetReader p) { }
 
-        private static void ConfigurationFileR(World world, ref StackDataReader p) { }
+        private static void ConfigurationFileR(World world, ref NetReader p) { }
 
-        private static void Logout(World world, ref StackDataReader p)
+        private static void Logout(World world, ref NetReader p)
         {
             // http://docs.polserver.com/packets/index.php?Packet=0xD1
 
@@ -5015,7 +5118,7 @@ namespace ClassicUO.Network
                 ) != 0
             )
             {
-                if (p.ReadBool())
+                if (p.ReadBoolean())
                 {
                     // client can disconnect
                     NetClient.Socket.Disconnect();
@@ -5111,25 +5214,25 @@ namespace ClassicUO.Network
             return parts == 2 && int.TryParse(second, out int value) ? value : 0;
         }
 
-        private static void MegaCliloc(World world, ref StackDataReader p)
+        private static void MegaCliloc(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            ushort unknown = p.ReadUInt16BE();
+            ushort unknown = p.ReadUInt16();
 
             if (unknown > 1)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
 
             p.Skip(2);
 
-            uint revision = p.ReadUInt32BE();
+            uint revision = p.ReadUInt32();
 
             Handler._oplQueue?.Answered(serial, revision);
             Handler._oplList.Answered(serial, revision);
@@ -5163,19 +5266,19 @@ namespace ClassicUO.Network
 
             while (p.Position < p.Length)
             {
-                int cliloc = (int)p.ReadUInt32BE();
+                int cliloc = (int)p.ReadUInt32();
 
                 if (cliloc == 0)
                 {
                     break;
                 }
 
-                ushort length = p.ReadUInt16BE();
+                ushort length = p.ReadUInt16();
 
                 // The argument is only parsed, never kept: decode it into a stack buffer instead of a string per line.
                 Span<char> argBuffer = length <= 512 ? stackalloc char[(length / 2) + 1] : new char[(length / 2) + 1];
                 ReadOnlySpan<char> argument = length != 0
-                    ? argBuffer.Slice(0, p.ReadUnicodeLE(length / 2, argBuffer))
+                    ? argBuffer.Slice(0, p.ReadLittleUni(length / 2, argBuffer))
                     : ReadOnlySpan<char>.Empty;
 
                 int lineStart = used;
@@ -5308,7 +5411,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void GenericAOSCommandsR(World world, ref StackDataReader p) { }
+        private static void GenericAOSCommandsR(World world, ref NetReader p) { }
 
         private static unsafe void ReadUnsafeCustomHouseData(
             ReadOnlySpan<byte> source,
@@ -5343,7 +5446,7 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                var reader = new StackDataReader(span.Slice(0, dlen));
+                var reader = new NetReader(span.Slice(0, dlen));
 
                 ushort id = 0;
                 sbyte x = 0,
@@ -5357,10 +5460,10 @@ namespace ClassicUO.Network
 
                         for (uint i = 0; i < c; i++)
                         {
-                            id = reader.ReadUInt16BE();
-                            x = reader.ReadInt8();
-                            y = reader.ReadInt8();
-                            z = reader.ReadInt8();
+                            id = reader.ReadUInt16();
+                            x = reader.ReadSByte();
+                            y = reader.ReadSByte();
+                            z = reader.ReadSByte();
 
                             if (id != 0)
                             {
@@ -5393,9 +5496,9 @@ namespace ClassicUO.Network
 
                         for (uint i = 0; i < c; i++)
                         {
-                            id = reader.ReadUInt16BE();
-                            x = reader.ReadInt8();
-                            y = reader.ReadInt8();
+                            id = reader.ReadUInt16();
+                            x = reader.ReadSByte();
+                            y = reader.ReadSByte();
 
                             if (id != 0)
                             {
@@ -5450,7 +5553,7 @@ namespace ClassicUO.Network
 
                         for (uint i = 0; i < c; i++)
                         {
-                            id = reader.ReadUInt16BE();
+                            id = reader.ReadUInt16();
                             x = (sbyte)(i / multiHeight + offX);
                             y = (sbyte)(i % multiHeight + offY);
 
@@ -5471,7 +5574,6 @@ namespace ClassicUO.Network
                         break;
                 }
 
-                reader.Release();
             }
             finally
             {
@@ -5482,13 +5584,13 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void CustomHouse(World world, ref StackDataReader p)
+        private static void CustomHouse(World world, ref NetReader p)
         {
-            bool compressed = p.ReadUInt8() == 0x03;
-            bool enableReponse = p.ReadBool();
-            uint serial = p.ReadUInt32BE();
+            bool compressed = p.ReadByte() == 0x03;
+            bool enableReponse = p.ReadBoolean();
+            uint serial = p.ReadUInt32();
             Item foundation = world.FindItem(serial);
-            uint revision = p.ReadUInt32BE();
+            uint revision = p.ReadUInt32();
 
             if (foundation == null)
             {
@@ -5529,13 +5631,13 @@ namespace ClassicUO.Network
                 return;
             }
 
-            byte planes = p.ReadUInt8();
+            byte planes = p.ReadByte();
 
             house.ClearCustomHouseComponents(0);
 
             for (int plane = 0; plane < planes; plane++)
             {
-                uint header = p.ReadUInt32BE();
+                uint header = p.ReadUInt32();
                 int dlen = (int)(((header & 0xFF0000) >> 16) | ((header & 0xF0) << 4));
                 int clen = (int)(((header & 0xFF00) >> 8) | ((header & 0x0F) << 8));
                 int planeZ = (int)((header & 0x0F000000) >> 24);
@@ -5580,14 +5682,14 @@ namespace ClassicUO.Network
             world.BoatMovingManager.ClearSteps(serial);
         }
 
-        private static void CharacterTransferLog(World world, ref StackDataReader p) { }
+        private static void CharacterTransferLog(World world, ref NetReader p) { }
 
-        private static void OPLInfo(World world, ref StackDataReader p)
+        private static void OPLInfo(World world, ref NetReader p)
         {
             if (world.ClientFeatures.TooltipsEnabled)
             {
-                uint serial = p.ReadUInt32BE();
-                uint revision = p.ReadUInt32BE();
+                uint serial = p.ReadUInt32();
+                uint revision = p.ReadUInt32();
                 bool held = world.OPL.IsRevisionEquals(serial, revision);
 #if CUO_DEVTOOLS
                 if (OplDebounceCheck.On)
@@ -5603,14 +5705,14 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void OpenCompressedGump(World world, ref StackDataReader p)
+        private static void OpenCompressedGump(World world, ref NetReader p)
         {
-            uint sender = p.ReadUInt32BE();
-            uint gumpID = p.ReadUInt32BE();
-            uint x = p.ReadUInt32BE();
-            uint y = p.ReadUInt32BE();
-            uint clen = p.ReadUInt32BE() - 4;
-            int dlen = (int)p.ReadUInt32BE();
+            uint sender = p.ReadUInt32();
+            uint gumpID = p.ReadUInt32();
+            uint x = p.ReadUInt32();
+            uint y = p.ReadUInt32();
+            uint clen = p.ReadUInt32() - 4;
+            int dlen = (int)p.ReadUInt32();
             byte[] decData = System.Buffers.ArrayPool<byte>.Shared.Rent(dlen);
             string layout;
 
@@ -5634,15 +5736,15 @@ namespace ClassicUO.Network
 
             p.Skip((int)clen);
 
-            uint linesNum = p.ReadUInt32BE();
+            uint linesNum = p.ReadUInt32();
             string[] lines = new string[linesNum];
 
             try
             {
                 if (linesNum != 0)
                 {
-                    clen = p.ReadUInt32BE() - 4;
-                    dlen = (int)p.ReadUInt32BE();
+                    clen = p.ReadUInt32() - 4;
+                    dlen = (int)p.ReadUInt32();
                     decData = System.Buffers.ArrayPool<byte>.Shared.Rent(dlen);
 
                     try
@@ -5656,7 +5758,7 @@ namespace ClassicUO.Network
 
                         p.Skip((int)clen);
 
-                        var reader = new StackDataReader(decData.AsSpan(0, inflated));
+                        var reader = new NetReader(decData.AsSpan(0, inflated));
 
                         for (int i = 0; i < linesNum; ++i)
                         {
@@ -5664,11 +5766,11 @@ namespace ClassicUO.Network
 
                             if (remaining >= 2)
                             {
-                                int length = reader.ReadUInt16BE();
+                                int length = reader.ReadUInt16();
 
                                 if (length > 0)
                                 {
-                                    lines[i] = reader.ReadUnicodeBE(length);
+                                    lines[i] = reader.ReadBigUni(length);
                                 }
                                 else
                                 {
@@ -5681,7 +5783,6 @@ namespace ClassicUO.Network
                             }
                         }
 
-                        reader.Release();
 
                         //for (int i = 0, index = 0; i < linesNum && index < dlen; i++)
                         //{
@@ -5717,18 +5818,18 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdateMobileStatus(World world, ref StackDataReader p)
+        private static void UpdateMobileStatus(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
-            byte status = p.ReadUInt8();
+            uint serial = p.ReadUInt32();
+            byte status = p.ReadByte();
 
             if (status == 1)
             {
-                uint attackerSerial = p.ReadUInt32BE();
+                uint attackerSerial = p.ReadUInt32();
             }
         }
 
-        private static void BuffDebuff(World world, ref StackDataReader p)
+        private static void BuffDebuff(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
@@ -5738,8 +5839,8 @@ namespace ClassicUO.Network
             const ushort BUFF_ICON_START = 0x03E9;
             const ushort BUFF_ICON_START_NEW = 0x466;
 
-            uint serial = p.ReadUInt32BE();
-            BuffIconType ic = (BuffIconType)p.ReadUInt16BE();
+            uint serial = p.ReadUInt32();
+            BuffIconType ic = (BuffIconType)p.ReadUInt16();
 
             ushort iconID =
                 (ushort)ic >= BUFF_ICON_START_NEW
@@ -5749,7 +5850,13 @@ namespace ClassicUO.Network
             if (iconID < BuffTable.Table.Length)
             {
                 BuffGump gump = UIManager.GetGump<BuffGump>();
-                ushort count = p.ReadUInt16BE();
+                ushort count = p.ReadUInt16();
+
+                if (count != 0)
+                {
+                    // the second and third text blocks may be absent (RunUO and ModernUO end the packet after one or two)
+                    PacketLayouts.Resolve(ref p, PacketLayouts.BuffEntries(p.Buffer), 3);
+                }
 
                 if (count == 0)
                 {
@@ -5760,29 +5867,35 @@ namespace ClassicUO.Network
                 {
                     for (int i = 0; i < count; i++)
                     {
-                        ushort source_type = p.ReadUInt16BE();
+                        ushort source_type = p.ReadUInt16();
                         p.Skip(2);
-                        ushort icon = p.ReadUInt16BE();
-                        ushort queue_index = p.ReadUInt16BE();
+                        ushort icon = p.ReadUInt16();
+                        ushort queue_index = p.ReadUInt16();
                         p.Skip(4);
-                        ushort timer = p.ReadUInt16BE();
+                        ushort timer = p.ReadUInt16();
                         p.Skip(3);
 
-                        uint titleCliloc = p.ReadUInt32BE();
-                        uint descriptionCliloc = p.ReadUInt32BE();
-                        uint wtfCliloc = p.ReadUInt32BE();
+                        uint titleCliloc = p.ReadUInt32();
+                        uint descriptionCliloc = p.ReadUInt32();
+                        uint wtfCliloc = p.ReadUInt32();
 
-                        ushort arg_length = p.ReadUInt16BE();
-                        var str = p.ReadUnicodeLE(2);
-                        var args = str + p.ReadUnicodeLE();
+                        ushort arg_length = p.ReadUInt16();
+                        var str = p.ReadLittleUni(2);
+                        var args = str + p.ReadLittleUni();
                         string title = Client.Game.UO.FileManager.Clilocs.Translate(
                             (int)titleCliloc,
                             args,
                             true
                         );
 
-                        arg_length = p.ReadUInt16BE();
-                        string args_2 = p.ReadUnicodeLE();
+                        string args_2 = string.Empty;
+
+                        if (p.Remaining > 0)
+                        {
+                            arg_length = p.ReadUInt16();
+                            args_2 = p.ReadLittleUni();
+                        }
+
                         string description = string.Empty;
 
                         if (descriptionCliloc != 0)
@@ -5801,8 +5914,14 @@ namespace ClassicUO.Network
                             }
                         }
 
-                        arg_length = p.ReadUInt16BE();
-                        string args_3 = p.ReadUnicodeLE();
+                        string args_3 = string.Empty;
+
+                        if (p.Remaining > 0)
+                        {
+                            arg_length = p.ReadUInt16();
+                            args_3 = p.ReadLittleUni();
+                        }
+
                         string wtf = string.Empty;
 
                         if (wtfCliloc != 0)
@@ -5832,23 +5951,23 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void NewCharacterAnimation(World world, ref StackDataReader p)
+        private static void NewCharacterAnimation(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32());
 
             if (mobile == null)
             {
                 return;
             }
 
-            ushort type = p.ReadUInt16BE();
-            ushort action = p.ReadUInt16BE();
-            byte mode = p.ReadUInt8();
+            ushort type = p.ReadUInt16();
+            ushort action = p.ReadUInt16();
+            byte mode = p.ReadByte();
             byte group = Mobile.GetObjectNewAnimation(mobile, type, action, mode);
 
             // T1 (funnel part 6)
@@ -5862,29 +5981,29 @@ namespace ClassicUO.Network
             );
         }
 
-        private static void KREncryptionResponse(World world, ref StackDataReader p) { }
+        private static void KREncryptionResponse(World world, ref NetReader p) { }
 
-        private static void DisplayWaypoint(World world, ref StackDataReader p)
+        private static void DisplayWaypoint(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            sbyte z = p.ReadInt8();
-            byte map = p.ReadUInt8();
-            WaypointsType type = (WaypointsType)p.ReadUInt16BE();
-            bool ignoreobject = p.ReadUInt16BE() != 0;
-            uint cliloc = p.ReadUInt32BE();
-            string name = p.ReadUnicodeLE();
+            uint serial = p.ReadUInt32();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            sbyte z = p.ReadSByte();
+            byte map = p.ReadByte();
+            WaypointsType type = (WaypointsType)p.ReadUInt16();
+            bool ignoreobject = p.ReadUInt16() != 0;
+            uint cliloc = p.ReadUInt32();
+            string name = p.ReadLittleUni();
         }
 
-        private static void RemoveWaypoint(World world, ref StackDataReader p)
+        private static void RemoveWaypoint(World world, ref NetReader p)
         {
-            uint serial = p.ReadUInt32BE();
+            uint serial = p.ReadUInt32();
         }
 
-        private static void KrriosClientSpecial(World world, ref StackDataReader p)
+        private static void KrriosClientSpecial(World world, ref NetReader p)
         {
-            byte type = p.ReadUInt8();
+            byte type = p.ReadByte();
 
             switch (type)
             {
@@ -5897,18 +6016,20 @@ namespace ClassicUO.Network
 
                 case 0x01: // custom party info
                 case 0x02: // guild track info
-                    bool locations = type == 0x01 || p.ReadBool();
+                    PacketLayouts.Resolve(ref p, PacketLayouts.Krrios(p.Buffer), PacketLayouts.KrriosValid);
+                    bool locations = type == 0x01 || p.ReadBoolean();
 
                     uint serial;
 
-                    while ((serial = p.ReadUInt32BE()) != 0)
+                    // the list ends at a zero serial, or at the packet's end
+                    while (p.Remaining > 0 && (serial = p.ReadUInt32()) != 0)
                     {
                         if (locations)
                         {
-                            ushort x = p.ReadUInt16BE();
-                            ushort y = p.ReadUInt16BE();
-                            byte map = p.ReadUInt8();
-                            int hits = type == 1 ? 0 : p.ReadUInt8();
+                            ushort x = p.ReadUInt16();
+                            ushort y = p.ReadUInt16();
+                            byte map = p.ReadByte();
+                            int hits = type == 1 ? 0 : p.ReadByte();
 
                             world.WMapManager.AddOrUpdate(
                                 serial,
@@ -5948,29 +6069,32 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void FreeshardListR(World world, ref StackDataReader p) { }
+        private static void FreeshardListR(World world, ref NetReader p) { }
 
-        private static void UpdateItemSA(World world, ref StackDataReader p)
+        private static void UpdateItemSA(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
+            int layout = PacketLayouts.Resolve(ref p, PacketLayouts.ItemSA(p.Buffer, Client.Game.UO.Version),
+                Client.Game.UO.Version >= Utility.ClientVersion.CV_7090 ? PacketLayouts.ItemSALong : PacketLayouts.ItemSAShort);
             p.Skip(2);
-            byte type = p.ReadUInt8();
-            uint serial = p.ReadUInt32BE();
-            ushort graphic = p.ReadUInt16BE();
-            byte graphicInc = p.ReadUInt8();
-            ushort amount = p.ReadUInt16BE();
-            ushort unk = p.ReadUInt16BE();
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            sbyte z = p.ReadInt8();
-            Direction dir = (Direction)p.ReadUInt8();
-            ushort hue = p.ReadUInt16BE();
-            Flags flags = (Flags)p.ReadUInt8();
-            ushort unk2 = p.ReadUInt16BE();
+            byte type = p.ReadByte();
+            uint serial = p.ReadUInt32();
+            ushort graphic = p.ReadUInt16();
+            byte graphicInc = p.ReadByte();
+            ushort amount = p.ReadUInt16();
+            ushort unk = p.ReadUInt16();
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            sbyte z = p.ReadSByte();
+            Direction dir = (Direction)p.ReadByte();
+            ushort hue = p.ReadUInt16();
+            Flags flags = (Flags)p.ReadByte();
+            // the 24-byte SA layout (clients before 7.0.9) ends before this field
+            ushort unk2 = layout == PacketLayouts.ItemSALong ? p.ReadUInt16() : (ushort)0;
 
             if (serial != world.Player)
             {
@@ -6002,20 +6126,20 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void BoatMoving(World world, ref StackDataReader p)
+        private static void BoatMoving(World world, ref NetReader p)
         {
             if (!world.InGame)
             {
                 return;
             }
 
-            uint serial = p.ReadUInt32BE();
-            byte boatSpeed = p.ReadUInt8();
-            Direction movingDirection = (Direction)p.ReadUInt8() & Direction.Mask;
-            Direction facingDirection = (Direction)p.ReadUInt8() & Direction.Mask;
-            ushort x = p.ReadUInt16BE();
-            ushort y = p.ReadUInt16BE();
-            ushort z = p.ReadUInt16BE();
+            uint serial = p.ReadUInt32();
+            byte boatSpeed = p.ReadByte();
+            Direction movingDirection = (Direction)p.ReadByte() & Direction.Mask;
+            Direction facingDirection = (Direction)p.ReadByte() & Direction.Mask;
+            ushort x = p.ReadUInt16();
+            ushort y = p.ReadUInt16();
+            ushort z = p.ReadUInt16();
 
             Item multi = world.FindItem(serial);
 
@@ -6077,14 +6201,14 @@ namespace ClassicUO.Network
                 }
             }
 
-            int count = p.ReadUInt16BE();
+            int count = p.ReadUInt16();
 
             for (int i = 0; i < count; i++)
             {
-                uint cSerial = p.ReadUInt32BE();
-                ushort cx = p.ReadUInt16BE();
-                ushort cy = p.ReadUInt16BE();
-                ushort cz = p.ReadUInt16BE();
+                uint cSerial = p.ReadUInt32();
+                ushort cx = p.ReadUInt16();
+                ushort cy = p.ReadUInt16();
+                ushort cz = p.ReadUInt16();
 
                 if (cSerial == world.Player)
                 {
@@ -6166,18 +6290,18 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void PacketList(World world, ref StackDataReader p)
+        private static void PacketList(World world, ref NetReader p)
         {
             if (world.Player == null)
             {
                 return;
             }
 
-            int count = p.ReadUInt16BE();
+            int count = p.ReadUInt16();
 
             for (int i = 0; i < count; i++)
             {
-                byte id = p.ReadUInt8();
+                byte id = p.ReadByte();
 
                 if (id == 0xF3)
                 {
@@ -6192,7 +6316,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void ServerListReceived(World world, ref StackDataReader p)
+        private static void ServerListReceived(World world, ref NetReader p)
         {
             if (world.InGame)
             {
@@ -6207,7 +6331,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void ReceiveServerRelay(World world, ref StackDataReader p)
+        private static void ReceiveServerRelay(World world, ref NetReader p)
         {
             if (world.InGame)
             {
@@ -6222,7 +6346,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void UpdateCharacterList(World world, ref StackDataReader p)
+        private static void UpdateCharacterList(World world, ref NetReader p)
         {
             if (world.InGame)
             {
@@ -6237,7 +6361,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void ReceiveCharacterList(World world, ref StackDataReader p)
+        private static void ReceiveCharacterList(World world, ref NetReader p)
         {
             if (world.InGame)
             {
@@ -6252,7 +6376,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void LoginDelay(World world, ref StackDataReader p)
+        private static void LoginDelay(World world, ref NetReader p)
         {
             if (world.InGame)
             {
@@ -6267,7 +6391,7 @@ namespace ClassicUO.Network
             }
         }
 
-        private static void ReceiveLoginRejection(World world, ref StackDataReader p)
+        private static void ReceiveLoginRejection(World world, ref NetReader p)
         {
             if (world.InGame)
             {

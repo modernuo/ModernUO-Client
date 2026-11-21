@@ -29,9 +29,9 @@ namespace ClassicUO.Game.Managers
         public long PartyHealTimer { get; set; }
         public uint PartyHealTarget { get; set; }
 
-        public void ParsePacket(ref StackDataReader p)
+        public void ParsePacket(ref NetReader p)
         {
-            byte code = p.ReadUInt8();
+            byte code = p.ReadByte();
 
             bool add = false;
 
@@ -42,7 +42,7 @@ namespace ClassicUO.Game.Managers
                     goto case 2;
 
                 case 2:
-                    byte count = p.ReadUInt8();
+                    byte count = p.ReadByte();
 
                     if (count <= 1)
                     {
@@ -83,7 +83,7 @@ namespace ClassicUO.Game.Managers
 
                     if (!add)
                     {
-                        to_remove = p.ReadUInt32BE();
+                        to_remove = p.ReadUInt32();
 
                         UIManager.GetGump<BaseHealthBarGump>(to_remove)?.RequestUpdateContents();
                     }
@@ -93,7 +93,7 @@ namespace ClassicUO.Game.Managers
 
                     for (int i = 0; i < count; i++)
                     {
-                        uint serial = p.ReadUInt32BE();
+                        uint serial = p.ReadUInt32();
                         bool remove = !add && serial == to_remove;
 
                         if (remove && serial == to_remove && i == 0)
@@ -154,8 +154,8 @@ namespace ClassicUO.Game.Managers
 
                 case 3:
                 case 4:
-                    uint ser = p.ReadUInt32BE();
-                    string name = p.ReadUnicodeBE();
+                    uint ser = p.ReadUInt32();
+                    string name = p.ReadBigUni();
 
                     for (int i = 0; i < PARTY_SIZE; i++)
                     {
@@ -179,7 +179,7 @@ namespace ClassicUO.Game.Managers
                     break;
 
                 case 7:
-                    Inviter = p.ReadUInt32BE();
+                    Inviter = p.ReadUInt32();
 
                     if (ProfileManager.CurrentProfile.PartyInviteGump)
                     {

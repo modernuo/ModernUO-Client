@@ -25,7 +25,7 @@ namespace ClassicUO.UnitTests.Game
     /// (death and resurrection, a map change, status and skill updates).
     /// </summary>
     [Collection("PlayerStateGlobals")]
-    public sealed class PlayerStateTests : IDisposable
+    public class PlayerStateTests : IDisposable
     {
         private const uint PLAYER = 0x0000_1234;
         private const string NAME = "Tester";
@@ -41,10 +41,11 @@ namespace ClassicUO.UnitTests.Game
         private readonly Profile _savedProfile = ProfileManager.CurrentProfile;
         private readonly object _savedBuffTable = BuffTableField.GetValue(null);
 
-        public void Dispose()
+        public virtual void Dispose()
         {
             SetProfile(_savedProfile);
             BuffTableField.SetValue(null, _savedBuffTable);
+            SpanBuffers.ModeOverride = null;
         }
 
         private static void SetProfile(Profile profile) =>
@@ -240,8 +241,8 @@ namespace ClassicUO.UnitTests.Game
             var handlers = (PacketHandlers.OnPacketBufferReader[])typeof(PacketHandlers)
                 .GetField("_handlers", BindingFlags.NonPublic | BindingFlags.Instance)!
                 .GetValue(PacketHandlers.Handler)!;
-            var reader = new StackDataReader(packet);
-            reader.Seek(3); // id and length: every packet here has a variable length
+            var reader = new NetReader(packet);
+            reader.Seek(3, System.IO.SeekOrigin.Begin); // id and length: every packet here has a variable length
             handlers[packet[0]](world, ref reader);
         }
 
@@ -426,5 +427,33 @@ namespace ClassicUO.UnitTests.Game
             world.PlayerState.Should().BeSameAs(s);
             AssertFresh(s, 0);
         }
+    }
+
+    /// <summary>span_reader on: the same packets through the same handlers read by SpanReader (in developer builds with the
+    /// checker comparing every read against StackDataReader, and no mismatch allowed).</summary>
+    [Collection("PlayerStateGlobals")]
+    public sealed class PlayerStateSpanReaderTests : PlayerStateTests
+    {
+#if CUO_DEVTOOLS
+        private readonly List<string> _mismatches = new();
+
+        public PlayerStateSpanReaderTests()
+        {
+            SpanBuffers.ModeOverride = SpanBufferMode.CheckNew;
+            SpanBuffers.MismatchObserver = _mismatches.Add;
+        }
+
+        public override void Dispose()
+        {
+            SpanBuffers.MismatchObserver = null;
+            base.Dispose();
+            _mismatches.Should().BeEmpty();
+        }
+#else
+        public PlayerStateSpanReaderTests()
+        {
+            SpanBuffers.ModeOverride = SpanBufferMode.New;
+        }
+#endif
     }
 }

@@ -77,7 +77,7 @@ namespace ClassicUO.UnitTests.Network
                 Client.AttachSocket(Socket);
                 Client.Disconnected += (_, _) => Disconnects++;
 
-                PacketHandlers.OnPacketBufferReader record = (World _, ref StackDataReader p) => Seen.Add(p.Buffer.ToArray());
+                PacketHandlers.OnPacketBufferReader record = (World _, ref NetReader p) => Seen.Add(p.Buffer.ToArray());
 
                 foreach (var id in new byte[] { 0xD6, 0xC1, 0x11, 0x78, 0x1D, 0x73, 0x77 })
                     Handlers.Add(id, record);

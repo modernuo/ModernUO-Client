@@ -775,6 +775,10 @@ namespace ClassicUO
             }
 
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
+#if CUO_DEVTOOLS
+            // net-rework parity harness (CUO_NET_CAPTURE / CUO_NET_REPLAY / CUO_NET_TRACE_OUT); a replay sets the frame clock
+            if (Network.Harness.NetHarness.On) Network.Harness.NetHarness.Frame();
+#endif
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
             // the large buffer pool keeps free buffers up to its per-use caps (LargePoolCaps); General and Page ones idle for

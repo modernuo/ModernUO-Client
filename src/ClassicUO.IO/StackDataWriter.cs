@@ -283,10 +283,8 @@ namespace ClassicUO.IO
         {
             if (!string.IsNullOrEmpty(str))
             {
-                foreach (var b in StringHelper.StringToCp1252Bytes(str))
-                {
-                    WriteUInt8(b);
-                }
+                EnsureSize(str.Length);
+                Position += StringHelper.GetBytesCp1252(str, _buffer.Slice(Position));
             }
 
             WriteUInt8(0x00);
@@ -301,12 +299,19 @@ namespace ClassicUO.IO
             {
                 WriteZero(sizeof(byte));
             }
+            else if (length > 0)
+            {
+                // A string longer than the field is cut at length chars; the rest of the field is zeroed.
+                EnsureSize(length);
+                StringHelper.GetBytesCp1252Fixed(str, _buffer.Slice(Position, length));
+                Position += length;
+
+                return;
+            }
             else
             {
-                foreach (var b in StringHelper.StringToCp1252Bytes(str, length))
-                {
-                    WriteUInt8(b);
-                }
+                EnsureSize(str.Length);
+                Position += StringHelper.GetBytesCp1252(str, _buffer.Slice(Position));
             }
 
             if (length > -1 && Position > start)
