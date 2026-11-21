@@ -63,9 +63,11 @@ namespace ClassicUO.UnitTests.Renderer
             starter.RunAll();
             d.HeldBytes.Should().Be(2 * BytesOf(0), "held bytes are exactly what was admitted");
 
+#if CUO_DEVTOOLS
             GumpBudgetCheck.ResetForTests();
             GumpBudgetCheck.Check(d.HeldBytes, d.CountedIn, out string mismatch);
             mismatch.Should().BeNull();
+#endif
 
             d.Drain(long.MaxValue);
             starter.RunAll();
@@ -92,14 +94,17 @@ namespace ClassicUO.UnitTests.Renderer
             DecodeBudget.Gumps.InFlightBytes.Should().Be(0);
             d.HeldBytes.Should().Be(BytesOf(0));
 
+#if CUO_DEVTOOLS
             GumpBudgetCheck.ResetForTests();
             GumpBudgetCheck.Check(d.HeldBytes, d.CountedIn, out string mismatch);
             mismatch.Should().BeNull("off has nothing to compare against");
+#endif
 
             d.Drain(long.MaxValue);
             d.HeldBytes.Should().Be(0);
         }
 
+#if CUO_DEVTOOLS
         [Fact]
         public void Check_Reports_Held_Above_Admitted()
         {
@@ -108,6 +113,7 @@ namespace ClassicUO.UnitTests.Renderer
             GumpBudgetCheck.Check(4096, budget, out string mismatch);
             mismatch.Should().Contain("held 4096 B > admitted 0 B");
         }
+#endif
     }
 
     [CollectionDefinition(nameof(GumpBudgetCheckCollection), DisableParallelization = true)]
