@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
-using System.Buffers;
+using Uo.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using ClassicUO.Assets;
@@ -39,9 +39,11 @@ namespace ClassicUO.Game.Scenes
             public byte Tile;
         }
 
-        public Entry[] Entries = new Entry[16];
+        private const int InitialEntries = 16, InitialInstances = 32;
+
+        public Entry[] Entries = new Entry[InitialEntries];
         public int Count;
-        public SpriteInstance[] Instances = new SpriteInstance[32];
+        public SpriteInstance[] Instances = new SpriteInstance[InitialInstances];
         public int InstanceCount;
         // entries of tile bit b: [TileStart[b], TileStart[b + 1])
         public readonly int[] TileStart = new int[65];
@@ -125,14 +127,14 @@ namespace ClassicUO.Game.Scenes
         {
             if (Count == Entries.Length)
             {
-                Entries = Grow(Entries, Count, Count * 2);
+                Entries = Grow(Entries, Count, Count * 2, InitialEntries);
                 // entries past Count read as new ones (Reset clears only up to Count); a pooled array may hold old values
                 Array.Clear(Entries, Count, Entries.Length - Count);
             }
 
             if (InstanceCount + instances.Length > Instances.Length)
             {
-                Instances = Grow(Instances, InstanceCount, Math.Max(Instances.Length * 2, InstanceCount + instances.Length));
+                Instances = Grow(Instances, InstanceCount, Math.Max(Instances.Length * 2, InstanceCount + instances.Length), InitialInstances);
             }
 
             ref Entry e = ref Entries[Count++];
@@ -144,18 +146,18 @@ namespace ClassicUO.Game.Scenes
             return ref e;
         }
 
-        // The arrays a build outgrows go back to the shared pool and the bigger one comes from it, so a chunk's growth reuses
+        // The arrays a build outgrows go back to the pool and the bigger one comes from it, so a chunk's growth reuses
         // what another chunk's growth gave up instead of leaving it to the collector (perf-alloc-sites: GpuItemCache.Add's
-        // Array.Resize on the Gpu ls_walk). Rent may return a longer array; only pool-sized arrays (16, 32, ... elements: the
-        // first Entries and Instances arrays, and every rented one) are returned.
-        private static T[] Grow<T>(T[] old, int used, int size)
+        // Array.Resize on the Gpu ls_walk). Main thread only, so the per-thread family (large ones go to LargeBufferPool).
+        // The first arrays are allocated, not rented, and every rent is longer than them: only rented arrays go back.
+        private static T[] Grow<T>(T[] old, int used, int size, int initialLength)
         {
-            T[] bigger = ArrayPool<T>.Shared.Rent(size);
+            T[] bigger = BufferPool.Rent<T>(size);
             Array.Copy(old, bigger, used);
 
-            if (old.Length >= 16 && System.Numerics.BitOperations.IsPow2(old.Length))
+            if (old.Length > initialLength)
             {
-                ArrayPool<T>.Shared.Return(old);
+                BufferPool.Return(old);
             }
 
             return bigger;

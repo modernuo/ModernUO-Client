@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using Uo.Buffers;
 
 namespace ClassicUO.Utility.Logging
 {
@@ -33,7 +34,7 @@ namespace ClassicUO.Utility.Logging
         public void Write(string message)
         {
             int maxByteCount = Encoding.UTF8.GetMaxByteCount(message.Length);
-            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(maxByteCount);
+            byte[] buffer = BufferPool.Rent<byte>(maxByteCount);
 
             try
             {
@@ -52,14 +53,15 @@ namespace ClassicUO.Utility.Logging
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                BufferPool.Return(buffer);
             }
         }
 
         public async Task WriteAsync(string message)
         {
             int maxByteCount = Encoding.UTF8.GetMaxByteCount(message.Length);
-            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(maxByteCount);
+            // The await may resume on another thread: the shared family, not the per-thread pool.
+            byte[] buffer = BufferPool.RentShared<byte>(maxByteCount);
 
             try
             {
@@ -78,7 +80,7 @@ namespace ClassicUO.Utility.Logging
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                BufferPool.ReturnShared(buffer);
             }
         }
 

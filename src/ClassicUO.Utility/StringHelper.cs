@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
 using SDL3;
+using Uo.Buffers;
 
 namespace ClassicUO.Utility
 {

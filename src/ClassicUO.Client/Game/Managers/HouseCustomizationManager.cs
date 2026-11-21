@@ -12,6 +12,7 @@ using ClassicUO.Game.UI.Gumps;
 using ClassicUO.IO;
 using ClassicUO.Network;
 using Microsoft.Xna.Framework;
+using Uo.Buffers;
 
 namespace ClassicUO.Game.Managers
 {
@@ -428,8 +429,8 @@ namespace ClassicUO.Game.Managers
                                 stairFloorBase = floorBase;
 
                             // Collect stair pieces sharing same X (N/S) or same Y (E/W) with clicked piece
-                            var sameXPieces = new List<Multi>();
-                            var sameYPieces = new List<Multi>();
+                            using var sameXPieces = PooledRefList<Multi>.Create(16);
+                            using var sameYPieces = PooledRefList<Multi>.Create(16);
 
                             foreach (Multi comp in house.Components)
                             {
@@ -450,7 +451,7 @@ namespace ClassicUO.Game.Managers
                             }
 
                             // Determine orientation by piece count, then find exact 4-tile group
-                            var stairPieces = new List<Multi>();
+                            using var stairPieces = PooledRefList<Multi>.Create(8);
 
                             if (sameXPieces.Count >= sameYPieces.Count && sameXPieces.Count > 0)
                             {

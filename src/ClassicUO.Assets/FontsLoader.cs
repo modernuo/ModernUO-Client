@@ -12,6 +12,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -390,7 +391,7 @@ namespace ClassicUO.Assets
             if (store != null && store.TryGet(font, out var slot, out var rec) && Volatile.Read(ref _badRecords[slot.Record - 1]) == 0)
             {
                 int bad = (int)slot.Record - 1;
-                byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+                byte[] buf = BufferPool.Rent<byte>((int)rec.RawBytes);
 
                 try
                 {
@@ -415,7 +416,7 @@ namespace ClassicUO.Assets
                 }
                 finally
                 {
-                    System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                    BufferPool.Return(buf);
                 }
             }
 
@@ -491,7 +492,7 @@ namespace ClassicUO.Assets
                 return _emptyPage;
             }
 
-            byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+            byte[] buf = BufferPool.Rent<byte>((int)rec.RawBytes);
 
             try
             {
@@ -527,7 +528,7 @@ namespace ClassicUO.Assets
             }
             finally
             {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                BufferPool.Return(buf);
             }
         }
 
@@ -2030,7 +2031,7 @@ namespace ClassicUO.Assets
                 int linkStartX = 0;
                 int linkStartY = 0;
                 int linesCount = 0;
-                using var links = new PooledList<WebLinkRect>(8);
+                using var links = PooledRefList<WebLinkRect>.Create(8);
 
                 // Captured before the walk because `info` is reassigned to
                 // each segment as we iterate. The head node carries the
@@ -2565,7 +2566,7 @@ namespace ClassicUO.Assets
                 fi.Width = width;
                 fi.Height = height;
                 fi.Data = pData;
-                fi.Links = links.Count == 0 ? null : links.AsSpan.ToArray();
+                fi.Links = links.Count == 0 ? null : links.AsSpan().ToArray();
                 fi.HtmlBackgroundColor = (IsUsingHTML && _htmlStatus.IsHtmlBackgroundColored && _htmlStatus.BackgroundColor != 0)
                     ? HuesHelper.RgbaToArgb(_htmlStatus.BackgroundColor | 0xFF)
                     : 0;
@@ -2855,7 +2856,7 @@ namespace ClassicUO.Assets
                 Link = 0
             };
 
-            using var stack = new PooledList<HTMLDataInfo>(8);
+            using var stack = PooledRefList<HTMLDataInfo>.Create(8);
             stack.Add(info);
             HTMLDataInfo currentInfo = info;
 
@@ -2923,7 +2924,7 @@ namespace ClassicUO.Assets
                         }
                     }
 
-                    GetCurrentHTMLInfo(stack.AsSpan, ref currentInfo);
+                    GetCurrentHTMLInfo(stack.AsSpan(), ref currentInfo);
 
                     switch (tag)
                     {

@@ -676,6 +676,8 @@ namespace ClassicUO
 
                 WorldHeld = false;
                 _sessionAfterReport = false;
+                _poolMap = -1;
+                _poolAfterAt = -1;
                 _sessionLast = now;
                 _sessionWaitTicks = 0;
                 SessionBaseline();
@@ -710,6 +712,7 @@ namespace ClassicUO
             double frameMs = BusyFrameMs(now - _sessionLast, _sessionWaitTicks, Stopwatch.Frequency);
             _sessionLast = now;
             _sessionWaitTicks = 0;
+            PoolTeleportTick(t, inv);
             int seen0 = GC.CollectionCount(0);
 
             if (seen0 != _sessionGcSeen0)
@@ -771,10 +774,56 @@ namespace ClassicUO
                 Log.Info(string.Format(inv, "[gcs] pools +{0:0}s: chunks created {1}, pooled {2}; lands new {3}, pooled {4}; statics new {5}, pooled {6}; statics mesh capacity (sprites:chunks){7}",
                     t, Game.Map.Chunk.TotalCreated, world?.ChunkPool.Count ?? 0, Game.GameObjects.Land.TotalNew, recycler?.PooledLands ?? 0,
                     Game.GameObjects.Static.TotalNew, recycler?.PooledStatics ?? 0, Game.Map.Chunk.DescribeMeshCapacities(world, world?.Map)));
+                var maps = Client.Game?.UO?.FileManager?.Maps;
+                Log.Info(string.Format(inv, "[bufpools] +{0:0}s: {1} | renderedText pooled {2}/{3} miss {4} drop {5} | region prefetch dropped {6} | bake trimmed {7}",
+                    t, Uo.Buffers.PoolStats.Format(), Game.RenderedText.PoolCount, Game.RenderedText.PoolMax,
+                    Game.RenderedText.PoolMisses, Game.RenderedText.PoolDropped, maps?.PendingDropped ?? 0, Uo.Render.BakeJob.TrimmedJobs));
+                var items = world?.ItemPoolIfCreated;
+                Log.Info(string.Format(inv, "[objpools] +{0:0}s: items {1}/{2} offered {3} reused {4} dropped {5} overflow {6} | chunks {7}/{8} | lands {9}/{10} statics {11}/{12} | frameCache {13}/{14} miss {15} drop {16} | wornCache {17}/{18} miss {19} drop {20} | tileEntries {21:0.00}/{22:0.00} MB hw {23:0.00} miss {24} drop {25}",
+                    t, items?.Count ?? 0, Game.ItemPool.MaxPooled, items?.Offered ?? 0, items?.Reused ?? 0, items?.Dropped ?? 0, items?.Overflow ?? 0,
+                    world?.ChunkPool.Count ?? 0, Game.Constants.PREDICTABLE_CHUNKS,
+                    recycler?.PooledLands ?? 0, Game.Map.MapObjectRecycler.MaxLands, recycler?.PooledStatics ?? 0, Game.Map.MapObjectRecycler.MaxStatics,
+                    Game.MobileFrameCache.PoolCount, Game.MobileFrameCache.PoolMax, Game.MobileFrameCache.PoolMisses, Game.MobileFrameCache.PoolDropped,
+                    Game.WornCache.PoolCount, Game.WornCache.PoolMax, Game.WornCache.PoolMisses, Game.WornCache.PoolDropped,
+                    Game.Map.DynamicTileIndex.EntryPool.PooledBytes / 1048576.0, Game.Map.DynamicTileIndex.EntryPool.MaxPooledBytes / 1048576.0,
+                    Game.Map.DynamicTileIndex.EntryPool.HighWaterBytes / 1048576.0, Game.Map.DynamicTileIndex.EntryPool.Misses, Game.Map.DynamicTileIndex.EntryPool.Dropped));
                 _sessionAfterReport = true;
             }
 
             SessionBaseline();
+        }
+
+        // the large pool at each teleport (a facet change or a jump of more than 32 tiles): at the jump (what the old area
+        // holds) and 5 s later (after the region swap), the evidence for the per-use caps (LargePoolCaps)
+        private static int _poolMap = -1, _poolX, _poolY;
+        private static double _poolAfterAt = -1;
+
+        private static void PoolTeleportTick(double t, CultureInfo inv)
+        {
+            var world = Client.Game?.UO?.World;
+            var player = world?.Player;
+
+            if (player == null)
+            {
+                return;
+            }
+
+            int map = world.MapIndex, x = player.X, y = player.Y;
+
+            if (_poolMap >= 0 && (map != _poolMap || Math.Max(Math.Abs(x - _poolX), Math.Abs(y - _poolY)) > 32))
+            {
+                Log.Info(string.Format(inv, "[bufpools] teleport +{0:0.0}s map {1} -> {2} ({3},{4}): {5}", t, _poolMap, map, x, y, Uo.Buffers.PoolStats.Format()));
+                _poolAfterAt = t + 5;
+            }
+            else if (_poolAfterAt >= 0 && t >= _poolAfterAt)
+            {
+                _poolAfterAt = -1;
+                Log.Info(string.Format(inv, "[bufpools] teleport+5s +{0:0.0}s: {1}", t, Uo.Buffers.PoolStats.Format()));
+            }
+
+            _poolMap = map;
+            _poolX = x;
+            _poolY = y;
         }
 
         // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept

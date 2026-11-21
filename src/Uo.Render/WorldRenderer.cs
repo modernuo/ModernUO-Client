@@ -21,7 +21,9 @@ public sealed class WorldOptions
     /// page array and the instance buffer start at <see cref="Layers"/>, <see cref="AnimLayers"/> and
     /// <see cref="InstanceCapacity"/> and double up to these. 0 = fixed at the starting size.</summary>
     public int LayersMax, AnimLayersMax, InstanceCapacityMax;
-    public int Workers = Math.Clamp(Environment.ProcessorCount / 2 - 1, 2, 8);
+    /// <summary>Default <see cref="Workers"/>: cores/2 - 1, 2..8 (also what the host's large-pool caps count).</summary>
+    public static readonly int DefaultWorkers = Math.Clamp(Environment.ProcessorCount / 2 - 1, 2, 8);
+    public int Workers = DefaultWorkers;
     public bool ForceExpand;
     /// <summary>false: no map streaming (debug scenes injected with <see cref="ChunkStore.InjectDebugChunk"/>).</summary>
     public bool StreamMap = true;

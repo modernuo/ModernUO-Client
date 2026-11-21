@@ -10,6 +10,7 @@ using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
 using System;
 using System.Xml;
+using Uo.Buffers;
 
 namespace ClassicUO.Game.UI.Gumps
 {

@@ -1,7 +1,7 @@
-using System.Buffers;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
+using Uo.Buffers;
 
 namespace Uo.Pack;
 
@@ -241,7 +241,7 @@ public sealed class RecordStore : IDisposable
             ReadExactly(_file, raw, (long)record.Offset);
             return;
         }
-        var compressed = ArrayPool<byte>.Shared.Rent((int)record.StoredBytes);
+        var compressed = BufferPool.Rent<byte>((int)record.StoredBytes);
         try
         {
             var src = compressed.AsSpan(0, (int)record.StoredBytes);
@@ -251,7 +251,7 @@ public sealed class RecordStore : IDisposable
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(compressed);
+            BufferPool.Return(compressed);
         }
     }
 

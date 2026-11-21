@@ -40,6 +40,11 @@ namespace ClassicUO.Game
             }
         );
 
+        internal static int PoolCount => _pool.Count;
+        internal static int PoolMax => _pool.MaxSize;
+        internal static int PoolMisses => _pool.Misses;
+        internal static int PoolDropped => _pool.Dropped;
+
         private static PixelPicker _picker = new PixelPicker();
         private byte _font;
 
@@ -986,6 +991,8 @@ namespace ClassicUO.Game
                 Texture.Dispose();
             }
 
+            // a pooled object no longer keeps its last string alive
+            _text = string.Empty;
             _pool.ReturnOne(this);
         }
     }

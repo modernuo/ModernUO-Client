@@ -2,12 +2,12 @@
 
 using ClassicUO.Utility.Logging;
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -136,15 +136,11 @@ namespace ClassicUO.Assets
         private static readonly int FileHeaderSize = StructIo.SizeOf<FileHeader>();
         private static readonly int PageHeaderSize = StructIo.SizeOf<PageHeader>();
 
-        // evicted chunk buffers kept for the next decodes (one size class: the pack's chunk size)
-        private const int MaxFreeBuffers = 4;
-
         private readonly string _dir;
         private readonly long _cacheBytes;
         private readonly Dictionary<int, PageInfo> _pages = new Dictionary<int, PageInfo>();
         private readonly Dictionary<long, LinkedListNode<Chunk>> _chunks = new Dictionary<long, LinkedListNode<Chunk>>();
         private readonly LinkedList<Chunk> _lru = new LinkedList<Chunk>();
-        private readonly Stack<byte[]> _free = new Stack<byte[]>();
         private readonly object _sync = new object();
         private long _cachedBytes;
         private int _decodedChunks;
@@ -215,10 +211,14 @@ namespace ClassicUO.Assets
         {
             lock (_sync)
             {
+                foreach (var chunk in _lru)
+                {
+                    ReturnBufferLocked(chunk.Data);
+                }
+
                 _chunks.Clear();
                 _lru.Clear();
                 _pages.Clear();
-                _free.Clear();
                 _cachedBytes = 0;
             }
         }
@@ -334,26 +334,10 @@ namespace ClassicUO.Assets
             }
         }
 
-        private byte[] RentBuffer(int size)
-        {
-            lock (_sync)
-            {
-                if (_free.Count > 0 && _free.Peek().Length == size)
-                {
-                    return _free.Pop();
-                }
-            }
+        // Chunk buffers come from the large pool: decoded on any thread, returned at eviction on any thread.
+        private static byte[] RentBuffer(int size) => BufferPool.RentShared<byte>(size, LargeUse.Page);
 
-            return new byte[size];
-        }
-
-        private void ReturnBufferLocked(byte[] buffer)
-        {
-            if (_free.Count < MaxFreeBuffers && (_free.Count == 0 || _free.Peek().Length == buffer.Length))
-            {
-                _free.Push(buffer);
-            }
-        }
+        private static void ReturnBufferLocked(byte[] buffer) => BufferPool.ReturnShared(buffer, LargeUse.Page);
 
         // decodes chunk `index` into `buffer` (capacity info.ChunkBytes) and returns its length
         private int DecodeChunk(PageInfo info, int page, int index, byte[] buffer)
@@ -373,7 +357,7 @@ namespace ClassicUO.Assets
                 case FileKind.ChunkedBrotli:
                 {
                     int size = (int)info.ChunkSizes[index];
-                    var compressed = ArrayPool<byte>.Shared.Rent(size);
+                    var compressed = BufferPool.Rent<byte>(size);
 
                     try
                     {
@@ -386,7 +370,7 @@ namespace ClassicUO.Assets
                     }
                     finally
                     {
-                        ArrayPool<byte>.Shared.Return(compressed);
+                        BufferPool.Return(compressed);
                     }
 
                     break;

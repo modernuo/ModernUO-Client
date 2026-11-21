@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- the copied ModernUO collections carry nullable annotations -->
+    <NoWarn>$(NoWarn);CS8632</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ClassicUO.UnitTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- src/Directory.Build.props adds the FileEmbed generator; this library embeds nothing with it -->
+    <ProjectReference Remove="..\..\external\FileEmbed\FileEmbed\FileEmbed.csproj" />
+  </ItemGroup>
+
+</Project>
