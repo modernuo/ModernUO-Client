@@ -39,7 +39,12 @@ namespace ClassicUO.UnitTests.Network.Packets
             public int Packets;
             public int Disconnects;
             public string Reason;
+
+            /// <summary>What the handlers sent back through NetClient.Socket (the pipe's client while it delivers), flushed.</summary>
+            public byte[] Sent = Array.Empty<byte>();
         }
+
+        private static readonly PropertyInfo StaticSocket = typeof(NetClient).GetProperty(nameof(NetClient.Socket))!;
 
         public static IEnumerable<object[]> Modes()
         {
@@ -102,12 +107,26 @@ namespace ClassicUO.UnitTests.Network.Packets
             setup?.Invoke(handlers);
             int Sink(ArraySegment<byte> data) => handlers.ParsePackets(client, world, data);
 
-            for (int frame = 0; frame < 10_000_000 && !socket.Empty && result.Disconnects == 0; frame++)
+            // handlers answer through the static NetClient.Socket: the pipe's client while it delivers
+            object previous = StaticSocket.GetValue(null);
+            StaticSocket.SetValue(null, client);
+
+            try
             {
+                for (int frame = 0; frame < 10_000_000 && !socket.Empty && result.Disconnects == 0; frame++)
+                {
+                    result.Packets += client.Drain(Sink, int.MaxValue, int.MaxValue, 0);
+                }
+
                 result.Packets += client.Drain(Sink, int.MaxValue, int.MaxValue, 0);
+                client.Flush();
+            }
+            finally
+            {
+                StaticSocket.SetValue(null, previous);
             }
 
-            result.Packets += client.Drain(Sink, int.MaxValue, int.MaxValue, 0);
+            result.Sent = socket.Sent.ToArray();
 
             return result;
         }
@@ -130,11 +149,12 @@ namespace ClassicUO.UnitTests.Network.Packets
                 _rng = new Random(seed);
             }
 
+            public readonly List<byte> Sent = new();
             public bool Empty => _pos >= _data.Length;
             public override bool IsConnected => _connected;
             public override EndPoint LocalEndPoint => null;
             public override void Connect(Uri uri) { }
-            public override void Send(byte[] buffer, int offset, int count) { }
+            public override void Send(byte[] buffer, int offset, int count) => Sent.AddRange(new ArraySegment<byte>(buffer, offset, count));
             public override void Disconnect() => _connected = false;
             public override void Dispose() => _connected = false;
 
