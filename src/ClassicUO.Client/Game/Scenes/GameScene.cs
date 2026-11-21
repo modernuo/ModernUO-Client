@@ -56,10 +56,9 @@ namespace ClassicUO.Game.Scenes
         private HealthLinesManager _healthLinesManager;
 
         private Point _lastSelectedMultiPositionInHouseCustomization;
-        private int _lightCount;
-        private readonly LightData[] _lights = new LightData[
-            LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT
-        ];
+        private readonly FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
+        // counts the drawn frames (Draw past the death screen); the light pass draws only its own frame's lights
+        private uint _lightsFrame;
         private Item _multi;
         private Rectangle _rectangleObj = Rectangle.Empty,
             _rectanglePlayer;
@@ -457,14 +456,16 @@ namespace ClassicUO.Game.Scenes
         }
 
         internal (byte Id, ushort Color, bool IsHue, int X, int Y) LightAt(int i) =>
-            (_lights[i].ID, _lights[i].Color, _lights[i].IsHue, _lights[i].DrawX, _lights[i].DrawY);
+            (_frameLights[i].ID, _frameLights[i].Color, _frameLights[i].IsHue, _frameLights[i].DrawX, _frameLights[i].DrawY);
 
-        internal void TruncateLights(int count) => _lightCount = Math.Min(_lightCount, Math.Max(count, 0));
+        internal int LightCount => _frameLights.Count;
+
+        internal void TruncateLights(int count) => _frameLights.Truncate(count);
 
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
             if (
-                _lightCount >= LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT
+                _frameLights.Full
                 || !UseLights && !UseAltLights
                 || obj == null
             )
@@ -509,7 +510,7 @@ namespace ClassicUO.Game.Scenes
 
             if (canBeAdded)
             {
-                ref LightData light = ref _lights[_lightCount];
+                ref FrameLights.Entry light = ref _frameLights.Next();
 
                 ushort graphic = lightObject.Graphic;
 
@@ -607,7 +608,7 @@ namespace ClassicUO.Game.Scenes
 
                 light.DrawX = x;
                 light.DrawY = y;
-                _lightCount++;
+                _frameLights.Commit();
             }
         }
 
@@ -1400,6 +1401,7 @@ namespace ClassicUO.Game.Scenes
                 return true;
             }
 
+            _frameLights.BeginFrame(++_lightsFrame);
             Viewport r_viewport = batcher.GraphicsDevice.Viewport;
             Viewport camera_viewport = Camera.GetViewport();
             Matrix matrix = Camera.ViewTransformMatrix;
@@ -1432,19 +1434,6 @@ namespace ClassicUO.Game.Scenes
 
                 FrameStats.WorldHeld = hold;
                 FrameStats.WorldShown |= !hold;
-
-                if (!hold)
-                {
-                    FrameStats.Begin(FramePhase.Lights);
-                    PrepareLightsRendering(batcher, ref matrix, renderTargets);
-                    FrameStats.End(FramePhase.Lights);
-                }
-                else
-                {
-                    // the light target keeps the held frame's lights
-                    InitializeRenderTargets(renderTargets);
-                    _lightCount = 0;
-                }
 
                 batcher.GraphicsDevice.Viewport = camera_viewport;
 
@@ -1492,6 +1481,22 @@ namespace ClassicUO.Game.Scenes
                     }
                 }
 
+                // after the world pass: the lights its walk collected, at this frame's offset (FrameLights)
+                if (!hold)
+                {
+                    FrameStats.Begin(FramePhase.Lights);
+                    PrepareLightsRendering(batcher, ref matrix, renderTargets);
+                    FrameStats.End(FramePhase.Lights);
+                }
+                else
+                {
+                    // the light target keeps the held frame's lights
+                    InitializeRenderTargets(renderTargets);
+#if CUO_DEVTOOLS
+                    LightFrameLog.OnHeld();
+#endif
+                }
+
                 renderTargets.WorldFade = ready ? _settle.Fade : 0f;
             }
             else if (GpuDeviceLost.WorldSetupFailed)
@@ -1502,12 +1507,13 @@ namespace ClassicUO.Game.Scenes
             else
             {
                 // the developer comparison mode (-worldrenderer legacy, DevBench world:legacy), never a fallback
-                FrameStats.Begin(FramePhase.Lights);
-                PrepareLightsRendering(batcher, ref matrix, renderTargets);
-                FrameStats.End(FramePhase.Lights);
                 batcher.GraphicsDevice.Viewport = camera_viewport;
 
                 DrawWorld(batcher, ref matrix, renderTargets);
+                // after the world draw: the lights its walk collected, at this frame's offset (FrameLights)
+                FrameStats.Begin(FramePhase.Lights);
+                PrepareLightsRendering(batcher, ref matrix, renderTargets);
+                FrameStats.End(FramePhase.Lights);
                 _settle.OnOtherRenderer();
                 FrameStats.WorldShown = true;
 
@@ -1526,6 +1532,9 @@ namespace ClassicUO.Game.Scenes
             }
 
             batcher.GraphicsDevice.Viewport = r_viewport;
+#if CUO_DEVTOOLS
+            LightFrameLog.OnWorldOffset(_offset.X, _offset.Y);
+#endif
 
             return base.Draw(batcher, renderTargets);
         }
@@ -1660,10 +1669,14 @@ namespace ClassicUO.Game.Scenes
                 batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
                 batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Transparent, 0f, 0);
                 batcher.GraphicsDevice.SetRenderTarget(null);
+#if CUO_DEVTOOLS
+                LightFrameLog.OnLightPass(false, UseLights, UseAltLights, _world.Light.IsometricLevel, _frameLights.Count, 0, _offset.X, _offset.Y);
+#endif
 
                 return false;
             }
 
+            int lightCount = _frameLights.CountFor(_lightsFrame);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
             batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Black, 0f, 0);
 
@@ -1684,6 +1697,22 @@ namespace ClassicUO.Game.Scenes
                 );
             }
 
+#if CUO_DEVTOOLS
+            if (LightFrameLog.Active)
+            {
+                uint h = 2166136261;
+
+                for (int i = 0; i < lightCount; i++)
+                {
+                    ref FrameLights.Entry d = ref _frameLights[i];
+                    h = (h ^ (uint)(d.ID | d.Color << 8)) * 16777619;
+                    h = (h ^ (uint)d.DrawX) * 16777619;
+                    h = (h ^ (uint)d.DrawY) * 16777619;
+                }
+
+                LightFrameLog.OnLightPass(true, UseLights, UseAltLights, _world.Light.IsometricLevel, lightCount, h, _offset.X, _offset.Y);
+            }
+#endif
             batcher.Begin(null, matrix);
             batcher.SetBlendState(BlendState.Additive);
 
@@ -1691,9 +1720,9 @@ namespace ClassicUO.Game.Scenes
 
             hue.Z = 1f;
 
-            for (int i = 0; i < _lightCount; i++)
+            for (int i = 0; i < lightCount; i++)
             {
-                ref LightData l = ref _lights[i];
+                ref FrameLights.Entry l = ref _frameLights[i];
                 ref readonly var lightInfo = ref Client.Game.UO.Lights.GetLight(l.ID);
 
                 if (lightInfo.Texture == null)
@@ -1720,8 +1749,6 @@ namespace ClassicUO.Game.Scenes
                     0f
                 );
             }
-
-            _lightCount = 0;
 
             batcher.SetBlendState(null);
             batcher.End();
@@ -1864,15 +1891,6 @@ namespace ClassicUO.Game.Scenes
                     TextType.CLIENT
                 );
             }
-        }
-
-        private struct LightData
-        {
-            public byte ID;
-            public ushort Color;
-            public bool IsHue;
-            public int DrawX,
-                DrawY;
         }
     }
 }
