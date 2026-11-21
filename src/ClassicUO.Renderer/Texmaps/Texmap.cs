@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Diagnostics;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework.Graphics;
+using Uo.Buffers;
 
 namespace ClassicUO.Renderer.Texmaps
 {
@@ -90,7 +91,7 @@ namespace ClassicUO.Renderer.Texmaps
             }
         }
 
-        // worker thread: the loader's sprite table (immutable after Load), the pack pages (thread-safe), ArrayPool
+        // worker thread: the loader's sprite table (immutable after Load), the pack pages (thread-safe), the buffer pools
         private bool DecodeOnWorker(FirstSightDecoder.Job job)
         {
             if (!_texmapsLoader.Exists((int)job.Index))
@@ -100,7 +101,7 @@ namespace ClassicUO.Renderer.Texmaps
 
             ref readonly var sprite = ref _texmapsLoader.PackSpriteEntries[job.Index];
             int count = sprite.OrigW * sprite.OrigH;
-            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            job.Pixels = BufferPool.RentShared<uint>(count);
             PackSprites.DecodeColor(_texmapsLoader.FileManager.Pack.Tex, in sprite, job.Pixels);
             job.Width = sprite.OrigW;
             job.Height = sprite.OrigH;

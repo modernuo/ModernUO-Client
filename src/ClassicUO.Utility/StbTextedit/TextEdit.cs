@@ -3,6 +3,7 @@
 using System;
 using System.Text;
 using ClassicUO.Utility;
+using Uo.Buffers;
 
 namespace StbTextEditSharp
 {

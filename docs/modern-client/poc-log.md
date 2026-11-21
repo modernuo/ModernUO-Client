@@ -8018,6 +8018,49 @@ region 1.00 vs 2.45 ms, art chunk 0.55 vs 1.83 ms, anim chunk 0.26 vs 0.98 ms, a
 0.23 vs 0.57 ms (q9), small raw gump record (7 KB) zstd 19 10.7 us (zstd 9 7.8 us) vs copy 0.1 us. zstd 19 is smaller than
 Brotli as built on every set. Confirms the busy-machine ranking.
 
+## 2026-11-19 buffer-pools (bg/buffer-pools): one buffer pool facade (Uo.Buffers), ModernUO ref collections, bounded LOH retention
+
+Base 519f6a4e3, poc ecdf36f42 merged. Plan and microbenchmark: cuo-poc-state/surveys/buffer-pools-2026-11-19.md. Owner go
+2026-11-19 (decisions in briefs/buffer-pools-2.md).
+
+What changed:
+- `src/Uo.Buffers` (new, dependency-free): `BufferPool` facade. Same-thread rents up to 64 KiB use the calling thread's
+  `STArrayPool` (ModernUO port); cross-thread rents up to 64 KiB use `ArrayPool.Shared`; everything above 64 KiB goes to
+  `LargeBufferPool` (4 size classes per octave, at most 48 MiB of free buffers, LRU eviction, idle trim after 30 s, counters).
+  `CUO_POOL_AUDIT=1` (dev) logs double, foreign and wrong-thread returns with the stack.
+- ModernUO copies (licence: THIRD-PARTY-NOTICES.md): `PooledRefList` replaces `PooledList`, `ValueStringBuilder` replaces the
+  client's (ToString no longer disposes; every site disposes after ToString), `PooledRefQueue` added. Coordinator change: their
+  rents go through the facade, so an oversized collection lands in the large pool, never in a per-thread pool. The packet code is
+  not edited (network rework); a csproj alias points its `ValueStringBuilder` at the copy.
+- Conversions: pack/asset decode scratch, PackPages chunk buffers (own free stack removed), MapLoader region buffers (4 spares
+  removed; prefetches not adopted within 10 s or beyond 8 are dropped, all dropped on LoadMap), Uo.Render region parse (H4: two
+  LOH arrays of garbage per region load now pooled), bake job arrays trimmed above 2048 on return (M4), renderer decode outputs
+  (`RentShared`), LogFile, world map cursor, Gpu item cache growth.
+- `gump_decode_budget` (default off, `CUO_GUMP_BUDGET_CHECK`): gump worker decodes counted in their own 32 MiB budget (H5).
+- Object pools: QueuedPool capped (RenderedText clears its text on return), FirstSightDecoder job stack capped at 256,
+  `DynamicTileIndex.EntryPool` capped at 4 MiB in all; counters on the `[bufpools]` and new `[objpools]` log lines.
+
+Verification (part 1 at 8e98e1d49, NativeAOT dev builds base 519f6a4e3 / new): gate Gpu with the audit, the gump checker and
+the switch on bench2-000039 PASS; golden bench6-000053 PASS (0 px); gate Legacy bench3-000030 failed only on
+`[mobile-cache-check]` dead-mobile lines (fixed on poc in ecdf36f42, merged). Alloc bench5-000043 (Gpu) / 000044 (Legacy),
+arms base, new, gumpon: 72 of 84 windows have the same main-thread p50; the 12 others differ by one step of the steady idle
+allocation (0/264/536/704/824/944 B), which also changes between rounds of the base arm (tour ls_idle base 536 then 704); traced
+separately (alloc-counters). GC per session (tour, 60 s): 7 collections / 2 gen2 (Gpu) and 5 / 2 (Legacy) in every arm.
+
+Large pool in the tour scene (teleports, Gpu, new arm): 460-590 rents, about half hits, 150-180 MiB allocated over the run,
+outstanding high-water 95-110 MiB, free 3-14 MiB of the 48 MiB budget at the 60 s lines; idle ls scenes: high-water 48-51 MiB,
+60-89 MiB allocated. Per-thread pools: 24 pools, 0.6-1.2 MiB free in all.
+
+Memory (per client): large pool at most 48 MiB of free buffers (measured 3-17 MiB held at the stats lines); per-thread pools
+about 1 MiB in all; gump budget 32 MiB in flight when on; tile entry pool at most 4 MiB. Removed: MapLoader's 4 spare region
+buffers (up to 13 MiB), PackPages' 4 spare chunks (4 MiB). Benefit: LOH retention has a known ceiling (ArrayPool.Shared kept the
+whole burst peak until its age trim), region parses stop producing LOH garbage, and oversized ref collections cannot pin memory
+per thread.
+
+Second part (this round): ref collections through the facade (test: a >64 KiB rent from each lands in the large pool); client
+migrated to the copies; first PooledRefList users outside the fonts (custom house stair delete); facade sites LogFile, world map
+cursor, Gpu item cache; object-pool counters. Jobs for this head: see the handoff (gates both renderers, golden, alloc).
+
 ## 2026-11-19 meshlayer-growth (bg/meshlayer-growth): pooled chunks no longer keep their high-water mesh arrays
 
 Known issue: Legacy `MeshLayer` arrays keep growing in reused chunks. Re-measured on a NativeAOT dev build of 519f6a4e3 plus a
@@ -8212,3 +8255,32 @@ waterline 7 px above the feet instead of ~40 px (wet flats got FlatDrop, 33 px).
   seated unchanged, select key).
 - Memory: none per client beyond ~24 B per MobileFrameCache. Cost: one per-vertex branch in the GEO VS; a cached scan per
   mobile in key mode with the switch on; nothing with it off.
+
+## 2026-11-20 buffer-pools: LargeBufferPool budget 112 MiB, idle trim 180 s with a 16 MiB floor
+
+Owner decision. The large pool's default free-buffer budget is 112 MiB (was 48 MiB): the measured teleport peak is 95-110 MiB
+outstanding, so a budget of that size lets a teleport run without LOH reallocation. `TrimIdle` now drops buffers idle for 180 s
+(was 30 s; still checked every 5 s) and never goes below a 16 MiB floor of free buffers (about one region set), trimming size
+classes that never had a hit first. Memory cost: up to ~64 MiB more held per client than before; the later memory-cap setting
+scales it (Low uses less). No env override exists for the budget (SetBudget is the code hook). Tests: floor respected, defaults.
+
+## 2026-11-20 buffer-pools round 4: LargeBufferPool per-use caps instead of the flat 112 MiB
+
+Owner decision (supersedes the 112 MiB budget): the flat budget mixed outstanding buffers (mostly resident regions, 24 per
+region cache x 1.2-3.3 MB) with free retention. The large pool now keeps free buffers per use (`LargeUse`), each under a cap
+the client derives at startup (`LargePoolCaps`, logged as `[bufpools] caps`; 24-core box):
+- General (scoped scratch, worker decode outputs): DecodeBudget.Shared 16 MiB (+ DecodeBudget.Gumps 32 MiB with
+  gump_decode_budget) + 1 MiB compressed input x 19 scratch threads (main 2, Uo.Render workers clamp(cores/2-1,2,8) = 8,
+  MapLoader MaxPending 8 + 1 sync load) = 35 MiB (67 MiB). Uo.Render page decoders keep their own buffers (not pooled).
+- Region (logical region buffers): one teleport's swap in both caches, 2 x 4 = 8 buffers, at most 32 MiB. A cache's loaded
+  area (GPU view + prefetch ring; client PrefetchRadius 104 tiles + one block) is under 512 tiles, so at most 2 x 2 regions.
+  A region rent may take a free buffer up to two classes (25 % each) larger, since region sizes spread over several classes.
+  Not idle-trimmed: it replaces the 16 MiB floor.
+- Page (PackPages chunk buffers): 3 lanes x 2 decodes in flight = 6 chunks, 6 MiB.
+Ordering: both region caches load before they evict, by design (MapLoader prefetches up to 8 regions ahead and evicts on
+adoption; ChunkStore evicts regions idle 120 frames, every 64 frames, and bake jobs pin theirs), so evicting first is not
+possible without changing the caches; the Region cap keeps exactly the buffers one teleport's evictions return for the next
+teleport. The first loads after login (caches filling up to 24 regions each) always miss: they are outstanding growth, not
+pool misses. Counters: `[bufpools]` lines print per use rents/hits/misses/allocated, outstanding and free count/MB with
+high-waters, cap, drops and evictions; FrameStats also logs them at each teleport (map change or a jump over 32 tiles) and
+5 s after it. Tests: per-use isolation, region count cap, region fit, idle trim keeps Region, facade with use, cap derivation.

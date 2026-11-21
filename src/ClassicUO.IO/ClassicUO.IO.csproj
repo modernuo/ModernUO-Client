@@ -9,6 +9,11 @@
     <ProjectReference Include="..\..\external\FNA\FNA.Core.csproj" />
   </ItemGroup>
 
+  <!-- The packet code (Network/, StackDataReader) names ValueStringBuilder without importing Uo.Buffers; it moves to the network rework, so it is aliased here instead of edited. -->
+  <ItemGroup>
+    <Using Include="Uo.Buffers.ValueStringBuilder" Alias="ValueStringBuilder" />
+  </ItemGroup>
+
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>ClassicUO.UnitTests</_Parameter1>
