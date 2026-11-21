@@ -27,10 +27,8 @@ public ref partial struct SpanWriter
     {
         if (!string.IsNullOrEmpty(str))
         {
-            foreach (var b in StringHelper.StringToCp1252Bytes(str))
-            {
-                Write(b);
-            }
+            GrowIfNeeded(str.Length);
+            Position += StringHelper.GetBytesCp1252(str, _buffer[_position..]);
         }
 
         Write((byte)0);
@@ -48,12 +46,19 @@ public ref partial struct SpanWriter
         {
             WriteZero(1);
         }
+        else if (length > 0)
+        {
+            // A string longer than the field is cut at length chars; the rest of the field is zeroed.
+            GrowIfNeeded(length);
+            StringHelper.GetBytesCp1252Fixed(str, _buffer.Slice(_position, length));
+            Position += length;
+
+            return;
+        }
         else
         {
-            foreach (var b in StringHelper.StringToCp1252Bytes(str, length))
-            {
-                Write(b);
-            }
+            GrowIfNeeded(str.Length);
+            Position += StringHelper.GetBytesCp1252(str, _buffer[_position..]);
         }
 
         if (length > -1 && Position > start)
