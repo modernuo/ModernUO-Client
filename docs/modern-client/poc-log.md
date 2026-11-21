@@ -8420,3 +8420,48 @@ Tests: SharedClilocTests (build once then reuse, damaged/truncated/empty/foreign
 unless locked and the in-use one deleted once released, old temps, two racing builders, cap, no-disk-cache hook, lookups
 equal with the switch on and off over raw and zstd packs incl. the checker's counts, mapped parse rejects what the heap
 parse rejects). Unit tests 2,799 passed, 6 skipped. Both build variants build.
+
+## 2026-11-20: text-encoding (bg/text-encoding, base 1bf5fef77)
+
+Cp1252 strings (names, 0x1C, 0xC1 affixes, every `ReadASCII`/`WriteASCII`) paid a string per byte on read
+(`char.ConvertFromUtf32`) and an iterator plus `ConvertToUtf32` per char on write.
+
+- **Codec** (`src/ClassicUO.Utility/Cp1252.cs`, adapted from ModernUO TextEncoding 8e2ddc7ab under the author's
+  agreement; THIRD-PARTY-NOTICES.md created): reads allocate only the result. `GetString` dispatches by length from a
+  pinned benchmark: a 256-entry table up to 16 bytes, above that one vectorized scan for 0x80-0x9F, then Latin1.GetString
+  or `string.Create` + Latin1 widen + table patch. Safe reads pre-scan C0+C1 with SearchValues. Writes: `GetBytesCp1252`
+  / `GetBytesCp1252Fixed` (span, Ascii.FromUtf16 one-pass prefix, scalar remap after it); `StringToCp1252Bytes` keeps its
+  name and returns a struct enumerable, so StackDataWriter and the net rework's SpanWriter compile unchanged and stop
+  allocating. Output identical to the old code for all 256 bytes, random strings, the safe filter and a write corpus with
+  surrogate pairs, 0x80-0x9F code points and typographic chars; a lone surrogate now writes '?' (the old iterator threw).
+  No switch: an allocation fix with identical output.
+- **Fonts:** ASCII fonts are indexed by Cp1252 byte, but text arrives decoded, so `GetASCIIIndex` truncated U+2026 to
+  0x26 and drew '&' for '...' (every 0x80-0x9F char mapping above U+00FF). `Cp1252.ToGlyphByte` maps back (identity up
+  to 0xFF, the 27 typographic chars to their bytes, else '?'); the glyph Y offset uses it too. Bug fix, no switch.
+- **TextEdit.InsertChars:** Rune instead of a string per inserted char.
+- **text_string_cache** (default on since 0b1a10a76, see Final results) + `CUO_TEXT_CACHE_CHECK`: decoded-string cache keyed by the bytes, 1024 sets x 2
+  ways, strings <= 64 bytes, game thread only; a hit allocates nothing. Memory held: <= 2048 strings of <= 64 chars
+  (~0.3 MB worst case, typically < 0.1 MB) + 12 KB arrays. Benchmark: a hit costs ~28-33 ns vs ~18-23 ns for a decode of
+  a 6-25 char name, and saves its 56 B.
+- **Benchmark** (busy machine, indicative; pinned; `measure/text-encoding/run-bench.sh`, quiet rerun
+  `job-bench-PARKED.sh`), JIT TC=0 / NativeAOT ns per string: decode old 90/63 (8 chars), 238/223 (30), 1471/1340 (200)
+  and 232/808/5224 B; new 16-17 (8), 20-24 (30), 57-67 (200), 72-75 with a C1 byte, result string only. Encode old
+  75-90 / 236-256 / 1490-1452 ns and a 56 B enumerator; new 8.5 / 11 / 16 ns ASCII, 0 B; the struct foreach the writers
+  still use is 15-24 / 40-80 / 210-480 ns, 0 B.
+- Verification: both builds; unit tests 4319 passed, 6 skipped (new: Cp1252Tests, Cp1252VariantAndCacheTests,
+  AsciiGlyphIndexTests, TextStringCacheTests). Lane jobs (AOT dev 09bc4d912 vs base 1bf5fef77): gates with the cache and
+  its checker on, Gpu bench2-000052 and Legacy bench3-000044; alloc base/new/cache (+cachechk for hit rate and the length
+  histogram), Gpu bench5-000065 and Legacy bench5-000066.
+- **Final results.** Gates TXENC PASS on both renderers (cache and checker on: 0 mismatches). Alloc (bench5-000065 Gpu,
+  bench5-000066 Legacy): main-thread p50 B/frame equal to base in every window and arm, except Gpu corpses (new and cache
+  132, base 0). That was scene noise, not a per-frame allocation: 132 is the median of a 0 window and a 264 window that ran
+  9 frames in 4.33 s (the loop idle between packet frames); base has the same 264 B frames (p95 264); the cachechk arm, same
+  binary, ran 0 there at 49-59 fps. Confirmed by bench5-000075 (corpses section twice per run, base/new interleaved x3:
+  both 0 at n12, probe 0 at n4) and by the base arm of water-depth's alloc jobs. Cache numbers (cachechk arm): Gpu 4481
+  hits / 752 misses (85.6 %), ~166 KiB not allocated per tour, 681 of 2048 entries; Legacy 4460/751 (85.6 %), ~165 KiB,
+  676 entries; 10,444 checked, 0 mismatches; lengths 79 % 1-8 chars, 21 % 9-16, 20 strings 17-32, none longer.
+  **text_string_cache default on** (coordinator, 2026-11-20; code 0b1a10a76): ~45 KiB held per client, at most ~0.3 MB
+  (accepted-costs.md). The switch and `CUO_TEXT_CACHE_CHECK` stay until it has been on a while. The saving is small
+  (well under one gen0 budget per tour), so it will not move pause counts alone; no alloc window got worse with it. After
+  merging poc 03131d73a: unit tests 4426 passed, 6 skipped; final gates at the new default (no `CUO_TEXT_STRING_CACHE`,
+  checker on), set measure/text-encoding-final: see the handoff for job ids.

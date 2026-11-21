@@ -1,7 +1,6 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
@@ -14,113 +13,85 @@ namespace ClassicUO.Utility
     {
         private static readonly char[] _dots = { '.', ',', ';', '!' };
 
-        public static IEnumerable<byte> StringToCp1252Bytes(string s, int length = -1)
-        {
-            length = length > 0 ? Math.Min(length, s.Length) : s.Length;
+        // A struct enumerable (no enumerator allocation); `foreach` call sites compile unchanged. Span writers use
+        // GetBytesCp1252.
+        public static Cp1252.ByteEnumerable StringToCp1252Bytes(string s, int length = -1) => new Cp1252.ByteEnumerable(s, length);
 
-            for (int i = 0; i < length; i += char.IsSurrogatePair(s, i) ? 2 : 1)
-            {
-                yield return UnicodeToCp1252(char.ConvertToUtf32(s, i));
-            }
-        }
+        /// <summary>The text_string_cache switch (ClassicUO.Game.TextStringCache sets it): null decodes every string.</summary>
+        public static Cp1252StringCache Cp1252Cache;
+
+        public delegate void Cp1252CacheCheckHandler(ReadOnlySpan<byte> bytes, string result);
+
+        /// <summary>CUO_TEXT_CACHE_CHECK (developer builds): sees every cached decode with its bytes.</summary>
+        public static Cp1252CacheCheckHandler Cp1252CacheCheck;
 
         public static string Cp1252ToString(ReadOnlySpan<byte> strCp1252)
         {
-            var sb = new ValueStringBuilder(strCp1252.Length);
+            Cp1252StringCache cache = Cp1252Cache;
 
-            for (int i = 0; i < strCp1252.Length; ++i)
+            if (cache == null)
             {
-                sb.Append(char.ConvertFromUtf32(Cp1252ToUnicode(strCp1252[i])));
+                return Cp1252.GetString(strCp1252);
             }
 
-            var str = sb.ToString();
+            string s = cache.GetString(strCp1252);
+            Cp1252CacheCheck?.Invoke(strCp1252, s);
 
-            sb.Dispose();
-
-            return str;
+            return s;
         }
 
+        /// <summary>Cp1252ToString, then (when safe) the chars that fail <see cref="IsSafeChar"/> dropped; one allocation.</summary>
+        public static string Cp1252ToString(ReadOnlySpan<byte> strCp1252, bool safe) => Cp1252.GetString(strCp1252, safe);
+
+        /// <summary>Cp1252 bytes of <paramref name="chars"/> (destination at least chars.Length bytes); returns the count.</summary>
+        public static int GetBytesCp1252(ReadOnlySpan<char> chars, Span<byte> destination) => Cp1252.GetBytes(chars, destination);
+
+        /// <summary>A fixed-length Cp1252 field: the string truncated to destination.Length chars, the rest zeroed.</summary>
+        public static void GetBytesCp1252Fixed(ReadOnlySpan<char> chars, Span<byte> destination) => Cp1252.GetBytesFixed(chars, destination);
+
         /// <summary>
-        /// Converts a unicode code point into a cp1252 code point
+        /// <paramref name="str"/> without the chars that fail <see cref="IsSafeChar"/>; the same instance when it has none
+        /// (one vectorized scan).
         /// </summary>
-        private static byte UnicodeToCp1252(int codepoint)
+        public static string RemoveUnsafeChars(string str)
         {
-            if (codepoint >= 0x80 && codepoint <= 0x9f)
-                return (byte)'?';
-            else if (codepoint <= 0xff)
-                return (byte)codepoint;
-            else
+            if (string.IsNullOrEmpty(str))
             {
-                switch (codepoint)
+                return str;
+            }
+
+            ReadOnlySpan<char> chars = str.AsSpan();
+            int first = chars.IndexOfAnyExceptInRange(' ', '�');
+
+            if (first < 0)
+            {
+                return str;
+            }
+
+            char[] rented = null;
+            Span<char> buffer = chars.Length <= 256
+                ? stackalloc char[256]
+                : rented = System.Buffers.ArrayPool<char>.Shared.Rent(chars.Length);
+
+            chars.Slice(0, first).CopyTo(buffer);
+            int n = first;
+
+            for (int i = first + 1; i < chars.Length; i++)
+            {
+                if (IsSafeChar(chars[i]))
                 {
-                    case 0x20AC: return 128; //€
-                    case 0x201A: return 130; //‚
-                    case 0x0192: return 131; //ƒ
-                    case 0x201E: return 132; //„
-                    case 0x2026: return 133; //…
-                    case 0x2020: return 134; //†
-                    case 0x2021: return 135; //‡
-                    case 0x02C6: return 136; //ˆ
-                    case 0x2030: return 137; //‰
-                    case 0x0160: return 138; //Š
-                    case 0x2039: return 139; //‹
-                    case 0x0152: return 140; //Œ
-                    case 0x017D: return 142; //Ž
-                    case 0x2018: return 145; //‘
-                    case 0x2019: return 146; //’
-                    case 0x201C: return 147; //“
-                    case 0x201D: return 148; //”
-                    case 0x2022: return 149; //•
-                    case 0x2013: return 150; //–
-                    case 0x2014: return 151; //—
-                    case 0x02DC: return 152; //˜
-                    case 0x2122: return 153; //™
-                    case 0x0161: return 154; //š
-                    case 0x203A: return 155; //›
-                    case 0x0153: return 156; //œ
-                    case 0x017E: return 158; //ž
-                    case 0x0178: return 159; //Ÿ
-                    default: return (byte)'?';
+                    buffer[n++] = chars[i];
                 }
             }
-        }
 
-        /// <summary>
-        /// Converts a cp1252 code point into a unicode code point
-        /// </summary>
-        private static int Cp1252ToUnicode(byte codepoint)
-        {
-            switch (codepoint)
+            string result = new string(buffer.Slice(0, n));
+
+            if (rented != null)
             {
-                case 128: return 0x20AC; //€
-                case 130: return 0x201A; //‚
-                case 131: return 0x0192; //ƒ
-                case 132: return 0x201E; //„
-                case 133: return 0x2026; //…
-                case 134: return 0x2020; //†
-                case 135: return 0x2021; //‡
-                case 136: return 0x02C6; //ˆ
-                case 137: return 0x2030; //‰
-                case 138: return 0x0160; //Š
-                case 139: return 0x2039; //‹
-                case 140: return 0x0152; //Œ
-                case 142: return 0x017D; //Ž
-                case 145: return 0x2018; //‘
-                case 146: return 0x2019; //’
-                case 147: return 0x201C; //“
-                case 148: return 0x201D; //”
-                case 149: return 0x2022; //•
-                case 150: return 0x2013; //–
-                case 151: return 0x2014; //—
-                case 152: return 0x02DC; //˜
-                case 153: return 0x2122; //™
-                case 154: return 0x0161; //š
-                case 155: return 0x203A; //›
-                case 156: return 0x0153; //œ
-                case 158: return 0x017E; //ž
-                case 159: return 0x0178; //Ÿ
-                default: return codepoint;
+                System.Buffers.ArrayPool<char>.Shared.Return(rented);
             }
+
+            return result;
         }
 
         public static string CapitalizeFirstCharacter(string str)
