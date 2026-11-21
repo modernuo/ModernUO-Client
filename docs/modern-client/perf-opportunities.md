@@ -253,3 +253,9 @@ Deflate with igzip beats zstd 19 only on regions, by 0.2 ms per region (0.8 ms o
 3. Keep Brotli q5/q9 until then. Lower Brotli qualities are not an option.
 
 Bench sources and a quiet-machine version: `cuo-poc-state/measure/igzip-eval/` (`bench-PARKED.sh`).
+
+## Pack reads mapped on Linux and macOS (2026-11-21, from ModernUO eb4c1fd57)
+
+ModernUO measured a 256 MB whole-file read (.NET 11): a read-only mapping took 16.8 ms warm and 82.3 ms cold on Linux, against 91.2 and 104.0 ms for `RandomAccess.Read`; on Windows `RandomAccess.Read` won (92.1 ms against 125.0 mapped). The client reads pack chunks and records with `RandomAccess.Read` into pooled buffers on every OS (`ChunkedFile`, `RecordStore`, `PackReaders`, `PageResidency`, `MapLoader`), which is the faster choice on Windows.
+
+**Proposal.** On Linux and macOS, map each pack file read-only once and decode zstd straight from the mapped bytes: one read call and one copy less per chunk or record. Windows unchanged. The gain per large chunk is small (the read is a few percent of its decode); it is larger for the many small record reads at login. Measure on Linux first (paired pack decode tour; WSL2 headless is the likely place) before it becomes the default there.
