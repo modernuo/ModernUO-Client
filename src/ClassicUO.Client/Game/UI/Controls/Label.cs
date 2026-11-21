@@ -3,6 +3,7 @@
 using ClassicUO.Assets;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Utility;
+using System;
 using System.Collections.Generic;
 
 namespace ClassicUO.Game.UI.Controls
@@ -66,6 +67,38 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
+
+        // G2: refreshing gumps (status, info bar) set their numbers through these: the text is formatted on the stack and a
+        // string is made only when it differs from the shown one. Same text as ToString()/$"{a}/{b}" (current culture).
+        public void SetText(ReadOnlySpan<char> value)
+        {
+            string current = _gText.Text;
+
+            if (current != null && value.SequenceEqual(current))
+            {
+                Text = current;
+
+                return;
+            }
+
+            Text = value.ToString();
+        }
+
+        public void SetNumber(long value)
+        {
+            Span<char> buffer = stackalloc char[24];
+            value.TryFormat(buffer, out int written);
+            SetText(buffer.Slice(0, written));
+        }
+
+        public void SetPair(long a, char separator, long b)
+        {
+            Span<char> buffer = stackalloc char[48];
+            a.TryFormat(buffer, out int written);
+            buffer[written++] = separator;
+            b.TryFormat(buffer.Slice(written), out int second);
+            SetText(buffer.Slice(0, written + second));
+        }
 
         public ushort Hue
         {
