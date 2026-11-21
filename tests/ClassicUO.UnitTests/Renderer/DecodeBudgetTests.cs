@@ -199,13 +199,13 @@ namespace ClassicUO.UnitTests.Renderer
         }
 
         [Fact]
-        public void Pooled_Bytes_Match_What_The_Shared_Pool_Rents()
+        public void Pooled_Bytes_Match_What_The_Shared_Family_Rents()
         {
-            foreach (int n in new[] { 1, 15, 16, 17, 100, 1000, 1024, 1025, 44 * 44, 128 * 128, 640 * 480, (1 << 20) + 1 })
+            foreach (int n in new[] { 1, 15, 16, 17, 100, 1000, 1024, 1025, 44 * 44, 128 * 128, 128 * 128 + 1, 640 * 480, (1 << 20) + 1 })
             {
-                uint[] a = ArrayPool<uint>.Shared.Rent(n);
+                uint[] a = Uo.Buffers.BufferPool.RentShared<uint>(n);
                 DecodeBudget.PooledBytes(n).Should().Be(a.Length * 4L, $"Rent({n})");
-                ArrayPool<uint>.Shared.Return(a);
+                Uo.Buffers.BufferPool.ReturnShared(a);
             }
 
             DecodeBudget.PooledBytes(0).Should().Be(0);

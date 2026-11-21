@@ -12,7 +12,6 @@ namespace Uo.Converter;
 /// </summary>
 public static class MiscConvert
 {
-    public const int Quality = 9;
     /// <summary>A multimap record whose raw size is at most this is stored uncompressed.</summary>
     public const int SmallRaw = 16384;
 
@@ -32,7 +31,7 @@ public static class MiscConvert
             var s = fm.Skills;
             if (s.SkillsCount == 0) s.Load();
             StringListFile.Write(path, MiscConst.MagicSkills,
-                s.Skills.Select(e => (e.HasAction ? MiscConst.SkillHasAction : 0u, e.Name)).ToList(), brotli: false);
+                s.Skills.Select(e => (e.HasAction ? MiscConst.SkillHasAction : 0u, e.Name)).ToList(), compress: false);
             parts.Add($"{s.SkillsCount} skills, {new FileInfo(path).Length} B");
         }
         else
@@ -81,9 +80,9 @@ public static class MiscConvert
             long len = new FileInfo(sources[i]!).Length;
             if (len > MiscConst.MaxMultiMapRecordBytes) throw new InvalidDataException($"{sources[i]}: {len} bytes; a multimap record is at most {MiscConst.MaxMultiMapRecordBytes}");
             var raw = File.ReadAllBytes(sources[i]!);
-            ushort codec = TextConvert.Raw || raw.Length <= SmallRaw ? StoreConst.CodecRaw : StoreConst.CodecBrotli;
-            var p = RecordStoreWriter.Encode(raw, codec, Quality);
-            encoded[i] = codec == StoreConst.CodecBrotli && p.Length >= raw.Length ? (raw, raw, StoreConst.CodecRaw) : (raw, p, codec);
+            ushort codec = TextConvert.Raw || raw.Length <= SmallRaw ? StoreConst.CodecRaw : StoreConst.CodecZstd;
+            var p = RecordStoreWriter.EncodeOrRaw(raw, ref codec);
+            encoded[i] = (raw, p, codec);
         });
         var w = new RecordStoreWriter(sources.Length);
         long rawTotal = 0;
@@ -112,7 +111,7 @@ public static class MiscConvert
             PackOutputFiles.Delete(path);
             return "no string_dictionary.uop (or no strings in it): no string dictionary table";
         }
-        StringListFile.Write(path, MiscConst.MagicStringDict, d.Strings.Select(s => (0u, s)).ToList(), brotli: !TextConvert.Raw);
+        StringListFile.Write(path, MiscConst.MagicStringDict, d.Strings.Select(s => (0u, s)).ToList(), compress: !TextConvert.Raw);
         return $"{d.Strings.Length} strings, {new FileInfo(path).Length / 1024.0:F0} KiB";
     }
 

@@ -7,6 +7,7 @@ using ClassicUO.Game.GameObjects;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
+using Uo.Buffers;
 
 namespace ClassicUO.Game.UI
 {

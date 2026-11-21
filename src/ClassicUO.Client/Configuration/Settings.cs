@@ -204,6 +204,12 @@ namespace ClassicUO.Configuration
         // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
 
+        // buffer-pools: gump worker decodes are counted in their own 32 MiB decode budget (DecodeBudget.Gumps) and wait for
+        // room there, so a burst of large gumps cannot hold an unbounded amount of pooled pixels, and UI decodes never wait
+        // behind world decodes. Off: gump decodes are not counted, as before. Read at startup (CUO_GUMP_DECODE_BUDGET=1|0
+        // overrides it in developer builds); CUO_GUMP_BUDGET_CHECK=1 compares held and admitted bytes. Default off.
+        [JsonPropertyName("gump_decode_budget")] public bool GumpDecodeBudget { get; set; }
+
         // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
         // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
         // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.
@@ -242,6 +248,13 @@ namespace ClassicUO.Configuration
         // Default off: the atlases only grow.
         [JsonPropertyName("atlas_lru")] public bool AtlasLru { get; set; }
 
+        // shared-tables: cliloc tables are read in place from read-only memory every instance shares (SharedTableCache):
+        // a raw record straight from the pack file, a compressed one from a per-user cache file it is decompressed into
+        // once (keyed by the pack's manifest hash), instead of a heap copy per process. Read once at startup
+        // (CUO_SHARED_CLILOC=1|0 overrides it in developer builds; CUO_SHARED_CLILOC_CHECK=1 compares every lookup with the
+        // heap path's). Default off.
+        [JsonPropertyName("shared_cliloc")] public bool SharedCliloc { get; set; }
+
         // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
         // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
         // every frame it is visible (GameScene.ApplyMeshHue, MeshHueEpoch). Read once per frame (CUO_MESH_HUE=1|0 overrides
@@ -270,6 +283,12 @@ namespace ClassicUO.Configuration
         // through walls; Game/Scenes/DepthModel). Both renderers (Legacy since clip-4). CUO_DEPTH_MODEL=1|0 overrides it in developer
         // builds. Default off.
         [JsonPropertyName("depth_model")] public bool DepthModel { get; set; }
+
+        // A mobile under a water surface (a wet static above its z on its tile) is drawn submerged: with depth_model, wet flats
+        // drop 0.1 tile sums instead of FlatDrop's 1.5 (the waterline at the true height); without it, the mobile's strips all
+        // take + 1 (no floating feet under the V-cut). Game/Scenes/WetSurfaceDepth. CUO_WET_SURFACE_DEPTH=1|0 overrides it and
+        // CUO_WET_DEPTH_CHECK=1 logs the mobiles under a wet surface, in developer builds. Default off.
+        [JsonPropertyName("wet_surface_depth")] public bool WetSurfaceDepth { get; set; }
 
         // step_drain: a non-local mobile's step lasts its learned server pace (never longer than the table time; faster
         // only when the pace is clearly faster), with a bounded drain of a real backlog, instead of the table time and the

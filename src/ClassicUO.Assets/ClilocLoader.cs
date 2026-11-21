@@ -10,6 +10,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Threading;
 using Uo.Pack;
+using Uo.Buffers;
 
 namespace ClassicUO.Assets
 {
@@ -32,6 +33,8 @@ namespace ClassicUO.Assets
             public ClilocTable Lang;
             public ClilocTable Enu;
             public string Language;
+            // CUO_SHARED_CLILOC_CHECK: the heap path's tables for the same load, compared at every lookup
+            public State Shadow;
 
             // Translate results for empty arguments, bounded; a new state starts empty, so a reload or language change drops them
             public readonly ConcurrentDictionary<int, string> Plain = new ConcurrentDictionary<int, string>();
@@ -44,6 +47,20 @@ namespace ClassicUO.Assets
 
         private volatile State _state = new State();
         private int _revision;
+
+        /// <summary>
+        /// shared_cliloc: when set (the client sets it from the switch before the first load), the tables are read in place
+        /// from shared read-only memory (<see cref="SharedTableCache"/>): a raw record straight from the pack file, a
+        /// compressed one from the per-user cache file it was decompressed into once. Null: today's heap path (a decoded
+        /// copy of each table per process). A table that can't be mapped falls back to the heap path.
+        /// </summary>
+        public SharedTableCache Shared { get; set; }
+
+        /// <summary>CUO_SHARED_CLILOC_CHECK: with <see cref="Shared"/> set, also loads the heap path's tables and compares
+        /// every lookup (same string or same miss), logging each mismatch and a summary every minute.</summary>
+        public bool CheckShared { get; set; }
+
+        private long _checkLookups, _checkMismatches, _checkLogAt;
 
         /// <summary>Bumps every time a new set of strings is published (a load, a reload, a language change, a clear):
         /// callers that cache a string built from cliloc key it on this.</summary>
@@ -183,7 +200,19 @@ namespace ClassicUO.Assets
             bool keepOld = _state.Lang != null;
             using var store = RecordStore.Open(path, TextConst.MagicCliloc);
             var dir = ClilocStore.Resolve(store);
-            var state = LanguagesFromPack(store, dir, requested);
+            var shared = Shared;
+            TableReader read = shared == null ? HeapTable : (s, rec, lang) => SharedTable(shared, path, s, rec, lang);
+            var state = LanguagesFromPack(store, dir, requested, read);
+
+            if (state != null && shared != null && CheckShared)
+            {
+                state.Shadow = LanguagesFromPack(store, dir, requested, HeapTable);
+
+                if (state.Shadow != null && dir.Overrides >= 0)
+                {
+                    state.Shadow.PackOverrides = ClilocStore.ReadTable(store, dir.Overrides, out _);
+                }
+            }
 
             if (state == null)
             {
@@ -193,7 +222,8 @@ namespace ClassicUO.Assets
             if (dir.Overrides >= 0)
             {
                 // the shard's own strings in the pack: a bad record is absent, the languages still serve
-                state.PackOverrides = ClilocStore.ReadTable(store, dir.Overrides, out string why);
+                state.PackOverrides = read(store, dir.Overrides, null);
+                string why = "a failed read or a malformed payload";
 
                 if (state.PackOverrides == null)
                 {
@@ -202,6 +232,12 @@ namespace ClassicUO.Assets
             }
 
             state.Ours = ReadOurs(out bool oursFailed);
+
+            if (state.Shadow != null)
+            {
+                state.Shadow.Ours = state.Ours;
+                state.Shadow.Language = state.Language;
+            }
 
             if (oursFailed && keepOld)
             {
@@ -212,7 +248,68 @@ namespace ClassicUO.Assets
         }
 
         // The pack's language record and, for another language, enu's; null when they can't serve.
-        private static State LanguagesFromPack(RecordStore store, ClilocDirectory dir, string requested)
+        // A record's table (lang null: the overrides record), or null with the error logged.
+        private delegate ClilocTable TableReader(RecordStore store, int record, string lang);
+
+        private static ClilocTable HeapTable(RecordStore store, int record, string lang)
+        {
+            var table = ClilocStore.ReadTable(store, record, out string why);
+
+            if (table == null && lang != null)
+            {
+                Log.Error($"Cliloc: the pack's '{lang}' record has {why}");
+            }
+
+            return table;
+        }
+
+        // shared_cliloc: the record read in place from shared memory; the heap path when it can't be mapped
+        private static unsafe ClilocTable SharedTable(SharedTableCache shared, string path, RecordStore store, int record, string lang)
+        {
+            ref readonly var r = ref store.Records[record];
+
+            if (r.RawBytes >= ClilocTable.HeaderBytes && r.RawBytes <= ClilocTable.MaxRawBytes &&
+                r.StoredBytes <= PackCodec.MaxStoredBytes(r.Codec, r.RawBytes))
+            {
+                SharedTableCache.Mapping m;
+                int at;
+
+                if (r.Codec == StoreConst.CodecRaw)
+                {
+                    m = shared.MapFileRange(path, (long)r.Offset, r.RawBytes);
+                    at = 0;
+                }
+                else
+                {
+                    var source = new SharedTableCache.CacheSource
+                    {
+                        FileBytes = (ulong)store.FileLength, Offset = r.Offset, StoredBytes = r.StoredBytes, RawBytes = r.RawBytes, Codec = r.Codec
+                    };
+                    var rec = r;
+                    m = shared.GetOrBuild($"cliloc-{lang ?? "overrides"}.bin", source, (int)r.RawBytes, dst => store.Read(rec, dst));
+                    at = SharedTableCache.CacheHeader.Size;
+                }
+
+                if (m != null)
+                {
+                    var table = ClilocTable.TryParseMapped(m.Pointer + at, (int)r.RawBytes, m);
+
+                    if (table != null)
+                    {
+                        // first touch off the lookup path: pages another instance has are mapped in here, on a worker
+                        System.Threading.ThreadPool.UnsafeQueueUserWorkItem(static mm => mm.Prefault(), m, preferLocal: false);
+
+                        return table;
+                    }
+
+                    Log.Error($"Cliloc: the shared copy of the pack's '{lang ?? "overrides"}' record is malformed; reading it to the heap");
+                }
+            }
+
+            return HeapTable(store, record, lang);
+        }
+
+        private static State LanguagesFromPack(RecordStore store, ClilocDirectory dir, string requested, TableReader read)
         {
             string lang = requested.ToLowerInvariant();
 
@@ -222,7 +319,7 @@ namespace ClassicUO.Assets
                 lang = "enu";
             }
 
-            var state = new State { Language = lang, Lang = PackTable(store, dir, lang) };
+            var state = new State { Language = lang, Lang = PackTable(store, dir, lang, read) };
 
             if (state.Lang == null)
             {
@@ -232,7 +329,7 @@ namespace ClassicUO.Assets
             if (lang != "enu")
             {
                 // the client reads Cliloc.enu under every language: a language file overrides it id by id
-                state.Enu = PackTable(store, dir, "enu");
+                state.Enu = PackTable(store, dir, "enu", read);
 
                 if (state.Enu == null)
                 {
@@ -243,7 +340,7 @@ namespace ClassicUO.Assets
             return state;
         }
 
-        private static ClilocTable PackTable(RecordStore store, ClilocDirectory dir, string lang)
+        private static ClilocTable PackTable(RecordStore store, ClilocDirectory dir, string lang, TableReader read)
         {
             if (!dir.Languages.TryGetValue(lang, out int record))
             {
@@ -252,14 +349,7 @@ namespace ClassicUO.Assets
                 return null;
             }
 
-            var table = ClilocStore.ReadTable(store, record, out string why);
-
-            if (table == null)
-            {
-                Log.Error($"Cliloc: the pack's '{lang}' record has {why}");
-            }
-
-            return table;
+            return read(store, record, lang);
         }
 
         /// <summary>
@@ -331,7 +421,87 @@ namespace ClassicUO.Assets
         public bool TryGetString(int clilocNum, out string text)
         {
             var state = _state;
+            bool found = Lookup(state, clilocNum, out text);
+#if CUO_DEVTOOLS
+            if (TracePath != null)
+            {
+                TraceId(clilocNum);
+            }
 
+            if (state.Shadow != null)
+            {
+                Check(state, clilocNum, found, text);
+            }
+#endif
+            return found;
+        }
+
+#if CUO_DEVTOOLS
+        // CUO_SHARED_CLILOC_CHECK: the heap path's answer for the same id must be the same string or the same miss
+        private void Check(State state, int clilocNum, bool found, string text)
+        {
+            bool heapFound = Lookup(state.Shadow, clilocNum, out string heap);
+            long n = Interlocked.Increment(ref _checkLookups);
+
+            if (heapFound != found || !string.Equals(heap, text, StringComparison.Ordinal))
+            {
+                long bad = Interlocked.Increment(ref _checkMismatches);
+
+                if (bad <= 50)
+                {
+                    Log.Warn($"[shared-cliloc-check] mismatch id {clilocNum} ('{state.Language}'): shared {(found ? $"'{text}'" : "miss")}, heap {(heapFound ? $"'{heap}'" : "miss")}");
+                }
+            }
+
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            long at = Volatile.Read(ref _checkLogAt);
+
+            if (n == 1 || now - at > System.Diagnostics.Stopwatch.Frequency * 60)
+            {
+                if (Interlocked.CompareExchange(ref _checkLogAt, now, at) == at)
+                {
+                    Log.Info($"[shared-cliloc-check] shared_cliloc=on lookups {n} mismatches {Volatile.Read(ref _checkMismatches)} lang '{state.Language}' mapped {DescribeMapping(state)}");
+                }
+            }
+        }
+
+        // CUO_CLILOC_ID_TRACE=<file>: every looked-up id appended as an i32 (the shared-cliloc benchmark's realistic id stream)
+        private static readonly string TracePath = Environment.GetEnvironmentVariable("CUO_CLILOC_ID_TRACE");
+        private static readonly object TraceGate = new object();
+        private static FileStream _trace;
+        private static int _traced;
+
+        private static void TraceId(int id)
+        {
+            lock (TraceGate)
+            {
+                try
+                {
+                    _trace ??= new FileStream(TracePath, FileMode.Append, FileAccess.Write, FileShare.Read, 4096);
+                    Span<byte> b = stackalloc byte[4];
+                    System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(b, id);
+                    _trace.Write(b);
+
+                    if (++_traced % 256 == 0)
+                    {
+                        _trace.Flush();
+                    }
+                }
+                catch (IOException)
+                {
+                }
+            }
+        }
+
+        private static string DescribeMapping(State s) =>
+            $"lang={s.Lang?.IsMapped} enu={s.Enu?.IsMapped} overrides={s.PackOverrides?.IsMapped}";
+
+        /// <summary>Tests: (lookups, mismatches) the shared-cliloc checker has counted.</summary>
+        internal (long Lookups, long Mismatches) CheckCounts => (Volatile.Read(ref _checkLookups), Volatile.Read(ref _checkMismatches));
+#endif
+
+        private static bool Lookup(State state, int clilocNum, out string text)
+        {
             if (state.Ours != null && state.Ours.TryGetValue(clilocNum, out text))
             {
                 return true;

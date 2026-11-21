@@ -217,13 +217,20 @@ namespace ClassicUO.Game.Map
 
         /// <summary>
         /// Per-tile entry arrays by power-of-two size class (main thread only). Chunks come and go as the player moves, so
-        /// arrays are reused instead of collected; each class keeps at most <see cref="MaxPooled"/> arrays.
+        /// arrays are reused instead of collected; each class keeps at most <see cref="MaxPooled"/> arrays and all classes
+        /// together at most <see cref="MaxPooledBytes"/> (a crowd that once grew a few tiles' arrays to thousands of entries
+        /// does not keep them for the session).
         /// </summary>
         internal static class EntryPool
         {
             public const int MinSize = 4;
             private const int MaxPooled = 4096;
+            public const long MaxPooledBytes = 4L << 20;
             private static readonly Stack<Entry[]>[] s_pools = new Stack<Entry[]>[24];
+            private static readonly int s_entryBytes = Unsafe.SizeOf<Entry>();
+
+            /// <summary>Stats line ([objpools]): bytes pooled now and at most, rents that allocated, returns left out.</summary>
+            public static long PooledBytes, HighWaterBytes, Misses, Dropped;
 
             public static int Pooled
             {
@@ -247,7 +254,17 @@ namespace ClassicUO.Game.Map
                 size = Math.Max(MinSize, (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)size));
                 Stack<Entry[]> s = s_pools[Class(size)];
 
-                return s != null && s.Count > 0 ? s.Pop() : new Entry[size];
+                if (s != null && s.Count > 0)
+                {
+                    Entry[] arr = s.Pop();
+                    PooledBytes -= (long)arr.Length * s_entryBytes;
+
+                    return arr;
+                }
+
+                Misses++;
+
+                return new Entry[size];
             }
 
             /// <summary>Clears the first <paramref name="used"/> entries (object references) and pools the array.</summary>
@@ -265,11 +282,22 @@ namespace ClassicUO.Game.Map
                     return;
                 }
 
+                long bytes = (long)arr.Length * s_entryBytes;
                 Stack<Entry[]> s = s_pools[c] ??= new Stack<Entry[]>();
 
-                if (s.Count < MaxPooled)
+                if (s.Count < MaxPooled && PooledBytes + bytes <= MaxPooledBytes)
                 {
                     s.Push(arr);
+                    PooledBytes += bytes;
+
+                    if (PooledBytes > HighWaterBytes)
+                    {
+                        HighWaterBytes = PooledBytes;
+                    }
+                }
+                else
+                {
+                    Dropped++;
                 }
             }
         }

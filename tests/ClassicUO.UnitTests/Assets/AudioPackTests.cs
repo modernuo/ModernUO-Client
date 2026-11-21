@@ -437,7 +437,7 @@ namespace ClassicUO.UnitTests.Assets
             // the type checks one by one
             var ok = new StoreRecord { RawBytes = 110, StoredBytes = 110, Meta0 = 22050, Meta1 = 1, Meta2 = 10 };
             AudioConst.CheckSoundRecord(ok).Should().BeNull();
-            AudioConst.CheckSoundRecord(ok with { Codec = StoreConst.CodecBrotli }).Should().NotBeNull("sounds are never compressed");
+            AudioConst.CheckSoundRecord(ok with { Codec = StoreConst.CodecZstd }).Should().NotBeNull("sounds are never compressed");
             AudioConst.CheckSoundRecord(ok with { Meta1 = 2 }).Should().NotBeNull("stereo");
             AudioConst.CheckSoundRecord(ok with { Meta2 = 41 }).Should().NotBeNull("name longer than 40");
             AudioConst.CheckSoundRecord(ok with { RawBytes = 5, StoredBytes = 5 }).Should().NotBeNull("shorter than its name");

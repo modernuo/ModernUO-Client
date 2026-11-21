@@ -15,7 +15,7 @@ namespace ClassicUO.UnitTests.Game.GameObjects
     // visible pixel of the art, and every pixel 5 px down-right of the mouse (a stack's second sprite), is inside it.
     public class ItemPickBoundsTests
     {
-        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.0";
+        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.6"; // revision 1.6: older packs are Brotli
 
         [Fact]
         public void The_Reject_From_The_Pack_Size_Never_Drops_A_Picker_Hit()

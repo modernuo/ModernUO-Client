@@ -35,8 +35,9 @@ namespace ClassicUO.Game
         // tiledata of the item's graphic (the multi's graphic for a multi)
         public bool TileLight, TilePartialHue, TileAnimated, TileContainer, TileStackable, TileHeavy;
 
-        // clip-2: the shape bits (SpriteInstance.GeoShapeBits) and height of the same tiledata row
-        public byte TileGeoBits, TileHeight;
+        // clip-2: the shape bits (SpriteInstance.GeoShapeBits, with ZGeoWet for wet flats) and height of the same tiledata row
+        public ushort TileGeoBits;
+        public byte TileHeight;
 
         // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset (read from the
         // ItemOffset component), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state;
@@ -268,7 +269,7 @@ namespace ClassicUO.Game
             i.TileStackable = tile.IsStackable;
             i.TileHeavy = tile.Weight > 90;
             i.TileHeight = tile.Height;
-            i.TileGeoBits = (byte)SpriteInstance.GeoShapeBits(tile.IsWall, tile.IsBackground, tile.IsSurface, tile.Height);
+            i.TileGeoBits = (ushort)SpriteInstance.GeoShapeBits(tile.IsWall, tile.IsBackground, tile.IsSurface, tile.IsWet, tile.Height);
         }
     }
 
@@ -304,7 +305,8 @@ namespace ClassicUO.Game
         private bool _geo;
         private ushort _geoTx, _geoTy;
         private sbyte _geoZ;
-        private byte _geoHeight, _geoBits;
+        private byte _geoHeight;
+        private ushort _geoBits;
 
         public ItemSpriteExtract() { }
 

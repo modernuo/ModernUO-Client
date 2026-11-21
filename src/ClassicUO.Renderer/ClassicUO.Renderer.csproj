@@ -10,4 +10,8 @@
     <ProjectReference Include="..\..\external\FNA\FNA.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ClassicUO.UnitTests" />
+  </ItemGroup>
+
 </Project>

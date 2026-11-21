@@ -5,6 +5,7 @@ using ClassicUO.IO;
 using ClassicUO.Utility;
 using FluentAssertions;
 using Xunit;
+using Uo.Buffers;
 
 namespace ClassicUO.UnitTests.Network
 {

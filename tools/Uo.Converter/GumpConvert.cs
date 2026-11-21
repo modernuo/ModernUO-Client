@@ -14,19 +14,18 @@ public static class GumpConvert
 {
     /// <summary>--raw-gumps: store records uncompressed (codec 0).</summary>
     public static bool Raw;
-    public const int Quality = 9;
-    /// <summary>Ship: raw texels with Brotli (smallest, fastest Brotli decode). --raw-gumps: the RLE rows uncompressed (fastest decode).</summary>
+    /// <summary>Ship: raw texels with zstd for large images. --raw-gumps: the RLE rows uncompressed (fastest decode).</summary>
     public static ushort Layout => Raw ? GumpCodec.LayoutRle : GumpCodec.LayoutTexels;
     /// <summary>
-    /// --gump-small n: an image whose run-length payload is at most n bytes is stored that way, uncompressed (a Brotli
-    /// decode has a fixed cost of tens of µs that dominates small images; they add little to the file). 0 = off.
+    /// --gump-small n: an image whose run-length payload is at most n bytes keeps that layout (smaller than texels before
+    /// compression), compressed with zstd like the large ones; a record that zstd does not shrink is stored raw. 0 = off.
     /// </summary>
     public static int SmallRle = 65536;
 
-    public sealed record Stats(int Slots, int Present, int Records, int Aliases, int ContentShared, int Hued, int SmallRaw, long RawBytes, long StoredBytes, long FileBytes)
+    public sealed record Stats(int Slots, int Present, int Records, int Aliases, int ContentShared, int Hued, int SmallRaw, int RawFallback, long RawBytes, long StoredBytes, long FileBytes)
     {
         public override string ToString() =>
-            $"{Slots} slots, {Present} gumps, {Records} records ({Aliases} gump.def/index aliases, {ContentShared} identical images shared, {Hued} hued; {SmallRaw} small images stored run-length uncompressed), " +
+            $"{Slots} slots, {Present} gumps, {Records} records ({Aliases} gump.def/index aliases, {ContentShared} identical images shared, {Hued} hued; {SmallRaw} small images stored run-length, {RawFallback} records raw where zstd does not shrink them), " +
             $"payload {RawBytes / 1048576.0:F1} MiB -> {StoredBytes / 1048576.0:F1} MiB, file {FileBytes / 1048576.0:F1} MiB";
     }
 
@@ -135,7 +134,7 @@ public static class GumpConvert
                 if (rec < 0)
                 {
                     ushort layout = layouts[c];
-                    ushort codec = layout == GumpCodec.LayoutRle ? StoreConst.CodecRaw : StoreConst.CodecBrotli;
+                    ushort codec = Raw ? StoreConst.CodecRaw : StoreConst.CodecZstd;
                     if (!Raw && layout == GumpCodec.LayoutRle) small++;
                     rec = writer.Add([], (uint)encoded[c].Length, codec, (ushort)img.W, (ushort)img.H, layout);
                     toCompress.Add((rec, encoded[c], codec));
@@ -153,17 +152,23 @@ public static class GumpConvert
         }
 
         var stored = new byte[toCompress.Count][];
+        var codecs = new ushort[toCompress.Count];
         Parallel.For(0, toCompress.Count, ConvertOptions.Par, i =>
-            stored[i] = RecordStoreWriter.Encode(toCompress[i].Raw, toCompress[i].Codec, Quality));
+        {
+            codecs[i] = toCompress[i].Codec;
+            stored[i] = RecordStoreWriter.EncodeOrRaw(toCompress[i].Raw, ref codecs[i]);
+        });
         long storedBytes = 0;
+        int rawFallback = 0;
         for (int i = 0; i < toCompress.Count; i++)
         {
-            writer.SetPayload(toCompress[i].Record, stored[i]);
+            writer.SetPayload(toCompress[i].Record, stored[i], codecs[i]);
             storedBytes += stored[i].Length;
+            if (codecs[i] != toCompress[i].Codec) rawFallback++;
         }
 
         var path = Path.Combine(outDir, StoreConst.GumpsFile);
         writer.Write(path, StoreConst.MagicGumps, loader.UseUOPGumps ? StoreConst.GumpFlagUop : 0);
-        return new Stats(highest + 1, present, writer.RecordCount, aliases, shared, hued, small, rawBytes, storedBytes, new FileInfo(path).Length);
+        return new Stats(highest + 1, present, writer.RecordCount, aliases, shared, hued, small, rawFallback, rawBytes, storedBytes, new FileInfo(path).Length);
     }
 }

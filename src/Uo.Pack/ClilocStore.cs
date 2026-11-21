@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -7,8 +6,8 @@ namespace Uo.Pack;
 
 // text/cliloc.bin (docs/modern-client/pack-format.md, "text/cliloc.bin"): a record store with one record per language
 // and at most one record of the shard's own strings (Clilocs.txt folded in by the converter). Every record holds a
-// ClilocTable payload: sorted ids, string ends, and the UTF-8 strings as one blob (the record itself may be Brotli
-// compressed whole, --cliloc-brotli). A block-compressed layout (meta2 bit 8) was tried and dropped (owner, 2026-10-31);
+// ClilocTable payload: sorted ids, string ends, and the UTF-8 strings as one blob (the record itself may be
+// compressed whole, --cliloc-compress). A block-compressed layout (meta2 bit 8) was tried and dropped (owner, 2026-10-31);
 // a store using it is rejected.
 
 /// <summary>
@@ -27,28 +26,60 @@ public sealed class ClilocTable
     public const int HeaderBytes = 8;
     /// <summary>Largest raw payload a reader accepts (the largest client file, Cliloc.jpn, is about 9 MiB raw).</summary>
     public const int MaxRawBytes = 256 << 20;
-    private readonly byte[] _data;
+    // The payload is a heap array (_data) or read-only memory the table does not own (_ptr/_length: a shared mapping,
+    // shared_cliloc). Mapped reads go through a span over the base pointer acquired once at load, never through a
+    // MemoryMappedViewAccessor, so a lookup costs what a heap read costs apart from first-touch page faults. _owner keeps
+    // the mapping's owner reachable for as long as the table is.
+    private readonly byte[]? _data;
+    private readonly unsafe byte* _ptr;
+    private readonly int _length;
+    private readonly object? _owner;
     private readonly int _count;
     private readonly int _idsAt, _endsAt;
     private readonly int _blobAt;
-    private readonly string?[] _cache;
+    // heap tables: one slot per string; mapped tables: blocks of CacheBlock slots made on first use, so a process keeps
+    // pointers only for the parts of the table it reads (shared_cliloc)
+    private readonly string?[]? _cache;
+    private readonly string?[]?[]? _blocks;
+    private const int CacheBlockShift = 8, CacheBlock = 1 << CacheBlockShift;
 
     private ClilocTable(byte[] data, int count)
     {
         _data = data;
+        _length = data.Length;
         _count = count;
         _idsAt = HeaderBytes;
         _endsAt = HeaderBytes + count * 4;
         _blobAt = HeaderBytes + count * 8;
         _cache = new string?[count];
     }
+
+    private unsafe ClilocTable(byte* ptr, int length, object owner, int count)
+    {
+        _ptr = ptr;
+        _length = length;
+        _owner = owner;
+        _count = count;
+        _idsAt = HeaderBytes;
+        _endsAt = HeaderBytes + count * 4;
+        _blobAt = HeaderBytes + count * 8;
+        _blocks = new string?[(count + CacheBlock - 1) >> CacheBlockShift][];
+    }
+
     public int Count => _count;
 
     /// <summary>Bytes held: the payload (index and UTF-8 text); strings made so far are extra.</summary>
-    public long PayloadBytes => _data.Length;
+    public long PayloadBytes => _length;
 
-    private ReadOnlySpan<int> Ids => MemoryMarshal.Cast<byte, int>(_data.AsSpan(_idsAt, _count * 4));
-    private ReadOnlySpan<uint> Ends => MemoryMarshal.Cast<byte, uint>(_data.AsSpan(_endsAt, _count * 4));
+    /// <summary>True when the payload is memory the table reads in place (a mapping), not a heap copy.</summary>
+    public unsafe bool IsMapped => _ptr != null;
+
+    /// <summary>The object that owns the mapped payload (null for a heap table).</summary>
+    public object? Owner => _owner;
+
+    private unsafe ReadOnlySpan<byte> Data => _data != null ? _data : new ReadOnlySpan<byte>(_ptr, _length);
+    private ReadOnlySpan<int> Ids => MemoryMarshal.Cast<byte, int>(Data.Slice(_idsAt, _count * 4));
+    private ReadOnlySpan<uint> Ends => MemoryMarshal.Cast<byte, uint>(Data.Slice(_endsAt, _count * 4));
     public int IdAt(int index) => Ids[index];
 
     /// <summary>Index of <paramref name="id"/>, or −1.</summary>
@@ -63,17 +94,49 @@ public sealed class ClilocTable
     {
         var ends = Ends;
         uint start = index == 0 ? 0 : ends[index - 1];
-        return _data.AsSpan(_blobAt + (int)start, (int)(ends[index] - start));
+        return Data.Slice(_blobAt + (int)start, (int)(ends[index] - start));
     }
 
     /// <summary>The string at <paramref name="index"/>, created on first use. Thread-safe.</summary>
     public string StringAt(int index)
     {
-        var s = Volatile.Read(ref _cache[index]);
+        ref string? slot = ref _cache != null ? ref _cache[index] : ref BlockSlot(index);
+        var s = Volatile.Read(ref slot);
         if (s != null) return s;
         s = Encoding.UTF8.GetString(Utf8At(index));
-        return Interlocked.CompareExchange(ref _cache[index], s, null) ?? s;
+        return Interlocked.CompareExchange(ref slot, s, null) ?? s;
     }
+
+    private ref string? BlockSlot(int index)
+    {
+        if ((uint)index >= (uint)_count) throw new ArgumentOutOfRangeException(nameof(index));
+        ref var block = ref _blocks![index >> CacheBlockShift];
+        var b = Volatile.Read(ref block);
+        if (b == null)
+        {
+            b = new string?[CacheBlock];
+            b = Interlocked.CompareExchange(ref block, b, null) ?? b;
+        }
+        return ref b[index & (CacheBlock - 1)];
+    }
+
+    /// <summary>String cache blocks made so far (mapped tables; tests and measurements).</summary>
+    public int CacheBlocks
+    {
+        get
+        {
+            if (_blocks == null) return 0;
+            int n = 0;
+            foreach (var b in _blocks) if (b != null) n++;
+            return n;
+        }
+    }
+
+    /// <summary>Managed bytes of the string cache's slot arrays (not the strings): the whole array for a heap table, the
+    /// block table and the blocks made so far for a mapped one.</summary>
+    public long CacheSlotBytes => _cache != null
+        ? (long)_cache.Length * IntPtr.Size
+        : (long)_blocks!.Length * IntPtr.Size + (long)CacheBlocks * CacheBlock * IntPtr.Size;
 
     public bool TryGetString(int id, out string text)
     {
@@ -88,7 +151,16 @@ public sealed class ClilocTable
         get
         {
             int n = 0;
-            foreach (var s in _cache) if (s != null) n++;
+            if (_cache != null)
+            {
+                foreach (var s in _cache) if (s != null) n++;
+            }
+            else
+            {
+                foreach (var b in _blocks!)
+                    if (b != null)
+                        foreach (var s in b) if (s != null) n++;
+            }
             return n;
         }
     }
@@ -104,6 +176,22 @@ public sealed class ClilocTable
         uint blob = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4));
         if (count > (uint)(data.Length - HeaderBytes) / 8 || (ulong)HeaderBytes + count * 8UL + blob != (ulong)data.Length) return null;
         var t = new ClilocTable(data, (int)count);
+        return CheckIndex(t.Ids, t.Ends, blob) ? t : null;
+    }
+
+    /// <summary>
+    /// Parses a flat payload that stays where it is: <paramref name="length"/> bytes at <paramref name="ptr"/>, read-only
+    /// memory (a mapping) that must stay valid while the table is used; <paramref name="owner"/> is kept reachable by the
+    /// table. The same checks as <see cref="TryParse"/>.
+    /// </summary>
+    public static unsafe ClilocTable? TryParseMapped(byte* ptr, int length, object owner)
+    {
+        if (ptr == null || length < HeaderBytes || length > MaxRawBytes) return null;
+        var span = new ReadOnlySpan<byte>(ptr, length);
+        uint count = BinaryPrimitives.ReadUInt32LittleEndian(span);
+        uint blob = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(4));
+        if (count > (uint)(length - HeaderBytes) / 8 || (ulong)HeaderBytes + count * 8UL + blob != (ulong)length) return null;
+        var t = new ClilocTable(ptr, length, owner, (int)count);
         return CheckIndex(t.Ids, t.Ends, blob) ? t : null;
     }
 
@@ -270,7 +358,7 @@ public static class ClilocStore
     }
 
     /// <summary>
-    /// Reads and parses one record (any thread). Null, with the reason, when its size is impossible, its read or Brotli
+    /// Reads and parses one record (any thread). Null, with the reason, when its size is impossible, its read or
     /// decode fails, or its payload is malformed; never throws for bad input.
     /// </summary>
     public static ClilocTable? ReadTable(RecordStore store, int record, out string? error)
@@ -282,7 +370,7 @@ public static class ClilocStore
             return null;
         }
         if (r.RawBytes < ClilocTable.HeaderBytes || r.RawBytes > ClilocTable.MaxRawBytes ||
-            (r.Codec == StoreConst.CodecBrotli && r.StoredBytes > BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes)))
+            r.StoredBytes > PackCodec.MaxStoredBytes(r.Codec, r.RawBytes))
         {
             error = $"an impossible size ({r.RawBytes} bytes)";
             return null;
