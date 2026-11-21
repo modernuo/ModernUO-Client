@@ -199,6 +199,10 @@ namespace ClassicUO.Game
                 {
                     w._world.Ecs.EndFold(_fold);
                 }
+#if CUO_DEVTOOLS
+                // net-rework parity harness: the subject's state after the operation is part of its packet's effect
+                ClassicUO.Network.Harness.NetTrace.Dispatching?.OpEnd(w._subject);
+#endif
 
                 w._open = false;
                 w._subject = null;
@@ -285,6 +289,9 @@ namespace ClassicUO.Game
         {
             if (!_open && !_world.Ecs.IsFolding)
             {
+#if CUO_DEVTOOLS
+                ClassicUO.Network.Harness.NetTrace.Dispatching?.Op(operation, serial);
+#endif
                 return true;
             }
 

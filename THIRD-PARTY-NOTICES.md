@@ -10,6 +10,8 @@ here outside its GPL under agreement from its author, Kamron Batman.
 
 | File here | ModernUO source | Commit |
 |---|---|---|
+| `src/ClassicUO.IO/Buffers/SpanReader.cs` | `Projects/Server/Buffers/SpanReader.cs` (namespace, partial, client text rules via `SpanText`) | 040425163 |
+| `src/ClassicUO.IO/Buffers/SpanWriter.cs` | `Projects/Server/Buffers/SpanWriter.cs` (namespace, partial, `ArrayPool<byte>.Shared`, no interpolated or `Serial` overloads) | 15e506ffc |
 | `src/Uo.Buffers/STArrayPool.cs` | `Projects/Server/Buffers/STArrayPool.cs` (adapted: one pool per thread) | 3161a5ba4 |
 | `src/Uo.Buffers/PooledRefList.cs` | `Projects/Server/Collections/PooledRefList.cs` | b19149856 |
 | `src/Uo.Buffers/PooledRefQueue.cs` | `Projects/Server/Collections/PooledRefQueue.cs` | ebaf10493 |

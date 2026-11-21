@@ -338,40 +338,7 @@ namespace ClassicUO.IO
             }
             else
             {
-                result = StringHelper.Cp1252ToString(slice.Slice(0, size));
-
-                if (safe)
-                {
-                    Span<char> buff = stackalloc char[256];
-                    ReadOnlySpan<char> chars = result.AsSpan();
-
-                    ValueStringBuilder sb = new ValueStringBuilder(buff);
-
-                    bool hasDoneAnyReplacements = false;
-                    int last = 0;
-                    for (int i = 0; i < chars.Length; i++)
-                    {
-                        if (!StringHelper.IsSafeChar(chars[i]))
-                        {
-                            hasDoneAnyReplacements = true;
-                            sb.Append(chars.Slice(last, i - last));
-                            last = i + 1; // Skip the unsafe char
-                        }
-                    }
-
-                    if (hasDoneAnyReplacements)
-                    {
-                        // append the rest of the string
-                        if (last < chars.Length)
-                        {
-                            sb.Append(chars.Slice(last, chars.Length - last));
-                        }
-
-                        result = sb.ToString();
-                    }
-
-                    sb.Dispose();
-                }
+                result = SpanText.GetStringCp1252(slice.Slice(0, size), safe);
             }
 
             Position += Math.Max(size + (!fixedLength && index >= 0 ? sizeT : 0), length * sizeT);
@@ -484,35 +451,7 @@ namespace ClassicUO.IO
 
             if (safe)
             {
-                Span<char> buff = stackalloc char[256];
-                ReadOnlySpan<char> chars = result.AsSpan();
-
-                ValueStringBuilder sb = new ValueStringBuilder(buff);
-
-                bool hasDoneAnyReplacements = false;
-                int last = 0;
-                for (int i = 0; i < chars.Length; i++)
-                {
-                    if (!StringHelper.IsSafeChar(chars[i]))
-                    {
-                        hasDoneAnyReplacements = true;
-                        sb.Append(chars.Slice(last, i - last));
-                        last = i + 1; // Skip the unsafe char
-                    }
-                }
-
-                if (hasDoneAnyReplacements)
-                {
-                    // append the rest of the string
-                    if (last < chars.Length)
-                    {
-                        sb.Append(chars.Slice(last, chars.Length - last));
-                    }
-
-                    result = sb.ToString();
-                }
-
-                sb.Dispose();
+                result = StringHelper.RemoveUnsafeChars(result);
             }
 
             Position += Math.Max(size + (!fixedLength && index >= 0 ? sizeT : 0), length * sizeT);
