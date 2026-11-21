@@ -62,7 +62,7 @@ namespace ClassicUO.Game
         {
             long shared = DecodeBudget.Shared.CapBytes > 0 ? DecodeBudget.Shared.CapBytes : DecodeBudget.DefaultCapBytes;
             Caps caps = Derive(shared, gumpBudget ? DecodeBudget.GumpCapBytes : 0, WorldOptions.DefaultWorkers, MapLoader.MaxPending,
-                Uo.Pack.ChunkedBrotli.DefaultChunkBytes);
+                Uo.Pack.ChunkedFile.DefaultChunkBytes);
 
             LargeBufferPool.SetCaps(LargeUse.General, caps.GeneralBytes, int.MaxValue);
             LargeBufferPool.SetCaps(LargeUse.Region, caps.RegionBytes, caps.RegionCount);

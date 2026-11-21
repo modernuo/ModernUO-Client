@@ -1663,6 +1663,7 @@ namespace ClassicUO
             if (Diagnostics.On) Diagnostics.Stop();
 #endif
             Scene?.Dispose();
+            Log.Info($"[pack] decodes: {Uo.Pack.PackDecodeCounts.Summary()}");
 
             Volatile.Write(ref NetClient.SendQueuedWake, null); // a captured wake after this is a no-op (Wake checks disposal)
             _waiter?.Dispose();

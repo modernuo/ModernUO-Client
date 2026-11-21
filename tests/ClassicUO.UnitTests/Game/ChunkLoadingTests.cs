@@ -14,7 +14,7 @@ namespace ClassicUO.UnitTests.Game
     // Incremental chunk loading (Map.UpdateLoading) and region prefetch (MapLoader.PrefetchRegion / IsBlockReady)
     public class ChunkLoadingTests
     {
-        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.0";
+        private const string PackDir = @"C:\Repositories\uo-packs\classic-1.6"; // revision 1.6: older packs are Brotli
 
         private static bool HavePack => File.Exists(Path.Combine(PackDir, "manifest.json"));
 

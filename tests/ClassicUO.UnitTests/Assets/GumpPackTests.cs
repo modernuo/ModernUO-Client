@@ -28,7 +28,7 @@ namespace ClassicUO.UnitTests.Assets
     public class GumpPackTests
     {
         private const string UoDir = @"C:\Ultima Online Classic";
-        private const string DefaultPack = @"C:\Repositories\uo-packs\classic-1.0";
+        private const string DefaultPack = @"C:\Repositories\uo-packs\classic-1.6"; // revision 1.6: older packs are Brotli
 
         private static string GumpPackDir()
         {
@@ -389,18 +389,18 @@ namespace ClassicUO.UnitTests.Assets
 
             GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutTexels, 200)).Should().BeNull();
             GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 40)).Should().BeNull();
-            GumpsLoader.CheckRecord(R(4096, 4096, GumpCodec.LayoutTexels, 4096u * 4096 * 2, StoreConst.CodecBrotli, 1000)).Should().BeNull();
+            GumpsLoader.CheckRecord(R(4096, 4096, GumpCodec.LayoutTexels, 4096u * 4096 * 2, StoreConst.CodecZstd, 1000)).Should().BeNull();
 
             GumpsLoader.CheckRecord(R(4097, 1, GumpCodec.LayoutRle, 4)).Should().NotBeNull("wider than the atlas");
             GumpsLoader.CheckRecord(R(65535, 65535, GumpCodec.LayoutTexels, 0)).Should().NotBeNull("w·h overflows an int");
             GumpsLoader.CheckRecord(R(0, 5, GumpCodec.LayoutRle, 20)).Should().NotBeNull();
-            GumpsLoader.CheckRecord(R(1, 1, GumpCodec.LayoutTexels, 1u << 30, StoreConst.CodecBrotli, 10)).Should().NotBeNull("a 1x1 texel payload is 2 bytes");
-            GumpsLoader.CheckRecord(R(1, 1, GumpCodec.LayoutRle, uint.MaxValue, StoreConst.CodecBrotli, 10)).Should().NotBeNull();
+            GumpsLoader.CheckRecord(R(1, 1, GumpCodec.LayoutTexels, 1u << 30, StoreConst.CodecZstd, 10)).Should().NotBeNull("a 1x1 texel payload is 2 bytes");
+            GumpsLoader.CheckRecord(R(1, 1, GumpCodec.LayoutRle, uint.MaxValue, StoreConst.CodecZstd, 10)).Should().NotBeNull();
             GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 36)).Should().NotBeNull("shorter than the row table");
             GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 42)).Should().NotBeNull("not whole runs");
             GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 4 * 10 + 4 * 100 + 4)).Should().NotBeNull("more runs than texels");
             GumpsLoader.CheckRecord(R(10, 10, 7, 200)).Should().NotBeNull("unknown layout");
-            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutTexels, 200, StoreConst.CodecBrotli, 100000)).Should().NotBeNull("more than Brotli can produce");
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutTexels, 200, StoreConst.CodecZstd, 100000)).Should().NotBeNull("more than zstd can produce");
         }
 
         [Fact]
@@ -414,10 +414,10 @@ namespace ClassicUO.UnitTests.Assets
                 var texels = Enumerable.Range(0, 64 * 64).Select(i => (ushort)(i % 3 == 0 ? 0 : 0x8000 | i)).ToArray();
                 var good = GumpCodec.Encode(GumpCodec.LayoutTexels, texels, 64, 64);
                 var w = new RecordStoreWriter(4);
-                int r0 = w.Add(RecordStoreWriter.Encode(good, StoreConst.CodecBrotli), (uint)good.Length, StoreConst.CodecBrotli, 64, 64, GumpCodec.LayoutTexels);
-                var corrupt = RecordStoreWriter.Encode(good, StoreConst.CodecBrotli);
+                int r0 = w.Add(RecordStoreWriter.Encode(good, StoreConst.CodecZstd), (uint)good.Length, StoreConst.CodecZstd, 64, 64, GumpCodec.LayoutTexels);
+                var corrupt = RecordStoreWriter.Encode(good, StoreConst.CodecZstd);
                 corrupt.AsSpan(corrupt.Length / 2).Fill(0x5A);
-                int r1 = w.Add(corrupt, (uint)good.Length, StoreConst.CodecBrotli, 64, 64, GumpCodec.LayoutTexels);
+                int r1 = w.Add(corrupt, (uint)good.Length, StoreConst.CodecZstd, 64, 64, GumpCodec.LayoutTexels);
                 int r2 = w.Add(new byte[8], 8, StoreConst.CodecRaw, 4097, 1, GumpCodec.LayoutRle); // fails the load checks
                 w.Slots[0] = new StoreSlot { Record = (uint)r0 + 1 };
                 w.Slots[1] = new StoreSlot { Record = (uint)r1 + 1 };
@@ -447,7 +447,7 @@ namespace ClassicUO.UnitTests.Assets
         }
 
         [Fact]
-        public void RecordStore_Round_Trips_Raw_And_Brotli_And_Rejects_Bad_Files()
+        public void RecordStore_Round_Trips_Raw_And_Zstd_And_Rejects_Bad_Files()
         {
             var dir = Path.Combine(Path.GetTempPath(), "cuo-recordstore-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
@@ -458,7 +458,7 @@ namespace ClassicUO.UnitTests.Assets
                 var w = new RecordStoreWriter(10);
                 var a = Enumerable.Range(0, 5000).Select(i => (byte)(i % 7)).ToArray();
                 var b = Enumerable.Range(0, 300).Select(i => (byte)i).ToArray();
-                int ra = w.Add(RecordStoreWriter.Encode(a, StoreConst.CodecBrotli), (uint)a.Length, StoreConst.CodecBrotli, 50, 100);
+                int ra = w.Add(RecordStoreWriter.Encode(a, StoreConst.CodecZstd), (uint)a.Length, StoreConst.CodecZstd, 50, 100);
                 int rb = w.Add(RecordStoreWriter.Encode(b, StoreConst.CodecRaw), (uint)b.Length, StoreConst.CodecRaw, 15, 20);
                 w.Slots[1] = new StoreSlot { Record = (uint)ra + 1 };
                 w.Slots[9] = new StoreSlot { Record = (uint)rb + 1, Arg = 33 };

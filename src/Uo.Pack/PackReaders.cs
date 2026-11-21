@@ -68,18 +68,16 @@ public static class AtlasPage
     public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain)
         => Write(path, size, mips, format, chain, compress: false);
 
-    /// <summary>Brotli quality used for Kind=1 pages.</summary>
-    public const int BrotliQuality = 5;
-
     /// <summary>
-    /// Writes a page. With <paramref name="compress"/> the file is FileHeader(Kind=1) followed by one Brotli stream of
-    /// everything a Kind=0 file has after its FileHeader (PageHeader + chain). DataBytes is always the uncompressed size.
+    /// Writes a page. With <paramref name="compress"/> the file is chunked zstd (<see cref="FileKind.ChunkedZstd"/>,
+    /// 1 MiB chunks) of everything a Kind=0 file has after its FileHeader (PageHeader + chain); else Kind 0.
+    /// DataBytes is always the uncompressed size.
     /// </summary>
     public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, bool compress)
-        => Write(path, size, mips, format, chain, compress ? FileKind.Brotli : FileKind.Raw);
+        => Write(path, size, mips, format, chain, compress ? FileKind.ChunkedZstd : FileKind.Raw);
 
-    /// <summary>Writes a page as Kind 0 (raw), 1 (one Brotli stream) or 2 (chunked Brotli, <paramref name="chunkBytes"/> per chunk).</summary>
-    public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, ushort kind, int chunkBytes = ChunkedBrotli.DefaultChunkBytes)
+    /// <summary>Writes a page as Kind 0 (raw) or chunked zstd (<paramref name="chunkBytes"/> per chunk).</summary>
+    public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, ushort kind, int chunkBytes = ChunkedFile.DefaultChunkBytes)
     {
         using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, PackConst.MagicPage, kind);
@@ -90,16 +88,7 @@ public static class AtlasPage
                 StructIo.Write(fs, in h);
                 fs.Write(chain);
                 break;
-            case FileKind.Brotli:
-            {
-                using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality }, leaveOpen: true))
-                {
-                    StructIo.Write(br, in h);
-                    br.Write(chain);
-                }
-                break;
-            }
-            case FileKind.ChunkedBrotli:
+            case FileKind.ChunkedZstd:
             {
                 int hs = StructIo.SizeOf<PageHeader>();
                 var logical = BufferPool.Rent<byte>(hs + chain.Length);
@@ -107,7 +96,7 @@ public static class AtlasPage
                 {
                     System.Runtime.InteropServices.MemoryMarshal.Write(logical, in h);
                     chain.CopyTo(logical.AsSpan(hs));
-                    ChunkedBrotli.Write(fs, logical.AsSpan(0, hs + chain.Length), chunkBytes);
+                    ChunkedFile.Write(fs, logical.AsSpan(0, hs + chain.Length), PackCodec.OfFileKind(kind, path), chunkBytes);
                 }
                 finally { BufferPool.Return(logical); }
                 break;
@@ -118,14 +107,14 @@ public static class AtlasPage
     }
 
     /// <summary>
-    /// Reads only a page's <see cref="PageHeader"/>. Compressed pages decode just its 16 bytes: the Brotli decoder stops
-    /// once they are out, so a Kind 2 page no longer decodes its whole 1 MiB chunk 0 (and Kind 1 its first block).
+    /// Reads only a page's <see cref="PageHeader"/>. A chunked page decodes its chunk 0 (at most one chunk, into a pooled
+    /// buffer): a zstd frame decodes in one pass only into a destination that holds all of it.
     /// </summary>
     public static PageHeader ReadHeader(string path)
     {
         using var fh = File.OpenHandle(path);
         int fhs = StructIo.SizeOf<FileHeader>();
-        Span<byte> head = stackalloc byte[fhs + ChunkedBrotli.HeaderBytes];
+        Span<byte> head = stackalloc byte[fhs + ChunkedFile.HeaderBytes];
         int got = RandomAccess.Read(fh, head, 0);
         if (got < fhs) throw new InvalidDataException($"'{path}' is too short for a pack page");
         var fileHeader = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(head);
@@ -134,45 +123,41 @@ public static class AtlasPage
 
         PageHeader header = default;
         var dst = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<PageHeader>(ref header));
-        long src; // file offset of the Brotli stream that starts with the PageHeader
-        switch (fileHeader.Kind)
+        ushort codec = PackCodec.OfFileKind(fileHeader.Kind, path);
+        if (codec == PackCodec.Raw)
         {
-            case FileKind.Raw:
-                if (RandomAccess.Read(fh, dst, fhs) != dst.Length) throw new EndOfStreamException();
-                return header;
-            case FileKind.Brotli:
-                src = fhs;
-                break;
-            case FileKind.ChunkedBrotli:
-            {
-                if (got < head.Length) throw new EndOfStreamException();
-                var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(head.Slice(fhs));
-                src = fhs + ChunkedBrotli.HeaderBytes + 4L * ch.ChunkCount; // chunk 0 follows the size table
-                break;
-            }
-            default: throw new InvalidDataException($"Unknown page kind {fileHeader.Kind}");
+            if (RandomAccess.Read(fh, dst, fhs) != dst.Length) throw new EndOfStreamException();
+            return header;
         }
-
-        // feed the compressed bytes a little at a time until the 16 header bytes are out
-        Span<byte> input = stackalloc byte[512];
-        using var dec = new System.IO.Compression.BrotliDecoder();
-        int written = 0;
-        while (written < dst.Length)
+        if (got < head.Length) throw new EndOfStreamException();
+        var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(head.Slice(fhs));
+        ChunkedFile.Check(ch);
+        if (ch.ChunkCount == 0 || ch.LogicalBytes < (ulong)dst.Length) throw new EndOfStreamException($"'{path}': page header truncated");
+        Span<byte> size0 = stackalloc byte[4];
+        long table = fhs + ChunkedFile.HeaderBytes;
+        if (RandomAccess.Read(fh, size0, table) != 4) throw new EndOfStreamException();
+        int stored = System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(size0);
+        int len = ch.ChunkLength(0);
+        if (stored < 0 || stored > PackCodec.MaxStoredBytes(codec, len)) throw new InvalidDataException($"'{path}': corrupt page");
+        var comp = BufferPool.Rent<byte>(stored);
+        var chunk = BufferPool.Rent<byte>(len);
+        try
         {
-            int n = RandomAccess.Read(fh, input, src);
-            if (n <= 0) throw new EndOfStreamException($"'{path}': page header truncated");
-            var status = dec.Decompress(input.Slice(0, n), dst.Slice(written), out int consumed, out int w);
-            written += w;
-            src += consumed;
-            if (status == System.Buffers.OperationStatus.InvalidData) throw new InvalidDataException($"'{path}': corrupt page");
-            if (status == System.Buffers.OperationStatus.Done && written < dst.Length) throw new EndOfStreamException($"'{path}': page header truncated");
+            if (RandomAccess.Read(fh, comp.AsSpan(0, stored), table + 4L * ch.ChunkCount) != stored) throw new EndOfStreamException();
+            PackCodec.ForThread(codec, path).Decode(comp.AsSpan(0, stored), chunk.AsSpan(0, len));
+            chunk.AsSpan(0, dst.Length).CopyTo(dst);
+        }
+        finally
+        {
+            BufferPool.Return(comp);
+            BufferPool.Return(chunk);
         }
         return header;
     }
 
     /// <summary>
-    /// Opens a page (Kind 0, 1 or 2) and returns a stream positioned at the start of the mip chain, plus the header.
-    /// For Kind 1/2 the stream is a forward-only decoder. Dispose it when done.
+    /// Opens a page (raw or chunked) and returns a stream positioned at the start of the mip chain, plus the header.
+    /// For a chunked page the stream is a forward-only decoder. Dispose it when done.
     /// </summary>
     public static Stream OpenChain(string path, out PageHeader header)
     {
@@ -180,13 +165,8 @@ public static class AtlasPage
         try
         {
             var fh = StructIo.ReadHeaderFull(fs, PackConst.MagicPage);
-            Stream s = fh.Kind switch
-            {
-                FileKind.Raw => fs,
-                FileKind.Brotli => new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress),
-                FileKind.ChunkedBrotli => new ChunkedBrotliStream(fs),
-                _ => throw new InvalidDataException($"Unknown page kind {fh.Kind}"),
-            };
+            ushort codec = PackCodec.OfFileKind(fh.Kind, path);
+            Stream s = codec == PackCodec.Raw ? fs : new ChunkedStream(fs, codec);
             header = StructIo.Read<PageHeader>(s);
             return s;
         }
@@ -198,8 +178,8 @@ public static class AtlasPage
     }
 
     /// <summary>
-    /// Reads a page (raw or Brotli, transparently) into <paramref name="into"/>, which must be at least DataBytes long.
-    /// Decompression streams straight into the caller's span with no intermediate full-size buffer. Returns the header.
+    /// Reads a page (raw or compressed, transparently) into <paramref name="into"/>, which must be at least DataBytes long.
+    /// Returns the header.
     /// </summary>
     public static PageHeader Read(string path, Span<byte> into)
     {
@@ -209,24 +189,25 @@ public static class AtlasPage
     }
 
     /// <summary>
-    /// As <see cref="Read(string, Span{byte})"/>, but a Kind=2 page is decoded by <paramref name="decoder"/>'s workers
+    /// As <see cref="Read(string, Span{byte})"/>, but a chunked page is decoded by <paramref name="decoder"/>'s workers
     /// straight into <paramref name="into"/> (chunk 0 goes through a worker scratch buffer to split off the PageHeader).
     /// </summary>
-    public static PageHeader Read(string path, Span<byte> into, ChunkedBrotliDecoder decoder)
+    public static PageHeader Read(string path, Span<byte> into, ChunkedDecoder decoder)
     {
         using var fh = File.OpenHandle(path);
         FileHeader f = default;
         RandomAccess.Read(fh, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<FileHeader>(ref f)), 0);
         if (f.Magic != PackConst.MagicPage) throw new InvalidDataException($"Bad magic 0x{f.Magic:X8}");
         if (!PackConst.VersionSupported(f.Version)) throw new InvalidDataException($"Unsupported pack version {f.Version}");
-        if (f.Kind != FileKind.ChunkedBrotli)
+        ushort codec = PackCodec.OfFileKind(f.Kind, path);
+        if (codec == PackCodec.Raw)
         {
             fh.Dispose();
             return Read(path, into);
         }
         PageHeader h = default;
         int hs = StructIo.SizeOf<PageHeader>();
-        decoder.Decode(fh, StructIo.SizeOf<FileHeader>(), into, hs, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<PageHeader>(ref h)));
+        decoder.Decode(fh, StructIo.SizeOf<FileHeader>(), codec, into, hs, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<PageHeader>(ref h)));
         return h;
     }
 }
@@ -244,16 +225,14 @@ public readonly struct BlockData
 /// <summary>Map regions: RegionHeader, block offset table, then block records.</summary>
 public static class RegionFile
 {
-    /// <summary>Brotli quality used for Kind=1 regions.</summary>
-    public const int BrotliQuality = 5;
-
     public static void Write(string path, in RegionHeader header, ReadOnlySpan<BlockData> blocks)
         => Write(path, in header, blocks, compress: false);
 
     /// <summary>
-    /// Writes a region. With <paramref name="compress"/> the file is FileHeader(Kind=1) followed by a Brotli stream of
-    /// everything a Kind=0 file has after its FileHeader. Block offsets are always relative to the start of the
-    /// logical (uncompressed) file, i.e. they include the 16-byte FileHeader.
+    /// Writes a region. With <paramref name="compress"/> the file is chunked zstd (<see cref="FileKind.ChunkedZstd"/>) of
+    /// everything a Kind=0 file has after its FileHeader, as one chunk: a region decodes on one worker anyway (regions
+    /// are prefetched), and one frame compresses better than 1 MiB pieces. Block offsets are always relative to the
+    /// start of the logical (uncompressed) file, i.e. they include the 16-byte FileHeader.
     /// </summary>
     public static void Write(string path, in RegionHeader header, ReadOnlySpan<BlockData> blocks, bool compress)
     {
@@ -268,9 +247,9 @@ public static class RegionFile
         WriteRaw(ms, in header, blocks);
         int hs = StructIo.SizeOf<FileHeader>();
         using var fs = ReplacingFile.Create(path);
-        StructIo.WriteHeader(fs, PackConst.MagicRegion, FileKind.Brotli);
-        using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality }, leaveOpen: true))
-            br.Write(ms.GetBuffer().AsSpan(hs, (int)ms.Length - hs));
+        StructIo.WriteHeader(fs, PackConst.MagicRegion, FileKind.ChunkedZstd);
+        var logical = ms.GetBuffer().AsSpan(hs, (int)ms.Length - hs);
+        ChunkedFile.Write(fs, logical, PackCodec.Zstd, Math.Max(1, logical.Length));
         fs.Commit();
     }
 
@@ -336,34 +315,14 @@ public static class RegionFile
             fileBytes.CopyTo(dest);
             return fileBytes.Length;
         }
-        if (kind == FileKind.ChunkedBrotli)
-        {
-            var body = fileBytes.Slice(hs);
-            var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(body);
-            total = checked(hs + (int)ch.LogicalBytes);
-            Ensure(ref dest, total, 0, pooled);
-            fileBytes.Slice(0, hs).CopyTo(dest);
-            ChunkedBrotli.Decode(body, dest.AsSpan(hs, total - hs));
-        }
-        else if (kind == FileKind.Brotli)
-        {
-            // the logical file keeps its header so block offsets stay file-relative; the size is not stored, so grow as needed
-            Ensure(ref dest, Math.Max(fileBytes.Length * 8, 1 << 16), 0, pooled);
-            fileBytes.Slice(0, hs).CopyTo(dest);
-            var src = fileBytes.Slice(hs);
-            total = hs;
-            using var dec = new System.IO.Compression.BrotliDecoder();
-            while (true)
-            {
-                var status = dec.Decompress(src, dest.AsSpan(total), out int consumed, out int written);
-                src = src.Slice(consumed);
-                total += written;
-                if (status == System.Buffers.OperationStatus.Done) break;
-                if (status == System.Buffers.OperationStatus.DestinationTooSmall) { Ensure(ref dest, dest.Length + dest.Length / 2, total, pooled); continue; }
-                throw new InvalidDataException($"corrupt region (brotli {status})");
-            }
-        }
-        else throw new InvalidDataException($"Unknown region kind {kind}");
+        // chunked: the logical file keeps its header so block offsets stay file-relative
+        ushort codec = PackCodec.OfFileKind(kind, "region");
+        var body = fileBytes.Slice(hs);
+        var ch = ChunkedFile.ReadHeader(body);
+        total = checked(hs + (int)ch.LogicalBytes);
+        Ensure(ref dest, total, 0, pooled);
+        fileBytes.Slice(0, hs).CopyTo(dest);
+        ChunkedFile.Decode(body, PackCodec.ForThread(codec), dest.AsSpan(hs, total - hs));
         dest[6] = 0; dest[7] = 0; // FileHeader.Kind = Raw: the result is a valid Kind-0 file
         return total;
     }
@@ -377,7 +336,7 @@ public static class RegionFile
         buffer = bigger;
     }
 
-    /// <summary>Parses a region from its file bytes (Kind 0, 1 = Brotli, or 2 = chunked Brotli).</summary>
+    /// <summary>Parses a region from its file bytes (raw or chunked).</summary>
     public static (RegionHeader Header, BlockData[] Blocks) Parse(byte[] fileBytes)
     {
         var bytes = Decompress(fileBytes);

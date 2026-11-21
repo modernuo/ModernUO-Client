@@ -68,14 +68,21 @@ public enum PixelFormat : ushort
     Indexed8 = 3,
 }
 
-/// <summary>FileHeader.Kind values for page and region files.</summary>
+/// <summary>FileHeader.Kind values for page and region files. The kind names the file's framing and its codec
+/// (<see cref="PackCodec.OfFileKind"/>).</summary>
 public static class FileKind
 {
     public const ushort Raw = 0;
-    /// <summary>Everything after the 16-byte FileHeader is one Brotli stream. v1.</summary>
-    public const ushort Brotli = 1;
-    /// <summary>ChunkedHeader, u32 CompressedSize[ChunkCount], then independent Brotli streams. See ChunkedBrotli.</summary>
-    public const ushort ChunkedBrotli = 2;
+    /// <summary>Retired in revision 1.6: everything after the FileHeader was one Brotli stream. Readers reject it
+    /// (<see cref="PackCodec.Retired"/>).</summary>
+    public const ushort RetiredBrotli = 1;
+    /// <summary>Retired in revision 1.6: chunked, each chunk a Brotli stream. Readers reject it.</summary>
+    public const ushort RetiredChunkedBrotli = 2;
+    /// <summary>ChunkedHeader, u32 CompressedSize[ChunkCount], then independent zstd frames (<see cref="ChunkedFile"/>). Revision 1.6.</summary>
+    public const ushort ChunkedZstd = 3;
+
+    /// <summary>True for the chunked framing (<see cref="ChunkedFile"/>); its codec is <see cref="PackCodec.OfFileKind"/>.</summary>
+    public static bool IsChunked(ushort kind) => kind == ChunkedZstd;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]

@@ -58,8 +58,8 @@ namespace ClassicUO.UnitTests.Assets
             }
 
             Check("radarcol.bin", p => RadarColFile.Write(p, new ushort[] { 1, 2, 3 }));
-            Check("page_0000.bin", p => AtlasPage.Write(p, 256, 1, PixelFormat.Rgba8, new byte[256 * 256 * 4], FileKind.Brotli));
-            Check("page_0001.bin", p => AtlasPage.Write(p, 256, 1, PixelFormat.Rgba8, new byte[256 * 256 * 4], FileKind.ChunkedBrotli));
+            Check("page_0000.bin", p => AtlasPage.Write(p, 256, 1, PixelFormat.Rgba8, new byte[256 * 256 * 4], FileKind.Raw));
+            Check("page_0001.bin", p => AtlasPage.Write(p, 256, 1, PixelFormat.Rgba8, new byte[256 * 256 * 4], FileKind.ChunkedZstd));
             Check("manifest.json", p => ManifestFileIo.Write(p, new Manifest()));
             Check("copy.bin", p => ReplacingFile.Copy(Path.Combine(_dir, "radarcol.bin"), p));
         }
