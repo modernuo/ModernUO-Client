@@ -218,8 +218,6 @@ namespace ClassicUO.Network
 
         private static void KREncryptionResponse(World world, ref NetReader p) { }
 
-        private static void FreeshardListR(World world, ref NetReader p) { }
-
         private static void ServerListReceived(World world, ref NetReader p)
         {
             if (world.InGame)

@@ -44,7 +44,6 @@ namespace ClassicUO.Game.Managers
 
     internal sealed class WorldMapEntityManager
     {
-        private bool _ackReceived;
         private uint _lastUpdate, _lastPacketSend, _lastPacketRecv;
         private readonly List<WMapEntity> _toRemove = new List<WMapEntity>();
         private readonly World _world;
@@ -55,9 +54,7 @@ namespace ClassicUO.Game.Managers
         {
             get
             {
-                return ((_world.ClientFeatures.Flags & CharacterListFlags.CLF_NEW_MOVEMENT_SYSTEM) == 0 || _ackReceived) &&
-                        (NetClient.Socket.Encryption == null || NetClient.Socket.Encryption.EncryptionType == 0) &&
-                        ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.WorldMapShowParty &&
+                return ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.WorldMapShowParty &&
                         WorldMapGump.IsOpen;
             }
         }
@@ -74,24 +71,8 @@ namespace ClassicUO.Game.Managers
         /// <summary>worldmap_idle_loop: the next stale-entity prune runs in the first Update with Time.Ticks past this.</summary>
         public long NextPruneTick => (long)_lastUpdate - 1;
 
-        public void SetACKReceived()
-        {
-            _ackReceived = true;
-        }
-
         public void SetEnable(bool v)
         {
-            if ((_world.ClientFeatures.Flags & CharacterListFlags.CLF_NEW_MOVEMENT_SYSTEM) != 0 && !_ackReceived)
-            {
-                Log.Warn("Server support new movement system. Can't use the 0xF0 packet to query guild/party position");
-                v = false;
-            }
-            else if (NetClient.Socket.Encryption?.EncryptionType != 0 && !_ackReceived)
-            {
-                Log.Warn("Server has encryption. Can't use the 0xF0 packet to query guild/party position");
-                v = false;
-            }
-
             if (v)
             {
                 RequestServerPartyGuildInfo(true);
@@ -250,7 +231,6 @@ namespace ClassicUO.Game.Managers
         public void Clear()
         {
             Entities.Clear();
-            _ackReceived = false;
             SetEnable(false);
         }
     }

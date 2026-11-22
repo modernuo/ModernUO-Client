@@ -633,7 +633,6 @@ namespace ClassicUO.Network
             Handler.Add(0xE5, DisplayWaypoint);
             Handler.Add(0xE6, RemoveWaypoint);
             Handler.Add(0xF0, KrriosClientSpecial);
-            Handler.Add(0xF1, FreeshardListR);
             Handler.Add(0xF3, UpdateItemSA);
             Handler.Add(0xF5, DisplayMap);
             Handler.Add(0xF6, BoatMoving);

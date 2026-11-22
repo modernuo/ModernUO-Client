@@ -22,7 +22,6 @@ namespace ClassicUO.Game.Data
         CLF_UNKNOWN_2 = 0x800,
         CLF_7_CHARACTER_SLOT = 0x1000,
         CLF_UNKNOWN_3 = 0x2000,
-        CLF_NEW_MOVEMENT_SYSTEM = 0x4000,
         CLF_UNLOCK_FELUCCA_AREAS = 0x8000
     }
 
