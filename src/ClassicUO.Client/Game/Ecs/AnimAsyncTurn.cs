@@ -11,7 +11,7 @@ using RendererAnimations = ClassicUO.Renderer.Animations.Animations;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// anim_async_turn (gpu-popin round 5, default off; owner 2026-11-20: a brief turn delay on one mobile is preferred to a
+    /// anim_async_turn (gpu-popin round 5, default on since 2026-11-22; owner 2026-11-20: a brief turn delay on one mobile is preferred to a
     /// whole-frame stall). Sets <see cref="RendererAnimations.AsyncTurn"/> every Update: a turn or new action of a body
     /// already drawn decodes on a worker instead of the main thread, and the draw keeps the mobile's previous look meanwhile
     /// (<see cref="LookPrefetch.HoldEnabled"/>, at most <see cref="LookPrefetch.HoldMaxMs"/>); the upload's asset signal
@@ -46,7 +46,7 @@ namespace ClassicUO.Game
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
 
-        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AnimAsyncTurn ?? false);
+        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AnimAsyncTurn ?? true);
 
         private readonly World _world;
         private readonly uint[] _serials = new uint[Capacity];

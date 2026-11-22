@@ -137,6 +137,19 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
+        public void Async_Turn_Is_On_By_Default_And_Round_Trips()
+        {
+            var ctx = ClassicUO.Configuration.SettingsJsonContext.RealDefault.Settings;
+            Assert.True(new ClassicUO.Configuration.Settings().AnimAsyncTurn);
+            Assert.True(System.Text.Json.JsonSerializer.Deserialize("{}", ctx).AnimAsyncTurn);
+
+            // a saved "off" stays off
+            string json = System.Text.Json.JsonSerializer.Serialize(new ClassicUO.Configuration.Settings { AnimAsyncTurn = false }, ctx);
+            Assert.Contains("\"anim_async_turn\": false", json);
+            Assert.False(System.Text.Json.JsonSerializer.Deserialize(json, ctx).AnimAsyncTurn);
+        }
+
+        [Fact]
         public void Async_Turn_Requests_The_Facing_Direction_Then_Its_Neighbours()
         {
             Span<byte> d = stackalloc byte[3];

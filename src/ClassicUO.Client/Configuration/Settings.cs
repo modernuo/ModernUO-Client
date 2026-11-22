@@ -217,8 +217,9 @@ namespace ClassicUO.Configuration
         // thread; the mobile keeps its previous look until the direction is uploaded, at most LookPrefetch.HoldMaxMs. Moves,
         // turns and war-mode changes request the facing direction and its two neighbours early (AnimAsyncTurn).
         // CUO_ANIM_ASYNC_TURN_CHECK=1 counts the main-thread decodes left and the turn delays in both states;
-        // CUO_ANIM_ASYNC_TURN=1|0 overrides the setting in developer builds. Default off.
-        [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; }
+        // CUO_ANIM_ASYNC_TURN=1|0 overrides the setting in developer builds. Default on (owner, 2026-11-22): without it the Gpu
+        // world draws a mobile part whose direction page is not resident as nothing for a frame (the first-turn flash, bg/turn-flash).
+        [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; } = true;
 
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
