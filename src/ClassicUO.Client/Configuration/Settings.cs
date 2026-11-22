@@ -230,6 +230,13 @@ namespace ClassicUO.Configuration
         // setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
+        // light-edges: a light's halo is not drawn over a wall, roof or other non-surface static or multi piece standing in
+        // front of its source on both axes (x and y greater), so lit windows on a far wall no longer glow through the near
+        // wall (Game/Scenes/LightOcclusion: per light, the occluders' art goes into the light target's stencil). Both
+        // renderers. CUO_LIGHT_OCCLUSION_CHECK=1 compares the occluders found with a wide reference scan in both states;
+        // CUO_LIGHT_OCCLUSION=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
+
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
         // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the

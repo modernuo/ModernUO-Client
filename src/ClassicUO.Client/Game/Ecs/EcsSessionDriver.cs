@@ -1073,6 +1073,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // lightocclusion on|off: light_occlusion (LightOcclusion; CUO_LIGHT_OCCLUSION overrides it)
+                case "lightocclusion" when args.Length > 0:
+                    Settings.GlobalSettings.LightOcclusion = args[0] == "on";
+                    Log.Info($"[ECS] driver: light_occlusion {Settings.GlobalSettings.LightOcclusion} (effective {LightOcclusion.Enabled})");
+
+                    return false;
+
                 // wetdepth on|off: wet_surface_depth (WetSurfaceDepth; CUO_WET_SURFACE_DEPTH overrides it)
                 case "wetdepth" when args.Length > 0:
                     Settings.GlobalSettings.WetSurfaceDepth = args[0] == "on";

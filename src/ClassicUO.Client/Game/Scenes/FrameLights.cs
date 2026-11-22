@@ -17,6 +17,12 @@ namespace ClassicUO.Game.Scenes
             public bool IsHue;
             public int DrawX,
                 DrawY;
+
+            // light_occlusion: the source (its own emitter: the glow passes through it) and its tile (LightOcclusion)
+            public GameObjects.GameObject Source;
+            public ushort SrcX,
+                SrcY;
+            public sbyte SrcZ;
         }
 
         /// <summary>view_margin: the safety bound on one frame's lights. The list grows to its high-water mark and is reused
