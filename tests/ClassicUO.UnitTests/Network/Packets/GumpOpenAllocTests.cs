@@ -48,6 +48,7 @@ namespace ClassicUO.UnitTests.Network.Packets
             StaticSocket.SetValue(null, _previousSocket);
             GumpLayoutSwitch.OverrideForTests = null;
             GumpLayoutCache.OverrideForTests = null;
+            FontLayoutPoolSwitch.OverrideForTests = null;
             GumpLayoutCache.Clear();
             UIManager.RemovePosition(GUMP_ID);
             _seam.Dispose();
@@ -109,16 +110,18 @@ namespace ClassicUO.UnitTests.Network.Packets
         }
 
         [Theory]
-        [InlineData(false, 120_000)]
-        [InlineData(true, 84_000)]
-        public void ServerGump_50_Entries_20_Lines(bool v2, long bound)
+        [InlineData(false, false, 94_000)]
+        [InlineData(true, false, 58_000)]
+        [InlineData(true, true, 34_000)]
+        public void ServerGump_50_Entries_20_Lines(bool v2, bool pool, long bound)
         {
             World world = InGame();
             MakeFixtureResident();
             GumpLayoutSwitch.OverrideForTests = v2;
+            FontLayoutPoolSwitch.OverrideForTests = pool;
             var (layout, lines) = ServerGumpFixture.Build();
 
-            long bytes = Measure($"server gump 50/20 gump_layout_v2={v2}", () =>
+            long bytes = Measure($"server gump 50/20 gump_layout_v2={v2} font_layout_pool={pool}", () =>
                 GumpFactory.OpenServerGump(world, MOB, GUMP_ID, 100, 100, layout, lines));
 
             bytes.Should().BeLessThan(bound);
@@ -140,15 +143,18 @@ namespace ClassicUO.UnitTests.Network.Packets
         }
 
         [Theory]
-        [InlineData(false, false, 118_000)]
-        [InlineData(true, false, 82_000)]
-        [InlineData(true, true, 78_000)]
-        public void ServerGump_Resend_Of_The_Open_Gump(bool v2, bool cache, long bound)
+        [InlineData(false, false, false, 92_000)]
+        [InlineData(true, false, false, 56_000)]
+        [InlineData(true, true, false, 53_000)]
+        [InlineData(true, false, true, 32_000)]
+        [InlineData(true, true, true, 28_000)]
+        public void ServerGump_Resend_Of_The_Open_Gump(bool v2, bool cache, bool pool, long bound)
         {
             World world = InGame();
             MakeFixtureResident();
             GumpLayoutSwitch.OverrideForTests = v2;
             GumpLayoutCache.OverrideForTests = cache;
+            FontLayoutPoolSwitch.OverrideForTests = pool;
             var (layout, lines) = ServerGumpFixture.Build();
             Gump open = GumpFactory.OpenServerGump(world, MOB, GUMP_ID, 100, 100, layout, lines);
 
@@ -160,7 +166,7 @@ namespace ClassicUO.UnitTests.Network.Packets
             long before = GC.GetAllocatedBytesForCurrentThread();
             Gump again = GumpFactory.OpenServerGump(world, MOB, GUMP_ID, 100, 100, layout, lines);
             long bytes = GC.GetAllocatedBytesForCurrentThread() - before;
-            _out.WriteLine($"server gump 50/20 resend gump_layout_v2={v2} gump_layout_cache={cache}: {bytes} B");
+            _out.WriteLine($"server gump 50/20 resend gump_layout_v2={v2} gump_layout_cache={cache} font_layout_pool={pool}: {bytes} B");
 
             again.Should().BeSameAs(open);
             bytes.Should().BeLessThan(bound);
@@ -221,10 +227,13 @@ namespace ClassicUO.UnitTests.Network.Packets
             bytes.Should().BeLessThan(30_000);
         }
 
-        [Fact]
-        public void HealthBar_Of_A_Mobile()
+        [Theory]
+        [InlineData(false, 3_000, 5_500)]
+        [InlineData(true, 2_700, 5_200)]
+        public void HealthBar_Of_A_Mobile(bool pool, long classicBound, long customBound)
         {
             World world = InGame();
+            FontLayoutPoolSwitch.OverrideForTests = pool;
             Mobile mob = world.Mobiles.Get(MOB);
 
             long classic = Measure("health bar (classic)", () =>
@@ -242,18 +251,22 @@ namespace ClassicUO.UnitTests.Network.Packets
                 return g;
             });
 
-            classic.Should().BeLessThan(10_500);
-            custom.Should().BeLessThan(12_500);
+            _out.WriteLine($"font_layout_pool={pool}");
+            classic.Should().BeLessThan(classicBound);
+            custom.Should().BeLessThan(customBound);
         }
 
-        [Fact]
-        public void Status_Of_The_Player()
+        [Theory]
+        [InlineData(false, 27_000)]
+        [InlineData(true, 22_500)]
+        public void Status_Of_The_Player(bool pool, long bound)
         {
             World world = InGame();
+            FontLayoutPoolSwitch.OverrideForTests = pool;
 
-            long bytes = Measure("status", () => StatusGumpBase.AddStatusGump(world, 100, 100));
+            long bytes = Measure($"status font_layout_pool={pool}", () => StatusGumpBase.AddStatusGump(world, 100, 100));
 
-            bytes.Should().BeLessThan(31_000);
+            bytes.Should().BeLessThan(bound);
         }
 
         [Fact]

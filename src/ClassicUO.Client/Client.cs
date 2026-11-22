@@ -39,6 +39,9 @@ namespace ClassicUO
         public ClientFlags Protocol { get; set; }
         public string ClientPath { get; private set; }
         public UOFileManager FileManager { get; private set; }
+#if CUO_DEVTOOLS
+        public FontLayoutCheck FontLayoutCheck { get; } = new FontLayoutCheck();
+#endif
 
 
         public UltimaOnline()
