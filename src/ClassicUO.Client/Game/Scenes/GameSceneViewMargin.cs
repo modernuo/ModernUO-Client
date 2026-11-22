@@ -11,11 +11,12 @@ namespace ClassicUO.Game.Scenes
     {
         private int _lightMargin = -1;
 
-        // view_margin (ViewMargin): adds the light sources the walk left out because their anchor is beside the walked
-        // rectangle, though their halo reaches into it. Runs in the light pass, after the walk and the world draw added theirs,
-        // so the lights in view keep the first places of the 100-light cap. No allocation; per frame it touches the loaded
-        // chunks of the band's rectangle, their light lists and their dynamics.
-        private void AddEdgeLights()
+        // view_margin (ViewMargin): the frame's static lights from the chunks' emitter lists (LightEmitters), with the switch
+        // on the walk adds none: an emitter the walk drew this frame, and one beside the walked rectangle whose halo reaches
+        // into it (with the ground items there, which the walk did not visit). AddLight drops the ones whose halo cannot reach
+        // the view. No allocation; per frame it touches the loaded chunks of the band's rectangle, their light lists and their
+        // dynamics.
+        private void AddChunkLights()
         {
             bool on = ViewMargin.Enabled;
 
@@ -36,7 +37,7 @@ namespace ClassicUO.Game.Scenes
             ViewMargin.ChunkRange(dLo, dHi, sLo, sHi, out int cx0, out int cy0, out int cx1, out int cy1);
             Map.Map map = _world.Map;
             StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
-            int count = 0;
+            int count = 0, walked = 0;
             uint hash = 0;
 
             for (int cx = cx0; cx <= cx1; cx++)
@@ -58,6 +59,18 @@ namespace ClassicUO.Game.Scenes
                     for (int i = 0, n = chunk.LightSourceCount; i < n; i++)
                     {
                         TileListObject obj = chunk.LightSources[i];
+
+                        if (obj.DrawnFrame == _drawFrame && !obj.IsDestroyed)
+                        {
+                            walked++;
+
+                            if (on)
+                            {
+                                AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                            }
+
+                            continue;
+                        }
 
                         if (EdgeLightCandidate(obj, staticData, left, top, right, bottom, margin, out int lx, out int ly))
                         {
@@ -103,7 +116,7 @@ namespace ClassicUO.Game.Scenes
 #if CUO_DEVTOOLS
             if (ViewMargin.Check)
             {
-                CheckEdgeLights(on, count, hash, staticData, left, top, right, bottom, margin, cx0, cy0, cx1, cy1);
+                CheckEdgeLights(on, count, hash, walked, staticData, left, top, right, bottom, margin, cx0, cy0, cx1, cy1);
             }
 #endif
         }
@@ -161,7 +174,7 @@ namespace ClassicUO.Game.Scenes
 
             ref StaticTiles data = ref staticData[graphic];
 
-            if (!(data.IsLight || displayed >= 0x3E02 && displayed <= 0x3E0B || displayed >= 0x3914 && displayed <= 0x3929))
+            if (!(data.IsLight && LightEmitters.HasShape(item.LightID) || displayed >= 0x3E02 && displayed <= 0x3E0B || displayed >= 0x3914 && displayed <= 0x3929))
             {
                 return false;
             }
@@ -204,13 +217,13 @@ namespace ClassicUO.Game.Scenes
         // CUO_VIEW_MARGIN_CHECK: the reference walks every tile list and dynamic of the chunk rectangle (the extended walk the
         // chunk light lists stand in for) with the same tests; a different count or hash means a light list missed or kept
         // an object (a static added or removed outside AddGameObject/RemoveFromTile, a graphic changed in place)
-        private void CheckEdgeLights(bool on, int count, uint hash, StaticTiles[] staticData, int left, int top, int right, int bottom, int margin,
+        private void CheckEdgeLights(bool on, int count, uint hash, int walked, StaticTiles[] staticData, int left, int top, int right, int bottom, int margin,
             int cx0, int cy0, int cx1, int cy1)
         {
             Map.Map map = _world.Map;
-            int refCount = 0;
+            int refCount = 0, refWalked = 0;
             uint refHash = 0;
-            GameObject sample = null;
+            GameObject sample = null, walkedSample = null;
 
             for (int cx = cx0; cx <= cx1; cx++)
             {
@@ -227,6 +240,24 @@ namespace ClassicUO.Game.Scenes
                     {
                         for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
                         {
+                            if ((o is Static || o is Multi) && o.DrawnFrame == _drawFrame && (uint)o.Graphic < (uint)staticData.Length && staticData[o.Graphic].IsLight)
+                            {
+                                // the old collection: the walk lit every flagged static it drew; the lists hold emitters only
+                                if (LightEmitters.Static(o.Graphic))
+                                {
+                                    refWalked++;
+
+                                    if (!ContainsLightSource(chunk, o))
+                                    {
+                                        walkedSample ??= o;
+                                    }
+                                }
+                                else
+                                {
+                                    NoteFlagOnly(o.Graphic);
+                                }
+                            }
+
                             if ((o is Static || o is Multi) && EdgeLightCandidate(o, staticData, left, top, right, bottom, margin, out _, out _))
                             {
                                 refCount++;
@@ -272,6 +303,17 @@ namespace ClassicUO.Game.Scenes
 
             _vmMaxLights = System.Math.Max(_vmMaxLights, _frameLights.Count + _frameLights.Refused);
 
+            if (refWalked != walked)
+            {
+                _vmMismatches++;
+
+                if (_vmMismatches <= 20)
+                {
+                    Log.Warn($"[view-margin-check] drawn emitters in the light lists {walked}, reference walk {refWalked}" +
+                             (walkedSample != null ? $"; not in its chunk's light list: {walkedSample.GetType().Name} 0x{walkedSample.Graphic:X4} at {walkedSample.X},{walkedSample.Y},{walkedSample.Z}" : ""));
+                }
+            }
+
             if (refCount != count || refHash != hash)
             {
                 _vmMismatches++;
@@ -288,6 +330,18 @@ namespace ClassicUO.Game.Scenes
                 _vmSummaryAt = Time.Ticks + 5000;
                 Log.Info($"[view-margin-check] view_margin {(on ? "on" : "off")}, light margin {margin} px: {_vmFrames} frames, {_vmFramesWithEdge} with edge lights " +
                          $"({_vmCandidates} candidates, {(on ? "added up to the cap" : "not added")}), light cap {_frameLights.Limit}: {_vmCapFrames} frames dropped {_vmRefused} lights, most lights offered in a frame {_vmMaxLights}; mismatches {_vmMismatches}");
+            }
+        }
+
+        private readonly System.Collections.Generic.HashSet<ushort> _vmFlagOnly = new();
+
+        // a drawn static with the tiledata Light flag but no light shape: the old collection gave it a slot, the lists don't
+        private void NoteFlagOnly(ushort graphic)
+        {
+            if (_vmFlagOnly.Count < 64 && _vmFlagOnly.Add(graphic))
+            {
+                ref StaticTiles d = ref Client.Game.UO.FileManager.TileData.StaticData[graphic];
+                Log.Info($"[view-margin-check] light flag without a light shape (no slot with view_margin): 0x{graphic:X4} '{d.Name}' light {d.Layer}");
             }
         }
 

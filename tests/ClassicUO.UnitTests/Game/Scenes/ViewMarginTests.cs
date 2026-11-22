@@ -15,7 +15,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
     [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData is process-wide
     public sealed class ViewMarginTests : IDisposable
     {
-        private const ushort Torch = 0x0A0F, Wall = 0x0080;
+        private const ushort Torch = 0x0A0F, Wall = 0x0080, Window = 0x0A10;
 
         private readonly StaticTiles[] _saved;
 
@@ -23,11 +23,20 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             var data = new StaticTiles[0x10000];
             data[Torch].Flags = TileFlag.LightSource;
+            data[Window].Flags = TileFlag.LightSource;
             _saved = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
+            // the emitter table: the torch has a light shape, the flagged window has none
+            var emitters = new bool[0x10000];
+            emitters[Torch] = true;
+            LightEmitters.OverrideForTests = emitters;
         }
 
-        public void Dispose() => Chunk.StaticTileData = _saved;
+        public void Dispose()
+        {
+            Chunk.StaticTileData = _saved;
+            LightEmitters.OverrideForTests = null;
+        }
 
         [Theory]
         [InlineData(true)]
@@ -113,9 +122,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var wall = new Static(world) { Graphic = Wall, Z = 0 };
             var lantern = new Multi(world) { Graphic = Torch, Z = 7 };
 
+            var window = new Static(world) { Graphic = Window, Z = 0 };
+
             chunk.AddGameObject(torch, 1, 2);
             chunk.AddGameObject(wall, 1, 2);
             chunk.AddGameObject(lantern, 3, 3);
+            // light flag without a light shape: not an emitter, no slot
+            chunk.AddGameObject(window, 5, 5);
             Assert.Equal(2, chunk.LightSourceCount);
 
             // a move within the chunk leaves it listed once
@@ -132,6 +145,30 @@ namespace ClassicUO.UnitTests.Game.Scenes
             chunk.Destroy();
             Assert.Equal(0, chunk.LightSourceCount);
             Assert.Null(chunk.LightSources[0]);
+        }
+
+        [Theory]
+        // centre inside, on the edges, and halos reaching in from each side
+        [InlineData(400, 300, true)]
+        [InlineData(0, 0, true)]
+        [InlineData(-50, 300, true)]
+        [InlineData(850, 300, true)]
+        [InlineData(400, -50, true)]
+        [InlineData(400, 650, true)]
+        // a halo one pixel short of each edge
+        [InlineData(-51, 300, false)]
+        [InlineData(851, 300, false)]
+        [InlineData(400, -51, false)]
+        [InlineData(400, 651, false)]
+        public void Light_counts_only_when_its_halo_reaches_the_view(int x, int y, bool reaches)
+        {
+            Assert.Equal(reaches, ViewMargin.LightReaches(x, y, 100, 100, 0, 0, 800, 600));
+        }
+
+        [Fact]
+        public void Light_without_a_shape_never_reaches()
+        {
+            Assert.False(ViewMargin.LightReaches(400, 300, 0, 0, 0, 0, 800, 600));
         }
 
         [Fact]

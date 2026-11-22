@@ -85,9 +85,10 @@ namespace ClassicUO.Game.Map
         public uint ContentVersion;
 
         /// <summary>
-        /// light_edge_margin (GameScene.AddEdgeLights): the chunk's light-emitting statics and multi components (tiledata Light),
-        /// in no order, kept by AddGameObject and RemoveFromTile, so the light pass reaches the sources just outside the
-        /// walked view without walking their tiles. CUO_LIGHT_EDGE_CHECK compares it with a walk of the tile lists.
+        /// view_margin (GameScene.AddChunkLights): the chunk's light-emitting statics and multi components (LightEmitters:
+        /// tiledata Light with a light shape), in no order, kept by AddGameObject and RemoveFromTile. With the switch on the
+        /// light pass takes every static light from these lists (the walk adds none). CUO_VIEW_MARGIN_CHECK compares them with
+        /// a walk of the tile lists.
         /// </summary>
         internal TileListObject[] LightSources = Array.Empty<TileListObject>();
         internal int LightSourceCount;
@@ -115,8 +116,7 @@ namespace ClassicUO.Game.Map
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal static bool IsLightSource(GameObject obj) =>
-            (obj is Static || obj is Multi) && (uint)obj.Graphic < (uint)StaticTileData.Length && StaticTileData[obj.Graphic].IsLight;
+        internal static bool IsLightSource(GameObject obj) => (obj is Static || obj is Multi) && Scenes.LightEmitters.Static(obj.Graphic);
 
         private void NoteLightSource(TileListObject node)
         {

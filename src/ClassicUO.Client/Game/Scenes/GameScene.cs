@@ -56,7 +56,7 @@ namespace ClassicUO.Game.Scenes
         private HealthLinesManager _healthLinesManager;
 
         private Point _lastSelectedMultiPositionInHouseCustomization;
-        private readonly FrameLights _frameLights = new FrameLights(FrameLights.WideCapacity);
+        private readonly FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
 #if CUO_DEVTOOLS
         // LightFrameLog: the light configuration the composite uses and the one the light target was drawn for (0 none,
         // 1 darkness, 2 alternative)
@@ -64,6 +64,14 @@ namespace ClassicUO.Game.Scenes
 #endif
         // counts the drawn frames (Draw past the death screen); the light pass draws only its own frame's lights
         private uint _lightsFrame;
+        // view_margin (ViewMargin): this frame's light list is ranked, and its view for the radius cull and the priorities
+        private bool _vmLights;
+
+        /// <summary>view_margin: this frame's static and multi lights come from the chunks' emitter lists (StaticView and
+        /// MultiView add none).</summary>
+        internal static bool ChunkStaticLights;
+        private uint _lightViewFrame;
+        private int _lvLeft, _lvTop, _lvRight, _lvBottom, _lvPx, _lvPy;
         private Item _multi;
         private Rectangle _rectangleObj = Rectangle.Empty,
             _rectanglePlayer;
@@ -485,7 +493,23 @@ namespace ClassicUO.Game.Scenes
             AddLightCore(obj, lightObject, x, y);
         }
 
-        // 0 added, 1 lights off, 2 refused by the cap, 3 hidden by an object above, 4 light index out of range (LightSlotDiag)
+        // view_margin: the visible world in the light list's coordinates (the walk's rectangle without its tile of slack) and
+        // the player's light position, once per light frame
+        private void SetLightView()
+        {
+            _lightViewFrame = _lightsFrame;
+            Point vMin = Camera.ScreenToWorld(Point.Zero);
+            Point vMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
+            _lvLeft = vMin.X;
+            _lvTop = vMin.Y;
+            _lvRight = vMax.X;
+            _lvBottom = vMax.Y;
+            _lvPx = _world.Player != null ? _world.Player.RealScreenPosition.X + 22 : (vMin.X + vMax.X) >> 1;
+            _lvPy = _world.Player != null ? _world.Player.RealScreenPosition.Y + 22 : (vMin.Y + vMax.Y) >> 1;
+        }
+
+        // 0 added, 1 lights off, 2 refused by the cap, 3 hidden by an object above, 4 light index out of range, 5 its halo
+        // cannot reach the view (view_margin) (LightSlotDiag)
         private byte AddLightCore(GameObject obj, GameObject lightObject, int x, int y)
         {
             if (
@@ -638,6 +662,27 @@ namespace ClassicUO.Game.Scenes
 
                 light.DrawX = x;
                 light.DrawY = y;
+
+                if (_vmLights)
+                {
+                    // view_margin: a light whose halo cannot reach the visible world takes no slot
+                    if (_lightViewFrame != _lightsFrame)
+                    {
+                        SetLightView();
+                    }
+
+                    Client.Game.UO.FileManager.Lights.Extent(light.ID, out int lw, out int lh);
+
+                    if (!ViewMargin.LightReaches(x, y, lw, lh, _lvLeft, _lvTop, _lvRight, _lvBottom))
+                    {
+                        return 5;
+                    }
+
+                    _frameLights.Commit(FrameLights.Priority(x, y, _lvLeft, _lvTop, _lvRight, _lvBottom, _lvPx, _lvPy));
+
+                    return 0;
+                }
+
                 _frameLights.Commit();
 
                 return 0;
@@ -1446,8 +1491,10 @@ namespace ClassicUO.Game.Scenes
                 return true;
             }
 
-            // view_margin: the wide cap (FrameLights.WideCapacity) instead of the classic 100 (ViewMargin)
-            _frameLights.BeginFrame(++_lightsFrame, ViewMargin.Enabled ? FrameLights.WideCapacity : LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
+            // view_margin: a growing list with a safety bound and priorities instead of the classic 100 (ViewMargin)
+            _vmLights = ViewMargin.Enabled;
+            ChunkStaticLights = _vmLights;
+            _frameLights.BeginFrame(++_lightsFrame, _vmLights ? FrameLights.SafetyBound : LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT, _vmLights);
             Viewport r_viewport = batcher.GraphicsDevice.Viewport;
             Matrix matrix = Camera.ViewTransformMatrix;
 
@@ -1729,8 +1776,9 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            // view_margin: the light sources beside the walked view whose halo reaches into it (ViewMargin)
-            AddEdgeLights();
+            // view_margin: the static lights from the chunks' emitter lists, and the light sources beside the walked view whose
+            // halo reaches into it (ViewMargin)
+            AddChunkLights();
             int lightCount = _frameLights.CountFor(_lightsFrame);
 #if CUO_DEVTOOLS
             if (LightSlotDiag.Armed)

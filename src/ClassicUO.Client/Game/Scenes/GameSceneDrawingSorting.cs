@@ -551,7 +551,8 @@ namespace ClassicUO.Game.Scenes
                     FrameStats.Enter(bucket);
                 }
 
-                if (itemData.IsLight)
+                // view_margin: static lights come from the chunks' emitter lists (AddChunkLights), not from the walk
+                if (!_vmLights && itemData.IsLight)
                 {
                     AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                 }
@@ -1091,7 +1092,7 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
 
-                    if (meshItemData.IsLight)
+                    if (!_vmLights && meshItemData.IsLight)
                     {
                         AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                     }

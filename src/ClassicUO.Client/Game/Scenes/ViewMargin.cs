@@ -10,7 +10,7 @@ namespace ClassicUO.Game.Scenes
     /// view_margin (light-edges, default off): the world beyond the walked view that can still reach it. The walk culls each
     /// object by its anchor against the view padded by one tile (GetViewPort: _minPixel/_maxPixel), but a light's halo reaches
     /// up to half the largest light texture (175 px in the classic lights) past its source, so a wall torch just outside the
-    /// view lit up only when it entered it. With the switch on, GameScene.AddEdgeLights adds the light sources whose anchor is
+    /// view lit up only when it entered it. With the switch on, GameScene.AddChunkLights adds the light sources whose anchor is
     /// in the band between that rectangle and the rectangle grown by <see cref="LightMargin"/>: the chunks' recorded light
     /// statics and multi components (Chunk.LightSources) and their ground items, without walking those tiles.
     /// CUO_VIEW_MARGIN_CHECK=1 compares that set with a walk of every tile list and dynamic of the same chunks, every frame,
@@ -84,6 +84,16 @@ namespace ClassicUO.Game.Scenes
             }
 
             return ax >= left - margin && ax <= right + margin && ay >= top - margin && ay <= bottom + margin;
+        }
+
+        /// <summary>A light drawn centred on (x, y) with a <paramref name="width"/> x <paramref name="height"/> texture touches
+        /// the view (left, top, right, bottom), edges included.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool LightReaches(int x, int y, int width, int height, int left, int top, int right, int bottom)
+        {
+            int hw = (width + 1) >> 1, hh = (height + 1) >> 1;
+
+            return width > 0 && height > 0 && x + hw >= left && x - hw <= right && y + hh >= top && y - hh <= bottom;
         }
 
         /// <summary>An object's anchor (GameObject.RealScreenPosition) at draw offset (offX, offY).</summary>
