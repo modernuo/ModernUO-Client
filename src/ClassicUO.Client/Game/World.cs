@@ -57,6 +57,7 @@ namespace ClassicUO.Game
             MapRecycler = new Map.MapObjectRecycler(this);
             ChunkPool = new Map.ChunkPool(this);
             Writer = new WorldWriter(this);
+            AsyncTurn = new AnimAsyncTurn(this);
         }
 
         public WorldEcs Ecs { get; }
@@ -66,6 +67,9 @@ namespace ClassicUO.Game
 
         /// <summary>T1: the mutation funnel (ecs-transition-plan.md); converted packet groups write world state through it.</summary>
         public WorldWriter Writer { get; }
+
+        /// <summary>anim_async_turn: the directions to request for mobiles that moved, turned or changed war mode.</summary>
+        internal AnimAsyncTurn AsyncTurn { get; }
 
         public Point RangeSize;
 
@@ -448,7 +452,7 @@ namespace ClassicUO.Game
         {
             Map?.UpdateLoading(Player.X, Player.Y);
             LookPrefetch.Drain(this);
-            AnimAsyncTurn.Drain(this);
+            AsyncTurn.Drain();
         }
 
         // 2. the item the player picked up and the server confirmed gone

@@ -130,7 +130,7 @@ namespace ClassicUO
 
             if (AnimAsyncTurn.Check)
             {
-                AnimAsyncTurn.Step(where);
+                Client.Game.UO.World?.AsyncTurn.Step(where);
             }
         }
 
