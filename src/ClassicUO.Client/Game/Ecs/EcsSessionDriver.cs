@@ -1102,6 +1102,25 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // fullsize on|off: the profile's "always use fullsize game window", as the options gump applies it
+                case "fullsize" when args.Length > 0 && ProfileManager.CurrentProfile is { } fullProfile:
+                {
+                    bool full = args[0] == "on";
+
+                    if (UIManager.GetGump<WorldViewportGump>() is { } vp)
+                    {
+                        vp.ResizeGameWindow(full ? new Microsoft.Xna.Framework.Point(Client.Game.Window.ClientBounds.Width, Client.Game.Window.ClientBounds.Height)
+                            : new Microsoft.Xna.Framework.Point(600, 480));
+                        vp.SetGameWindowPosition(full ? new Microsoft.Xna.Framework.Point(-5, -5) : new Microsoft.Xna.Framework.Point(20, 20));
+                        fullProfile.GameWindowPosition = vp.Location;
+                    }
+
+                    fullProfile.GameWindowFullSize = full;
+                    Log.Info($"[ECS] driver: fullsize {args[0]}, window {Client.Game.Window.ClientBounds.Width}x{Client.Game.Window.ClientBounds.Height}");
+
+                    return true;
+                }
+
                 case "coloredlights" when args.Length > 0 && ProfileManager.CurrentProfile is { } colProfile:
                     colProfile.UseColoredLights = args[0] == "on";
                     Log.Info($"[ECS] driver: colored lights {args[0]}");
