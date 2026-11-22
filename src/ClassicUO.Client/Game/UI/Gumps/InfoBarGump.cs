@@ -115,11 +115,9 @@ namespace ClassicUO.Game.UI.Gumps
 
             base.Update();
 
-            Control last = Children.LastOrDefault();
-
-            if (last != null)
+            if (Children.Count != 0)
             {
-                Width = last.Bounds.Right;
+                Width = Children[Children.Count - 1].Bounds.Right;
             }
 
             _background.Width = Width;
@@ -166,7 +164,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 _refreshTime = (long)Time.Ticks + 125;
 
-                _data.Text = GetVarData(Var);
+                SetVarData(Var);
 
                 if (ProfileManager.CurrentProfile.InfoBarHighlightType == 0 || Var == InfoBarVars.NameNotoriety)
                 {
@@ -204,61 +202,62 @@ namespace ClassicUO.Game.UI.Gumps
             return true;
         }
 
-        private string GetVarData(InfoBarVars var)
+        // G2: formats into the label on the stack; a string is made only when the shown text changes
+        private void SetVarData(InfoBarVars var)
         {
             switch (var)
             {
-                case InfoBarVars.HP: return $"{_gump.World.Player.Hits}/{_gump.World.Player.HitsMax}";
+                case InfoBarVars.HP: _data.SetPair(_gump.World.Player.Hits, '/', _gump.World.Player.HitsMax); return;
 
-                case InfoBarVars.Mana: return $"{_gump.World.Player.Mana}/{_gump.World.Player.ManaMax}";
+                case InfoBarVars.Mana: _data.SetPair(_gump.World.Player.Mana, '/', _gump.World.Player.ManaMax); return;
 
-                case InfoBarVars.Stamina: return $"{_gump.World.Player.Stamina}/{_gump.World.Player.StaminaMax}";
+                case InfoBarVars.Stamina: _data.SetPair(_gump.World.Player.Stamina, '/', _gump.World.Player.StaminaMax); return;
 
-                case InfoBarVars.Weight: return $"{_gump.World.PlayerState.Weight}/{_gump.World.PlayerState.WeightMax}";
+                case InfoBarVars.Weight: _data.SetPair(_gump.World.PlayerState.Weight, '/', _gump.World.PlayerState.WeightMax); return;
 
-                case InfoBarVars.Followers: return $"{_gump.World.PlayerState.Followers}/{_gump.World.PlayerState.FollowersMax}";
+                case InfoBarVars.Followers: _data.SetPair(_gump.World.PlayerState.Followers, '/', _gump.World.PlayerState.FollowersMax); return;
 
-                case InfoBarVars.Gold: return _gump.World.PlayerState.Gold.ToString();
+                case InfoBarVars.Gold: _data.SetNumber(_gump.World.PlayerState.Gold); return;
 
-                case InfoBarVars.Damage: return $"{_gump.World.PlayerState.DamageMin}-{_gump.World.PlayerState.DamageMax}";
+                case InfoBarVars.Damage: _data.SetPair(_gump.World.PlayerState.DamageMin, '-', _gump.World.PlayerState.DamageMax); return;
 
-                case InfoBarVars.Armor: return _gump.World.PlayerState.PhysicalResistance.ToString();
+                case InfoBarVars.Armor: _data.SetNumber(_gump.World.PlayerState.PhysicalResistance); return;
 
-                case InfoBarVars.Luck: return _gump.World.PlayerState.Luck.ToString();
+                case InfoBarVars.Luck: _data.SetNumber(_gump.World.PlayerState.Luck); return;
 
-                case InfoBarVars.FireResist: return _gump.World.PlayerState.FireResistance.ToString();
+                case InfoBarVars.FireResist: _data.SetNumber(_gump.World.PlayerState.FireResistance); return;
 
-                case InfoBarVars.ColdResist: return _gump.World.PlayerState.ColdResistance.ToString();
+                case InfoBarVars.ColdResist: _data.SetNumber(_gump.World.PlayerState.ColdResistance); return;
 
-                case InfoBarVars.PoisonResist: return _gump.World.PlayerState.PoisonResistance.ToString();
+                case InfoBarVars.PoisonResist: _data.SetNumber(_gump.World.PlayerState.PoisonResistance); return;
 
-                case InfoBarVars.EnergyResist: return _gump.World.PlayerState.EnergyResistance.ToString();
+                case InfoBarVars.EnergyResist: _data.SetNumber(_gump.World.PlayerState.EnergyResistance); return;
 
-                case InfoBarVars.LowerReagentCost: return _gump.World.PlayerState.LowerReagentCost.ToString();
+                case InfoBarVars.LowerReagentCost: _data.SetNumber(_gump.World.PlayerState.LowerReagentCost); return;
 
-                case InfoBarVars.SpellDamageInc: return _gump.World.PlayerState.SpellDamageIncrease.ToString();
+                case InfoBarVars.SpellDamageInc: _data.SetNumber(_gump.World.PlayerState.SpellDamageIncrease); return;
 
-                case InfoBarVars.FasterCasting: return _gump.World.PlayerState.FasterCasting.ToString();
+                case InfoBarVars.FasterCasting: _data.SetNumber(_gump.World.PlayerState.FasterCasting); return;
 
-                case InfoBarVars.FasterCastRecovery: return _gump.World.PlayerState.FasterCastRecovery.ToString();
+                case InfoBarVars.FasterCastRecovery: _data.SetNumber(_gump.World.PlayerState.FasterCastRecovery); return;
 
-                case InfoBarVars.HitChanceInc: return _gump.World.PlayerState.HitChanceIncrease.ToString();
+                case InfoBarVars.HitChanceInc: _data.SetNumber(_gump.World.PlayerState.HitChanceIncrease); return;
 
-                case InfoBarVars.DefenseChanceInc: return _gump.World.PlayerState.DefenseChanceIncrease.ToString();
+                case InfoBarVars.DefenseChanceInc: _data.SetNumber(_gump.World.PlayerState.DefenseChanceIncrease); return;
 
-                case InfoBarVars.LowerManaCost: return _gump.World.PlayerState.LowerManaCost.ToString();
+                case InfoBarVars.LowerManaCost: _data.SetNumber(_gump.World.PlayerState.LowerManaCost); return;
 
-                case InfoBarVars.DamageChanceInc: return _gump.World.PlayerState.DamageIncrease.ToString();
+                case InfoBarVars.DamageChanceInc: _data.SetNumber(_gump.World.PlayerState.DamageIncrease); return;
 
-                case InfoBarVars.SwingSpeedInc: return _gump.World.PlayerState.SwingSpeedIncrease.ToString();
+                case InfoBarVars.SwingSpeedInc: _data.SetNumber(_gump.World.PlayerState.SwingSpeedIncrease); return;
 
-                case InfoBarVars.StatsCap: return _gump.World.PlayerState.StatsCap.ToString();
+                case InfoBarVars.StatsCap: _data.SetNumber(_gump.World.PlayerState.StatsCap); return;
 
-                case InfoBarVars.NameNotoriety: return _gump.World.Player.Name;
+                case InfoBarVars.NameNotoriety: _data.Text = _gump.World.Player.Name; return;
 
-                case InfoBarVars.TithingPoints: return _gump.World.PlayerState.TithingPoints.ToString();
+                case InfoBarVars.TithingPoints: _data.SetNumber(_gump.World.PlayerState.TithingPoints); return;
 
-                default: return "";
+                default: _data.Text = ""; return;
             }
         }
 

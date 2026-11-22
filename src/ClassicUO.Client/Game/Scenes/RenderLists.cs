@@ -305,6 +305,8 @@ namespace ClassicUO.Game.Scenes
         // without requiring a live graphics device to invoke the flush path.
         internal int GumpTextsCount => _gumpTexts.Count;
         internal GumpCommand PeekGumpText(int index) => _gumpTexts[index];
+        internal int GumpSpritesCount => _gumpSprites.Count;
+        internal GumpCommand PeekGumpSprite(int index) => _gumpSprites[index];
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
         {

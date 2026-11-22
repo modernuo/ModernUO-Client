@@ -16,20 +16,13 @@ namespace ClassicUO.Game.UI.Gumps
 {
     internal class DebugGump : Gump, IGumpDeferredDraw
     {
-        // the player-facing rate, then the measurement: frames drawn per second, and the rate the last frame's build time allows
-        private const string DEBUG_STRING_0 = "- FPS: {0} (drawn {1}/s, possible {2}/s, frame build {3:0.00} ms), Zoom: {4:0.00}, Total Objs: {5}\n";
-        private const string DEBUG_STRING_1 = "- Mobiles: {0}   Items: {1}   Statics: {2}   Multi: {3}   Lands: {4}   Effects: {5}\n";
-        private const string DEBUG_STRING_2 = "- CharPos: {0}\n- Mouse: {1}\n- InGamePos: {2}\n";
-        private const string DEBUG_STRING_3 = "- Selected: {0}\n";
-
-        // the player-facing counter: the display rate while present on change runs (FpsDisplay.Shown), never the idle draw rate
-        private const string DEBUG_STRING_SMALL = "FPS: {0}\nZoom: {1:0.00}";
-        private const string DEBUG_STRING_SMALL_NO_ZOOM = "FPS: {0}";
         private static Point _last_position = new Point(-1, -1);
 
         private uint _timeToUpdate;
         private readonly AlphaBlendControl _alphaBlendControl;
-        private string _cacheText = string.Empty;
+        // G2: the shown text lives in this buffer and is drawn from it; a refresh that formats the same text does nothing
+        private char[] _text = new char[256];
+        private int _textLength;
 
         public DebugGump(World world, int x, int y) : base(world, 0, 0)
         {
@@ -89,31 +82,42 @@ namespace ClassicUO.Game.UI.Gumps
                 GameScene scene = Client.Game.GetScene<GameScene>();
                 Span<char> span = stackalloc char[256];
                 ValueStringBuilder sb = new ValueStringBuilder(span);
-                Span<char> loopRate = stackalloc char[10];
-                if (CUOEnviroment.CurrentLoopRate.TryFormat(loopRate, out int loopChars))
-                    sb.Append(loopRate.Slice(0, loopChars));
-                sb.Append(" loops/s | ");
+                sb.Append($"{CUOEnviroment.CurrentLoopRate} loops/s | ");
 
                 if (IsMinimized && scene != null)
                 {
-                    sb.Append
-                    (string.Format(
-                         DEBUG_STRING_0,
-                         CUOEnviroment.ShownRefreshRate,
-                         CUOEnviroment.CurrentRefreshRate,
-                         ClassicUO.Loop.FpsDisplay.Possible(CUOEnviroment.LastFrameBuildMs),
-                         CUOEnviroment.LastFrameBuildMs,
-                         !World.InGame ? 1f : scene.Camera.Zoom,
-                         scene.RenderedObjectsCount
-                         )
-                     );
-
+                    // the player-facing rate, then the measurement: frames drawn per second, and the rate the last frame's build time allows
+                    sb.Append($"- FPS: {CUOEnviroment.ShownRefreshRate} (drawn {CUOEnviroment.CurrentRefreshRate}/s, possible {ClassicUO.Loop.FpsDisplay.Possible(CUOEnviroment.LastFrameBuildMs)}/s, frame build {CUOEnviroment.LastFrameBuildMs:0.00} ms), Zoom: {(!World.InGame ? 1f : scene.Camera.Zoom):0.00}, Total Objs: {scene.RenderedObjectsCount}\n");
                     sb.Append($"- CUO version: {CUOEnviroment.Version}, Client version: {Client.Game.UO.VersionText}\n");
 
-                    //_sb.AppendFormat(DEBUG_STRING_1, Engine.DebugInfo.MobilesRendered, Engine.DebugInfo.ItemsRendered, Engine.DebugInfo.StaticsRendered, Engine.DebugInfo.MultiRendered, Engine.DebugInfo.LandsRendered, Engine.DebugInfo.EffectsRendered);
-                    sb.Append(string.Format(DEBUG_STRING_2, World.InGame ? $"{World.Player.X}, {World.Player.Y}, {World.Player.Z}" : "0xFFFF, 0xFFFF, 0", Mouse.Position, SelectedObject.Object is GameObject gobj ? $"{gobj.X}, {gobj.Y}, {gobj.Z}" : "0xFFFF, 0xFFFF, 0"));
+                    sb.Append("- CharPos: ");
 
-                    sb.Append(string.Format(DEBUG_STRING_3, ReadObject(SelectedObject.Object)));
+                    if (World.InGame)
+                    {
+                        sb.Append($"{World.Player.X}, {World.Player.Y}, {World.Player.Z}");
+                    }
+                    else
+                    {
+                        sb.Append("0xFFFF, 0xFFFF, 0");
+                    }
+
+                    // Point.ToString's text
+                    Point mouse = Mouse.Position;
+                    sb.Append($"\n- Mouse: {{X:{mouse.X} Y:{mouse.Y}}}\n- InGamePos: ");
+
+                    if (SelectedObject.Object is GameObject gobj)
+                    {
+                        sb.Append($"{gobj.X}, {gobj.Y}, {gobj.Z}");
+                    }
+                    else
+                    {
+                        sb.Append("0xFFFF, 0xFFFF, 0");
+                    }
+
+                    sb.Append("\n- Selected: ");
+                    Span<char> selected = stackalloc char[256];
+                    sb.Append(selected.Slice(0, FormatObject(selected, SelectedObject.Object)));
+                    sb.Append("\n");
 
                     if (Profiler.Enabled)
                     {
@@ -124,21 +128,14 @@ namespace ClassicUO.Game.UI.Gumps
 
                         double timeUpdate = Profiler.GetContext(Profiler.ProfilerContext.UPDATE_WORLD).TimeInContext;
 
-                        double timeOutOfContext = Profiler.GetContext(Profiler.ProfilerContext.OUT_OF_CONTEXT).TimeInContext;
-
-                        //double timeTotalCheck = timeOutOfContext + timeDraw + timeUpdate;
                         double timeTotal = Profiler.TrackedTime;
 
                         double avgDrawMs = Profiler.GetContext(Profiler.ProfilerContext.RENDER_FRAME).AverageTime;
 
                         sb.Append("- Profiling\n");
-
-                        sb.Append
-                        (
-                            $"    - Draw:{100d * (timeDraw / timeTotal):0.0}% (Prepare:{100d * (timeDrawWorldPrepare / timeTotal):0.0}% World:{100d * (timeDrawWorld / timeTotal):0.0}%, UI:{100d * (timeDrawUi / timeTotal):0.0}%)\n" +
-                            $"    - Update:{100d * (timeUpdate / timeTotal):0.0}%\n" +
-                            $"    - AvgDraw:{avgDrawMs:0.0}ms {CUOEnviroment.CurrentRefreshRate} presented FPS\n"
-                        );
+                        sb.Append($"    - Draw:{100d * (timeDraw / timeTotal):0.0}% (Prepare:{100d * (timeDrawWorldPrepare / timeTotal):0.0}% World:{100d * (timeDrawWorld / timeTotal):0.0}%, UI:{100d * (timeDrawUi / timeTotal):0.0}%)\n");
+                        sb.Append($"    - Update:{100d * (timeUpdate / timeTotal):0.0}%\n");
+                        sb.Append($"    - AvgDraw:{avgDrawMs:0.0}ms {CUOEnviroment.CurrentRefreshRate} presented FPS\n");
                     }
                 }
                 else
@@ -146,27 +143,29 @@ namespace ClassicUO.Game.UI.Gumps
                     var cameraZoomCount = (int)((scene.Camera.ZoomMax - scene.Camera.ZoomMin) / scene.Camera.ZoomStep);
                     var cameraZoomIndex = cameraZoomCount - (int)((scene.Camera.ZoomMax - scene.Camera.Zoom) / scene.Camera.ZoomStep);
 
-                    if (scene != null && cameraZoomIndex != 5)
-                    {
-                        sb.Append(string.Format(DEBUG_STRING_SMALL, CUOEnviroment.ShownRefreshRate, !World.InGame ? 1f : scene.Camera.Zoom));
-                    }
-                    else
-                    {
-                        sb.Append(string.Format(DEBUG_STRING_SMALL_NO_ZOOM, CUOEnviroment.ShownRefreshRate));
-                    }
+                    Span<char> small = stackalloc char[64];
+                    sb.Append(small.Slice(0, FormatSmall(small, CUOEnviroment.ShownRefreshRate, scene != null && cameraZoomIndex != 5, !World.InGame ? 1f : scene.Camera.Zoom)));
                 }
 
+                if (!sb.AsSpan().SequenceEqual(_text.AsSpan(0, _textLength)))
+                {
+                    if (sb.Length > _text.Length)
+                    {
+                        _text = new char[Math.Max(sb.Length, _text.Length * 2)];
+                    }
 
-                _cacheText = sb.ToString();
+                    sb.AsSpan().CopyTo(_text);
+                    _textLength = sb.Length;
+
+                    Vector2 size = Fonts.Bold.MeasureString(_text.AsSpan(0, _textLength));
+
+                    _alphaBlendControl.Width = Width = (int) (size.X + 20);
+                    _alphaBlendControl.Height = Height = (int) (size.Y + 20);
+
+                    WantUpdateSize = true;
+                }
 
                 sb.Dispose();
-
-                Vector2 size = Fonts.Bold.MeasureString(_cacheText);
-
-                _alphaBlendControl.Width = Width = (int) (size.X + 20);
-                _alphaBlendControl.Height = Height = (int) (size.Y + 20);
-
-                WantUpdateSize = true;
             }
 
             // visual-due tracking: the next timed change
@@ -192,7 +191,7 @@ namespace ClassicUO.Game.UI.Gumps
             batcher.DrawString
             (
                 Fonts.Bold,
-                _cacheText,
+                _text.AsSpan(0, _textLength),
                 x + 10,
                 y + 10,
                 hueVector,
@@ -201,29 +200,49 @@ namespace ClassicUO.Game.UI.Gumps
             return true;
         }
 
-        private string ReadObject(BaseGameObject obj)
+        // the collapsed text: "FPS: n", the player-facing counter (the display rate while present on change runs,
+        // FpsDisplay.Shown; never the idle draw rate), and the zoom unless it is at the default step
+        internal static int FormatSmall(Span<char> destination, uint shownRate, bool showZoom, float zoom)
         {
+            int n = 0;
+            UiFormat.Put(destination, ref n, "FPS: ");
+            UiFormat.Put(destination, ref n, shownRate);
+
+            if (showZoom)
+            {
+                UiFormat.Put(destination, ref n, "\nZoom: ");
+                UiFormat.Put(destination, ref n, zoom, "0.00");
+            }
+
+            return n;
+        }
+
+        // the selected object's line; returns its length
+        private int FormatObject(Span<char> destination, BaseGameObject obj)
+        {
+            int written = 0;
+
             if (obj != null && IsMinimized)
             {
                 switch (obj)
                 {
-                    case Mobile mob: return $"Mobile (0x{mob.Serial:X8})  graphic: 0x{mob.Graphic:X4}  flags: {mob.Flags}  noto: {mob.NotorietyFlag}";
+                    case Mobile mob: destination.TryWrite($"Mobile (0x{mob.Serial:X8})  graphic: 0x{mob.Graphic:X4}  flags: {mob.Flags}  noto: {mob.NotorietyFlag}", out written); break;
 
-                    case Item item: return $"Item (0x{item.Serial:X8})  graphic: 0x{item.Graphic:X4}  flags: {item.Flags}  amount: {item.Amount} itemdata: {item.ItemData.Flags}";
+                    case Item item: destination.TryWrite($"Item (0x{item.Serial:X8})  graphic: 0x{item.Graphic:X4}  flags: {item.Flags}  amount: {item.Amount} itemdata: {item.ItemData.Flags}", out written); break;
 
-                    case Static st: return $"Static (0x{st.Graphic:X4})  height: {st.ItemData.Height}  flags: {st.ItemData.Flags}  Alpha: {st.AlphaHue}";
+                    case Static st: destination.TryWrite($"Static (0x{st.Graphic:X4})  height: {st.ItemData.Height}  flags: {st.ItemData.Flags}  Alpha: {st.AlphaHue}", out written); break;
 
-                    case Multi multi: return $"Multi (0x{multi.Graphic:X4})  height: {multi.ItemData.Height}  flags: {multi.ItemData.Flags}";
+                    case Multi multi: destination.TryWrite($"Multi (0x{multi.Graphic:X4})  height: {multi.ItemData.Height}  flags: {multi.ItemData.Flags}", out written); break;
 
-                    case GameEffect effect: return "GameEffect";
+                    case GameEffect: destination.TryWrite($"GameEffect", out written); break;
 
-                    case TextObject overhead: return $"TextOverhead type: {overhead.Type}  hue: 0x{overhead.Hue:X4}";
+                    case TextObject overhead: destination.TryWrite($"TextOverhead type: {overhead.Type}  hue: 0x{overhead.Hue:X4}", out written); break;
 
-                    case Land land: return $"Land (0x{land.Graphic:X4})  flags: {land.TileData.Flags} stretched: {land.IsStretched}  avgZ: {land.AverageZ} minZ: {land.MinZ}";
+                    case Land land: destination.TryWrite($"Land (0x{land.Graphic:X4})  flags: {land.TileData.Flags} stretched: {land.IsStretched}  avgZ: {land.AverageZ} minZ: {land.MinZ}", out written); break;
                 }
             }
 
-            return string.Empty;
+            return written;
         }
 
 

@@ -226,6 +226,18 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>Times <see cref="ChangeFacet"/> switched the facet.</summary>
     public int FacetChanges;
 
+    /// <summary>
+    /// The camera centre that puts the world on the target's pixel grid: the screen origin (viewport centre - centre x scale)
+    /// is made whole, not the centre, so an odd viewport (its centre on a half pixel) draws a world pixel where the FNA passes
+    /// (lights, Legacy) do. A world pixel w lands at viewport / 2 + (w - centre) x scale.
+    /// </summary>
+    public static double SnapCenter(double center, int viewport, float scale)
+    {
+        double half = Math.Max(1, viewport) * 0.5;
+
+        return (half - Math.Round(half - center * scale)) / scale;
+    }
+
     /// <summary>Streaming and the visible chunk list for this camera. Call once per frame before <see cref="Render()"/>.</summary>
     public void Prepare(in WorldCamera cam)
     {
@@ -237,7 +249,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         _jumped = false;
         float scale = _scale = cam.Zoom;
         int pw = Math.Max(1, cam.ViewportWidth), ph = Math.Max(1, cam.ViewportHeight);
-        double cx = Math.Round(cam.CenterX * scale) / scale, cy = Math.Round(cam.CenterY * scale) / scale;
+        double cx = SnapCenter(cam.CenterX, pw, scale), cy = SnapCenter(cam.CenterY, ph, scale);
         _cx = cx; _cy = cy;
         float halfW = pw * 0.5f / scale, halfH = ph * 0.5f / scale;
         _view = new RectI((int)(cx - halfW) - 1, (int)(cy - halfH) - 1, (int)(cx + halfW) + 1, (int)(cy + halfH) + 1);

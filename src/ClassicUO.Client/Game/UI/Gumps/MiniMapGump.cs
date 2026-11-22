@@ -79,17 +79,33 @@ namespace ClassicUO.Game.UI.Gumps
             CreateMiniMapTexture(gumpInfo.Texture, gumpInfo.UV, true);
         }
 
+        // G7: everything that changes state happens here, not in DrawDeferred: closing the gump when its art is missing,
+        // building the map (blank pixel buffers) and rewriting the map texture when the player moved. The draw only draws,
+        // so a per-gump recording (ui_gump_dirty) can treat it as a live node without side effects.
         public override void Update()
         {
+            ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(_useLargeMap ? BIG_MAP_GRAPHIC : SMALL_MAP_GRAPHIC);
+
+            if (gumpInfo.Texture == null)
+            {
+                Dispose();
+
+                return;
+            }
+
             if (!World.InGame)
             {
                 return;
             }
 
-            if (_lastMap != World.MapIndex)
+            if (_lastMap != World.MapIndex || _blankGumpsPixels[_useLargeMap ? 1 : 0] == null)
             {
                 CreateMap();
                 _lastMap = World.MapIndex;
+            }
+            else if (World.Player != null)
+            {
+                CreateMiniMapTexture(gumpInfo.Texture, gumpInfo.UV);
             }
 
             if (_timeMS < Time.Ticks)
@@ -138,31 +154,23 @@ namespace ClassicUO.Game.UI.Gumps
                     _useLargeMap ? BIG_MAP_GRAPHIC : SMALL_MAP_GRAPHIC
                 );
 
+            // Update closes the gump
             if (gumpInfo.Texture == null)
             {
-                Dispose();
-
                 return false;
             }
 
             // Drawn before its first Update (or before the player exists): the blank pixel buffers are built in CreateMap,
-            // which Update has not run yet. Build them now, or draw the empty frame only.
-            if (_blankGumpsPixels[_useLargeMap ? 1 : 0] == null)
+            // which Update has not run yet. Draw the empty frame only.
+            if (_blankGumpsPixels[_useLargeMap ? 1 : 0] == null || !World.InGame || World.Player == null)
             {
-                if (!World.InGame || World.Player == null)
-                {
-                    batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
+                batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
 
-                    return true;
-                }
-
-                CreateMap();
+                return true;
             }
 
+            // Drawn twice as before (the map texture was rewritten between the two draws, which the GPU saw as one state)
             batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
-
-            CreateMiniMapTexture(gumpInfo.Texture, gumpInfo.UV);
-
             batcher.Draw(gumpInfo.Texture, new Vector2(x, y), gumpInfo.UV, hueVector, layerDepth);
 
             if (_draw)

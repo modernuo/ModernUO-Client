@@ -101,7 +101,8 @@ namespace ClassicUO.Game.Managers
         {
             foreach (Gump control in Gumps)
             {
-                if (control.IsModal)
+                // a modal gump closed earlier this frame stays in the list until Update drops it; it no longer blocks input
+                if (control.IsModal && !control.IsDisposed)
                 {
                     return true;
                 }
@@ -243,6 +244,24 @@ namespace ClassicUO.Game.Managers
         public static Control LastControlMouseDown(MouseButtonType button)
         {
             return _mouseDownControls[(int) button];
+        }
+
+        // Control.Dispose: a closed control is dropped from the mouse-down and focus slots at once, so it is neither kept
+        // alive until the next click nor sent FocusLost when another control takes the focus.
+        internal static void OnControlDisposed(Control control)
+        {
+            if (_lastFocus == control)
+            {
+                _lastFocus = null;
+            }
+
+            for (int i = 0; i < (int) MouseButtonType.Size; i++)
+            {
+                if (_mouseDownControls[i] == control)
+                {
+                    _mouseDownControls[i] = null;
+                }
+            }
         }
 
         public static void SavePosition(uint serverSerial, Point point)
@@ -460,13 +479,19 @@ namespace ClassicUO.Game.Managers
 
             if (MouseOverControl != null && gump != MouseOverControl)
             {
-                MouseOverControl.InvokeMouseExit(Mouse.Position);
-
-                if (MouseOverControl.RootParent != null)
+                // a control closed since the last frame gets no Exit (its gump may still be open and does get one)
+                if (!MouseOverControl.IsDisposed)
                 {
-                    if (gump == null || gump.RootParent != MouseOverControl.RootParent)
+                    MouseOverControl.InvokeMouseExit(Mouse.Position);
+                }
+
+                Control root = MouseOverControl.RootParent;
+
+                if (root != null && !root.IsDisposed)
+                {
+                    if (gump == null || gump.RootParent != root)
                     {
-                        MouseOverControl.RootParent.InvokeMouseExit(Mouse.Position);
+                        root.InvokeMouseExit(Mouse.Position);
                     }
                 }
             }

@@ -87,13 +87,13 @@ namespace ClassicUO
                     return _clientBoundsForTests; // a controller from CreateForTests has no window
                 }
 
-                var window_rectangle = window.ClientBounds;
-                return new Rectangle(
-                    window_rectangle.X,
-                    window_rectangle.Y,
-                    (int)((float)(window_rectangle.Width) / DpiScale),
-                    (int)((float)(window_rectangle.Height) / DpiScale)
-                );
+                if (_geometry.UiWidth == 0)
+                {
+                    RefreshGeometry();
+                }
+
+                // the UI target's size (RenderGeometry): the back buffer in UI units, rounded, not truncated
+                return new Rectangle(_windowX, _windowY, _geometry.UiWidth, _geometry.UiHeight);
             }
         }
 
@@ -644,7 +644,12 @@ namespace ClassicUO
             GraphicManager.PreferredBackBufferWidth = width;
             GraphicManager.PreferredBackBufferHeight = height;
             GraphicManager.ApplyChanges();
+            RefreshGeometry();
         }
+
+        // The windowed state before going borderless at runtime, restored when the border comes back.
+        private Rectangle? _windowedBeforeBorderless;
+        private bool _maximizedBeforeBorderless;
 
         public void SetWindowBorderless(bool borderless)
         {
@@ -660,37 +665,72 @@ namespace ClassicUO
                 return;
             }
 
-            SDL_SetWindowBordered(
-                Window.Handle,
-                !borderless
-            );
-            SDL_DisplayMode* displayMode = (SDL_DisplayMode * )SDL_GetCurrentDisplayMode(
-                SDL_GetDisplayForWindow(Window.Handle)
-            );
-
-            int width = displayMode->w;
-            int height = displayMode->h;
+            uint display = SDL_GetDisplayForWindow(Window.Handle);
 
             if (borderless)
             {
-                SetWindowSize(width, height);
-                SDL_GetDisplayUsableBounds(
-                    SDL_GetDisplayForWindow(Window.Handle),
-                    out SDL_Rect rect
-                );
-                SDL_SetWindowPosition(Window.Handle, rect.x, rect.y);
+                _maximizedBeforeBorderless = (flags & SDL_WindowFlags.SDL_WINDOW_MAXIMIZED) != 0;
+
+                // A maximized window keeps its maximized rectangle when the caption goes away: Windows then shows the
+                // content below where the client area starts (the mouse is off by the caption height), and SDL defers
+                // the size and position below until the window is restored. So restore it first.
+                if (_maximizedBeforeBorderless)
+                {
+                    SDL_RestoreWindow(Window.Handle);
+                    SDL_SyncWindow(Window.Handle);
+                }
+                else
+                {
+                    SDL_GetWindowPosition(Window.Handle, out int wx, out int wy);
+                    SDL_GetWindowSize(Window.Handle, out int ww, out int wh);
+                    _windowedBeforeBorderless = new Rectangle(wx, wy, ww, wh);
+                }
+
+                SDL_SetWindowBordered(Window.Handle, false);
+                SDL_GetDisplayBounds(display, out SDL_Rect bounds);
+                SDL_SetWindowSize(Window.Handle, bounds.w, bounds.h);
+                SDL_SetWindowPosition(Window.Handle, bounds.x, bounds.y);
             }
             else
             {
-                SDL_GetWindowBordersSize(Window.Handle, out int top, out _, out int bottom, out _);
+                SDL_SetWindowBordered(Window.Handle, true);
 
-                SetWindowSize(width, height - (top - bottom));
-                SetWindowPositionBySettings();
+                if (_windowedBeforeBorderless is { } before && !_maximizedBeforeBorderless)
+                {
+                    SDL_SetWindowSize(Window.Handle, before.Width, before.Height);
+                    SDL_SetWindowPosition(Window.Handle, before.X, before.Y);
+                }
+                else
+                {
+                    // Started borderless, or maximized before: fill the usable area with the border back.
+                    SDL_MaximizeWindow(Window.Handle);
+                }
+
+                _windowedBeforeBorderless = null;
+                _maximizedBeforeBorderless = false;
             }
+
+            SDL_SyncWindow(Window.Handle);
+            ApplyWindowPixelSize();
+        }
+
+        // The back buffer (and the UI target sized from it) must match the window's real client area: FNA presents the
+        // back buffer stretched over it, and Mouse maps window coordinates through it. FNA forwards the resize event only
+        // while the window has focus, so a change made here (or with the window unfocused) is applied directly.
+        private void ApplyWindowPixelSize()
+        {
+            SDL_GetWindowSizeInPixels(Window.Handle, out int width, out int height);
+
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            SetWindowSize(width, height);
 
             WorldViewportGump viewport = UIManager.GetGump<WorldViewportGump>();
 
-            if (viewport != null && ProfileManager.CurrentProfile.GameWindowFullSize)
+            if (viewport != null && ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.GameWindowFullSize)
             {
                 viewport.ResizeGameWindow(new Point(width, height));
                 viewport.X = -5;
@@ -705,6 +745,7 @@ namespace ClassicUO
             GraphicManager.PreferredBackBufferWidth = Client.Game.Window.ClientBounds.Width;
             GraphicManager.PreferredBackBufferHeight = Client.Game.Window.ClientBounds.Height;
             GraphicManager.ApplyChanges();
+            RefreshGeometry();
         }
 
         public bool IsWindowMaximized()
@@ -777,12 +818,32 @@ namespace ClassicUO
 
         private uint _poolTrimTick;
 
+        // set by the event filter, which may run on another thread; read on the main thread in Update
+        private volatile bool _windowSizeDirty;
+
+        private void SyncBackBufferToWindow()
+        {
+            _windowSizeDirty = false;
+            SDL_GetWindowSizeInPixels(Window.Handle, out int width, out int height);
+
+            if (width > 0 && height > 0
+                && (width != GraphicManager.PreferredBackBufferWidth || height != GraphicManager.PreferredBackBufferHeight))
+            {
+                WindowOnClientSizeChanged(width, height);
+            }
+        }
+
         protected override void Update(GameTime gameTime)
         {
 #if CUO_DEVTOOLS
             if (Diagnostics.On) Diagnostics.Update();
 #endif
             RenderInfoCheck();
+
+            if (_windowSizeDirty)
+            {
+                SyncBackBufferToWindow();
+            }
             FrameStats.Begin(FramePhase.Update);
             FrameStats.Inc(FrameCounter.LoopTicks);
             _updateStartTs = Stopwatch.GetTimestamp();
@@ -842,6 +903,7 @@ namespace ClassicUO
                 SetWindowTitle(_windowTitle);
             }
 
+            RefreshGeometry();
             Mouse.Update();
 
             FrameStats.Begin(FramePhase.Packets);
@@ -1187,12 +1249,8 @@ namespace ClassicUO
             // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
             _renderTargets.PreserveWorldContents = Scene is GameScene;
             _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
-            _renderTargets.EnsureSizes(
-                GraphicsDevice,
-                new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
-                Scene.Camera.Bounds,
-                DpiScale
-            );
+            RefreshGeometry();
+            _renderTargets.EnsureSizes(GraphicsDevice, _geometry);
 
             if (!_loggedWorldTexture && _gpuDevice != IntPtr.Zero && _renderTargets.WorldRenderTarget != null)
             {
@@ -1247,6 +1305,7 @@ namespace ClassicUO
             }
 
             SelectedObject.HealthbarObject = null;
+            SelectedObject.UiSelectedContainerSerial = SelectedObject.SelectedContainer?.Serial ?? 0;
             SelectedObject.SelectedContainer = null;
 
             FrameStats.Begin(FramePhase.UiPass);
@@ -1287,6 +1346,10 @@ namespace ClassicUO
             FrameStats.End(FramePhase.Composite);
 #if CUO_DEVTOOLS
             Game.Scenes.LightFrameLog.AfterComposite(GraphicsDevice, _renderTargets, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight);
+            if (Scene is Game.Scenes.GameScene geomScene)
+            {
+                Game.Scenes.GeometryProbe.AfterComposite(this, _renderTargets, geomScene.Camera.Bounds, geomScene.Camera.Zoom);
+            }
 #endif
 
             if (_worldShotPath != null)
@@ -1433,6 +1496,15 @@ namespace ClassicUO
 
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_REMOVED:
                     Log.Trace($"Audio device removed: {sdlEvent->adevice.which}");
+
+                    break;
+
+                // FNA applies a resize only while the window has focus (and never for PIXEL_SIZE_CHANGED): a resize while
+                // unfocused (a minimum-size change, the OS, a border change) left the back buffer on the old size, presented
+                // stretched with the mouse unscaled. Update compares the two (SyncBackBufferToWindow).
+                case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
+                case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    _windowSizeDirty = true;
 
                     break;
 
@@ -1707,6 +1779,7 @@ namespace ClassicUO
                         );
 
                         _displayScale = DpiScale;
+                        RefreshGeometry();
                     }
                     break;
                 }

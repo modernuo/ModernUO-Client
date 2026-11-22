@@ -275,6 +275,7 @@ namespace ClassicUO.Game
             string arg = sp < 0 ? string.Empty : line.Substring(sp + 1).Trim();
             string[] args = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (ExecuteUiDirty(world, cmd, args)) return true;
+            if (ExecuteGeometry(cmd, args)) return true;
             Item backpack = player.FindItemByLayer(Layer.Backpack);
 
             switch (cmd)

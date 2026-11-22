@@ -9,6 +9,7 @@ using ClassicUO.Renderer;
 using ClassicUO.Resources;
 using Microsoft.Xna.Framework;
 using System;
+using System.Text;
 using System.Xml;
 
 namespace ClassicUO.Game.UI.Gumps
@@ -273,6 +274,34 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
+        private static CompositeFormat _hoursFormat;
+
+        // the countdown under the icon: "+Nhr", "m:ss" or "sss" (two-digit seconds and an s)
+        internal static int FormatTimeLeft(Span<char> destination, TimeSpan span)
+        {
+            int n = 0;
+
+            if (span.Hours > 0)
+            {
+                // once an hour; the resource text decides the layout
+                _hoursFormat ??= CompositeFormat.Parse(ResGumps.Span0Hours);
+                destination.TryWrite(null, _hoursFormat, out n, span.Hours);
+            }
+            else if (span.Minutes > 0)
+            {
+                UiFormat.Put(destination, ref n, span.Minutes);
+                UiFormat.Put(destination, ref n, ":");
+                UiFormat.Put(destination, ref n, span.Seconds, "00");
+            }
+            else
+            {
+                UiFormat.Put(destination, ref n, span.Seconds, "00");
+                UiFormat.Put(destination, ref n, "s");
+            }
+
+            return n;
+        }
+
         private enum GumpDirection
         {
             LEFT_VERTICAL,
@@ -287,6 +316,9 @@ namespace ClassicUO.Game.UI.Gumps
             private bool _decreaseAlpha;
             private readonly RenderedText _gText;
             private float _updateTooltipTime;
+            // G2: the tooltip's fixed part, made once; the time-left formats are parsed once (no boxing per refresh)
+            private readonly string _tooltipText;
+            private static CompositeFormat _timeLeftFormat;
 
             public BuffControlEntry(BuffIcon icon) : base(0, 0, icon.Graphic, 0)
             {
@@ -313,7 +345,8 @@ namespace ClassicUO.Game.UI.Gumps
                 WantUpdateSize = false;
                 CanMove = true;
 
-                SetTooltip(icon.Text + $"\nID: {icon.Type}");
+                _tooltipText = icon.Text + $"\nID: {icon.Type}";
+                SetTooltip(_tooltipText);
             }
 
             public BuffIcon Icon { get; }
@@ -330,28 +363,17 @@ namespace ClassicUO.Game.UI.Gumps
                     {
                         TimeSpan span = TimeSpan.FromMilliseconds(delta);
 
-                        SetTooltip(
-                            string.Format(
-                                ResGumps.TimeLeft,
-                                Icon.Text + $"\nID: {Icon.Type}",
-                                span.Hours,
-                                span.Minutes,
-                                span.Seconds
-                            )
-                        );
+                        _timeLeftFormat ??= CompositeFormat.Parse(ResGumps.TimeLeft);
+                        SetTooltip(string.Format(null, _timeLeftFormat, _tooltipText, span.Hours, span.Minutes, span.Seconds));
 
                         _updateTooltipTime = (float)Time.Ticks + 1000;
 
-                        if (span.Hours > 0)
+                        Span<char> text = stackalloc char[32];
+                        int written = FormatTimeLeft(text, span);
+
+                        if (!text.Slice(0, written).SequenceEqual(_gText.Text))
                         {
-                            _gText.Text = string.Format(ResGumps.Span0Hours, span.Hours);
-                        }
-                        else
-                        {
-                            _gText.Text =
-                                span.Minutes > 0
-                                    ? $"{span.Minutes}:{span.Seconds:00}"
-                                    : $"{span.Seconds:00}s";
+                            _gText.Text = text.Slice(0, written).ToString();
                         }
                     }
 
