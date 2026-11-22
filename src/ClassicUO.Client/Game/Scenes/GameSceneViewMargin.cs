@@ -11,16 +11,16 @@ namespace ClassicUO.Game.Scenes
     {
         private int _lightMargin = -1;
 
-        // view_margin (ViewMargin): the frame's static lights from the chunks' emitter lists (LightEmitters), with the switch
+        // chunk_lights (ChunkLights): the frame's static lights from the chunks' emitter lists (LightEmitters), with the switch
         // on the walk adds none: an emitter the walk drew this frame, and one beside the walked rectangle whose halo reaches
         // into it (with the ground items there, which the walk did not visit). AddLight drops the ones whose halo cannot reach
         // the view. No allocation; per frame it touches the loaded chunks of the band's rectangle, their light lists and their
         // dynamics.
         private void AddChunkLights()
         {
-            bool on = ViewMargin.Enabled;
+            bool on = ChunkLights.Enabled;
 
-            if (!on && !ViewMargin.Check)
+            if (!on && !ChunkLights.Check)
             {
                 return;
             }
@@ -61,7 +61,7 @@ namespace ClassicUO.Game.Scenes
                     {
                         TileListObject obj = chunk.LightSources[i];
 
-                        if (obj.DrawnFrame == _drawFrame && !obj.IsDestroyed)
+                        if (ChunkLights.LightsDrawn(obj.DrawnFrame, _drawFrame, obj.IsDestroyed))
                         {
                             walked++;
 
@@ -115,7 +115,7 @@ namespace ClassicUO.Game.Scenes
             }
 
 #if CUO_DEVTOOLS
-            if (ViewMargin.Check)
+            if (ChunkLights.Check)
             {
                 CheckEdgeLights(on, count, hash, walked, staticData, left, top, right, bottom, margin, cx0, cy0, cx1, cy1);
             }
@@ -310,7 +310,7 @@ namespace ClassicUO.Game.Scenes
 
                 if (_vmMismatches <= 20)
                 {
-                    Log.Warn($"[view-margin-check] drawn emitters in the light lists {walked}, reference walk {refWalked}" +
+                    Log.Warn($"[chunk-lights-check] drawn emitters in the light lists {walked}, reference walk {refWalked}" +
                              (walkedSample != null ? $"; not in its chunk's light list: {walkedSample.GetType().Name} 0x{walkedSample.Graphic:X4} at {walkedSample.X},{walkedSample.Y},{walkedSample.Z}" : ""));
                 }
             }
@@ -321,7 +321,7 @@ namespace ClassicUO.Game.Scenes
 
                 if (_vmMismatches <= 20)
                 {
-                    Log.Warn($"[view-margin-check] edge lights {count} (hash {hash:X8}), reference walk {refCount} (hash {refHash:X8}); " +
+                    Log.Warn($"[chunk-lights-check] edge lights {count} (hash {hash:X8}), reference walk {refCount} (hash {refHash:X8}); " +
                              (sample != null ? $"not in its chunk's light list: {sample.GetType().Name} 0x{sample.Graphic:X4} at {sample.X},{sample.Y},{sample.Z}" : "no static missing from a light list"));
                 }
             }
@@ -329,7 +329,7 @@ namespace ClassicUO.Game.Scenes
             if (Time.Ticks >= _vmSummaryAt)
             {
                 _vmSummaryAt = Time.Ticks + 5000;
-                Log.Info($"[view-margin-check] view_margin {(on ? "on" : "off")}, light margin {margin} px: {_vmFrames} frames, {_vmFramesWithEdge} with edge lights " +
+                Log.Info($"[chunk-lights-check] chunk_lights {(on ? "on" : "off")}, light margin {margin} px: {_vmFrames} frames, {_vmFramesWithEdge} with edge lights " +
                          $"({_vmCandidates} candidates, {(on ? "added up to the cap" : "not added")}), light cap {_frameLights.Limit}: {_vmCapFrames} frames dropped {_vmRefused} lights, most lights offered in a frame {_vmMaxLights}; mismatches {_vmMismatches}");
             }
         }

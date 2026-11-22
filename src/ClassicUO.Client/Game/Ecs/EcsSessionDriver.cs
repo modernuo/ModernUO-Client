@@ -1104,6 +1104,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // chunklights on|off: chunk_lights (ChunkLights; CUO_CHUNK_LIGHTS overrides it)
+                case "chunklights" when args.Length > 0:
+                    Settings.GlobalSettings.ChunkLights = args[0] == "on";
+                    Log.Info($"[ECS] driver: chunk_lights {Settings.GlobalSettings.ChunkLights} (effective {ChunkLights.Enabled})");
+
+                    return false;
+
                 // lightalphafade on|off: light_alpha_fade (LightAlphaFade; CUO_LIGHT_ALPHA_FADE overrides it)
                 case "lightalphafade" when args.Length > 0:
                     Settings.GlobalSettings.LightAlphaFade = args[0] == "on";

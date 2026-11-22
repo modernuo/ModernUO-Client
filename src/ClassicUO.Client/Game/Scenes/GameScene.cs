@@ -1502,8 +1502,8 @@ namespace ClassicUO.Game.Scenes
                 return true;
             }
 
-            // view_margin: a growing list with a safety bound and priorities instead of the classic 100 (ViewMargin)
-            _vmLights = ViewMargin.Enabled;
+            // chunk_lights: a growing list with a safety bound and priorities instead of the classic 100 (ChunkLights)
+            _vmLights = ChunkLights.Enabled;
             ChunkStaticLights = _vmLights;
             _frameLights.BeginFrame(++_lightsFrame, _vmLights ? FrameLights.SafetyBound : LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT, _vmLights);
             Viewport r_viewport = batcher.GraphicsDevice.Viewport;

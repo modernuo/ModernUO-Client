@@ -224,14 +224,18 @@ namespace ClassicUO.Configuration
         // world draws a mobile part whose direction page is not resident as nothing for a frame (the first-turn flash, bg/turn-flash).
         [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; } = true;
 
-        // light-edges (owner 2026-11-21: Deceit's wall torches lit up only once they entered the view; trees beside the view
-        // pop in whole): the view margin. Now: the light pass also takes the light sources up to the largest light's radius
-        // beyond the walked view (the chunks' recorded light statics and multi components, Chunk.LightSources, and the ground
-        // items there), so a halo reaching into the view is drawn before its source is. Next (handoff light-edges): the walk
-        // culls by sprite rects with the chunks' recorded static overhang (Chunk.StaticOver*). CUO_VIEW_MARGIN_CHECK=1
-        // compares the added lights with a walk of those chunks' tile lists in both states; CUO_VIEW_MARGIN=1|0 overrides the
-        // setting in developer builds. Default off.
+        // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
+        // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
+        // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the
+        // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
+
+        // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
+        // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
+        // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose
+        // halo cannot reach the view (ChunkLights). CUO_CHUNK_LIGHTS_CHECK=1 compares the band lights with a walk of those
+        // chunks; CUO_CHUNK_LIGHTS=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("chunk_lights")] public bool ChunkLights { get; set; }
 
         // light-edges: a light's halo is not drawn where another static, multi piece or ground item in front of its source
         // covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a far
