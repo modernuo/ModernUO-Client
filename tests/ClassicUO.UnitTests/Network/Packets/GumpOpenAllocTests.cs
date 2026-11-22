@@ -29,7 +29,7 @@ namespace ClassicUO.UnitTests.Network.Packets
 
         private static readonly System.Reflection.PropertyInfo StaticSocket = typeof(NetClient).GetProperty(nameof(NetClient.Socket))!;
 
-        private readonly GameSeam _seam = new(art: true);
+        private readonly GameSeam _seam = new();
         private readonly ITestOutputHelper _out;
         private readonly object _previousSocket;
 

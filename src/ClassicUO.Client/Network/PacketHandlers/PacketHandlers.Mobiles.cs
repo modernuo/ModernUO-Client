@@ -742,7 +742,8 @@ namespace ClassicUO.Network
                 p.Skip(6);
             }
 
-            uint itemSerial = p.ReadUInt32();
+            // the layout check accepts a packet that ends after the header: an empty list, as with the terminator
+            uint itemSerial = p.Position + 4 <= p.Length ? p.ReadUInt32() : 0;
             int entryCount = 0;
 
             // t3a-fold: the list is read first (before any change), then cleared and worn in one operation

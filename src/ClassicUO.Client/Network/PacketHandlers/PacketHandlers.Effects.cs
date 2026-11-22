@@ -138,7 +138,8 @@ namespace ClassicUO.Network
             ushort xOff = p.ReadUInt16();
             ushort yOff = p.ReadUInt16();
             ushort zOff = p.ReadUInt16();
-            ushort hue = p.ReadUInt16();
+            // the hue word exists from 7.0.9 (30 bytes); older clients get the 26-byte form without it
+            ushort hue = p.Position + 2 <= p.Length ? p.ReadUInt16() : (ushort)0;
 
             world.TargetManager.SetTargetingMulti(targID, multiID, xOff, yOff, zOff, hue);
         }
