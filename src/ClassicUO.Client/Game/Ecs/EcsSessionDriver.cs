@@ -1096,6 +1096,38 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // lightdiag <frames>: LightSlotDiag (what fills the light list, per frame)
+                case "lightdiag" when args.Length > 0 && int.TryParse(args[0], out int diagFrames):
+                    Scenes.LightSlotDiag.Start(diagFrames);
+
+                    return false;
+
+                // winsize <w>x<h>: the window's client area, with the game viewport filling it (as CUO_BENCH_SIZE)
+                case "winsize" when args.Length > 0 && args[0].Split('x') is { Length: 2 } wh && int.TryParse(wh[0], out int winW) && int.TryParse(wh[1], out int winH):
+                {
+                    if (Client.Game.IsWindowMaximized())
+                    {
+                        Client.Game.RestoreWindow();
+                    }
+
+                    Client.Game.SetWindowSize(winW, winH);
+
+                    if (ProfileManager.CurrentProfile is { } sizeProfile)
+                    {
+                        sizeProfile.GameWindowFullSize = true;
+                    }
+
+                    if (UIManager.GetGump<WorldViewportGump>() is { } sizeVp)
+                    {
+                        sizeVp.ResizeGameWindow(new Microsoft.Xna.Framework.Point(Client.Game.Window.ClientBounds.Width, Client.Game.Window.ClientBounds.Height));
+                        sizeVp.SetGameWindowPosition(new Microsoft.Xna.Framework.Point(-5, -5));
+                    }
+
+                    Log.Info($"[ECS] driver: winsize {args[0]}, window {Client.Game.Window.ClientBounds.Width}x{Client.Game.Window.ClientBounds.Height}");
+
+                    return true;
+                }
+
                 // altlights on|off, coloredlights on|off: the profile's light options (DevBench's altlights:)
                 case "altlights" when args.Length > 0 && ProfileManager.CurrentProfile is { } altProfile:
                     altProfile.UseAlternativeLights = args[0] == "on";

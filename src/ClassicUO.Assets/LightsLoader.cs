@@ -29,6 +29,24 @@ namespace ClassicUO.Assets
             return max;
         }
 
+        /// <summary>Light <paramref name="id"/> has a shape the light pass can draw (a light below the classic 100 with a
+        /// non-empty texture): view_margin's emitter tables admit only these.</summary>
+        public bool HasShape(int id) => (uint)id < (uint)Math.Min(MAX_LIGHTS_DATA_INDEX_COUNT, _lights.Length) && _lights[id].Width != 0 && _lights[id].Height != 0;
+
+        /// <summary>Light <paramref name="id"/>'s texture size (0 x 0 without a shape).</summary>
+        public void Extent(int id, out int width, out int height)
+        {
+            if ((uint)id < (uint)_lights.Length)
+            {
+                width = _lights[id].Width;
+                height = _lights[id].Height;
+            }
+            else
+            {
+                width = height = 0;
+            }
+        }
+
         public override void Load()
         {
             (_lights, _data) = LightFile.Read(FileManager.Pack.PathOf(TableConst.LightsFile));

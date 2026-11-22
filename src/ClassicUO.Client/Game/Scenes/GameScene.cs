@@ -469,19 +469,38 @@ namespace ClassicUO.Game.Scenes
 
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
+#if CUO_DEVTOOLS
+            if (LightSlotDiag.Armed)
+            {
+                byte outcome = AddLightCore(obj, lightObject, x, y);
+
+                if (outcome != 1)
+                {
+                    LightSlotDiag.Record(obj, lightObject, x, y, outcome, outcome == LightSlotDiag.Added ? _frameLights[_frameLights.Count - 1].ID : (byte)255);
+                }
+
+                return;
+            }
+#endif
+            AddLightCore(obj, lightObject, x, y);
+        }
+
+        // 0 added, 1 lights off, 2 refused by the cap, 3 hidden by an object above, 4 light index out of range (LightSlotDiag)
+        private byte AddLightCore(GameObject obj, GameObject lightObject, int x, int y)
+        {
             if (
                 !UseLights && !UseAltLights
                 || obj == null
             )
             {
-                return;
+                return 1;
             }
 
             if (_frameLights.Full)
             {
                 _frameLights.Refused++;
 
-                return;
+                return 2;
             }
 
             bool canBeAdded = true;
@@ -609,7 +628,7 @@ namespace ClassicUO.Game.Scenes
 
                 if (light.ID >= LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT)
                 {
-                    return;
+                    return 4;
                 }
 
                 if (light.Color != 0)
@@ -620,7 +639,11 @@ namespace ClassicUO.Game.Scenes
                 light.DrawX = x;
                 light.DrawY = y;
                 _frameLights.Commit();
+
+                return 0;
             }
+
+            return 3;
         }
 
         private void FillGameObjectList()
@@ -1709,6 +1732,14 @@ namespace ClassicUO.Game.Scenes
             // view_margin: the light sources beside the walked view whose halo reaches into it (ViewMargin)
             AddEdgeLights();
             int lightCount = _frameLights.CountFor(_lightsFrame);
+#if CUO_DEVTOOLS
+            if (LightSlotDiag.Armed)
+            {
+                Point vMin = Camera.ScreenToWorld(Point.Zero);
+                Point vMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
+                LightSlotDiag.EndFrame(vMin.X, vMin.Y, vMax.X, vMax.Y, lightCount);
+            }
+#endif
 #if CUO_DEVTOOLS
             _lightTargetMode = UseAltLights ? 2 : 1;
 #endif
