@@ -218,5 +218,29 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 l.Commit(FrameLights.Priority(x, y, 0, 0, 100, 100, 50, 50));
             }
         }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_new_frame_keeps_no_source_of_an_earlier_frame(bool ranked)
+        {
+            // light_occlusion (review P2 #7): entries past the new frame's count kept the sources of earlier frames alive
+            var lights = new FrameLights(4);
+            lights.BeginFrame(1, 4, ranked);
+
+            for (int i = 0; i < 6; i++)
+            {
+                ref FrameLights.Entry e = ref lights.Next();
+                e.Source = ClassicUO.Game.GameObjects.Land.NewForRecycler(null);
+                lights.Commit(i);
+            }
+
+            lights.BeginFrame(2, 4, ranked);
+
+            for (int i = 0; i < lights.Capacity; i++)
+            {
+                lights[i].Source.Should().BeNull();
+            }
+        }
     }
 }
