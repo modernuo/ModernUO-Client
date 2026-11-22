@@ -8731,3 +8731,25 @@ Owner-approved items from surveys/upstream-2026-11-22.md (not verdata). One code
 - **UI over world text (e3e10e9da, test).** Already right for both renderers: world text is drawn only in GameScene.DrawUI inside the renderer-independent UI pass, before the gumps. Source tests pin the order. No scenario file (nothing changed on screen).
 - **Grid container search (impl/ecs e65f15e2e): not applicable.** This client has no grid container view (only GridLootGump, which has no search or sort).
 - **Costs.** None: no switch, no per-frame path touched.
+
+## 2026-11-22 render-order-1: depth_model flats floored at their back edges (bg/render-order-1)
+
+Spot 2 (owner, Moonglow bank roof, depth_model on): reproduced on both renderers (bench-001047, bench-001049); key mode
+(depth_model off) is correct there. Root cause: GeoDepth.Static / sprite.hlsl GEO_FLAT / IsometricWorld.fx class 4 gave a flat
+its plane less FlatDrop (1.5 tile sums). Art of the tile behind that hangs over the flat (the parapet 0x0162 at 4462 z 20, the
+lower storey's wall top at z 0, the planter walls 0x0080 under the flowers) has the wall model's back-edge depth, up to 2 sums
+more than the flat's plane there, so it beat the lowered flat in a sawtooth, one diamond per tile; upright Background
+height-0 art (flowers) lost to the planter walls on its own tile.
+
+- **Fix (e9f42627b, code + tests).** A flat is max(plane - FlatDrop, x + y + |s|): never behind its own tile's back edges
+  (static flats, and flat land through a new GEO_LAND class on the Gpu; Legacy land already uses class 4). Feet hanging over
+  the floor ahead are capped by their tile's front faces, which that floor's back edges tie, so they still win by MobileBias.
+  Beside its own tile (|s| > 1: wide mounts) a mobile's lower rows were capped at the billboard and would have been cut; they
+  now take the side neighbours' front faces (GeoDepth.FrontFaces, all three mirrors). Wet flats with wet_surface_depth keep
+  plane - WetDrop, no floor (own class: GEO_FLATWET, Legacy 6). With wet_surface_depth off, water now cuts a submerged
+  mobile 18 px above its centre row instead of 7 (true 40). Stretched land is not floored (no free Legacy vertex field).
+- **Evidence.** Gpu depth_model on vs off at the roof: 22704 -> 987 px (Legacy 1034); south pose 37964 -> 3019; key mode 0 px
+  changed. measure/render-order-1/evidence. Clip regression captures (c4-feet base/new, c4-multis) were queued at handoff.
+- **Tests.** DepthModelFlatFloorTests (fails on the base: the roof and the flowers), updated DepthModel/LegacyDepthModel/
+  WetSurfaceDepth tests. ClassicUO.UnitTests dev 8653 passed / 6 skipped, CuoDevTools=false 8255 / 6.
+- **Costs.** One max() per flat pixel and an fmod per mobile pixel in the geo PS, Legacy the same; no switch, no allocation.
