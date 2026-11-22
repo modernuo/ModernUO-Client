@@ -41,7 +41,7 @@ namespace ClassicUO.Game.UI.Controls
             Height = _gText.Height;
         }
 
-        public Label(List<string> parts, string[] lines) : this
+        public Label(GumpArgs parts, string[] lines) : this
         (
             int.TryParse(parts[4], out int lineIndex) && lineIndex >= 0 && lineIndex < lines.Length ? lines[lineIndex] : string.Empty,
             true,

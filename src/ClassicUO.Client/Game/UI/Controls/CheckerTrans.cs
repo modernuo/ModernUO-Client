@@ -54,7 +54,7 @@ namespace ClassicUO.Game.UI.Controls
         //    AcceptMouseInput = false;
         //}
 
-        public CheckerTrans(List<string> parts)
+        public CheckerTrans(GumpArgs parts)
         {
             X = int.Parse(parts[1]);
             Y = int.Parse(parts[2]);

@@ -6,6 +6,7 @@ using ClassicUO.Network;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
+using System;
 using System.Collections.Generic;
 
 namespace ClassicUO.Game.UI.Controls
@@ -110,7 +111,7 @@ namespace ClassicUO.Game.UI.Controls
             IsFromServer = true;
         }
 
-        public GumpPic(List<string> parts)
+        public GumpPic(GumpArgs parts)
             : this(
                 int.Parse(parts[1]),
                 int.Parse(parts[2]),
@@ -119,7 +120,7 @@ namespace ClassicUO.Game.UI.Controls
                     parts.Count > 4
                         ? TransformHue(
                             (ushort)(
-                                UInt16Converter.Parse(parts[4].Substring(parts[4].IndexOf('=') + 1))
+                                UInt16Converter.Parse(parts[4].Slice(parts[4].IndexOf('=') + 1))
                                 + 1
                             )
                         )
@@ -172,7 +173,7 @@ namespace ClassicUO.Game.UI.Controls
     {
         private readonly World _world;
 
-        public VirtueGumpPic(World world, List<string> parts) : base(parts)
+        public VirtueGumpPic(World world, GumpArgs parts) : base(parts)
         {
             _world = world;
         }
@@ -213,7 +214,7 @@ namespace ClassicUO.Game.UI.Controls
             IsFromServer = true;
         }
 
-        public GumpPicInPic(List<string> parts)
+        public GumpPicInPic(GumpArgs parts)
             : this(
                 int.Parse(parts[1]),
                 int.Parse(parts[2]),

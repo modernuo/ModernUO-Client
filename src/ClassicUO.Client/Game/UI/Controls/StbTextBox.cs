@@ -97,10 +97,10 @@ namespace ClassicUO.Game.UI.Controls
             Height = _rendererCaret.Height;
         }
 
-        public StbTextBox(List<string> parts, string[] lines) : this
+        public StbTextBox(GumpArgs parts, string[] lines) : this
         (
             1,
-            parts[0] == "textentrylimited" ? int.Parse(parts[8]) : byte.MaxValue,
+            parts.Is(0, "textentrylimited") ? int.Parse(parts[8]) : byte.MaxValue,
             int.Parse(parts[3]),
             style: FontStyle.BlackBorder | FontStyle.CropTexture,
             hue: (ushort) (UInt16Converter.Parse(parts[5]) + 1)

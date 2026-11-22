@@ -51,12 +51,12 @@ namespace ClassicUO.Game.UI.Controls
             AcceptMouseInput = true;
         }
 
-        public Checkbox(List<string> parts, string[] lines)
+        public Checkbox(GumpArgs parts, string[] lines)
             : this(ushort.Parse(parts[3]), ushort.Parse(parts[4]))
         {
             X = int.Parse(parts[1]);
             Y = int.Parse(parts[2]);
-            IsChecked = parts[5] == "1";
+            IsChecked = parts.Is(5, "1");
             LocalSerial = SerialHelper.Parse(parts[6]);
             IsFromServer = true;
         }
