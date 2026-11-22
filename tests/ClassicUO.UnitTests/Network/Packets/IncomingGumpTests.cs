@@ -148,6 +148,53 @@ namespace ClassicUO.UnitTests.Network.Packets
             world.Items.Get(BAG).Opened.Should().BeTrue();
         }
 
+        // 7.0.60+ with large container gumps on: a container whose large gump exists opens that one, the others keep theirs
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void OpenContainer_0x24_Large_Container_Gumps_From_7_0_60(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            GameSeam.UseVersion("7.0.60.0");
+            World world = WithBag();
+            Setup(world, Equip(ITEM, 0x0E7C, Layer.Bank, PLAYER));
+            ClassicUO.Configuration.ProfileManager.CurrentProfile.UseLargeContainerGumps = true;
+            _seam.Resident(0x06E8, 230, 200); // the large backpack; 0x0049's large gump (0x9CDF) is not in the pack
+
+            NoDisconnect(PacketPipe.Deliver(world, mode, read, compressed,
+                new PacketBuilder(0x24, false).U32(BAG).U16(0x0048).U16(0x007D).Build(),
+                new PacketBuilder(0x24, false).U32(ITEM).U16(0x0049).U16(0x007D).Build()), 2);
+
+            Open<ContainerGump>().Select(g => (g.LocalSerial, g.Graphic)).Should().BeEquivalentTo(new[] { (BAG, (ushort)0x06E8), (ITEM, (ushort)0x0049) });
+        }
+
+        private const uint CORPSE = 0x4000_0300;
+
+        // grid loot 1: the corpse opens no container gump; the first item the server puts in it opens the grid loot gump.
+        // Grid loot 2: both.
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void OpenContainer_0x24_Corpse_With_Grid_Loot_Opens_The_Grid_On_Its_Contents(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            foreach (int gridLoot in new[] { 1, 2 })
+            {
+                UIManager.Gumps.Clear();
+                World world = InGame();
+                ClassicUO.Configuration.ProfileManager.CurrentProfile.GridLootType = gridLoot;
+                Setup(world, new PacketBuilder(0x1A, true).U32(CORPSE).U16(0x2006).U16(100).U16(200).I8(0).Build());
+
+                NoDisconnect(PacketPipe.Deliver(world, mode, read, compressed,
+                    new PacketBuilder(0x24, false).U32(CORPSE).U16(0x0009).U16(0x007D).Build()), 1);
+
+                Open<GridLootGump>().Should().BeEmpty("the grid waits for the corpse's contents");
+                Open<ContainerGump>().Should().HaveCount(gridLoot == 2 ? 1 : 0);
+
+                NoDisconnect(PacketPipe.Deliver(world, mode, read, compressed, Contained(ITEM, 0x0EED, 5, CORPSE), Contained(ITEM2, 0x0EED, 1, CORPSE)), 2);
+
+                Open<GridLootGump>().Should().ContainSingle($"grid loot {gridLoot}: one grid for both items").Which.LocalSerial.Should().Be(CORPSE);
+                Open<ContainerGump>().Should().HaveCount(gridLoot == 2 ? 1 : 0);
+                world.Items.Get(CORPSE).Opened.Should().Be(gridLoot == 2, "grid loot 1 returns before the corpse is marked opened");
+            }
+        }
+
         // ---- 0x74 buy list + 0x24 0x0030 vendor window
 
         [Theory]
@@ -398,6 +445,8 @@ namespace ClassicUO.UnitTests.Network.Packets
         public void Menu_0x7C_With_Pictures_Opens_A_Menu_Gump(SpanBufferMode mode, PipeRead read, bool compressed)
         {
             World world = InGame();
+            _seam.ResidentArt(0x0EED, 20, 30);
+            _seam.ResidentArt(0x0F0E, 25, 50);
 
             NoDisconnect(PacketPipe.Deliver(world, mode, read, compressed,
                 new PacketBuilder(0x7C, true).U32(ITEM).U16(5).U8(4).Ascii("Menu", 4).U8(2)
@@ -406,6 +455,10 @@ namespace ClassicUO.UnitTests.Network.Packets
             var menu = Open<MenuGump>().Should().ContainSingle().Subject;
             menu.LocalSerial.Should().Be(ITEM);
             menu.ServerSerial.Should().Be(5u);
+            // items side by side, each centred in the 47-high strip unless taller
+            Descendants(menu).Where(c => c.GetType().Name == "ItemView")
+                .Select(c => $"{c.X},{c.Y} {c.Width}x{c.Height} {c.Tooltip}")
+                .Should().Equal("0,8 20x30 abc", "20,0 25x50 de");
         }
 
         [Theory]

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
@@ -11,10 +12,9 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Network.Packets
 {
-    // Login packets (0xA8, 0xA9, 0x82, 0x53, 0x85) on a LoginScene that is current but not loaded (GameSeam +
+    // Login packets (0xA8, 0xA9, 0x86, 0x82, 0x53, 0x85, 0xFD) on a LoginScene that is current but not loaded (GameSeam +
     // SetSceneForTests: no UI, no music), the whole receive path, every read mode, compressed or not, span_reader off and on.
-    // Not here: 0x8C (the relay connects a real socket), 0x86 (it builds the character selection gump), 0x1B and 0x55 (they
-    // need a GameScene with its camera), 0xFD (a 7.0.104 packet; the pipe runs 7.0.13).
+    // Not here: 0x8C (the relay connects a real socket), 0x1B (IncomingSceneTests), 0x55 (it loads a GameScene).
     [Collection(nameof(SpanBuffersCollection))]
     public sealed class IncomingLoginTests : IDisposable
     {
@@ -160,6 +160,49 @@ namespace ClassicUO.UnitTests.Network.Packets
 
             r.Disconnects.Should().Be(0);
             scene.CurrentLoginStep.Should().Be(LoginSteps.CharacterCreation);
+        }
+
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void CharacterListUpdate_0x86_Replaces_The_Names_And_Shows_The_Selection(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            var (world, scene) = AtLogin();
+            scene.PopupMessage = "stale";
+
+            byte[] update = CharList("Avatar", "", "Blackthorn", "", "").Build();
+            update[0] = 0x86; // the same body as 0xA9's character part
+
+            var r = PacketPipe.Deliver(world, mode, read, compressed, update, update);
+
+            r.Packets.Should().Be(2);
+            r.Disconnects.Should().Be(0);
+            scene.Characters.Should().Equal("Avatar", "", "Blackthorn", "", "");
+            scene.CurrentLoginStep.Should().Be(LoginSteps.CharacterSelection);
+            scene.PopupMessage.Should().BeNull("a popup is dropped unless the popup step is current");
+            UIManager.Gumps.OfType<ClassicUO.Game.UI.Gumps.Login.CharacterSelectionGump>().Should()
+                .ContainSingle(g => !g.IsDisposed, "the second update replaces the first selection gump");
+            r.Sent.Should().BeEmpty();
+        }
+
+        // 0xFD exists from 7.0.104 (2 bytes); the seam runs that version here, so the pipe frames it with that table
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void LoginDelay_0xFD_Feeds_The_Next_Rejection(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            GameSeam.UseVersion("7.0.104.0");
+            var (world, scene) = AtLogin();
+
+            var r = PacketPipe.Deliver(world, mode, read, compressed, new PacketBuilder(0xFD, false).U8(3).Build());
+
+            r.Packets.Should().Be(1);
+            r.Disconnects.Should().Be(0, r.Reason);
+            scene.LoginDelay.Should().Be((20, 30));
+
+            r = PacketPipe.Deliver(world, mode, read, compressed, new PacketBuilder(0x53, false).U8(13).Build());
+
+            r.Disconnects.Should().Be(0, r.Reason);
+            scene.PopupMessage.Should().Be(ServerErrorMessages.GetError(0x53, 13, (20, 30)), "code 13 names the delay");
+            scene.LoginDelay.Should().Be(default((int, int)), "a rejection uses the delay once");
         }
 
         [Theory]
