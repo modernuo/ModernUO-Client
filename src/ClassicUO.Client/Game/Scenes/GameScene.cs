@@ -1495,8 +1495,10 @@ namespace ClassicUO.Game.Scenes
                 }
                 else
                 {
-                    // the light target keeps the held frame's lights
-                    InitializeRenderTargets(renderTargets);
+                    // the light target keeps the held frame's lights, and the composite keeps the configuration they were
+                    // drawn for: setting it from this frame's light state composited the held target in another mode when the
+                    // state changed during the hold (leaving a dark dungeon into daylight through a teleporter: the held
+                    // darkness map, black with orange torch halos, alpha-blended over the world, light-edges)
 #if CUO_DEVTOOLS
                     LightFrameLog.OnHeld();
 #endif
