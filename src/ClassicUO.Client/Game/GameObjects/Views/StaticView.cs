@@ -30,6 +30,11 @@ namespace ClassicUO.Game.GameObjects
             return r;
         }
 
+        /// <summary>The graphic Draw draws for <paramref name="graphic"/>: a tree's stump with the profile's TreeToStumps
+        /// (light_occlusion's masks use it too).</summary>
+        internal static ushort DrawnGraphic(ushort graphic, bool isTree) =>
+            isTree && ProfileManager.CurrentProfile.TreeToStumps ? Constants.TREE_REPLACE_GRAPHIC : graphic;
+
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
             if (Map.MapObjectRecycler.Check && InRecycler)
@@ -71,10 +76,7 @@ namespace ClassicUO.Game.GameObjects
             bool cot = !isTree && !ItemData.IsFoliage && TransparentTest(World.Player.Z + 5);
             Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, partial, AlphaHue / 255f, circletrans: cot);
 
-            if (isTree && ProfileManager.CurrentProfile.TreeToStumps)
-            {
-                graphic = Constants.TREE_REPLACE_GRAPHIC;
-            }
+            graphic = DrawnGraphic(graphic, isTree);
 
             DrawStaticAnimated(
                 batcher,

@@ -532,6 +532,9 @@ namespace ClassicUO.Game.Scenes
             int testX = obj.X + 1;
             int testY = obj.Y + 1;
 
+            // light_occlusion keeps this whole-light rejection for now (review P1 #3, round 5): it hides the lit windows under
+            // a roof eave (Moonglow house by the street lamps), whose glow the cover test alone drew over the roof in front.
+            // It goes when the occluder rule hides glow over intervening faces, not only over the light point
             TileListObject tile = _world.Map.GetTile(testX, testY);
 
             if (tile != null)
@@ -662,6 +665,10 @@ namespace ClassicUO.Game.Scenes
 
                 light.DrawX = x;
                 light.DrawY = y;
+                light.Source = obj;
+                light.SrcX = obj.X;
+                light.SrcY = obj.Y;
+                light.SrcZ = obj.Z;
 
                 if (_vmLights)
                 {
@@ -1831,12 +1838,16 @@ namespace ClassicUO.Game.Scenes
                 LightFrameLog.OnLightPass(true, UseLights, UseAltLights, _world.Light.IsometricLevel, lightCount, h, _offset.X, _offset.Y);
             }
 #endif
+            // light_occlusion: the stencil the occluders of each light are written to (LightOcclusion)
+            BeginLightOcclusion(batcher.GraphicsDevice);
             batcher.Begin(null, matrix);
+            BeginLightOcclusionBatch(batcher);
             batcher.SetBlendState(BlendState.Additive);
 
             Vector3 hue = Vector3.Zero;
 
             hue.Z = 1f;
+            bool stencilSet = false;
 
             for (int i = 0; i < lightCount; i++)
             {
@@ -1856,20 +1867,20 @@ namespace ClassicUO.Game.Scenes
                             : ShaderHueTranslator.SHADER_LIGHTS
                         : ShaderHueTranslator.SHADER_NONE;
 
-                batcher.Draw(
-                    lightInfo.Texture,
-                    new Vector2(
-                        l.DrawX - lightInfo.UV.Width * 0.5f,
-                        l.DrawY - lightInfo.UV.Height * 0.5f
-                    ),
-                    lightInfo.UV,
-                    hue,
-                    0f
-                );
+                DrawLight(batcher, ref matrix, ref l, in lightInfo, hue, ref stencilSet);
             }
 
+            if (stencilSet)
+            {
+                batcher.SetStencil(null);
+            }
+
+            EndLightOcclusionBatch(batcher);
             batcher.SetBlendState(null);
             batcher.End();
+#if CUO_DEVTOOLS
+            LightOcclusionSummary();
+#endif
 #if CUO_DEVTOOLS
             if (GeometryProbe.Active)
             {

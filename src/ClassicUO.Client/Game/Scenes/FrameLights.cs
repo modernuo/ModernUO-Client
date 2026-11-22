@@ -17,6 +17,12 @@ namespace ClassicUO.Game.Scenes
             public bool IsHue;
             public int DrawX,
                 DrawY;
+
+            // light_occlusion: the source (its own emitter: the glow passes through it) and its tile (LightOcclusion)
+            public GameObjects.GameObject Source;
+            public ushort SrcX,
+                SrcY;
+            public sbyte SrcZ;
         }
 
         /// <summary>view_margin: the safety bound on one frame's lights. The list grows to its high-water mark and is reused
@@ -62,6 +68,13 @@ namespace ClassicUO.Game.Scenes
         /// otherwise the limit is clamped to the entries allocated and the frame refuses lights past it.</summary>
         public void BeginFrame(uint frame, int limit, bool ranked = false)
         {
+            // light_occlusion: no source kept past the frame that collected it (review P2 #7); the scratch entry too
+            for (int i = 0, end = System.Math.Min(_count + 1, _entries.Length); i < end; i++)
+            {
+                _entries[i].Source = null;
+            }
+
+            _entries[_entries.Length - 1].Source = null;
             _frame = frame;
             _count = 0;
             _ranked = ranked;
