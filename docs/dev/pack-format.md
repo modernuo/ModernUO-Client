@@ -27,6 +27,7 @@ The format version is 1. `FileHeader.version` and the manifest `version` are bot
   tileart.bin              paperdoll appearances from tileart.uop (TART)
   equipconv.bin            Equipconv.def (EQCV)
   layerrules.bin           equipment layering rules (LAYR); optional, see layer-rules.md
+  lightclass.bin           light shape classes: surface glow or radial (LCLS); optional
   skills.bin               skills.mul + Skills.idx: a string-list store (SKLS); required since revision 1.2
   skillgrp.bin             skillgrp.mul: group names and per-skill group numbers (SKGR); optional
   multimap.bin             Multimap.rle and facet0*.mul: a record store of their RLE streams (MMAP); optional
@@ -87,6 +88,7 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `TART` 0x54524154 | tileart.bin |
 | `EQCV` 0x56435145 | equipconv.bin |
 | `LAYR` 0x5259414C | layerrules.bin (optional) |
+| `LCLS` 0x534C434C | lightclass.bin (optional) |
 | `ANIM` 0x4D494E41 | anim/anim.bin |
 | `APAL` 0x4C415041 | anim/palettes.bin |
 | `ANDT` 0x54444E41 | anim/animdata.bin |
@@ -411,6 +413,18 @@ At runtime, an equipped item on body `body` with animId `graphic` is drawn as `n
 
 ClassicUO's hard-coded equipment layering (the draw order, the cloak move by facing, the covering rules and the gargoyle remaps) as data: magic `LAYR`, a `LayerRulesHeader` of six i32 counts, then body groups, base draw-order tables, rules, conditions and ranges. The converter writes it from `Uo.Pack.LayerRulesDefault.Create()`, or from a JSON file given with `--layer-rules` (stage `layers`, no install data), and a client whose pack has no such file uses the same `Create()`. The client reads it while the `ecs_layer_rules` setting is on (the default). The full layout, the evaluation rules, the setting and the checker are in [layer-rules.md](layer-rules.md).
 
+### `lightclass.bin` (optional)
+
+`FileHeader` (magic `LCLS`, Kind 0), `count i32` (at most 256), then `u8 class[count]`, index = light id (the tiledata light id, the same index as `lights.bin`). Classes: 0 unlisted, 1 radial, 2 surface (`Uo.Pack.LightClass`, reader and writer `Uo.Pack.LightClassFile`, `src/Uo.Pack/LightClasses.cs`). The reader checks the magic, version, Kind 0, the count, the file length and every class value.
+
+- A **surface** glow is light thrown onto a surface: a lit window's beam on the floor, a window pane's own glow. With the client switch `light_alpha_fade` on, it is drawn at its emitter's drawn alpha (circle of transparency, roof fade), so a hidden wall leaves no glow.
+- A **radial** glow surrounds its source (lamps, torches, wall torches, sconces, candles, braziers, fireplaces, ovens, moongates). It keeps full light whatever happens to its emitter's sprite.
+- An **unlisted** shape (not in the table, or a pack without the file) is decided by the emitter: a surface glow when its tiledata has the Wall or Window flag, else radial.
+
+Stage `lightclass` of `tools/Uo.Converter` writes the file. It reads nothing from the install. By default it writes `LightClassFile.Seed()`, the classes of the standard `light.mul` shapes 0..55 (surface: 3, 4, 22..28, 37..42, 44..46; radial: every other standard shape, including 0, whose tiledata users are sconces, fire columns and runes; 43 and 56..255 unlisted). A shard with its own light shapes gives `--light-classes <file.json>`; `--export-light-classes <file.json>` writes the seed as a starting point. The JSON is `{ "lightClasses": 1, "surface": [ids], "radial": [ids] }`; unknown keys, ids outside 0..255 and an id in both lists are refused. The verify step compares the file with the run's JSON, or with the seed, and prints `EXACT` or fails with `MISMATCH`; a pack without the file passes (it is optional).
+
+A client whose pack has no `lightclass.bin` loads it as before; every shape is then unlisted. There is no built-in table in the client: the seed lives only in the converter's output.
+
 ## Skills, skill groups, multimap, string dictionary
 
 The last binary files the client read from the UO folder. `skills.bin` is required: every supported install, from 4.0.11c on, has skills.mul and Skills.idx, so the converter fails without them and the client refuses a pack without `skills.bin`. The others are optional: the converter writes one only when the install has the source file (a stale copy from an earlier run is removed), and a client whose pack lacks it behaves as it did without the file. Reader and writer: `src/Uo.Pack/MiscData.cs`.
@@ -630,7 +644,7 @@ camelCase JSON, read case-insensitively (`Uo.Pack.Manifest`):
 
 - No install-time unpacking is required. A patcher may rewrite any file to Kind 0, since raw is always valid.
 - Compression and page flags: `--raw-pages`, `--compress-pages` (the default, chunked), `--chunk-bytes n`, `--raw-regions`, `--page-size n`, `--anim-page-size n`, `--raw-gumps`, `--gump-small n`, `--raw-text`, `--text-small n`, `--cliloc-compress`, `--zstd-level n` (default 19; other levels are for size and time comparisons, any level is valid for a reader), `--zstd-checksum` (appends zstd's 4-byte content checksum to every frame; off in the ship profile; readers verify it when present). Experimental page formats (`--format rgba8|bc7`, `--anim-format page`) exist for measurement and are not part of the format.
-- Stages: `--only art,tex,hues,tiledata,data,layers,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music`, `--verify-only`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin`); `tiledata` writes `tiledata.bin` (and deletes a stale `tiledata_ext.bin`); `data` writes multis, lights, tileart and equipconv; `layers` writes `layerrules.bin`; `fonts` writes `text/fonts.bin` and `text/unifont.bin`; `sounds` and `music` write the audio stores; `skills` writes `skills.bin` and `skillgrp.bin`; `multimap`, `stringdict` and `loose` write the files of their names; `animdata.bin` belongs to `anims`.
+- Stages: `--only art,tex,hues,tiledata,data,layers,lightclass,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music`, `--verify-only`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin`); `tiledata` writes `tiledata.bin` (and deletes a stale `tiledata_ext.bin`); `data` writes multis, lights, tileart and equipconv; `layers` writes `layerrules.bin`; `lightclass` writes `lightclass.bin`; `fonts` writes `text/fonts.bin` and `text/unifont.bin`; `sounds` and `music` write the audio stores; `skills` writes `skills.bin` and `skillgrp.bin`; `multimap`, `stringdict` and `loose` write the files of their names; `animdata.bin` belongs to `anims`.
 - **Outputs are replaced, never written in place.** Every pack file the converter writes goes to a temp file in the same folder (`.<name>.<guid>.replacing.tmp`), which is then moved over the target (`Uo.Pack.ReplacingFile`). Replacing the directory entry breaks a hard link instead of writing through it, so a test pack built by hard-linking a published pack's files and then converting `--only <stages>` leaves the published files untouched. A failed write deletes its temp file and leaves the target as it was; the manifest skips leftover temp files.
 - **Published packs are refused as output.** The converter and the pack tools refuse an output folder that is, lies under, or contains a published-packs root (`Uo.Pack.PublishedPacks`). Roots are a built-in default root, the `UO_PACKS_ROOTS` environment variable (`;`-separated), every `--packs-root <dir>` argument, and any ancestor folder holding a `CURRENT` file that names one of its subfolders. Paths are compared in canonical form (symlinks, junctions and drive aliases collapse to one path). When the relationship cannot be established, the write is refused. `--verify-only` only reads, so it may verify a published pack.
 - **No recursive deletes.** A full conversion deletes only the files the previous output's `manifest.json` lists (plus crashed-writer temp files beside them and the manifest itself); a non-empty `--out` without a manifest is refused. `--only anims` deletes the `*.bin` files directly in `anim/`.
