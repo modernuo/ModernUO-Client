@@ -763,5 +763,95 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 }
             }
         }
+
+        [TileDataPackTheory]
+        [MemberData(nameof(SurfaceOnlyArms))]
+        public void Malas_fire_fields_are_not_masked_by_the_fire_fields_in_front_with_surface_only(bool surfaceOnly, bool withTable)
+        {
+            // round 7 (owner 2026-11-22, Malas 1030 520 -53, light_occlusion on): dark patches flickered inside the fire fields'
+            // glow. Each fire field 0x3996 (map static, z -70, height 12, light 2, Animation | LightSource | Damaging: an occluder
+            // by tiledata) is its own radial light; the fire fields on the next rows in front cover its light point with their
+            // flame art, so their pixels were masked out of its glow, and the animated frame (GameObject.StaticArt) changes the
+            // covered pixels every frame. Surface only: fire fields are radial, no masks
+            PackArt pack = PackArt.Get();
+            byte[] table = withTable ? LightClassFile.Seed() : Array.Empty<byte>();
+            var scene = MapStatics(3, 1024, 510, 1040, 530);
+            var fields = scene.Where(o => o.Graphic == 0x3996).ToList();
+            Assert.True(fields.Count >= 6, $"fire fields {fields.Count}");
+            // the animation frames' art ids (anim/animdata.bin): the light point is taken from the source's drawn frame and the
+            // cover from the occluder's (GameScene.CollectOccluders)
+            AnimDataEntry anim = AnimDataFile.Read(Path.Combine(TileDrawOracleTests.PackDir(), "anim", "animdata.bin")).First(e => e.Graphic == 0x3996);
+            ReadOnlySpan<sbyte> offsets = anim.Frames;
+            var frames = new List<ushort>();
+
+            for (int i = 0; i < anim.FrameCount; i++)
+            {
+                frames.Add((ushort)(0x3996 + offsets[i]));
+            }
+
+            Assert.True(frames.Distinct().Count() > 1, "fire field not animated");
+            int coveringPairs = 0, pairs = 0;
+
+            foreach (Obj field in fields)
+            {
+                Assert.False(Surface(pack, field, table), $"{field}");
+                // surface only: no occluders whatever the frames; off: the occluders of the base frame, as before
+                var masked = Masked(pack, field, scene, surfaceOnly, table);
+
+                if (surfaceOnly)
+                {
+                    Assert.Empty(masked);
+                }
+                else
+                {
+                    Assert.Equal(Occluders(pack, field, scene), masked);
+                }
+
+                foreach (Obj front in fields.Where(o => o.X - field.X + o.Y - field.Y > 0 && Math.Abs(o.X - field.X) <= 2 && Math.Abs(o.Y - field.Y) <= 2))
+                {
+                    foreach (ushort fs in frames)
+                    {
+                        foreach (ushort fo in frames)
+                        {
+                            pairs++;
+
+                            if (LightOcclusion.Masks(surfaceOnly, Surface(pack, field, table)) && FrameHides(pack, field, fs, front, fo))
+                            {
+                                coveringPairs++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            _output.WriteLine($"fire fields {fields.Count}, frames {string.Join(",", frames.Select(f => f.ToString("X4")))}: " +
+                              $"{coveringPairs} of {pairs} (source frame, front field frame) pairs mask the glow");
+
+            if (surfaceOnly)
+            {
+                Assert.Equal(0, coveringPairs);
+            }
+            else
+            {
+                // some frame pairs cover the light point, others do not: the mask flickers with the animation
+                Assert.InRange(coveringPairs, 1, pairs - 1);
+            }
+        }
+
+        // the front fire field drawn at frame fo hides the glow of src drawn at frame fs (LightOcclusion.Hides with the cover
+        // test on the frames' art, as GameScene.StaticOccluder after GameObject.StaticArt)
+        private static bool FrameHides(PackArt pack, Obj src, ushort fs, Obj front, ushort fo)
+        {
+            var (sax, say) = Anchor(src);
+            var a = pack.Art(fs);
+            LightOcclusion.LightPoint(sax, say, a.W, a.H, a.BX, a.BY, a.BW, a.BH, out int px, out int py);
+            int srcTop = LightOcclusion.SourceTop(pack.Statics[src.Graphic].Height, say, py);
+            var oa = pack.Art(fo);
+            var (ax, ay) = Anchor(front);
+            bool covers = oa.W != 0 && LightOcclusion.CoverPoint(ax, ay, oa.W, oa.H, px, py, out int lx, out int ly) && pack.Pixel(fo, lx, ly);
+            ref StaticTiles data = ref pack.Statics[front.Graphic];
+
+            return LightOcclusion.Hides(true, false, front.X - src.X, front.Y - src.Y, front.Z - src.Z, srcTop, ref data, covers);
+        }
     }
 }
