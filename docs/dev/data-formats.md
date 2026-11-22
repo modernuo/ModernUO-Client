@@ -69,6 +69,7 @@ The table lists what each stage reads and the pack file it writes. Layouts of th
 | `hues` | `hues.mul`, `radarcol.mul` | `hues_raw.bin`, `radarcol.bin` |
 | `data` | multis, `light.mul`, `tileart.uop`, `Equipconv.def` | `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin` |
 | `layers` | nothing from the install | `layerrules.bin` |
+| `lightclass` | nothing from the install (`--light-classes <file.json>` if given) | `lightclass.bin` |
 | `gumps` | gump archive, `gump.def`, loose `Gumps/*.gump` | `gumps/gumps.bin` |
 | `fonts` | `fonts.mul`, `unifont*.mul` | `text/fonts.bin`, `text/unifont.bin` |
 | `cliloc` | `Cliloc.*`, `Clilocs.txt` | `text/cliloc.bin` |
@@ -142,6 +143,7 @@ Art, texmaps and gump pages are stored as `B5G5R5A1` by default (`--format`). Tr
 ### 3.10 Lights
 
 - Reads `light.mul` and `lightidx.mul`. The texels are written as read to `lights.bin`, with each light's width and height from the index.
+- `lightclass.bin`: which light shapes are surface glows (a lit window's beam) and which are radial (lamps, torches), written by the `lightclass` stage from the standard shapes' seed or the shard's `--light-classes` JSON. It reads nothing from the install. A shard whose `light.mul` has other shapes at the standard ids, or new shapes, lists them in the JSON. Ids, classes and the JSON form: pack-format.md, "lightclass.bin".
 
 ### 3.11 Sounds and music
 
@@ -229,13 +231,14 @@ Uo.Converter --uo <uo-install> --out <pack-out> [options]
 
 | Option | Meaning |
 |---|---|
-| `--only a,b,c` | Convert only these stages into an existing pack and keep every other file. Names: `art`, `tex`, `hues`, `tiledata`, `data`, `layers`, `gumps`, `fonts`, `cliloc`, `speech`, `sounds`, `music`, `skills`, `multimap`, `stringdict`, `loose`, `maps`, `anims`. An unknown name is accepted and does nothing. |
+| `--only a,b,c` | Convert only these stages into an existing pack and keep every other file. Names: `art`, `tex`, `hues`, `tiledata`, `data`, `layers`, `lightclass`, `gumps`, `fonts`, `cliloc`, `speech`, `sounds`, `music`, `skills`, `multimap`, `stringdict`, `loose`, `maps`, `anims`. An unknown name is accepted and does nothing. |
 | `--anims-only` | Same as `--only anims`. |
 | `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music` | Skip that stage in a full run. Ignored when `--only` is given. |
 | `--verify-only` | Convert nothing; verify the pack in `--out`. |
 | `--facets 0,1` | Convert only these facets. |
 | `--body-choices <bodies.json>` | The shard's body choices (bodies.md). Used only when anims are converted; otherwise it is ignored with a warning. |
 | `--bodies <ids>` | Limit animation frame conversion to these bodies (debugging). |
+| `--light-classes <file.json>` | The shard's light shape classes (pack-format.md, "lightclass.bin"). Used only when `lightclass` is converted; otherwise it is ignored with a warning. `--export-light-classes <file.json>` writes the standard shapes' seed and exits. |
 
 With `--only`, the converter does not clear the output folder. If `--format` is not given, it takes the page format and compression from the first existing art page, so the new sections match the pack being extended. A run that does not rebuild the anims keeps the previous manifest's `bodies` record. If maps are not part of an `--only` run, the previous manifest's facets are kept.
 

@@ -7,14 +7,15 @@ using ClassicUO.Configuration;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// view_margin (light-edges, default off): the world beyond the walked view that can still reach it. The walk culls each
-    /// object by its anchor against the view padded by one tile (GetViewPort: _minPixel/_maxPixel), but a light's halo reaches
-    /// up to half the largest light texture (175 px in the classic lights) past its source, so a wall torch just outside the
-    /// view lit up only when it entered it. With the switch on, GameScene.AddChunkLights adds the light sources whose anchor is
-    /// in the band between that rectangle and the rectangle grown by <see cref="LightMargin"/>: the chunks' recorded light
-    /// statics and multi components (Chunk.LightSources) and their ground items, without walking those tiles.
-    /// CUO_VIEW_MARGIN_CHECK=1 compares that set with a walk of every tile list and dynamic of the same chunks, every frame,
-    /// in both states (off: what the margin would add). The pure geometry lives here for the unit tests.
+    /// The world beyond the walked view that can still reach it. The walk culls each object by its anchor against the view
+    /// padded by one tile (GetViewPort: _minPixel/_maxPixel), but a light's halo reaches up to half the largest light texture
+    /// (175 px in the classic lights) past its source and tall art reaches the view from beside it.
+    /// view_margin (light-edges, default off; <see cref="Enabled"/>) is the sprite margin: the walk grows by the chunks' art
+    /// reach. Its light part is chunk_lights since round 6c (<see cref="ChunkLights"/>): GameScene.AddChunkLights adds the
+    /// light sources whose anchor is in the band between that rectangle and the rectangle grown by <see cref="LightMargin"/>
+    /// (the chunks' recorded light statics and multi components, Chunk.LightSources, and their ground items) and every
+    /// emitter the walk drew. CUO_VIEW_MARGIN_CHECK=1 checks the sprite margin, CUO_CHUNK_LIGHTS_CHECK=1 the band lights.
+    /// The pure geometry lives here for the unit tests.
     /// </summary>
     internal static class ViewMargin
     {

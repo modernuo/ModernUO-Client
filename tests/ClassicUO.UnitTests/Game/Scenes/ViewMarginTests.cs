@@ -113,6 +113,48 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
         }
 
+        // round W2a: zoomed out (Camera.ScreenToWorld scales the 1280 x 720 view about its centre) the chunk pass still visits
+        // the chunk of every tile whose anchor is in the walked rectangle grown by the light margin
+        [Theory]
+        [InlineData(1f)]
+        [InlineData(2.5f)]
+        [InlineData(4f)]
+        public void Zoomed_out_view_keeps_every_light_tile_in_a_touched_chunk(float zoom)
+        {
+            const int w = 1280, h = 720, margin = 175;
+            int px = 4462, py = 1169;
+            int offX = (px - py) * 22 - w / 2, offY = (px + py) * 22 - h / 2;
+            int left = (int)(w / 2f - w / 2f * zoom) - 44 - margin, right = (int)(w / 2f + w / 2f * zoom) + 44 + margin;
+            int top = (int)(h / 2f - h / 2f * zoom) - 44 - margin, bottom = (int)(h / 2f + h / 2f * zoom) + 44 + margin;
+            ViewMargin.Bands(left, top, right, bottom, offX, offY, out int dLo, out int dHi, out int sLo, out int sHi);
+            ViewMargin.ChunkRange(dLo, dHi, sLo, sHi, out int cx0, out int cy0, out int cx1, out int cy1);
+            int seen = 0;
+
+            for (int x = px - 160; x <= px + 160; x++)
+            {
+                for (int y = py - 160; y <= py + 160; y++)
+                {
+                    foreach (int z in new[] { -128, 0, 40, 127 })
+                    {
+                        ViewMargin.Anchor(x, y, z, offX, offY, out int ax, out int ay);
+
+                        if (ax < left || ax > right || ay < top || ay > bottom)
+                        {
+                            continue;
+                        }
+
+                        seen++;
+                        int cx = x >> 3, cy = y >> 3;
+                        Assert.InRange(cx, cx0, cx1);
+                        Assert.InRange(cy, cy0, cy1);
+                        Assert.True(ViewMargin.ChunkTouches(cx, cy, dLo, dHi, sLo, sHi), $"zoom {zoom}: tile {x},{y},{z} chunk {cx},{cy}");
+                    }
+                }
+            }
+
+            Assert.True(seen > 0);
+        }
+
         [Fact]
         public void Chunk_light_list_follows_placement_removal_and_teardown()
         {

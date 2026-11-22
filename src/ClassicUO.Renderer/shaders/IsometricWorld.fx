@@ -9,6 +9,8 @@
 #define SHADOW 8
 #define LIGHTS 9
 #define EFFECT_HUED 10
+// light_alpha_fade (LightAlphaFade): a light occluder's stencil mask, kept where the alpha beats a Bayer 4x4 threshold
+#define DITHER_MASK 11
 #define GUMP 20
 
 const static float3 LIGHT_DIRECTION = float3(0.0f, 1.0f, 1.0f);
@@ -187,6 +189,18 @@ float4 PixelShader_Hue(PS_INPUT IN) : COLOR0
 			if (alpha < 0.02f)
 				discard;
 		}
+	}
+
+	if (mode == DITHER_MASK)
+	{
+		// screen pixel from the clip position (as the circle above): mask coverage = alpha in sixteenths, the same pixels every frame
+		float2 p = fmod(floor((IN.PixelPos.xy * 0.5 + 0.5) * Viewport), 4.0);
+		float2 lo = fmod(p, 2.0);
+		float2 hi = floor(p * 0.5);
+		float rank = 4.0 * (2.0 * abs(lo.x - lo.y) + lo.y) + 2.0 * abs(hi.x - hi.y) + hi.y;
+
+		if (alpha * 16.0 <= rank + 0.5)
+			discard;
 	}
 
 	return color * alpha;

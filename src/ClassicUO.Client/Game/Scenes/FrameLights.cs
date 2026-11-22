@@ -23,6 +23,9 @@ namespace ClassicUO.Game.Scenes
             public ushort SrcX,
                 SrcY;
             public sbyte SrcZ;
+
+            // light_range: the share of the light drawn (range fade x budget fade; 1 with the switch off)
+            public float Share;
         }
 
         /// <summary>view_margin: the safety bound on one frame's lights. The list grows to its high-water mark and is reused
@@ -58,6 +61,9 @@ namespace ClassicUO.Game.Scenes
         /// lights replaced or not taken past the bound).</summary>
         public int Refused;
 
+        /// <summary>light_range's checker: the smallest priority a ranked frame dropped past its bound (long.MaxValue: none).</summary>
+        public long MinRefusedPriority = long.MaxValue;
+
         public ref Entry this[int index] => ref _entries[index];
 
         /// <summary>A drawn frame starts: the lights of earlier frames are dropped.</summary>
@@ -80,6 +86,7 @@ namespace ClassicUO.Game.Scenes
             _ranked = ranked;
             _limit = ranked ? System.Math.Max(limit, 0) : System.Math.Clamp(limit, 0, _entries.Length - 1);
             Refused = 0;
+            MinRefusedPriority = long.MaxValue;
         }
 
         /// <summary>The next free entry (past a ranked frame's bound: a scratch entry); <see cref="Commit()"/> keeps it.
@@ -135,6 +142,53 @@ namespace ClassicUO.Game.Scenes
             {
                 _entries[worst] = _entries[_limit];
                 _priority[worst] = priority;
+            }
+
+            MinRefusedPriority = System.Math.Min(MinRefusedPriority, worstP);
+        }
+
+        /// <summary>A ranked frame's priority of entry <paramref name="index"/>.</summary>
+        public long PriorityAt(int index) => _priority[index];
+
+        /// <summary>light_range: the <paramref name="ranks"/> kept entries of largest priority (the lowest ranked) get their
+        /// share times LightRange.BudgetShare by rank from the lowest. Partial selection in rank order, O(count x ranks), no
+        /// state: ties are ordered by index. Ranked frames only.</summary>
+        public void FadeLowest(int ranks)
+        {
+            if (!_ranked)
+            {
+                return;
+            }
+
+            ranks = System.Math.Min(ranks, _count);
+            long prevP = long.MaxValue;
+            int prevI = int.MaxValue;
+
+            for (int r = 0; r < ranks; r++)
+            {
+                int best = -1;
+                long bestP = long.MinValue;
+
+                for (int i = 0; i < _count; i++)
+                {
+                    long p = _priority[i];
+
+                    // below the previous pick in (priority, index) order, and the largest such
+                    if ((p < prevP || p == prevP && i < prevI) && (p > bestP || p == bestP && i > best))
+                    {
+                        bestP = p;
+                        best = i;
+                    }
+                }
+
+                if (best < 0)
+                {
+                    return;
+                }
+
+                _entries[best].Share *= LightRange.BudgetShare(r, ranks);
+                prevP = bestP;
+                prevI = best;
             }
         }
 
