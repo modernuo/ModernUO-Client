@@ -706,9 +706,10 @@ namespace ClassicUO.Assets
                         {
                             if (int.TryParse(a.Slice(1), out int id1))
                             {
-                                var ss = GetString(id1);
-
-                                if (string.IsNullOrEmpty(ss))
+                                // TryGetString, not GetString: a missing argument cliloc is left empty, as this check
+                                // meant; GetString's "missing" placeholder (with its own ~1_val~ ~2_val~) would land
+                                // inside the sentence
+                                if (!TryGetString(id1, out string ss) || string.IsNullOrEmpty(ss))
                                 {
                                     a = string.Empty.AsSpan();
                                 }

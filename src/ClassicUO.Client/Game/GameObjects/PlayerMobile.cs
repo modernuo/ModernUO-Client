@@ -593,6 +593,14 @@ namespace ClassicUO.Game.GameObjects
             return true;
         }
 
+        /// <summary>
+        /// The delay <see cref="Walk"/> puts before the next request after a step that moves (a turn uses
+        /// <see cref="MovementSpeed.TurnDelay"/>): the mounted pace while riding, in a fast-unmount speed mode or flying.
+        /// Read from the live state at every request, so a dismount restores the walking pace at the next step.
+        /// </summary>
+        internal ushort StepRequestDelay(bool run) =>
+            (ushort) MovementSpeed.TimeToCompleteMovement(run, IsMounted || SpeedMode == CharacterSpeedType.FastUnmount || SpeedMode == CharacterSpeedType.FastUnmountAndCantRun || IsFlying);
+
         public bool Walk(Direction direction, bool run)
         {
             if (Walker.WalkingFailed || Walker.LastStepRequestTime > Time.Ticks || Walker.StepsCount >= Constants.MAX_STEP_COUNT || Client.Game.UO.Version >= ClientVersion.CV_60142 && IsParalyzed)
@@ -658,7 +666,7 @@ namespace ClassicUO.Game.GameObjects
                     y = newY;
                     z = newZ;
 
-                    walkTime = (ushort) MovementSpeed.TimeToCompleteMovement(run, IsMounted || SpeedMode == CharacterSpeedType.FastUnmount || SpeedMode == CharacterSpeedType.FastUnmountAndCantRun || IsFlying);
+                    walkTime = StepRequestDelay(run);
                 }
             }
             else
@@ -682,7 +690,7 @@ namespace ClassicUO.Game.GameObjects
                     y = newY;
                     z = newZ;
 
-                    walkTime = (ushort) MovementSpeed.TimeToCompleteMovement(run, IsMounted || SpeedMode == CharacterSpeedType.FastUnmount || SpeedMode == CharacterSpeedType.FastUnmountAndCantRun || IsFlying);
+                    walkTime = StepRequestDelay(run);
                 }
 
                 direction = newDir;
