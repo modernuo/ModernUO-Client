@@ -29,19 +29,6 @@ namespace ClassicUO.Network
 
         private static uint _requestedGridLoot;
 
-        private static readonly TextFileParser _parser = new TextFileParser(
-            string.Empty,
-            new[] { ' ' },
-            new char[] { },
-            new[] { '{', '}' }
-        );
-        private static readonly TextFileParser _cmdparser = new TextFileParser(
-            string.Empty,
-            new[] { ' ', ',' },
-            new char[] { },
-            new[] { '@', '@' }
-        );
-
         private readonly OplRequestList _oplList = new OplRequestList();
         private OplRequestQueue _oplQueue;
         private static readonly OplBatchSink s_oplSink = SendOplBatch;
@@ -77,10 +64,17 @@ namespace ClassicUO.Network
         public int PartialPacketWaits { get; private set; }
 
         /// <summary>Bytes received but not yet dispatched (a packet split across reads). Main thread.</summary>
-        internal int PendingBytes => _buffer.Length;
+        internal int PendingBytes => _lastRing?.ReadableBytes ?? _buffer.Length;
 
         public int ParsePackets(NetClient socket, World world, Span<byte> data)
         {
+            NetRing ring = socket.ReceiveRing;
+
+            if (ring != null)
+            {
+                return ParseRing(socket, world, ring);
+            }
+
             lock (_queueLock)
             {
                 SyncGenerations(socket.ConnectionGeneration);
@@ -96,6 +90,197 @@ namespace ClassicUO.Network
 
             return ParseQueue(socket, world);
         }
+
+        // net_ring: the ring the last parse read (PendingBytes)
+        private NetRing _lastRing;
+
+        // net_ring (NetRings): packets are framed in the receive ring, read in place by the handler and released after it
+        // returns (only Drain writes the ring, and no handler drains). A connection change while a handler runs leaves the
+        // packet unreleased: SyncRing drops it with the rest of the old stream.
+        private int ParseRing(NetClient socket, World world, NetRing ring)
+        {
+            _lastRing = ring;
+            socket.SyncRing();
+            Span<byte> slice = socket.TakeRingSlice();
+#if CUO_DEVTOOLS
+            bool check = NetRings.CheckOn;
+
+            if (check)
+            {
+                lock (_queueLock)
+                {
+                    SyncGenerations(socket.ConnectionGeneration);
+
+                    if (!slice.IsEmpty)
+                    {
+                        _buffer.Enqueue(slice);
+                        NetRings.CheckedSlices++;
+                    }
+                }
+            }
+
+            if (Diagnostics.On && !slice.IsEmpty) _diagReads.Enqueue(slice.Length, socket.DiagReadTimestamp);
+#endif
+            int packetsCount = 0;
+
+            while (true)
+            {
+                socket.SyncRing();
+                Span<byte> span = ring.GetReadSpan();
+
+                if (span.IsEmpty)
+                {
+                    break;
+                }
+
+                byte packetID = span[0];
+                int packetlength = socket.PacketsTable.GetPacketLength(packetID);
+                int offset = 1;
+
+                if (packetlength == -1)
+                {
+                    if (span.Length < 3)
+                    {
+                        PartialPacketWaits++;
+
+                        break;
+                    }
+
+                    packetlength = (span[1] << 8) | span[2];
+                    offset = 3;
+                }
+
+                if (packetlength < offset)
+                {
+                    Log.Error($"Malformed packet ID: {packetID:X2} | off: {offset} | len: {packetlength}; dropping the connection");
+                    ring.DiscardReadable();
+                    socket.ProtocolError();
+
+                    break;
+                }
+
+                if (span.Length < packetlength)
+                {
+                    PartialPacketWaits++;
+
+                    break;
+                }
+
+                Span<byte> packet = span.Slice(0, packetlength);
+#if CUO_DEVTOOLS
+                long diagRead = 0, diagDequeued = 0;
+                int diagPingIndex = -1;
+
+                if (check)
+                {
+                    CheckRingPacket(socket, packet);
+                }
+
+                if (Diagnostics.On)
+                {
+                    diagRead = _diagReads.Dequeue(packetlength);
+
+                    if (packetlength == 2 && packet[0] == 0x73)
+                    {
+                        diagPingIndex = packet[1];
+                        diagDequeued = System.Diagnostics.Stopwatch.GetTimestamp();
+                    }
+                }
+#endif
+                PacketLogger.Default?.Log(packet, false);
+                int generation = socket.ConnectionGeneration;
+                bool dispatched;
+#if CUO_DEVTOOLS
+                var previousDispatch = Diagnostics.On ? Diagnostics.EnterDispatch(socket.Statistics,
+                    packetlength == 2 && packet[0] == 0x73 && packet[1] == diagPingIndex ? diagPingIndex : -1,
+                    diagRead, diagDequeued) : default;
+                var trace = Trace;
+                trace?.BeginPacket(packet);
+                try
+                {
+#endif
+                    dispatched = AnalyzePacket(socket, world, packet, offset);
+#if CUO_DEVTOOLS
+                }
+                finally
+                {
+                    trace?.EndPacket(world);
+                    if (Diagnostics.On) Diagnostics.LeaveDispatch(previousDispatch);
+                }
+#endif
+                if (socket.ConnectionGeneration == generation)
+                {
+                    ring.CommitRead(packetlength);
+                }
+
+                ++packetsCount;
+
+                if (!dispatched)
+                {
+                    break;
+                }
+            }
+#if CUO_DEVTOOLS
+
+            if (check)
+            {
+                CheckRingLeftover(socket, ring);
+            }
+
+            NetRings.LogSummary();
+            SpanBuffers.LogSummary();
+#endif
+
+            return packetsCount;
+        }
+#if CUO_DEVTOOLS
+
+        // CUO_NET_RING_CHECK: the CircularBuffer path, fed the same slices, must frame the same packet next
+        private void CheckRingPacket(NetClient socket, ReadOnlySpan<byte> packet)
+        {
+            lock (_queueLock)
+            {
+                SyncGenerations(socket.ConnectionGeneration);
+                NetRings.CheckedPackets++;
+
+                if (!GetPacketInfo(socket, _buffer, _buffer.Length, out byte id, out int offset, out int length) || length < offset || _buffer.Length < length)
+                {
+                    NetRings.Mismatch($"ring framed 0x{packet[0]:X2} ({packet.Length} bytes); the CircularBuffer path had no whole packet ({_buffer.Length} bytes queued)");
+                    _buffer.Clear();
+
+                    return;
+                }
+
+                while (length > _readingBuffer.Length)
+                {
+                    Array.Resize(ref _readingBuffer, _readingBuffer.Length * 2);
+                }
+
+                _buffer.Dequeue(_readingBuffer, 0, length);
+
+                if (length != packet.Length || !packet.SequenceEqual(_readingBuffer.AsSpan(0, length)))
+                {
+                    NetRings.Mismatch($"ring framed 0x{packet[0]:X2} ({packet.Length} bytes); the CircularBuffer path framed 0x{id:X2} ({length} bytes) with {(length == packet.Length ? "different bytes" : "another length")}");
+                }
+            }
+        }
+
+        // after a parse both paths hold the same unframed tail, so a packet cannot land in a different frame
+        private void CheckRingLeftover(NetClient socket, NetRing ring)
+        {
+            lock (_queueLock)
+            {
+                SyncGenerations(socket.ConnectionGeneration);
+                socket.SyncRing();
+
+                if (_buffer.Length != ring.ReadableBytes)
+                {
+                    NetRings.Mismatch($"after the parse the ring holds {ring.ReadableBytes} bytes, the CircularBuffer path {_buffer.Length}");
+                    _buffer.Clear();
+                }
+            }
+        }
+#endif
 
         // A new connection (or the end of one) starts with empty queues: half a packet from the old stream must not be
         // glued to the first bytes of the next one. Must be called with _queueLock held.

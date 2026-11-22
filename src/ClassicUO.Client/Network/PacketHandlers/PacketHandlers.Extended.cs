@@ -245,13 +245,7 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x14: // display popup/context menu
-                    UIManager.ShowGamePopup(
-                        new PopupMenuGump(world, PopupMenuData.Parse(ref p))
-                        {
-                            X = world.DelayedObjectClickManager.LastMouseX,
-                            Y = world.DelayedObjectClickManager.LastMouseY
-                        }
-                    );
+                    GumpFactory.OpenPopupMenu(world, PopupMenuData.Parse(ref p));
 
                     break;
 
@@ -604,8 +598,7 @@ namespace ClassicUO.Network
                     bool isfemale = p.ReadBoolean();
                     byte race = p.ReadByte();
 
-                    UIManager.GetGump<RaceChangeGump>()?.Dispose();
-                    UIManager.Add(new RaceChangeGump(world, isfemale, race));
+                    GumpFactory.OpenRaceChange(world, isfemale, race);
                     break;
 
                 case 0x2B:

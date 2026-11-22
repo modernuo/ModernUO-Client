@@ -44,17 +44,7 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                UIManager.GetGump<SpellbookGump>(serial)?.Dispose();
-
-                SpellbookGump spellbookGump = new SpellbookGump(world, spellBookItem);
-
-                if (!UIManager.GetGumpCachePosition(spellBookItem, out Point location))
-                {
-                    location = new Point(64, 64);
-                }
-
-                spellbookGump.Location = location;
-                UIManager.Add(spellbookGump);
+                GumpFactory.OpenSpellbook(world, spellBookItem);
 
                 Client.Game.Audio.PlaySound(0x0055);
             }
@@ -67,29 +57,7 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                UIManager.GetGump<ShopGump>(serial)?.Dispose();
-
-                ShopGump gump = new ShopGump(world, serial, true, 150, 5);
-                UIManager.Add(gump);
-
-                for (Layer layer = Layer.ShopBuyRestock; layer < Layer.ShopBuy + 1; layer++)
-                {
-                    Item item = vendor.FindItemByLayer(layer);
-
-                    // T2: the shop's list from the ECS (reversed unless 0x2AF8: hardcoded logic in original client that we must match)
-                    bool backwards = item.Graphic != 0x2AF8;
-                    ReadOnlySpan<uint> shopContents = world.State.Contents(item.Serial);
-
-                    for (int k = 0; k < shopContents.Length; k++)
-                    {
-                        Item it = world.FindItem(shopContents[backwards ? shopContents.Length - 1 - k : k]);
-
-                        if (it != null)
-                        {
-                            gump.AddItem(it.Serial, it.Graphic, it.Hue, it.Amount, it.Price, it.Name, false);
-                        }
-                    }
-                }
+                GumpFactory.OpenVendorShop(world, vendor);
             }
             else
             {
@@ -115,120 +83,7 @@ namespace ClassicUO.Network
                         }
                     }
 
-                    ContainerGump container = UIManager.GetGump<ContainerGump>(serial);
-                    bool playsound = false;
-                    int x,
-                        y;
-
-                    // TODO: check client version ?
-                    if (
-                        Client.Game.UO.Version >= Utility.ClientVersion.CV_706000
-                        && ProfileManager.CurrentProfile != null
-                        && ProfileManager.CurrentProfile.UseLargeContainerGumps
-                    )
-                    {
-                        var gumps = Client.Game.UO.Gumps;
-
-                        switch (graphic)
-                        {
-                            case 0x0048:
-                                if (gumps.GetGump(0x06E8).Texture != null)
-                                {
-                                    graphic = 0x06E8;
-                                }
-
-                                break;
-
-                            case 0x0049:
-                                if (gumps.GetGump(0x9CDF).Texture != null)
-                                {
-                                    graphic = 0x9CDF;
-                                }
-
-                                break;
-
-                            case 0x0051:
-                                if (gumps.GetGump(0x06E7).Texture != null)
-                                {
-                                    graphic = 0x06E7;
-                                }
-
-                                break;
-
-                            case 0x003E:
-                                if (gumps.GetGump(0x06E9).Texture != null)
-                                {
-                                    graphic = 0x06E9;
-                                }
-
-                                break;
-
-                            case 0x004D:
-                                if (gumps.GetGump(0x06EA).Texture != null)
-                                {
-                                    graphic = 0x06EA;
-                                }
-
-                                break;
-
-                            case 0x004E:
-                                if (gumps.GetGump(0x06E6).Texture != null)
-                                {
-                                    graphic = 0x06E6;
-                                }
-
-                                break;
-
-                            case 0x004F:
-                                if (gumps.GetGump(0x06E5).Texture != null)
-                                {
-                                    graphic = 0x06E5;
-                                }
-
-                                break;
-
-                            case 0x004A:
-                                if (gumps.GetGump(0x9CDD).Texture != null)
-                                {
-                                    graphic = 0x9CDD;
-                                }
-
-                                break;
-
-                            case 0x0044:
-                                if (gumps.GetGump(0x9CE3).Texture != null)
-                                {
-                                    graphic = 0x9CE3;
-                                }
-
-                                break;
-                        }
-                    }
-
-                    if (container != null)
-                    {
-                        x = container.ScreenCoordinateX;
-                        y = container.ScreenCoordinateY;
-                        container.Dispose();
-                    }
-                    else
-                    {
-                        world.ContainerManager.CalculateContainerPosition(serial, graphic);
-                        x = world.ContainerManager.X;
-                        y = world.ContainerManager.Y;
-                        playsound = true;
-                    }
-
-                    UIManager.Add(
-                        new ContainerGump(world, item, graphic, playsound)
-                        {
-                            X = x,
-                            Y = y,
-                            InvalidateContents = true
-                        }
-                    );
-
-                    UIManager.RemovePosition(serial);
+                    GumpFactory.OpenContainer(world, item, graphic);
                 }
                 else
                 {

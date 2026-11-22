@@ -25,6 +25,44 @@ abstract class SocketWrapper : IDisposable
     /// </summary>
     public abstract int Read(byte[] buffer);
 
+    private byte[] _limitScratch, _sendScratch;
+
+    /// <summary>
+    /// Reads at most <paramref name="count"/> bytes into <paramref name="buffer"/> (net_ring: what still fits in the receive
+    /// ring). The base version goes through an exact-size scratch array; TcpSocketWrapper reads in place.
+    /// </summary>
+    public virtual int Read(byte[] buffer, int count)
+    {
+        if (count >= buffer.Length)
+        {
+            return Read(buffer);
+        }
+
+        if (_limitScratch == null || _limitScratch.Length != count)
+        {
+            _limitScratch = new byte[count];
+        }
+
+        int n = Read(_limitScratch);
+        Array.Copy(_limitScratch, buffer, n);
+
+        return n;
+    }
+
+    /// <summary>Sends every byte of <paramref name="data"/> (net_ring: straight from the send ring). The base version copies through a 4 KB array.</summary>
+    public virtual void Send(ReadOnlySpan<byte> data)
+    {
+        _sendScratch ??= new byte[4096];
+
+        while (!data.IsEmpty)
+        {
+            int n = Math.Min(data.Length, _sendScratch.Length);
+            data.Slice(0, n).CopyTo(_sendScratch);
+            Send(_sendScratch, 0, n);
+            data = data.Slice(n);
+        }
+    }
+
     /// <summary>Bytes ready to read (diagnostics only).</summary>
     public virtual int Available => 0;
 

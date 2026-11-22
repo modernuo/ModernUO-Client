@@ -128,19 +128,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            ShopGump gump = UIManager.GetGump<ShopGump>();
-
-            if (gump != null && (gump.LocalSerial != vendor || !gump.IsBuyGump))
-            {
-                gump.Dispose();
-                gump = null;
-            }
-
-            if (gump == null)
-            {
-                gump = new ShopGump(world, vendor, true, 150, 5);
-                UIManager.Add(gump);
-            }
+            GumpFactory.OpenBuyList(world, vendor);
 
             if (container.Layer == Layer.ShopBuyRestock || container.Layer == Layer.ShopBuy)
             {
@@ -233,9 +221,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            ShopGump gump = UIManager.GetGump<ShopGump>(vendor);
-            gump?.Dispose();
-            gump = new ShopGump(world, vendor, false, 100, 0);
+            var items = new SellItemData[countItems];
 
             for (int i = 0; i < countItems; i++)
             {
@@ -265,10 +251,10 @@ namespace ClassicUO.Network
                 //if (string.IsNullOrEmpty(item.Name))
                 //    item.Name = name;
 
-                gump.AddItem(serial, graphic, hue, amount, price, name, fromcliloc);
+                items[i] = new SellItemData(serial, graphic, hue, amount, price, name, fromcliloc);
             }
 
-            UIManager.Add(gump);
+            GumpFactory.OpenSellList(world, vendor, items);
         }
     }
 }

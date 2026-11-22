@@ -46,6 +46,29 @@ namespace ClassicUO
 
         }
 
+        /// <summary>Test seam (see Client.UseForTests): the fields Load sets that packet handlers read, without loading anything.</summary>
+        internal void SetForTests(ClientVersion version, string versionText, UOFileManager fileManager, GameCursor cursor)
+        {
+            Version = version;
+            VersionText = versionText;
+            FileManager = fileManager;
+            GameCursor = cursor;
+        }
+
+        /// <summary>
+        /// Test seam: the renderer's asset front ends on the real loaders of <see cref="FileManager"/>, without a graphics device.
+        /// An asset the loaders have no pixels for is missing (no texture), as in a pack without it; one with pixels would need a device,
+        /// so the test passes the gump front end it built and makes the gumps it needs resident (Renderer.Gumps.Gump.SetResidentForTests).
+        /// </summary>
+        internal void SetRendererForTests(Renderer.Gumps.Gump gumps)
+        {
+            Arts = new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, null);
+            Gumps = gumps;
+            MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, null);
+            Animations = new Renderer.Animations.Animations(FileManager.Animations, null);
+            FontGlyphAtlas = new Renderer.FontGlyphAtlas(FileManager.Fonts, null);
+        }
+
         public unsafe void Load(GameController game)
         {
             LoadUOFiles();
@@ -236,6 +259,12 @@ namespace ClassicUO
     internal static class Client
     {
         public static GameController Game { get; private set; }
+
+        /// <summary>
+        /// Test seam: installs a GameController made by <see cref="GameController.CreateForTests"/> (no window, device or audio)
+        /// so packet handlers that reach Client.Game run in unit tests. Run never calls it.
+        /// </summary>
+        internal static void UseForTests(GameController game) => Game = game;
 
 
         public static void Run()

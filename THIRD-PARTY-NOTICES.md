@@ -28,4 +28,5 @@ Contributors, MIT License: [licenses/dotnet-MIT-LICENSE](licenses/dotnet-MIT-LIC
 ## IORingGroup (BSD-3-Clause)
 
 The event-loop waiters in `src/ClassicUO.Client/Loop/` (`LoopWin32.cs`, `LoopLinux.cs`, `LoopMacOS.cs` and their waiters)
-adapt code from IORingGroup: [licenses/IORingGroup-LICENSE](licenses/IORingGroup-LICENSE).
+and the double-mapped network ring `src/ClassicUO.Client/Network/NetRing.cs` (from `IORingBuffer`) adapt code from
+IORingGroup: [licenses/IORingGroup-LICENSE](licenses/IORingGroup-LICENSE).
