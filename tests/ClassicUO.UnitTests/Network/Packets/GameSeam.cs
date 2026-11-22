@@ -76,7 +76,8 @@ namespace ClassicUO.UnitTests.Network.Packets
             return (asciiPath, uniPath);
         });
 
-        public GameSeam(bool profile = true)
+        /// <param name="art">Size the static art table for every graphic, so a test can make art resident (<see cref="ResidentArt"/>).</param>
+        public GameSeam(bool profile = true, bool art = false)
         {
             string empty = Path.Combine(Path.GetTempPath(), "cuo-gameseam-empty");
             Directory.CreateDirectory(empty);
@@ -97,7 +98,9 @@ namespace ClassicUO.UnitTests.Network.Packets
             // text controls measure as they do in the client
             fm.Fonts.LoadStores(FontStores.Value.Ascii, FontStores.Value.Unicode);
             uo.SetForTests(PacketPipe.Version, "7.0.13.0", fm, new GameCursor(new World()));
-            uo.SetRendererForTests(new ClassicUO.Renderer.Gumps.Gump(fm.Gumps, null, GumpsLoader.MAX_GUMP_DATA_INDEX_COUNT));
+            uo.SetRendererForTests(
+                new ClassicUO.Renderer.Gumps.Gump(fm.Gumps, null, GumpsLoader.MAX_GUMP_DATA_INDEX_COUNT),
+                art ? new ClassicUO.Renderer.Arts.Art(fm.Arts, fm.Hues, null, 0x4000 + 0x10000) : null);
             ClassicUO.Renderer.SolidColorTextureCache.TextureWithoutDeviceForTests ??= static _ => TextureWithoutDevice();
             Game = GameController.CreateForTests(uo);
             Client.UseForTests(Game);
@@ -118,6 +121,10 @@ namespace ClassicUO.UnitTests.Network.Packets
         /// <summary>Gump <paramref name="graphic"/> as if it were in the atlas, <paramref name="width"/> x <paramref name="height"/>.</summary>
         public void Resident(ushort graphic, int width, int height) =>
             Game.UO.Gumps.SetResidentForTests(graphic, TextureWithoutDevice(), width, height);
+
+        /// <summary>Static art <paramref name="graphic"/> as if it were in the atlas, <paramref name="width"/> x <paramref name="height"/>.</summary>
+        public void ResidentArt(ushort graphic, int width, int height) =>
+            Game.UO.Arts.SetResidentForTests(graphic, TextureWithoutDevice(), width, height);
 
         public ItemHold ItemHold => Game.UO.GameCursor.ItemHold;
 
