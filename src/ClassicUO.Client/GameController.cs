@@ -87,13 +87,13 @@ namespace ClassicUO
                     return _clientBoundsForTests; // a controller from CreateForTests has no window
                 }
 
-                var window_rectangle = window.ClientBounds;
-                return new Rectangle(
-                    window_rectangle.X,
-                    window_rectangle.Y,
-                    (int)((float)(window_rectangle.Width) / DpiScale),
-                    (int)((float)(window_rectangle.Height) / DpiScale)
-                );
+                if (_geometry.UiWidth == 0)
+                {
+                    RefreshGeometry();
+                }
+
+                // the UI target's size (RenderGeometry): the back buffer in UI units, rounded, not truncated
+                return new Rectangle(_windowX, _windowY, _geometry.UiWidth, _geometry.UiHeight);
             }
         }
 
@@ -644,6 +644,7 @@ namespace ClassicUO
             GraphicManager.PreferredBackBufferWidth = width;
             GraphicManager.PreferredBackBufferHeight = height;
             GraphicManager.ApplyChanges();
+            RefreshGeometry();
         }
 
         public void SetWindowBorderless(bool borderless)
@@ -705,6 +706,7 @@ namespace ClassicUO
             GraphicManager.PreferredBackBufferWidth = Client.Game.Window.ClientBounds.Width;
             GraphicManager.PreferredBackBufferHeight = Client.Game.Window.ClientBounds.Height;
             GraphicManager.ApplyChanges();
+            RefreshGeometry();
         }
 
         public bool IsWindowMaximized()
@@ -842,6 +844,7 @@ namespace ClassicUO
                 SetWindowTitle(_windowTitle);
             }
 
+            RefreshGeometry();
             Mouse.Update();
 
             FrameStats.Begin(FramePhase.Packets);
@@ -1187,12 +1190,8 @@ namespace ClassicUO
             // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
             _renderTargets.PreserveWorldContents = Scene is GameScene;
             _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
-            _renderTargets.EnsureSizes(
-                GraphicsDevice,
-                new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
-                Scene.Camera.Bounds,
-                DpiScale
-            );
+            RefreshGeometry();
+            _renderTargets.EnsureSizes(GraphicsDevice, _geometry);
 
             if (!_loggedWorldTexture && _gpuDevice != IntPtr.Zero && _renderTargets.WorldRenderTarget != null)
             {
@@ -1711,6 +1710,7 @@ namespace ClassicUO
                         );
 
                         _displayScale = DpiScale;
+                        RefreshGeometry();
                     }
                     break;
                 }

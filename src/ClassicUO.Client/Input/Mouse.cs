@@ -79,6 +79,10 @@ namespace ClassicUO.Input
 
         public static Point Position;
 
+        /// <summary>The mouse in UI units before truncation (RenderGeometry.WindowToUi); a scripted position (Override) is its
+        /// unit's centre.</summary>
+        public static Vector2 PositionF;
+
         /// <summary>Dev (DevBench's ui scene): the position Update reports instead of the OS cursor's, without moving it.</summary>
         public static Point? Override;
 
@@ -125,29 +129,31 @@ namespace ClassicUO.Input
                 }
 
                 Position = Override.Value;
+                PositionF = new Vector2(Position.X + 0.5f, Position.Y + 0.5f);
                 IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
 
                 return;
             }
 
+            float mx, my;
+
             if (!MouseInWindow)
             {
                 SDL.SDL_GetGlobalMouseState(out float x, out float y);
                 SDL.SDL_GetWindowPosition(Client.Game.Window.Handle, out int winX, out int winY);
-                Position.X = (int)x - winX;
-                Position.Y = (int)y - winY;
+                mx = x - winX;
+                my = y - winY;
             }
             else
             {
-                SDL.SDL_GetMouseState(out float x, out float y);
-                Position.X = (int)x;
-                Position.Y = (int)y;
+                SDL.SDL_GetMouseState(out mx, out my);
             }
 
-            // Scale the mouse coordinates for the faux-backbuffer and DPI settings
-            Position.X = (int) ((double) Position.X * (Client.Game.GraphicManager.PreferredBackBufferWidth / Client.Game.Window.ClientBounds.Width) / Client.Game.DpiScale);
-
-            Position.Y = (int) ((double) Position.Y * (Client.Game.GraphicManager.PreferredBackBufferHeight / Client.Game.Window.ClientBounds.Height) / Client.Game.DpiScale);
+            // window -> back buffer -> UI units (RenderGeometry): the inverse of the UI composite
+            var geometry = Client.Game.Geometry;
+            Vector2 b = geometry.WindowToBackBuffer(mx, my);
+            PositionF = geometry.BackBufferToUi(b.X, b.Y);
+            Position = new Point((int)System.MathF.Floor(PositionF.X), (int)System.MathF.Floor(PositionF.Y));
 
             IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
         }

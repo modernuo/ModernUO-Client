@@ -1161,7 +1161,7 @@ namespace ClassicUO.Game.Scenes
         {
             Profile currentProfile = ProfileManager.CurrentProfile;
 
-            SelectedObject.TranslatedMousePositionByViewport = Camera.MouseToWorldPosition();
+            SelectedObject.TranslatedMousePositionByViewport = MouseToWorld();
 
             base.Update();
 
@@ -1389,6 +1389,17 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        /// <summary>The mouse in the world's screen pixels (relative to the draw offset): its UI position through the inverse of
+        /// the world composite (RenderGeometry) to a world-target pixel, then the camera's inverse matrix.</summary>
+        internal Point MouseToWorld() => MouseToWorld(Client.Game.Geometry.WithViewport(Camera.Bounds), Camera, Mouse.PositionF);
+
+        internal static Point MouseToWorld(in RenderGeometry geometry, Camera camera, Vector2 mouseUi)
+        {
+            Vector2 t = geometry.UiToWorldTarget(mouseUi.X, mouseUi.Y);
+
+            return camera.ScreenToWorld(new Point((int)MathF.Floor(t.X), (int)MathF.Floor(t.Y)));
+        }
+
         public override bool Draw(UltimaBatcher2D batcher, RenderTargets renderTargets)
         {
             if (!_world.InGame)
@@ -1403,7 +1414,6 @@ namespace ClassicUO.Game.Scenes
 
             _frameLights.BeginFrame(++_lightsFrame);
             Viewport r_viewport = batcher.GraphicsDevice.Viewport;
-            Viewport camera_viewport = Camera.GetViewport();
             Matrix matrix = Camera.ViewTransformMatrix;
 
             var gpu = Client.Game.GetGpuWorld();
@@ -1434,8 +1444,6 @@ namespace ClassicUO.Game.Scenes
 
                 FrameStats.WorldHeld = hold;
                 FrameStats.WorldShown |= !hold;
-
-                batcher.GraphicsDevice.Viewport = camera_viewport;
 
                 if (ready)
                 {
@@ -1507,8 +1515,6 @@ namespace ClassicUO.Game.Scenes
             else
             {
                 // the developer comparison mode (-worldrenderer legacy, DevBench world:legacy), never a fallback
-                batcher.GraphicsDevice.Viewport = camera_viewport;
-
                 DrawWorld(batcher, ref matrix, renderTargets);
                 // after the world draw: the lights its walk collected, at this frame's offset (FrameLights)
                 FrameStats.Begin(FramePhase.Lights);
@@ -1553,6 +1559,8 @@ namespace ClassicUO.Game.Scenes
             SelectedObject.Object = null;
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
             FillGameObjectList();
+            // the fill moved the draw offset: the matrix snaps the world origin for it (Camera.SetWorldOffset)
+            matrix = Camera.ViewTransformMatrix;
 
             // Restore previous highlight's original hue before applying new one
             if (_prevMeshHighlight != null

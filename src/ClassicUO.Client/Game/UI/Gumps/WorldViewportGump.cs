@@ -53,8 +53,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 if (!ProfileManager.CurrentProfile.GameWindowLock)
                 {
-                    var s = new Point(Client.Game.ScaleWithDpi(_lastSize.X), Client.Game.ScaleWithDpi(_lastSize.Y));
-                    Point n = ResizeGameWindow(s);
+                    Point n = ResizeViewport(_lastSize);
 
                     UIManager.GetGump<OptionsGump>()?.UpdateVideo();
 
@@ -230,10 +229,18 @@ namespace ClassicUO.Game.UI.Gumps
             UpdateGameWindowPos();
         }
 
+        /// <summary>Sizes the viewport to a window size in back-buffer pixels (the full-size viewport): the same UI units the
+        /// UI target has (RenderGeometry.UiUnits), at least 640x480.</summary>
         public Point ResizeGameWindow(Point newSize)
         {
-            newSize.X = (int)(newSize.X / Client.Game.DpiScale);
-            newSize.Y = (int)(newSize.Y / Client.Game.DpiScale);
+            float scale = Client.Game.DpiScale;
+
+            return ResizeViewport(new Point(RenderGeometry.UiUnits(newSize.X, scale), RenderGeometry.UiUnits(newSize.Y, scale)));
+        }
+
+        /// <summary>Sizes the viewport in UI units, at least 640x480; returns the size set.</summary>
+        public Point ResizeViewport(Point newSize)
+        {
             int targetWidth = 640;
             int targetHeight = 480;
             if (newSize.X < targetWidth)
@@ -246,7 +253,6 @@ namespace ClassicUO.Game.UI.Gumps
                 newSize.Y = targetHeight;
             }
 
-            //Resize();
             _lastSize = _savedSize = newSize;
 
             if (
@@ -265,7 +271,7 @@ namespace ClassicUO.Game.UI.Gumps
             return newSize;
         }
 
-        /// <summary>Sets the viewport's size in UI units, without the DPI conversion of <see cref="ResizeGameWindow"/>.</summary>
+        /// <summary>Sets the viewport's size in UI units without the 640x480 floor (driver geometry checks).</summary>
         public void SetViewportSize(Point size)
         {
             _lastSize = _savedSize = size;

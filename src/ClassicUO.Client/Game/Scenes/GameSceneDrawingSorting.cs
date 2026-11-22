@@ -1517,6 +1517,7 @@ namespace ClassicUO.Game.Scenes
 
             _offset.X = winDrawOffsetX;
             _offset.Y = winDrawOffsetY;
+            Camera.SetWorldOffset(_offset.X, _offset.Y);
 
             _last_scaled_offset.X = winGameScaledOffsetX;
             _last_scaled_offset.Y = winGameScaledOffsetY;

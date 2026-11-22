@@ -379,6 +379,8 @@ namespace ClassicUO.Game.Scenes
             }
 
             GpuItemCheckLists();
+            // the fill moved the draw offset: the matrix snaps the world origin for it (Camera.SetWorldOffset)
+            matrix = Camera.ViewTransformMatrix;
             stamp = FrameStats.Stamp();
             FinishGpuCollect();
             gpu.SetOffset(_offset.X, _offset.Y);
@@ -513,16 +515,16 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        // The batcher's world matrix maps p = world - _offset to (p - c) / zoom + c - cameraOffset, c = the target's centre.
+        // the camera matrix's centre (Camera.GpuCenter): the Gpu world draws every world pixel where the FNA passes (lights,
+        // Legacy, the world-space sprites) do
         private WorldCamera GetGpuCamera(RenderTarget2D target)
         {
-            float scale = 1f / Camera.Zoom;
-            Vector2 peek = Camera.Offset;
+            var (cx, cy, scale) = Camera.GpuCenter(target.Width, target.Height);
 
             return new WorldCamera
             {
-                CenterX = _offset.X + Camera.Bounds.Width * 0.5 + peek.X / scale,
-                CenterY = _offset.Y + Camera.Bounds.Height * 0.5 + peek.Y / scale,
+                CenterX = cx,
+                CenterY = cy,
                 Zoom = scale,
                 ViewportWidth = target.Width,
                 ViewportHeight = target.Height
