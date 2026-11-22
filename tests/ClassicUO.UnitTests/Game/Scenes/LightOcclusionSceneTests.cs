@@ -111,11 +111,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
         // the objects that hide the glow of src's light with the switch on (GameScene.Occluder without the draw state): art
         // covering the light point, or for a wall source a wall piece under the light quad (the light shape's size, centred
         // on anchor + 22 as AddLight places it) facing away from it
-        private static List<Obj> Occluders(PackArt pack, Obj src, IEnumerable<Obj> scene, bool on = true)
+        // (srcHeight: the source's top, LightOcclusion.SourceTop when null)
+        private static List<Obj> Occluders(PackArt pack, Obj src, IEnumerable<Obj> scene, bool on = true, int? srcHeight = null)
         {
             var (sax, say) = Anchor(src);
             var a = pack.Art(src.Graphic);
             LightOcclusion.LightPoint(sax, say, a.W, a.H, a.BX, a.BY, a.BW, a.BH, out int px, out int py);
+            int srcTop = srcHeight ?? LampTop(pack, src);
             byte srcFacing = pack.Statics[src.Graphic].IsWall ? LightOcclusion.Facing(a.W, a.BX, a.BW) : LightOcclusion.FacingNone;
             var (lw, lh) = pack.Light(pack.Statics[src.Graphic].Layer);
             int left = sax + 22 - lw / 2, top = say + 22 - lh / 2;
@@ -135,13 +137,23 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 bool facesAway = data.IsWall && oa.W != 0 && LightOcclusion.ArtOverlaps(ax, ay, oa.W, oa.H, left, top, left + lw, top + lh) &&
                     LightOcclusion.FacesAway(srcFacing, LightOcclusion.Facing(oa.W, oa.BX, oa.BW), o.X - src.X, o.Y - src.Y);
 
-                if (LightOcclusion.Hides(on, false, o.X - src.X, o.Y - src.Y, o.Z - src.Z, ref data, covers, facesAway))
+                if (LightOcclusion.Hides(on, false, o.X - src.X, o.Y - src.Y, o.Z - src.Z, srcTop, ref data, covers, facesAway))
                 {
                     hidden.Add(o);
                 }
             }
 
             return hidden;
+        }
+
+        // the source's height (LightOcclusion.SourceTop as GameScene.CollectOccluders takes it)
+        private static int LampTop(PackArt pack, Obj src)
+        {
+            var (_, say) = Anchor(src);
+            var a = pack.Art(src.Graphic);
+            LightOcclusion.LightPoint(0, say, a.W, a.H, a.BX, a.BY, a.BW, a.BH, out _, out int py);
+
+            return LightOcclusion.SourceTop(pack.Statics[src.Graphic].Height, say, py);
         }
 
         // round 3's rule: every occluder drawn after the source (for the record: these cases are the owner's regression)
@@ -482,6 +494,63 @@ namespace ClassicUO.UnitTests.Game.Scenes
             AssertWindowsKeepTheirWallLine(pack, scene, "fountain");
         }
 
+        // Moonglow, Felucca 4466..4484 x 1084..1100 (owner repro 2026-11-22 at 4470 1091 0): the house north-east of the lamp
+        // post 0x0B22 at 4474 1091 0 (tiledata height 15), its walls, lit windows (0x00B9 / 0x00BA) and roof eave at z 20..32
+        private const string Eave = @"
+4471 1084 0 00A7; 4471 1085 0 00B9; 4471 1085 0 0C84; 4472 1084 32 05CE; 4471 1086 0 00A7; 4472 1085 29 05CF; 4473 1084 32 05CE; 4471 1087 0 00A7
+4471 1087 0 0C84; 4472 1086 26 05CF; 4473 1085 29 05CF; 4474 1084 32 05CE; 4471 1088 0 0C84; 4472 1087 0 00A8; 4472 1087 23 05CF; 4473 1086 26 05CF
+4474 1085 29 05CF; 4475 1084 32 05CE; 4472 1088 0 0C84; 4472 1088 20 05CF; 4473 1087 0 00BA; 4473 1087 23 05CF; 4474 1086 26 05CF; 4475 1085 29 05CF
+4476 1084 0 0B3F; 4476 1084 32 05CE; 4473 1088 0 0C84; 4473 1088 20 05CF; 4474 1087 0 00A8; 4474 1087 23 05CF; 4475 1086 26 05CF; 4476 1085 29 05CF
+4477 1084 32 05CE; 4474 1088 0 0C84; 4474 1088 20 05CF; 4475 1087 0 00A8; 4475 1087 20 0B3F; 4475 1087 23 05CF; 4476 1086 26 05CF; 4477 1085 29 05CF
+4478 1084 32 05CE; 4475 1088 0 00A7; 4475 1088 20 05CF; 4476 1087 23 05CF; 4477 1086 26 05CF; 4478 1085 29 05CF; 4479 1084 32 05CE; 4475 1089 0 00A7
+4475 1089 0 0C84; 4476 1088 20 05C5; 4477 1087 23 05C5; 4478 1086 26 05C5; 4479 1085 29 05C5; 4480 1084 32 05CB; 4474 1091 0 0B22; 4475 1090 0 00B9
+4475 1090 0 0C84; 4476 1089 20 05C4; 4477 1088 23 05C4; 4478 1087 26 05C4; 4479 1086 29 05C4; 4480 1085 32 05C2; 4481 1084 32 05CE; 4475 1091 0 00A7
+4475 1091 0 0C84; 4476 1090 20 05C4; 4477 1089 23 05C4; 4478 1088 26 05C4; 4479 1087 29 05C4; 4480 1086 32 05C2; 4481 1085 29 05C8; 4482 1084 32 05CE
+4476 1091 0 00A8; 4476 1091 20 05C4; 4476 1091 20 00C1; 4477 1090 23 05C4; 4478 1089 26 05C4; 4479 1088 29 05C4; 4480 1087 32 05C2; 4481 1086 29 05C3
+4482 1085 29 05CF; 4483 1084 32 05CE; 4476 1092 20 05C4; 4477 1091 0 00BA; 4477 1091 20 00C1; 4477 1091 23 05C4; 4477 1091 23 00C1; 4478 1090 26 05C4
+4479 1089 29 05C4; 4480 1088 32 05C2; 4481 1087 29 05C3; 4482 1086 26 05C8; 4483 1085 29 05CF; 4484 1084 0 0B16; 4484 1084 3 0AA1; 4484 1084 32 05CE
+4477 1092 23 05C4; 4478 1091 0 00AD; 4478 1091 20 00C1; 4478 1091 23 00C1; 4478 1091 26 05C4; 4478 1091 26 00C1; 4479 1090 29 05C4; 4480 1089 32 05C2
+4481 1088 29 05C3; 4482 1087 26 05C3; 4483 1086 26 05CF; 4484 1085 0 0B12; 4484 1085 3 0AA5; 4484 1085 29 05CF; 4478 1092 0 0B9A; 4478 1092 26 05C4
+4479 1091 20 00C1; 4479 1091 23 00C1; 4479 1091 26 00C1; 4479 1091 29 05C4; 4479 1091 29 00C1; 4480 1090 32 05C2; 4481 1089 29 05C3; 4482 1088 26 05C3
+4483 1087 0 00A9; 4483 1087 23 05C8; 4484 1086 26 05CF; 4479 1092 29 05C4; 4480 1091 20 00C1; 4480 1091 23 00C1; 4480 1091 26 00C1; 4480 1091 32 05C2
+4481 1090 29 05C3; 4482 1089 26 05C3; 4483 1088 0 00A7; 4483 1088 23 05C3; 4484 1087 0 00A8; 4484 1087 23 05CF; 4480 1092 32 05C2; 4481 1091 0 00AB
+4481 1091 20 00C1; 4481 1091 23 00C1; 4481 1091 29 05C3; 4482 1090 26 05C3; 4483 1089 0 00A7; 4483 1089 23 05C3; 4484 1088 0 0C84; 4484 1088 20 05C8
+4474 1099 0 0CB0; 4481 1092 29 05C3; 4482 1091 0 00BA; 4482 1091 20 00C1; 4482 1091 26 05C3; 4483 1090 0 00B9; 4483 1090 23 05C3; 4484 1089 0 0C84
+4484 1089 20 05C3; 4482 1092 26 05C3; 4483 1091 0 00A6; 4483 1091 23 05C3; 4484 1090 0 0C84; 4484 1090 20 05C3; 4475 1100 0 0CB0; 4483 1092 23 05C3
+4484 1091 0 0C84; 4484 1091 20 05C3; 4478 1098 0 0D11; 4484 1092 20 05C3; 4477 1100 0 0C84; 4478 1099 0 0CB4; 4478 1100 0 0CE9; 4480 1098 0 0CD6
+4480 1098 0 0CD7; 4481 1098 0 0CAF; 4482 1098 0 0CB6; 4484 1097 0 0C9E; 4484 1098 0 0CE6; 4484 1098 0 0CE7
+";
+
+        [TileDataPackFact]
+        public void Moonglow_lamp_post_lights_the_roof_eave_above_it()
+        {
+            // round 6a (owner 2026-11-22): the eave tile 4476 1092 z 20 (and 4477 1092 z 23 next to it) covers the lamp's
+            // light point, so its whole sprite stayed dark while the eave tiles around it were lit. Its bottom is above the
+            // lamp's top (z 0 + 15): the light shines up onto it, it does not hide it
+            PackArt pack = PackArt.Get();
+            var scene = Parse(Eave).ToList();
+            Obj lamp = new Obj(4474, 1091, 0, 0x0B22);
+            Assert.Contains(lamp, scene);
+            int top = LampTop(pack, lamp);
+            var all = Occluders(pack, lamp, scene);
+            _output.WriteLine($"lamp {lamp}: tiledata height {pack.Statics[lamp.Graphic].Height}, top {top}; occluders {all.Count}: {string.Join(", ", all)}");
+            Assert.Equal(15, top);
+            // round 5 (no source top): the eave tile hid the glow
+            Assert.Equal(new[] { new Obj(4476, 1092, 20, 0x05C4) }, Occluders(pack, lamp, scene, srcHeight: int.MaxValue));
+            Assert.Empty(all);
+
+            // the house's lit windows: the eave above them never hides them; only wall pieces do, the gable's upper wall pieces
+            // (0x00C1, z 20..29) in front of the east-facing window 0x00B9 at 4475 1090 by facing away from it
+            foreach (Obj window in scene.Where(o => o.Graphic == 0x00B9 || o.Graphic == 0x00BA))
+            {
+                var hidden = Occluders(pack, window, scene);
+                _output.WriteLine($"window {window}: {hidden.Count}: {string.Join(", ", hidden)}");
+                Assert.All(hidden, o => Assert.True(pack.Statics[o.Graphic].IsWall));
+            }
+
+            Assert.Contains(new Obj(4479, 1091, 29, 0x00C1), Occluders(pack, new Obj(4475, 1090, 0, 0x00B9), scene));
+        }
+
         // GameScene.AddLightCore's old whole-light rejection (kept with the switch off): an object with art, not transparent
         // by tiledata, on tile (x + 1, y + 1) at least 5 Z above the source drops the light
         private static bool OldNeighbourRejects(PackArt pack, Obj src, IEnumerable<Obj> scene) =>
@@ -504,14 +573,17 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             var wall = new List<Obj> { lamp, new Obj(801, 801, 20, 0x0162) };
             Assert.True(OldNeighbourRejects(pack, lamp, wall));
-            Assert.Contains(new Obj(801, 801, 20, 0x0162), Occluders(pack, lamp, wall));
+            Assert.Contains(new Obj(801, 801, 20, 0x0162), Occluders(pack, lamp, wall, srcHeight: int.MaxValue));
+            // round 6a: that wall piece stands above the post's top, the light shines up onto it
+            Assert.DoesNotContain(new Obj(801, 801, 20, 0x0162), Occluders(pack, lamp, wall));
         }
 
         [TileDataPackFact]
         public void Oversized_static_covering_the_light_is_found_by_the_chunk_search()
         {
             // review P2 #5: 0x0D42 is 44 x 421 (1,786 statics exceed the round 4 window's 300 x 256). Placed where its art covers
-            // a lamp post's light point from far down the diagonals, it hides the glow and the chunk search reaches it
+            // a lamp post's light point from far down the diagonals, it hides the glow (taken without round 6a's rule: at
+            // z 25 it stands above the post's top) and the chunk search reaches it
             PackArt pack = PackArt.Get();
             Obj lamp = new Obj(800, 800, 0, 0x0B20);
             var a = pack.Art(0x0D42);
@@ -539,7 +611,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             Assert.True(any, "no placement of 0x0D42 covers the lamp's point");
             _output.WriteLine($"0x0D42 covering the lamp: {found} (S = {found.X - lamp.X + found.Y - lamp.Y}, round 4 window ended at S 17)");
-            Assert.Contains(found, Occluders(pack, lamp, new[] { lamp, found }));
+            Assert.Contains(found, Occluders(pack, lamp, new[] { lamp, found }, srcHeight: int.MaxValue));
             // Anchor() here is ViewMargin.Anchor without the draw offset
             Assert.True(LightOcclusion.ChunkReaches(found.X >> 3, found.Y >> 3, (a.W >> 1) - 22, a.W - (a.W >> 1) - 22, a.H - 44, found.Z, found.Z,
                 0, 0, px, py, px + 1, py + 1));

@@ -16,11 +16,11 @@ namespace ClassicUO.Game.Scenes
 {
     internal partial class GameScene
     {
-        // light_occlusion: what one light's occluders are tested against: its light point, its quad, and a wall source's
-        // facing (LightOcclusion.Facing)
+        // light_occlusion: what one light's occluders are tested against: its light point, its quad, its source's height
+        // (LightOcclusion.SourceTop) and a wall source's facing (LightOcclusion.Facing)
         private struct LightTarget
         {
-            public int Px, Py, Left, Top, Right, Bottom;
+            public int Px, Py, Left, Top, Right, Bottom, SrcTop;
             public byte Facing;
         }
 
@@ -195,7 +195,10 @@ namespace ClassicUO.Game.Scenes
         {
             ViewMargin.Anchor(l.SrcX, l.SrcY, l.SrcZ, _offset.X, _offset.Y, out int sax, out int say);
             StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
-            LightTarget t = new LightTarget { Px = l.DrawX, Py = l.DrawY, Left = left, Top = top, Right = left + w, Bottom = top + h };
+            LightTarget t = new LightTarget
+            {
+                Px = l.DrawX, Py = l.DrawY, Left = left, Top = top, Right = left + w, Bottom = top + h, SrcTop = LightOcclusion.MobileTop
+            };
             GameObject src = l.Source;
 
             // a static or item emitter: the centre of its visible art; a mobile's light: the glow's centre
@@ -216,6 +219,8 @@ namespace ClassicUO.Game.Scenes
                         t.Facing = LightOcclusion.Facing(srcArt.UV.Width, b.X, b.Width);
                     }
                 }
+
+                t.SrcTop = LightOcclusion.SourceTop((uint)src.Graphic < (uint)staticData.Length ? staticData[src.Graphic].Height : 0, say, t.Py);
             }
 
             // a wall source's occluders may be anywhere under its quad; any other's must cover its light point
@@ -322,14 +327,16 @@ namespace ClassicUO.Game.Scenes
             o.Cot = cot;
         }
 
-        // the cheap terms of light l's occluder test (LightOcclusion.Hides without cover or facing: not its own emitter, in
-        // front of its source, an occluder by tiledata) and the world draw's visibility (review P1 #2): drawn at least
+        // the cheap terms of light l's occluder test (LightOcclusion.Hides as if its art covered the light point or, a wall
+        // piece for a wall source, faced away: not its own emitter, in front of its source, an occluder by tiledata, and to
+        // hide by cover not above the source) and the world draw's visibility (review P1 #2): drawn at least
         // LightOcclusion.MinOccluderAlpha opaque; above the max Z or a hidden roof only while it fades out (ProcessAlpha: drawn
         // by this walk with alpha left)
-        private bool OccluderCandidate(ref FrameLights.Entry l, GameObject o, ref StaticTiles data, byte alpha)
+        private bool OccluderCandidate(ref FrameLights.Entry l, in LightTarget t, GameObject o, ref StaticTiles data, byte alpha)
         {
             if (o.IsDestroyed || !o.AllowedToDraw || alpha < LightOcclusion.MinOccluderAlpha ||
-                !LightOcclusion.Hides(true, ReferenceEquals(o, l.Source), o.X - l.SrcX, o.Y - l.SrcY, o.Z - l.SrcZ, ref data, true))
+                !LightOcclusion.Hides(true, ReferenceEquals(o, l.Source), o.X - l.SrcX, o.Y - l.SrcY, o.Z - l.SrcZ, t.SrcTop, ref data, true,
+                    t.Facing != LightOcclusion.FacingNone && data.IsWall))
             {
                 return false;
             }
@@ -350,7 +357,7 @@ namespace ClassicUO.Game.Scenes
             Multi multi = o as Multi;
 
             if (multi != null && multi.IgnoredInRender ||
-                !OccluderCandidate(ref l, o, ref data, multi != null ? multi.DrawnAlpha : o.AlphaHue))
+                !OccluderCandidate(ref l, in t, o, ref data, multi != null ? multi.DrawnAlpha : o.AlphaHue))
             {
                 return false;
             }
@@ -373,7 +380,7 @@ namespace ClassicUO.Game.Scenes
 
             ushort drawn = GameObject.StaticArt(graphic, ax, ay, out SpriteInfo art, out int x, out int y);
 
-            if (art.Texture == null || !SpriteHides(in t, ref data, drawn, art.UV.Width, art.UV.Height, x, y, o.X - l.SrcX, o.Y - l.SrcY))
+            if (art.Texture == null || !SpriteHides(in t, ref data, drawn, art.UV.Width, art.UV.Height, x, y, o.X - l.SrcX, o.Y - l.SrcY, o.Z - l.SrcZ))
             {
                 return false;
             }
@@ -394,7 +401,7 @@ namespace ClassicUO.Game.Scenes
 
             ref StaticTiles data = ref staticData[item.Graphic];
 
-            if (!OccluderCandidate(ref l, item, ref data, item.AlphaHue))
+            if (!OccluderCandidate(ref l, in t, item, ref data, item.AlphaHue))
             {
                 return false;
             }
@@ -428,7 +435,7 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                hides |= SpriteHides(in t, ref data, sp.Id, d.Source.Width, d.Source.Height, x, y, item.X - l.SrcX, item.Y - l.SrcY);
+                hides |= SpriteHides(in t, ref data, sp.Id, d.Source.Width, d.Source.Height, x, y, item.X - l.SrcX, item.Y - l.SrcY, item.Z - l.SrcZ);
                 AddOccluder(n++, d.Texture, d.Source, x, y, false);
             }
 
@@ -445,14 +452,14 @@ namespace ClassicUO.Game.Scenes
             return hides;
         }
 
-        // a drawn sprite (art id drawn, w x h at top left x, y) of an occluder at (dx, dy) from light l's source covers its
-        // light point (the art's pixel there), or (a wall source) is a wall piece under its quad facing away from it
-        // (LightOcclusion.FacesAway)
-        private static bool SpriteHides(in LightTarget t, ref StaticTiles data, uint drawn, int w, int h, int x, int y, int dx, int dy)
+        // a drawn sprite (art id drawn, w x h at top left x, y) of an occluder at (dx, dy, dz) from light l's source covers its
+        // light point (the art's pixel there) and is not above the source (LightOcclusion.Above), or (a wall source) is a wall
+        // piece under its quad facing away from it (LightOcclusion.FacesAway)
+        private static bool SpriteHides(in LightTarget t, ref StaticTiles data, uint drawn, int w, int h, int x, int y, int dx, int dy, int dz)
         {
             int lx = t.Px - x, ly = t.Py - y;
 
-            if ((uint)lx < (uint)w && (uint)ly < (uint)h && Client.Game.UO.Arts.PixelCheck(drawn, lx, ly))
+            if (!LightOcclusion.Above(dz, t.SrcTop) && (uint)lx < (uint)w && (uint)ly < (uint)h && Client.Game.UO.Arts.PixelCheck(drawn, lx, ly))
             {
                 return true;
             }
