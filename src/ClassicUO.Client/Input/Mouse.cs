@@ -114,6 +114,15 @@ namespace ClassicUO.Input
 
         public static bool MouseInWindow { get; set; }
 
+        // Scale the mouse coordinates for the faux-backbuffer and DPI settings
+        internal static Point MapToUi(int x, int y)
+        {
+            return new Point(
+                (int) ((double) x * (Client.Game.GraphicManager.PreferredBackBufferWidth / Client.Game.Window.ClientBounds.Width) / Client.Game.DpiScale),
+                (int) ((double) y * (Client.Game.GraphicManager.PreferredBackBufferHeight / Client.Game.Window.ClientBounds.Height) / Client.Game.DpiScale)
+            );
+        }
+
         public static void Update()
         {
             if (Override.HasValue)
@@ -144,10 +153,7 @@ namespace ClassicUO.Input
                 Position.Y = (int)y;
             }
 
-            // Scale the mouse coordinates for the faux-backbuffer and DPI settings
-            Position.X = (int) ((double) Position.X * (Client.Game.GraphicManager.PreferredBackBufferWidth / Client.Game.Window.ClientBounds.Width) / Client.Game.DpiScale);
-
-            Position.Y = (int) ((double) Position.Y * (Client.Game.GraphicManager.PreferredBackBufferHeight / Client.Game.Window.ClientBounds.Height) / Client.Game.DpiScale);
+            Position = MapToUi(Position.X, Position.Y);
 
             IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
         }

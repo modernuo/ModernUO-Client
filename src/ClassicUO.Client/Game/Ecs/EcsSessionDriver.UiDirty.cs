@@ -42,6 +42,16 @@ namespace ClassicUO.Game
                     Log.Info($"[ui-count-journal] entries={JournalManager.Entries.Count}");
                     break;
                 case "uiresize": Client.Game.SetWindowSize(int.Parse(args[0]), int.Parse(args[1])); break;
+                // borderless on|off: the Options checkbox's path (profile + GameController.SetWindowBorderless)
+                case "borderless":
+                    if (ProfileManager.CurrentProfile != null) ProfileManager.CurrentProfile.WindowBorderless = on;
+                    Client.Game.SetWindowBorderless(on);
+                    Log.Info($"[ECS] driver: borderless {(on ? "on" : "off")}");
+                    break;
+                // winfo <tag>: window, back buffer, UI target and mouse mapping (GameController.WindowInfoLine)
+                case "winfo":
+                    Log.Info($"[winfo] {(args.Length > 0 ? args[0] : "-")} {Client.Game.WindowInfoLine()}");
+                    break;
                 case "uidirtymutate":
                     if (_uiDirtyFixture != null)
                         foreach (Control control in _uiDirtyFixture.Children)
