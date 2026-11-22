@@ -11,16 +11,16 @@ namespace ClassicUO.Game.Scenes
     {
         private int _lightMargin = -1;
 
-        // view_margin (ViewMargin): the frame's static lights from the chunks' emitter lists (LightEmitters), with the switch
+        // chunk_lights (ChunkLights): the frame's static lights from the chunks' emitter lists (LightEmitters), with the switch
         // on the walk adds none: an emitter the walk drew this frame, and one beside the walked rectangle whose halo reaches
         // into it (with the ground items there, which the walk did not visit). AddLight drops the ones whose halo cannot reach
         // the view. No allocation; per frame it touches the loaded chunks of the band's rectangle, their light lists and their
         // dynamics.
         private void AddChunkLights()
         {
-            bool on = ViewMargin.Enabled;
+            bool on = ChunkLights.Enabled;
 
-            if (!on && !ViewMargin.Check)
+            if (!on && !ChunkLights.Check)
             {
                 return;
             }
@@ -61,9 +61,14 @@ namespace ClassicUO.Game.Scenes
                     {
                         TileListObject obj = chunk.LightSources[i];
 
-                        if (obj.DrawnFrame == _drawFrame && !obj.IsDestroyed)
+                        if (ChunkLights.LightsDrawn(obj.DrawnFrame, _drawFrame, obj.IsDestroyed))
                         {
-                            walked++;
+                            // the checker counts the ones whose light draws with this frame's colored-lights setting (the
+                            // list also holds the colored-index emitters, which the light add drops with colored lights off)
+                            if (ChunkLights.Check && LightEmitters.StaticDrawsNow(obj.Graphic, staticData[obj.Graphic].Layer))
+                            {
+                                walked++;
+                            }
 
                             if (on)
                             {
@@ -115,16 +120,18 @@ namespace ClassicUO.Game.Scenes
             }
 
 #if CUO_DEVTOOLS
-            if (ViewMargin.Check)
+            if (ChunkLights.Check)
             {
                 CheckEdgeLights(on, count, hash, walked, staticData, left, top, right, bottom, margin, cx0, cy0, cx1, cy1);
             }
 #endif
         }
 
-        // a light static or multi component beside the walked rectangle that the walk would light if it reached it: the
-        // meshed walk's tests (GameSceneDrawingSorting: max Z, hidden roofs, the object's height against the walk's max Z),
-        // without the alpha, which the walk updates only for objects it visits
+        // a light static or multi component beside the walked rectangle that the walk would light if it reached it: its light
+        // draws a shape with this frame's colored-lights setting (LightEmitters.StaticDrawsNow, not the table, so the checker's
+        // reference catches an emitter missing from the lists) and the meshed walk's tests (GameSceneDrawingSorting: max Z,
+        // hidden roofs, the object's height against the walk's max Z), without the alpha, which the walk updates only for
+        // objects it visits
         private bool EdgeLightCandidate(TileListObject obj, StaticTiles[] staticData, int left, int top, int right, int bottom, int margin, out int lx, out int ly)
         {
             lx = ly = 0;
@@ -143,7 +150,7 @@ namespace ClassicUO.Game.Scenes
 
             ref StaticTiles data = ref staticData[obj.Graphic];
 
-            if (!data.IsLight || !EdgeVisible(obj, ref data))
+            if (!data.IsLight || !LightEmitters.StaticDrawsNow(obj.Graphic, data.Layer) || !EdgeVisible(obj, ref data))
             {
                 return false;
             }
@@ -175,7 +182,7 @@ namespace ClassicUO.Game.Scenes
 
             ref StaticTiles data = ref staticData[graphic];
 
-            if (!(data.IsLight && LightEmitters.HasShape(item.LightID) || displayed >= 0x3E02 && displayed <= 0x3E0B || displayed >= 0x3914 && displayed <= 0x3929))
+            if (!(data.IsLight && LightEmitters.ItemDrawsNow(item.LightID) || displayed >= 0x3E02 && displayed <= 0x3E0B || displayed >= 0x3914 && displayed <= 0x3929))
             {
                 return false;
             }
@@ -243,8 +250,9 @@ namespace ClassicUO.Game.Scenes
                         {
                             if ((o is Static || o is Multi) && o.DrawnFrame == _drawFrame && (uint)o.Graphic < (uint)staticData.Length && staticData[o.Graphic].IsLight)
                             {
-                                // the old collection: the walk lit every flagged static it drew; the lists hold emitters only
-                                if (LightEmitters.Static(o.Graphic))
+                                // the old collection: the walk lit every flagged static it drew, and the ones whose light
+                                // draws a shape must be in the lists (an index above 200 with colored lights: round W2a)
+                                if (LightEmitters.StaticDrawsNow(o.Graphic, staticData[o.Graphic].Layer))
                                 {
                                     refWalked++;
 
@@ -310,7 +318,7 @@ namespace ClassicUO.Game.Scenes
 
                 if (_vmMismatches <= 20)
                 {
-                    Log.Warn($"[view-margin-check] drawn emitters in the light lists {walked}, reference walk {refWalked}" +
+                    Log.Warn($"[chunk-lights-check] drawn emitters in the light lists {walked}, reference walk {refWalked}" +
                              (walkedSample != null ? $"; not in its chunk's light list: {walkedSample.GetType().Name} 0x{walkedSample.Graphic:X4} at {walkedSample.X},{walkedSample.Y},{walkedSample.Z}" : ""));
                 }
             }
@@ -321,7 +329,7 @@ namespace ClassicUO.Game.Scenes
 
                 if (_vmMismatches <= 20)
                 {
-                    Log.Warn($"[view-margin-check] edge lights {count} (hash {hash:X8}), reference walk {refCount} (hash {refHash:X8}); " +
+                    Log.Warn($"[chunk-lights-check] edge lights {count} (hash {hash:X8}), reference walk {refCount} (hash {refHash:X8}); " +
                              (sample != null ? $"not in its chunk's light list: {sample.GetType().Name} 0x{sample.Graphic:X4} at {sample.X},{sample.Y},{sample.Z}" : "no static missing from a light list"));
                 }
             }
@@ -329,20 +337,20 @@ namespace ClassicUO.Game.Scenes
             if (Time.Ticks >= _vmSummaryAt)
             {
                 _vmSummaryAt = Time.Ticks + 5000;
-                Log.Info($"[view-margin-check] view_margin {(on ? "on" : "off")}, light margin {margin} px: {_vmFrames} frames, {_vmFramesWithEdge} with edge lights " +
+                Log.Info($"[chunk-lights-check] chunk_lights {(on ? "on" : "off")}, light margin {margin} px: {_vmFrames} frames, {_vmFramesWithEdge} with edge lights " +
                          $"({_vmCandidates} candidates, {(on ? "added up to the cap" : "not added")}), light cap {_frameLights.Limit}: {_vmCapFrames} frames dropped {_vmRefused} lights, most lights offered in a frame {_vmMaxLights}; mismatches {_vmMismatches}");
             }
         }
 
         private readonly System.Collections.Generic.HashSet<ushort> _vmFlagOnly = new();
 
-        // a drawn static with the tiledata Light flag but no light shape: the old collection gave it a slot, the lists don't
+        // a drawn static with the tiledata Light flag whose light draws no shape with this frame's colored-lights setting
         private void NoteFlagOnly(ushort graphic)
         {
             if (_vmFlagOnly.Count < 64 && _vmFlagOnly.Add(graphic))
             {
                 ref StaticTiles d = ref Client.Game.UO.FileManager.TileData.StaticData[graphic];
-                Log.Info($"[view-margin-check] light flag without a light shape (no slot with view_margin): 0x{graphic:X4} '{d.Name}' light {d.Layer}");
+                Log.Info($"[chunk-lights-check] light flag without a light shape now (no light either way): 0x{graphic:X4} '{d.Name}' light {d.Layer}");
             }
         }
 

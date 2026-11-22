@@ -224,14 +224,18 @@ namespace ClassicUO.Configuration
         // world draws a mobile part whose direction page is not resident as nothing for a frame (the first-turn flash, bg/turn-flash).
         [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; } = true;
 
-        // light-edges (owner 2026-11-21: Deceit's wall torches lit up only once they entered the view; trees beside the view
-        // pop in whole): the view margin. Now: the light pass also takes the light sources up to the largest light's radius
-        // beyond the walked view (the chunks' recorded light statics and multi components, Chunk.LightSources, and the ground
-        // items there), so a halo reaching into the view is drawn before its source is. Next (handoff light-edges): the walk
-        // culls by sprite rects with the chunks' recorded static overhang (Chunk.StaticOver*). CUO_VIEW_MARGIN_CHECK=1
-        // compares the added lights with a walk of those chunks' tile lists in both states; CUO_VIEW_MARGIN=1|0 overrides the
-        // setting in developer builds. Default off.
+        // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
+        // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
+        // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the
+        // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
+
+        // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
+        // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
+        // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose
+        // halo cannot reach the view (ChunkLights). CUO_CHUNK_LIGHTS_CHECK=1 compares the band lights with a walk of those
+        // chunks; CUO_CHUNK_LIGHTS=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("chunk_lights")] public bool ChunkLights { get; set; }
 
         // light-edges: a light's halo is not drawn where another static, multi piece or ground item in front of its source
         // covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a far
@@ -241,6 +245,33 @@ namespace ClassicUO.Configuration
         // with a scan of every tile of the drawn chunks; CUO_LIGHT_OCCLUSION=1|0 overrides the setting in developer builds.
         // Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
+
+        // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
+        // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
+        // fade), so hidden walls leave no floating glows; radial glows (lamps, torches) keep full light. With light_occlusion
+        // on, occluder masks are dithered to their drawn alpha instead of cut at 128 (LightAlphaFade). Both renderers.
+        // CUO_LIGHT_ALPHA_FADE_CHECK=1 compares with the unfaded path; CUO_LIGHT_ALPHA_FADE=1|0 overrides the setting in
+        // developer builds. Default off.
+        [JsonPropertyName("light_alpha_fade")] public bool LightAlphaFade { get; set; }
+
+        // light-edges round 6c (owner 2026-11-22: zoomed out with every light in range drawn, the light pass lagged): with
+        // chunk_lights on, a light farther from the player than light_range_tiles (0 = auto: just past the zoom-1 view plus
+        // the largest halo) is dropped, fading over its last 2 tiles, and at most light_budget lights are kept (the ranked
+        // list's best), the lowest-ranked 16 fading by rank (LightRange). Both renderers. CUO_LIGHT_RANGE_CHECK=1 checks the
+        // kept, dropped and faded lights against the rule; CUO_LIGHT_RANGE=1|0 overrides the setting in developer builds.
+        // Default off.
+        [JsonPropertyName("light_range")] public bool LightRange { get; set; }
+
+        [JsonPropertyName("light_range_tiles")] public int LightRangeTiles { get; set; }
+
+        [JsonPropertyName("light_budget")] public int LightBudget { get; set; } = ClassicUO.Game.Scenes.LightRange.DefaultBudget;
+
+        // light-edges round 6c: with light_occlusion on, the light pass collects every light's occluders first, draws the
+        // lights with none in one batch without the stencil, then the occluded ones with their masks as before (additive
+        // blending: the same light target). Both renderers. CUO_LIGHT_BATCH_CHECK=1 renders the per-light path beside it once
+        // a second and compares the light targets pixel by pixel; CUO_LIGHT_BATCH=1|0 overrides the setting in developer
+        // builds. Default off.
+        [JsonPropertyName("light_batch")] public bool LightBatch { get; set; }
 
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild

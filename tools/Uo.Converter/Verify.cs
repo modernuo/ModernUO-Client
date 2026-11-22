@@ -108,6 +108,7 @@ public static class Verify
         if (Want("multimap")) MiscConvert.VerifyMultiMap(fm, outDir);
         if (Want("stringdict")) MiscConvert.VerifyStringDict(fm, outDir);
         if (Want("loose")) MiscConvert.VerifyLoose(fm, outDir);
+        if (Want("lightclass")) CheckLightClasses(outDir);
         // Sounds and music have no MUL fallback in the client: a pack without them is silent, so a verify that asks
         // for them (a full verify, or --only sounds/music) fails when they are missing.
         if (Want("sounds") && !Off.Contains("sounds"))
@@ -559,6 +560,26 @@ public static class Verify
         bool same = Same(pack.Bodies, own.Bodies) && Same(pack.Tables, own.Tables) && Same(pack.Rules, own.Rules) && Same(pack.Conds, own.Conds) && Same(pack.Ranges, own.Ranges);
         if (!same) Fail($"layerrules: differs from {what} (a custom rules file: pass its JSON with --layer-rules; or a converter from another version)");
         Console.WriteLine($"  layerrules: {pack.Rules.Length} rules {(same ? "EXACT" : "MISMATCH")} vs {what}");
+    }
+
+    /// <summary>light_alpha_fade: the run's --light-classes JSON (null: the standard shapes' seed) and its path.</summary>
+    public static byte[]? LightClasses;
+    public static string? LightClassesSource;
+
+    /// <summary>light_alpha_fade: lightclass.bin, when present, is exactly the run's --light-classes JSON, else
+    /// LightClassFile.Seed. The file is optional (packs from before it load; the client then classifies by the flag
+    /// fallback).</summary>
+    private static void CheckLightClasses(string outDir)
+    {
+        var path = Path.Combine(outDir, LightClassFile.FileName);
+        if (!File.Exists(path)) { Console.WriteLine($"  lightclass: no {LightClassFile.FileName} (optional)"); return; }
+        var pack = LightClassFile.Read(path);
+        var own = LightClasses ?? LightClassFile.Seed();
+        string what = LightClasses != null ? $"--light-classes {LightClassesSource}" : "the standard shapes' seed";
+        bool same = pack.AsSpan().SequenceEqual(own);
+        if (!same) Fail($"lightclass: differs from {what} (a custom table: pass its JSON with --light-classes)");
+        var (sf, rd) = LightClassFile.ToLists(pack);
+        Console.WriteLine($"  lightclass: {sf.Count} surface, {rd.Count} radial {(same ? "EXACT" : "MISMATCH")} vs {what}");
     }
 
     /// <summary>animdata.bin against AnimDataLoader.CalculateCurrentGraphic for every graphic whose record is in the file.</summary>
