@@ -252,6 +252,20 @@ namespace ClassicUO.Game.Map
             return IsInMap(chunkX, chunkY) ? _terrainChunks[GetBlock(chunkX, chunkY)] : null;
         }
 
+        /// <summary><see cref="PeekChunk"/> by chunk coordinates: the loaded chunk or null, never loading or queueing one and
+        /// leaving LastAccessTime alone (view_margin: the light margin reads chunks beyond the walked ones).</summary>
+        internal Chunk PeekChunkAt(int chunkX, int chunkY)
+        {
+            if (!IsInMap(chunkX, chunkY))
+            {
+                return null;
+            }
+
+            Chunk chunk = _terrainChunks[GetBlock(chunkX, chunkY)];
+
+            return chunk == null || chunk.IsDestroyed ? null : chunk;
+        }
+
         public Chunk GetChunk(int x, int y, bool load = true)
         {
             if (x < 0 || y < 0)

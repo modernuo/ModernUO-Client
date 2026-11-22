@@ -84,6 +84,84 @@ namespace ClassicUO.Game.Map
         /// (MobileFrameCache keys a mobile's seat lookup on it).</summary>
         public uint ContentVersion;
 
+        /// <summary>
+        /// view_margin (GameScene.AddChunkLights): the chunk's light-emitting statics and multi components (LightEmitters:
+        /// tiledata Light with a light shape), in no order, kept by AddGameObject and RemoveFromTile. With the switch on the
+        /// light pass takes every static light from these lists (the walk adds none). CUO_VIEW_MARGIN_CHECK compares them with
+        /// a walk of the tile lists.
+        /// </summary>
+        internal TileListObject[] LightSources = Array.Empty<TileListObject>();
+        internal int LightSourceCount;
+
+        /// <summary>
+        /// view_margin (sprite margin): how far the art of the chunk's statics, multi components and items reaches past its
+        /// anchor's 44 x 44 box, in world pixels: left and right of it, above it. Grows only (map statics at Load, multis and
+        /// items as they join; reset when the chunk is loaded again), so the walk's per-chunk tile mask (GameScene
+        /// FillGameObjectList) covers every sprite of the chunk that can reach the view. A growth after Load sets
+        /// ViewMargin.OverhangGrew: tiles joining the walk get their positions recomputed.
+        /// </summary>
+        internal int StaticOverLeft, StaticOverRight, StaticOverUp;
+
+        private bool _loading;
+
+        private void RecordOverhang(ushort graphic)
+        {
+            ArtLoader arts = Client.Game?.UO?.FileManager?.Arts;
+
+            if (arts == null || !arts.TrySize(graphic + 0x4000, out int w, out int h))
+            {
+                return;
+            }
+
+            int left = (w >> 1) - 22, right = w - (w >> 1) - 22, up = h - 44;
+
+            if (left > StaticOverLeft || right > StaticOverRight || up > StaticOverUp)
+            {
+                StaticOverLeft = Math.Max(StaticOverLeft, left);
+                StaticOverRight = Math.Max(StaticOverRight, right);
+                StaticOverUp = Math.Max(StaticOverUp, up);
+
+                if (!_loading)
+                {
+                    Scenes.ViewMargin.OverhangGrew = true;
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static bool IsLightSource(GameObject obj) => (obj is Static || obj is Multi) && Scenes.LightEmitters.Static(obj.Graphic);
+
+        private void NoteLightSource(TileListObject node)
+        {
+            if (LightSourceCount == LightSources.Length)
+            {
+                Array.Resize(ref LightSources, Math.Max(4, LightSourceCount * 2));
+            }
+
+            LightSources[LightSourceCount++] = node;
+        }
+
+        /// <summary>RemoveFromTile: <paramref name="node"/> leaves the chunk (a no-op when it is not a light source).</summary>
+        internal void ForgetLightSource(TileListObject node)
+        {
+            for (int i = LightSourceCount - 1; i >= 0; i--)
+            {
+                if (ReferenceEquals(LightSources[i], node))
+                {
+                    LightSources[i] = LightSources[--LightSourceCount];
+                    LightSources[LightSourceCount] = null;
+
+                    return;
+                }
+            }
+        }
+
+        private void ClearLightSources()
+        {
+            Array.Clear(LightSources, 0, LightSourceCount);
+            LightSourceCount = 0;
+        }
+
         /// <summary>The Map that loaded this chunk (Map.LoadChunk): told about content changes, which can invalidate its
         /// max-Z decision (Map.NoteContentChanged). Cleared by Destroy.</summary>
         internal Map OwnerMap;
@@ -244,6 +322,8 @@ namespace ClassicUO.Game.Map
             }
 
             bool gargoyle = GameObject.PlayerIsGargoyle(_world);
+            StaticOverLeft = StaticOverRight = StaticOverUp = 0;
+            _loading = true;
 
             foreach (ref readonly var sb in block.Statics)
             {
@@ -254,9 +334,10 @@ namespace ClassicUO.Game.Map
                 staticObject.Y = (ushort)(by + sb.Y);
                 staticObject.Z = sb.Z;
                 staticObject.UpdateScreenPosition();
-
                 AddGameObject(staticObject, sb.X, sb.Y);
             }
+
+            _loading = false;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -391,7 +472,22 @@ namespace ClassicUO.Game.Map
             {
                 (Dynamic ??= new DynamicTileIndex()).Add(obj, obj.TileCell);
 
+                if (obj is Item { IsMulti: false } overItem)
+                {
+                    RecordOverhang(overItem.Graphic);
+                }
+
                 return;
+            }
+
+            if (IsLightSource(node))
+            {
+                NoteLightSource(node);
+            }
+
+            if (node is Static || node is Multi)
+            {
+                RecordOverhang(node.Graphic);
             }
 
             int cell = obj.TileCell;
@@ -563,6 +659,7 @@ namespace ClassicUO.Game.Map
             }
 
             IsDestroyed = true;
+            ClearLightSources();
             Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
@@ -696,6 +793,7 @@ namespace ClassicUO.Game.Map
             }
 
             Mesh.SoftClear(null); // in-place reload: the chunk stays in use and rebuilds at once, so it keeps its arrays
+            ClearLightSources();
             Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);

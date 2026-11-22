@@ -34,6 +34,10 @@ namespace ClassicUO.Game.Scenes
 
         private sbyte _maxGroundZ;
         private int _maxZ;
+        // view_margin: the walk's culling rectangle before the sprite margin grew it (_minPixel/_maxPixel are the grown one)
+        private Vector2 _viewMinPixel, _viewMaxPixel;
+        private bool _vmSprites;
+
         private Vector2 _minPixel,
             _maxPixel,
             _lastCamOffset;
@@ -551,7 +555,8 @@ namespace ClassicUO.Game.Scenes
                     FrameStats.Enter(bucket);
                 }
 
-                if (itemData.IsLight)
+                // view_margin: static lights come from the chunks' emitter lists (AddChunkLights), not from the walk
+                if (!_vmLights && itemData.IsLight)
                 {
                     AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                 }
@@ -1091,7 +1096,7 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
 
-                    if (meshItemData.IsLight)
+                    if (!_vmLights && meshItemData.IsLight)
                     {
                         AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                     }
@@ -1464,6 +1469,21 @@ namespace ClassicUO.Game.Scenes
             }
 
             int size = (int)(Math.Max(winGameWidth / 44f + 1, winGameHeight / 44f + 1) * zoom);
+            // view_margin (sprite margin): the walk reaches the objects whose art reaches the view from beside it
+            _vmSprites = ViewMargin.Enabled;
+            int artSide = 0, artUp = 0;
+
+            if (_vmSprites)
+            {
+                ViewMargin.ArtReach(Client.Game.UO.FileManager.Arts, out artSide, out artUp);
+                size += Math.Max(artSide, artUp) / 22 + 2;
+
+                if (ViewMargin.OverhangGrew)
+                {
+                    ViewMargin.OverhangGrew = false;
+                    UpdateDrawPosition = true;
+                }
+            }
 
             if (Camera.Offset.X != 0 || Camera.Offset.Y != 0)
             {
@@ -1514,6 +1534,17 @@ namespace ClassicUO.Game.Scenes
             _minPixel.Y = minPixelsY;
             _maxPixel.X = maxPixelsX;
             _maxPixel.Y = maxPixelsY;
+            _viewMinPixel = _minPixel;
+            _viewMaxPixel = _maxPixel;
+
+            if (_vmSprites)
+            {
+                // every anchor test of the walk and the Gpu prepare uses the grown rectangle; the walk's tile masks are cut
+                // back per chunk to what that chunk's sprites can reach (WalkChunkMask)
+                _minPixel.X -= artSide;
+                _maxPixel.X += artSide;
+                _maxPixel.Y += artUp;
+            }
 
             _offset.X = winDrawOffsetX;
             _offset.Y = winDrawOffsetY;
@@ -1523,6 +1554,21 @@ namespace ClassicUO.Game.Scenes
             _last_scaled_offset.Y = winGameScaledOffsetY;
 
             UpdateMaxDrawZ();
+        }
+
+        // view_margin (sprite margin): the chunk's walked tiles, cut to the ones from which its sprites can reach the view
+        private ulong WalkChunkMask(Chunk chunk, int chunkX, int chunkY, ulong inWalk)
+        {
+            if (!_vmSprites || inWalk == 0)
+            {
+                return inWalk;
+            }
+
+            ViewMargin.ChunkRect(_viewMinPixel.X, _viewMinPixel.Y, _viewMaxPixel.X, _viewMaxPixel.Y, chunk.StaticOverLeft, chunk.StaticOverRight,
+                chunk.StaticOverUp, out float minX, out float minY, out float maxX, out float maxY);
+            FillDiamond.Bounds b = FillDiamond.Compute(_offset.X, _offset.Y, new Vector2(minX, minY), new Vector2(maxX, maxY), false, default, 0);
+
+            return inWalk & FillDiamond.ChunkMask(chunkX, chunkY, in b);
         }
 
         private struct TreeUnion

@@ -89,7 +89,7 @@ namespace ClassicUO.Game.GameObjects
                 ProfileManager.CurrentProfile.AnimatedWaterEffect && ItemData.IsWet
             );
 
-            if (ItemData.IsLight && !InChunkMesh)
+            if (!InChunkMesh && !Scenes.GameScene.ChunkStaticLights && ItemData.IsLight)
             {
                 Client.Game.GetScene<GameScene>().AddLight(this, this, posX + 22, posY + 22);
             }
