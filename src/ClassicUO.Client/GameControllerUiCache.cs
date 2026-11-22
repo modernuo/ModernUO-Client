@@ -141,6 +141,7 @@ namespace ClassicUO
 
             FrameStats.End(FramePhase.UiCacheCompare);
             Submit(final, _uiCache.Final);
+            NoteUiChange(gumps, final);
 
             FrameStats.Set(FrameCounter.UiCached, gumps == RecordingResult.Same ? 1 : 0);
             FrameStats.Set(FrameCounter.UiUntouched, final == RecordingResult.Same ? 1 : 0);

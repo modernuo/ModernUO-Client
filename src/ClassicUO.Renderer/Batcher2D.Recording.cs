@@ -40,6 +40,65 @@ namespace ClassicUO.Renderer
         public void Invalidate() => Valid = false;
 
         /// <summary>
+        /// ui_border_bake: the target pixels the sprites of segments <paramref name="fromSegment"/>.. cover (empty when they
+        /// draw nothing). False when the pass is invalid or a segment is transformed or drawn through a viewport not at the
+        /// target's origin, whose vertices are not target pixels.
+        /// </summary>
+        public bool TryGetBounds(int fromSegment, out Rectangle bounds)
+        {
+            bounds = Rectangle.Empty;
+
+            if (!Valid)
+            {
+                return false;
+            }
+
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+
+            for (int s = fromSegment; s < Segments.Count; s++)
+            {
+                RecordedSegment seg = Segments[s];
+
+                if (seg.Transform != Matrix.Identity || seg.Viewport.X != 0 || seg.Viewport.Y != 0)
+                {
+                    return false;
+                }
+
+                for (int i = seg.Start, end = seg.Start + seg.Count; i < end; i++)
+                {
+                    ref UltimaBatcher2D.PositionNormalTextureColor4 v = ref Vertices[i];
+                    Grow(v.Position0, ref minX, ref minY, ref maxX, ref maxY);
+                    Grow(v.Position1, ref minX, ref minY, ref maxX, ref maxY);
+                    Grow(v.Position2, ref minX, ref minY, ref maxX, ref maxY);
+                    Grow(v.Position3, ref minX, ref minY, ref maxX, ref maxY);
+                }
+            }
+
+            if (minX > maxX || minY > maxY)
+            {
+                return true;
+            }
+
+            if (!float.IsFinite(minX) || !float.IsFinite(minY) || !float.IsFinite(maxX) || !float.IsFinite(maxY))
+            {
+                return false;
+            }
+
+            int x0 = (int)MathF.Floor(minX), y0 = (int)MathF.Floor(minY);
+            bounds = new Rectangle(x0, y0, (int)MathF.Ceiling(maxX) - x0, (int)MathF.Ceiling(maxY) - y0);
+
+            return true;
+        }
+
+        private static void Grow(in Vector3 p, ref float minX, ref float minY, ref float maxX, ref float maxY)
+        {
+            minX = Math.Min(minX, p.X);
+            minY = Math.Min(minY, p.Y);
+            maxX = Math.Max(maxX, p.X);
+            maxY = Math.Max(maxY, p.Y);
+        }
+
+        /// <summary>
         /// True when two recordings draw the same: the same segments (ranges and states), the same texture references and
         /// byte-identical vertices. Bytes, not floats: -0 and 0 differ (a needless redraw), NaN equals itself.
         /// </summary>

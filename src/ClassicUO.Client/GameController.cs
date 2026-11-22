@@ -1249,6 +1249,15 @@ namespace ClassicUO
             // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
             _renderTargets.PreserveWorldContents = Scene is GameScene;
             _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
+            bool borderBake = UiComposite.Enabled;
+            _renderTargets.BorderBake = borderBake;
+
+            if (!borderBake && _borderBakeWas && !UiCompositeCheckOn)
+            {
+                _renderTargets.ReleaseBorder();
+            }
+
+            _borderBakeWas = borderBake;
             RefreshGeometry();
             _renderTargets.EnsureSizes(GraphicsDevice, _geometry);
 
@@ -1279,7 +1288,12 @@ namespace ClassicUO
             if (PresentCapCheck.On) PresentCapCheck.Draw(_displayDrawDue);
 #endif
 
-            GraphicsDevice.Clear(Color.Black);
+            // ui_border_bake: the composite writes every back-buffer pixel opaque, so the back buffer needs no clear first
+            if (!borderBake)
+            {
+                GraphicsDevice.Clear(Color.Black);
+            }
+
             FrameStats.End(FramePhase.DrawSetup);
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
@@ -1319,6 +1333,7 @@ namespace ClassicUO
             else
             {
                 _uiCache.Invalidate();
+                NoteUiChangedEverywhere();
 
                 _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
                 GraphicsDevice.Clear(Color.Transparent);
@@ -1339,10 +1354,15 @@ namespace ClassicUO
                 FrameStats.AddTicks(FramePhase.UiFna, UltimaBatcher2D.FrameGpuTicks - uiFna0);
             }
 
+#if CUO_DEVTOOLS
+            CheckUiComposite(borderBake);
+#endif
             FrameStats.Begin(FramePhase.Composite);
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(null);
 
+            long bakedBefore = _renderTargets.BorderBakeState.BakedPixels;
             _renderTargets.Draw(_uoSpriteBatch);
+            FrameStats.Set(FrameCounter.UiBorderBakePx, (int)Math.Min(int.MaxValue, _renderTargets.BorderBakeState.BakedPixels - bakedBefore));
             FrameStats.End(FramePhase.Composite);
 #if CUO_DEVTOOLS
             Game.Scenes.LightFrameLog.AfterComposite(GraphicsDevice, _renderTargets, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight);
