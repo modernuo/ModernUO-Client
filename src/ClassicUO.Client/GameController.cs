@@ -1287,6 +1287,10 @@ namespace ClassicUO
             FrameStats.End(FramePhase.Composite);
 #if CUO_DEVTOOLS
             Game.Scenes.LightFrameLog.AfterComposite(GraphicsDevice, _renderTargets, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight);
+            if (Scene is Game.Scenes.GameScene geomScene)
+            {
+                Game.Scenes.GeometryProbe.AfterComposite(this, _renderTargets, geomScene.Camera.Bounds, geomScene.Camera.Zoom);
+            }
 #endif
 
             if (_worldShotPath != null)

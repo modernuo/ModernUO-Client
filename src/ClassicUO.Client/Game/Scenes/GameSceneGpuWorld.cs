@@ -486,7 +486,15 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(null);
             batcher.End();
 
-            gpu.Render(target, GetGpuCamera(target), hold);
+            var gpuCam = GetGpuCamera(target);
+#if CUO_DEVTOOLS
+            if (GeometryProbe.Active)
+            {
+                GeometryProbe.OnWorldPass(device, batcher, target, matrix, true, gpuCam.CenterX - _offset.X, gpuCam.CenterY - _offset.Y,
+                    gpuCam.ViewportWidth, gpuCam.ViewportHeight, _offset.X, _offset.Y);
+            }
+#endif
+            gpu.Render(target, gpuCam, hold);
 
             device.SetRenderTarget(null);
             _gpuWorld = null;

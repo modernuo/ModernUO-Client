@@ -1650,6 +1650,12 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(null);
             batcher.SetCircleOfTransparencyRadius(0f);
             batcher.End();
+#if CUO_DEVTOOLS
+            if (GeometryProbe.Active)
+            {
+                GeometryProbe.OnWorldPass(batcher.GraphicsDevice, batcher, renderTargets.WorldRenderTarget, matrix, false, 0, 0, 0, 0, _offset.X, _offset.Y);
+            }
+#endif
 
             batcher.GraphicsDevice.SetRenderTarget(null);
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
@@ -1752,6 +1758,13 @@ namespace ClassicUO.Game.Scenes
 
             batcher.SetBlendState(null);
             batcher.End();
+#if CUO_DEVTOOLS
+            if (GeometryProbe.Active)
+            {
+                GeometryProbe.OnLightPass(batcher.GraphicsDevice, batcher, renderTargets.LightRenderTarget, matrix, lightCount,
+                    lightCount > 0 ? _frameLights[0].DrawX : 0, lightCount > 0 ? _frameLights[0].DrawY : 0);
+            }
+#endif
 
             batcher.GraphicsDevice.SetRenderTarget(null);
 

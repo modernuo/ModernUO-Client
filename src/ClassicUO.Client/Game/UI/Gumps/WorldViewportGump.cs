@@ -265,6 +265,17 @@ namespace ClassicUO.Game.UI.Gumps
             return newSize;
         }
 
+        /// <summary>Sets the viewport's size in UI units, without the DPI conversion of <see cref="ResizeGameWindow"/>.</summary>
+        public void SetViewportSize(Point size)
+        {
+            _lastSize = _savedSize = size;
+            _scene.Camera.Bounds.Width = size.X;
+            _scene.Camera.Bounds.Height = size.Y;
+            Width = size.X + BORDER_WIDTH * 2;
+            Height = size.Y + BORDER_WIDTH * 2;
+            Resize();
+        }
+
         public override bool Contains(int x, int y)
         {
             if (
