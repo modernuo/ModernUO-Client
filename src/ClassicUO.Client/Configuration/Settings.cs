@@ -98,6 +98,7 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("login_music_volume")] public int LoginMusicVolume { get; set; } = 70;
 
+        // not read: GameController runs with IsFixedTimeStep = false; only the -fixed_time_step argument writes the key
         [JsonPropertyName("fixed_time_step")] public bool FixedTimeStep { get; set; } = true;
 
         [JsonPropertyName("run_mouse_in_separate_thread")]
@@ -137,6 +138,8 @@ namespace ClassicUO.Configuration
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
+        // a text control keeps the glyph quads of its last draw and reuses them while its layout, atlas, width, font, style,
+        // hue and cell are unchanged. CUO_TEXT_QUAD_CHECK=1 compares them with a fresh build. Default off.
         [JsonPropertyName("text_quad_cache")] public bool TextQuadCache { get; set; }
 
         // A minimized window skips world prepare, draw and present (GameController.Update); packets, update and audio keep running.
@@ -169,15 +172,15 @@ namespace ClassicUO.Configuration
 
         // vsync-mailbox: vsync on presents in mailbox mode where FNA3D's SDL_GPU driver and the window support it (no tearing,
         // no queued frames; Present does not block), else in normal vsync. In mailbox mode the display-rate schedule and present
-        // on change run as for vsync off. The Options menu shows the mode in force. Default on after quiet-1119 (bench-000919/920:
+        // on change run as for vsync off. The Options menu shows the mode in force. Was default on after quiet-1119 (bench-000919/920:
         // idle CPU 68-90 -> 9-22 ms/s, walking 70-84 -> 25-37, ping RTT p50 5.9-7.5 -> 0.12 ms, both renderers).
-        // Default off again (owner, 2026-11-22): mailbox at the display rate judders as presents drift against scanout (bg/frame-pacing
+        // Default off since 2026-11-22 (owner): mailbox at the display rate judders as presents drift against scanout (bg/frame-pacing
         // simulation); FIFO with present on change and the deadline fix measured similar idle CPU. Mailbox stays opt-in.
         [JsonPropertyName("vsync_mailbox")] public bool VsyncMailbox { get; set; } = false;
 
         // The event loop (GameController.EventLoopWait; Windows, and Linux with event_loop_linux) waits between frames for the socket, window messages, a wake
-        // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (plugin ticks,
-        // macros, audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.
+        // or the next deadline. This is its longest wait without an Update, for timers the loop does not track (macros,
+        // audio streaming). 16 ms keeps Update at 60 Hz or more; a larger value saves wake-ups on idle clients.
         [JsonPropertyName("event_loop_max_wait_ms")] public int EventLoopMaxWaitMs { get; set; } = 16;
 
         // loop-idle: the event loop gathers the non-visual work Update polls (LoopDue: use queue, delayed click, music refill,
@@ -393,8 +396,8 @@ namespace ClassicUO.Configuration
         // the ring keeps the CircularBuffer path (one log line). Default off.
         [JsonPropertyName("net_ring")] public bool NetRing { get; set; }
 
-        // text_string_cache: server Cp1252 strings are decoded through a bounded cache keyed by their bytes (2048 strings of
-        // up to 64 chars), so repeated names and lines allocate nothing (Game/TextStringCache). CUO_TEXT_STRING_CACHE=1|0
+        // text_string_cache: server Cp1252 strings are decoded through a bounded cache keyed by their bytes (1024 sets x 2
+        // ways, strings up to 64 bytes), so repeated names and lines allocate nothing (Game/TextStringCache). CUO_TEXT_STRING_CACHE=1|0
         // overrides it and CUO_TEXT_CACHE_CHECK=1 compares every cached string with a fresh decode, in developer builds.
         // Default on (2026-11-20: 85.6 % hit rate, ~166 KiB per tour not allocated, ~45 KiB held per client, at most ~0.3 MB).
         [JsonPropertyName("text_string_cache")] public bool TextStringCache { get; set; } = true;
