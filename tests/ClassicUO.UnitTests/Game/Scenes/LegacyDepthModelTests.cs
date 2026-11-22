@@ -123,9 +123,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 LegacyGeo.Apply(ref v, LegacyGeo.Flat, col, row, b);
                 var (nx, ny) = GeoDepth.NorthVertex(PX, PY, z);
 
-                for (int dy = 0; dy <= 44; dy += 4)
+                for (int dx = -22; dx <= 22; dx += 3)
                 {
-                    Decode(in v, nx, ny + dy).Should().BeApproximately(GeoDepth.Land(ny + dy, z) - Cam, 1e-3f);
+                    for (int dy = 0; dy <= 44; dy += 4)
+                    {
+                        Decode(in v, nx + dx, ny + dy).Should().BeApproximately(GeoDepth.Land(PX, PY, z, nx + dx, ny + dy) - Cam, 1e-3f, $"z {z} at {dx},{dy}");
+                    }
                 }
             }
         }
@@ -203,6 +206,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 {
                     for (int dy = 0; dy <= 10; dy += 2)
                     {
+                        // render-order-1: a floor only where its diamond is (it is floored at its tile's back edges)
+                        if (!GeoDepth.OnShape(tx, ty, Z, 0, false, true, ax + dx, ay + dy))
+                        {
+                            continue;
+                        }
+
                         Decode(in mobile, ax + dx, ay + dy).Should().BeGreaterThan(Decode(in land, ax + dx, ay + dy), $"land {tx},{ty} at {dx},{dy}");
                     }
                 }
