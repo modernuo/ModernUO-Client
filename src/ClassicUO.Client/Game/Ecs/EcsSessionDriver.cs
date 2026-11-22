@@ -1146,6 +1146,14 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // uiborderbake on|off: ui_border_bake (G11a, UiComposite; CUO_UI_BORDER_BAKE overrides it). Live: the next frame draws
+                // the other composite
+                case "uiborderbake" when args.Length > 0:
+                    Settings.GlobalSettings.UiBorderBake = args[0] == "on";
+                    Log.Info($"[ECS] driver: ui_border_bake {Settings.GlobalSettings.UiBorderBake} (effective {UiComposite.Enabled})");
+
+                    return false;
+
                 // wetdepth on|off: wet_surface_depth (WetSurfaceDepth; CUO_WET_SURFACE_DEPTH overrides it)
                 case "wetdepth" when args.Length > 0:
                     Settings.GlobalSettings.WetSurfaceDepth = args[0] == "on";

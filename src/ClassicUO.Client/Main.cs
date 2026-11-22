@@ -361,6 +361,12 @@ namespace ClassicUO
 
                         break;
 
+                    // -display <index|name>: the monitor the window opens on (window_display, WindowPlacement)
+                    case "display":
+                        Settings.GlobalSettings.WindowDisplay = value;
+
+                        break;
+
                     case "pack":
                         Settings.GlobalSettings.PackDirectory = value;
 

@@ -163,6 +163,8 @@ namespace ClassicUO
         UiDrawCalls,
         UiCached,
         UiUntouched,
+        // ui_border_bake: back-buffer pixels baked into the border this frame (0: copied as it was)
+        UiBorderBakePx,
         // E6: effects in the world's effects list this frame
         Effects,
         // L1 network drain: bytes the socket had ready when the frame drained it, raw bytes read, 4 KB slices read, packets dispatched
@@ -272,7 +274,7 @@ namespace ClassicUO
             "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_alloc", "chunk_new", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending", "art_obj", "art_take",
             "gump_sync", "gump_sync_us", "gump_async", "gump_upload_us", "gump_pending",
-            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
+            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "ui_border_bake_px", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
             "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
             "child_layer_scans", "child_layer_gets", "loop_ticks", "loop_waits",
