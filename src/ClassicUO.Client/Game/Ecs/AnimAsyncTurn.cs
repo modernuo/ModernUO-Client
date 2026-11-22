@@ -20,10 +20,11 @@ namespace ClassicUO.Game
     /// (the end of its queued steps) and the two next to it, in the group it will draw (walk or run while moving, the war
     /// stance in war mode), for body, mount and equipment. Bounded like <see cref="LookPrefetch"/>: at most
     /// <see cref="Capacity"/> notes waiting (the oldest dropped), <see cref="BudgetPerUpdate"/> resolved an Update, mobiles
-    /// beyond the view range skipped. Main thread; no allocation.
+    /// beyond the view range skipped. Main thread; no allocation. One queue per <see cref="World"/> (World.AsyncTurn): a
+    /// process-wide queue let one world's notes reach another world's drain (the unit suite's parallel worlds).
     /// CUO_ANIM_ASYNC_TURN_CHECK=1 (Animations.AsyncTurnCheck) reports per plan step or every 5 s, in both states.
     /// </summary>
-    internal static class AnimAsyncTurn
+    internal sealed class AnimAsyncTurn
     {
         public const int Capacity = 128;
         public const int BudgetPerUpdate = 16;
@@ -47,21 +48,27 @@ namespace ClassicUO.Game
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AnimAsyncTurn ?? false);
 
-        private static readonly uint[] _serials = new uint[Capacity];
-        private static int _head, _count;
+        private readonly World _world;
+        private readonly uint[] _serials = new uint[Capacity];
+        private int _head, _count;
 
         /// <summary>Notes dropped because the queue was full, and mobiles resolved (totals).</summary>
-        public static long Dropped, Resolved;
+        public long Dropped, Resolved;
 
-        public static int Count => _count;
+        public int Count => _count;
 
 #if CUO_DEVTOOLS
-        private static long _summaryAt;
-        public static bool StepWindows;
+        private long _summaryAt;
+        private bool _stepWindows;
 #endif
 
+        public AnimAsyncTurn(World world)
+        {
+            _world = world;
+        }
+
         /// <summary>WorldWriter: <paramref name="serial"/> moved, turned or changed its war mode (main thread).</summary>
-        public static void Note(uint serial)
+        public void Note(uint serial)
         {
             if (serial == 0 || !Enabled)
             {
@@ -79,7 +86,7 @@ namespace ClassicUO.Game
             _count++;
         }
 
-        internal static bool TryTake(out uint serial)
+        internal bool TryTake(out uint serial)
         {
             if (_count == 0)
             {
@@ -95,12 +102,6 @@ namespace ClassicUO.Game
             return true;
         }
 
-        internal static void ResetForTests()
-        {
-            _head = _count = 0;
-            Dropped = Resolved = 0;
-        }
-
         /// <summary>The UO directions requested for a mobile that will face <paramref name="uoDir"/>: that one first, then
         /// its two neighbours (the likely next turn).</summary>
         internal static void Directions(byte uoDir, Span<byte> dirs)
@@ -111,12 +112,13 @@ namespace ClassicUO.Game
         }
 
         /// <summary>Each Update, before the draw.</summary>
-        public static void Drain(World world)
+        public void Drain()
         {
+            World world = _world;
             bool on = Enabled;
             RendererAnimations.AsyncTurn = on;
 #if CUO_DEVTOOLS
-            if (Check && !StepWindows)
+            if (Check && !_stepWindows)
             {
                 long now = Stopwatch.GetTimestamp();
 
@@ -176,9 +178,9 @@ namespace ClassicUO.Game
 
 #if CUO_DEVTOOLS
         /// <summary>DevBench plan step: the summary for <paramref name="tag"/> (null: a window starts, discarded).</summary>
-        public static void Step(string tag)
+        public void Step(string tag)
         {
-            StepWindows = true;
+            _stepWindows = true;
             string s = RendererAnimations.AsyncTurnSummary();
 
             if (tag != null)
