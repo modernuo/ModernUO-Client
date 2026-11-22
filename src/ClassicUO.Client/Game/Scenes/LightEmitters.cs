@@ -32,8 +32,16 @@ namespace ClassicUO.Game.Scenes
 
         private static bool[] Build()
         {
-            StaticTiles[] data = Client.Game.UO.FileManager.TileData.StaticData;
-            LightsLoader lights = Client.Game.UO.FileManager.Lights;
+            UOFileManager files = Client.Game?.UO?.FileManager;
+            StaticTiles[] data = files?.TileData?.StaticData;
+            LightsLoader lights = files?.Lights;
+
+            if (data == null || lights == null)
+            {
+                // no pack loaded (unit tests without one): nothing emits, and the table is built once one is
+                return System.Array.Empty<bool>();
+            }
+
             bool[] t = new bool[data.Length];
 
             for (int g = 0; g < data.Length; g++)
