@@ -973,6 +973,7 @@ namespace ClassicUO.Game.UI.Controls
             }
 
             IsDisposed = true;
+            UIManager.OnControlDisposed(this);
             InvalidateDraw();
         }
     }

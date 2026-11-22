@@ -496,25 +496,25 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _labels[(int) MobileStats.Name].Text = !string.IsNullOrEmpty(World.Player.Name) ? World.Player.Name : string.Empty;
 
-                _labels[(int) MobileStats.Strength].Text = World.PlayerState.Strength.ToString();
+                _labels[(int) MobileStats.Strength].SetNumber(World.PlayerState.Strength);
 
-                _labels[(int) MobileStats.Dexterity].Text = World.PlayerState.Dexterity.ToString();
+                _labels[(int) MobileStats.Dexterity].SetNumber(World.PlayerState.Dexterity);
 
-                _labels[(int) MobileStats.Intelligence].Text = World.PlayerState.Intelligence.ToString();
+                _labels[(int) MobileStats.Intelligence].SetNumber(World.PlayerState.Intelligence);
 
                 _labels[(int) MobileStats.Sex].Text = World.Player.IsFemale ? ResGumps.Female : ResGumps.Male;
 
-                _labels[(int) MobileStats.AR].Text = World.PlayerState.PhysicalResistance.ToString();
+                _labels[(int) MobileStats.AR].SetNumber(World.PlayerState.PhysicalResistance);
 
-                _labels[(int) MobileStats.HealthCurrent].Text = $"{World.Player.Hits}/{World.Player.HitsMax}";
+                _labels[(int) MobileStats.HealthCurrent].SetPair(World.Player.Hits, '/', World.Player.HitsMax);
 
-                _labels[(int) MobileStats.ManaCurrent].Text = $"{World.Player.Mana}/{World.Player.ManaMax}";
+                _labels[(int) MobileStats.ManaCurrent].SetPair(World.Player.Mana, '/', World.Player.ManaMax);
 
-                _labels[(int) MobileStats.StaminaCurrent].Text = $"{World.Player.Stamina}/{World.Player.StaminaMax}";
+                _labels[(int) MobileStats.StaminaCurrent].SetPair(World.Player.Stamina, '/', World.Player.StaminaMax);
 
-                _labels[(int) MobileStats.Gold].Text = World.PlayerState.Gold.ToString();
+                _labels[(int) MobileStats.Gold].SetNumber(World.PlayerState.Gold);
 
-                _labels[(int) MobileStats.WeightCurrent].Text = $"{World.PlayerState.Weight}/{World.PlayerState.WeightMax}";
+                _labels[(int) MobileStats.WeightCurrent].SetPair(World.PlayerState.Weight, '/', World.PlayerState.WeightMax);
             }
 
             base.Update();
@@ -1362,89 +1362,89 @@ namespace ClassicUO.Game.UI.Gumps
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.HitChanceInc].Text = World.PlayerState.HitChanceIncrease.ToString();
+                    _labels[(int) MobileStats.HitChanceInc].SetNumber(World.PlayerState.HitChanceIncrease);
                 }
 
-                _labels[(int) MobileStats.Strength].Text = World.PlayerState.Strength.ToString();
+                _labels[(int) MobileStats.Strength].SetNumber(World.PlayerState.Strength);
 
-                _labels[(int) MobileStats.Dexterity].Text = World.PlayerState.Dexterity.ToString();
+                _labels[(int) MobileStats.Dexterity].SetNumber(World.PlayerState.Dexterity);
 
-                _labels[(int) MobileStats.Intelligence].Text = World.PlayerState.Intelligence.ToString();
+                _labels[(int) MobileStats.Intelligence].SetNumber(World.PlayerState.Intelligence);
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.DefenseChanceInc].Text = $"{World.PlayerState.DefenseChanceIncrease}/{World.PlayerState.MaxDefenseChanceIncrease}";
+                    _labels[(int) MobileStats.DefenseChanceInc].SetPair(World.PlayerState.DefenseChanceIncrease, '/', World.PlayerState.MaxDefenseChanceIncrease);
                 }
 
-                _labels[(int) MobileStats.HealthCurrent].Text = World.Player.Hits.ToString();
+                _labels[(int) MobileStats.HealthCurrent].SetNumber(World.Player.Hits);
 
-                _labels[(int) MobileStats.HealthMax].Text = World.Player.HitsMax.ToString();
+                _labels[(int) MobileStats.HealthMax].SetNumber(World.Player.HitsMax);
 
-                _labels[(int) MobileStats.StaminaCurrent].Text = World.Player.Stamina.ToString();
+                _labels[(int) MobileStats.StaminaCurrent].SetNumber(World.Player.Stamina);
 
-                _labels[(int) MobileStats.StaminaMax].Text = World.Player.StaminaMax.ToString();
+                _labels[(int) MobileStats.StaminaMax].SetNumber(World.Player.StaminaMax);
 
-                _labels[(int) MobileStats.ManaCurrent].Text = World.Player.Mana.ToString();
+                _labels[(int) MobileStats.ManaCurrent].SetNumber(World.Player.Mana);
 
-                _labels[(int) MobileStats.ManaMax].Text = World.Player.ManaMax.ToString();
+                _labels[(int) MobileStats.ManaMax].SetNumber(World.Player.ManaMax);
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.LowerManaCost].Text = World.PlayerState.LowerManaCost.ToString();
+                    _labels[(int) MobileStats.LowerManaCost].SetNumber(World.PlayerState.LowerManaCost);
                 }
 
-                _labels[(int) MobileStats.StatCap].Text = World.PlayerState.StatsCap.ToString();
+                _labels[(int) MobileStats.StatCap].SetNumber(World.PlayerState.StatsCap);
 
-                _labels[(int) MobileStats.Luck].Text = World.PlayerState.Luck.ToString();
+                _labels[(int) MobileStats.Luck].SetNumber(World.PlayerState.Luck);
 
-                _labels[(int) MobileStats.WeightCurrent].Text = World.PlayerState.Weight.ToString();
+                _labels[(int) MobileStats.WeightCurrent].SetNumber(World.PlayerState.Weight);
 
-                _labels[(int) MobileStats.WeightMax].Text = World.PlayerState.WeightMax.ToString();
+                _labels[(int) MobileStats.WeightMax].SetNumber(World.PlayerState.WeightMax);
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.DamageChanceInc].Text = World.PlayerState.DamageIncrease.ToString();
+                    _labels[(int) MobileStats.DamageChanceInc].SetNumber(World.PlayerState.DamageIncrease);
 
-                    _labels[(int) MobileStats.SwingSpeedInc].Text = World.PlayerState.SwingSpeedIncrease.ToString();
+                    _labels[(int) MobileStats.SwingSpeedInc].SetNumber(World.PlayerState.SwingSpeedIncrease);
                 }
 
-                _labels[(int) MobileStats.Gold].Text = World.PlayerState.Gold.ToString();
+                _labels[(int) MobileStats.Gold].SetNumber(World.PlayerState.Gold);
 
-                _labels[(int) MobileStats.Damage].Text = $"{World.PlayerState.DamageMin}-{World.PlayerState.DamageMax}";
+                _labels[(int) MobileStats.Damage].SetPair(World.PlayerState.DamageMin, '-', World.PlayerState.DamageMax);
 
-                _labels[(int) MobileStats.Followers].Text = $"{World.PlayerState.Followers}/{World.PlayerState.FollowersMax}";
+                _labels[(int) MobileStats.Followers].SetPair(World.PlayerState.Followers, '/', World.PlayerState.FollowersMax);
 
                 if (Client.Game.UO.FileManager.Gumps.UseUOPGumps)
                 {
-                    _labels[(int) MobileStats.LowerReagentCost].Text = World.PlayerState.LowerReagentCost.ToString();
+                    _labels[(int) MobileStats.LowerReagentCost].SetNumber(World.PlayerState.LowerReagentCost);
 
-                    _labels[(int) MobileStats.SpellDamageInc].Text = World.PlayerState.SpellDamageIncrease.ToString();
+                    _labels[(int) MobileStats.SpellDamageInc].SetNumber(World.PlayerState.SpellDamageIncrease);
 
-                    _labels[(int) MobileStats.FasterCasting].Text = World.PlayerState.FasterCasting.ToString();
+                    _labels[(int) MobileStats.FasterCasting].SetNumber(World.PlayerState.FasterCasting);
 
-                    _labels[(int) MobileStats.FasterCastRecovery].Text = World.PlayerState.FasterCastRecovery.ToString();
+                    _labels[(int) MobileStats.FasterCastRecovery].SetNumber(World.PlayerState.FasterCastRecovery);
 
-                    _labels[(int) MobileStats.AR].Text = $"{World.PlayerState.PhysicalResistance}/{World.PlayerState.MaxPhysicResistence}";
+                    _labels[(int) MobileStats.AR].SetPair(World.PlayerState.PhysicalResistance, '/', World.PlayerState.MaxPhysicResistence);
 
-                    _labels[(int) MobileStats.RF].Text = $"{World.PlayerState.FireResistance}/{World.PlayerState.MaxFireResistence}";
+                    _labels[(int) MobileStats.RF].SetPair(World.PlayerState.FireResistance, '/', World.PlayerState.MaxFireResistence);
 
-                    _labels[(int) MobileStats.RC].Text = $"{World.PlayerState.ColdResistance}/{World.PlayerState.MaxColdResistence}";
+                    _labels[(int) MobileStats.RC].SetPair(World.PlayerState.ColdResistance, '/', World.PlayerState.MaxColdResistence);
 
-                    _labels[(int) MobileStats.RP].Text = $"{World.PlayerState.PoisonResistance}/{World.PlayerState.MaxPoisonResistence}";
+                    _labels[(int) MobileStats.RP].SetPair(World.PlayerState.PoisonResistance, '/', World.PlayerState.MaxPoisonResistence);
 
-                    _labels[(int) MobileStats.RE].Text = $"{World.PlayerState.EnergyResistance}/{World.PlayerState.MaxEnergyResistence}";
+                    _labels[(int) MobileStats.RE].SetPair(World.PlayerState.EnergyResistance, '/', World.PlayerState.MaxEnergyResistence);
                 }
                 else
                 {
-                    _labels[(int) MobileStats.AR].Text = World.PlayerState.PhysicalResistance.ToString();
+                    _labels[(int) MobileStats.AR].SetNumber(World.PlayerState.PhysicalResistance);
 
-                    _labels[(int) MobileStats.RF].Text = World.PlayerState.FireResistance.ToString();
+                    _labels[(int) MobileStats.RF].SetNumber(World.PlayerState.FireResistance);
 
-                    _labels[(int) MobileStats.RC].Text = World.PlayerState.ColdResistance.ToString();
+                    _labels[(int) MobileStats.RC].SetNumber(World.PlayerState.ColdResistance);
 
-                    _labels[(int) MobileStats.RP].Text = World.PlayerState.PoisonResistance.ToString();
+                    _labels[(int) MobileStats.RP].SetNumber(World.PlayerState.PoisonResistance);
 
-                    _labels[(int) MobileStats.RE].Text = World.PlayerState.EnergyResistance.ToString();
+                    _labels[(int) MobileStats.RE].SetNumber(World.PlayerState.EnergyResistance);
                 }
             }
 

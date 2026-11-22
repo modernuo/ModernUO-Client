@@ -33,6 +33,9 @@ namespace ClassicUO.Game.UI.Gumps
             private uint _time;
             private AlphaBlendControl _background;
             private readonly CounterBarGump _gump;
+            // G2: what the shown amount text was made from; the poll makes a new text only when one of these changed
+            private bool _shownValid, _shownAbbreviate;
+            private int _shownAmount, _shownCompareTo, _shownAbbreviateAt;
 
             public CounterItem(CounterBarGump gump, ushort graphic, ushort? hue, int compareTo)
             {
@@ -333,6 +336,7 @@ namespace ClassicUO.Game.UI.Gumps
                 if (Graphic == 0)
                 {
                     _image.SetAmount(string.Empty);
+                    _shownValid = false;
                     return;
                 }
 
@@ -341,7 +345,19 @@ namespace ClassicUO.Game.UI.Gumps
 
                 UpdateOnChangeAnimation(previousAmount);
 
-                _image.SetAmount(CalculateDisplayAmountText());
+                Profile profile = ProfileManager.CurrentProfile;
+                int displayAmount = CalculateDisplayAmount();
+
+                if (!_shownValid || displayAmount != _shownAmount || CompareTo != _shownCompareTo
+                    || profile.CounterBarDisplayAbbreviatedAmount != _shownAbbreviate || profile.CounterBarAbbreviatedAmount != _shownAbbreviateAt)
+                {
+                    _shownValid = true;
+                    _shownAmount = displayAmount;
+                    _shownCompareTo = CompareTo;
+                    _shownAbbreviate = profile.CounterBarDisplayAbbreviatedAmount;
+                    _shownAbbreviateAt = profile.CounterBarAbbreviatedAmount;
+                    _image.SetAmount(CalculateDisplayAmountText());
+                }
             }
 
             private void UpdateOnChangeAnimation(int previousAmount)

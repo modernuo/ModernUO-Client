@@ -130,6 +130,9 @@ namespace ClassicUO.Game.UI.Controls
         public bool HighlightOnMouseOver { get; set; }
         public bool CanPickUp { get; set; }
 
+        // the container whose gump is hovered (ContainerGump.Update, HighlightContainerWhenSelected), as latched for the UI pass
+        internal static bool IsSelectedContainer(uint serial) => serial != 0 && serial == SelectedObject.UiSelectedContainerSerial;
+
         public override void Update()
         {
             if (IsDisposed)
@@ -177,7 +180,7 @@ namespace ClassicUO.Game.UI.Controls
             bool partialHue = IsPartialHue;
             ushort hue = Hue;
 
-            if (HighlightOnMouseOver && MouseIsOver || LocalSerial == SelectedObject.SelectedContainer?.Serial)
+            if (HighlightOnMouseOver && MouseIsOver || IsSelectedContainer(LocalSerial))
             {
                 hue = 0x0035;
                 partialHue = false;
