@@ -56,7 +56,9 @@ namespace ClassicUO.UnitTests.Network.Packets
             byte[] bits = new byte[Uo.Pack.UnicodeGlyph.BitBytes(GlyphWidth, GlyphHeight)];
             Array.Fill(bits, (byte)0xFC);
 
-            for (int c = 32; c < 127; c++)
+            // no glyph for ' ', as in the client's unicode fonts: the loader measures a space as UNICODE_SPACE_WIDTH only then
+            // (with a glyph, GetWidthUnicode and the layout disagree by a pixel per space and one-line labels wrap)
+            for (int c = 33; c < 127; c++)
             {
                 glyphs[c] = new Uo.Pack.UnicodeGlyph(0, 0, GlyphWidth, GlyphHeight, bits);
             }
