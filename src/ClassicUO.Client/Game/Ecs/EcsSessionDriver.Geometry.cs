@@ -10,7 +10,7 @@ using Microsoft.Xna.Framework;
 namespace ClassicUO.Game
 {
     // Render geometry checks: viewport <w> <h> [x y] sets the game viewport's size in UI units (and its position), geom <tag>
-    // logs the frame's render geometry (GeometryProbe), zoom <z> sets the camera zoom.
+    // logs the frame's render geometry (GeometryProbe), zoom <z> sets the camera zoom, title <text> the window title.
     internal sealed partial class EcsSessionDriver
     {
         private bool ExecuteGeometry(string command, string[] args)
@@ -38,6 +38,11 @@ namespace ClassicUO.Game
                 }
                 case "geom":
                     GeometryProbe.Force(args.Length > 0 ? args[0] : "");
+
+                    return true;
+                // title <text>: the window title, so a person can tell a bench window apart
+                case "title" when args.Length > 0:
+                    Client.Game.Window.Title = string.Join(' ', args);
 
                     return true;
                 case "zoom" when args.Length > 0 && Client.Game.Scene is GameScene zs:
