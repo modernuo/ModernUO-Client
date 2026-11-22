@@ -1105,6 +1105,15 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // lightsurfaceonly on|off: light_occlusion_surface_only (LightOcclusion.SurfaceOnly; CUO_LIGHT_OCCLUSION_SURFACE_ONLY
+                // overrides it)
+                case "lightsurfaceonly" when args.Length > 0:
+                    Settings.GlobalSettings.LightOcclusionSurfaceOnly = args[0] == "on";
+                    Log.Info($"[ECS] driver: light_occlusion_surface_only {Settings.GlobalSettings.LightOcclusionSurfaceOnly} " +
+                             $"(effective {LightOcclusion.SurfaceOnly}, light_occlusion {LightOcclusion.Enabled})");
+
+                    return false;
+
                 // chunklights on|off: chunk_lights (ChunkLights; CUO_CHUNK_LIGHTS overrides it)
                 case "chunklights" when args.Length > 0:
                     Settings.GlobalSettings.ChunkLights = args[0] == "on";

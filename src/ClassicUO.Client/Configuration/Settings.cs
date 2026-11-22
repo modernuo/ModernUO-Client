@@ -251,6 +251,14 @@ namespace ClassicUO.Configuration
         // Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
 
+        // light-edges round 7 (owner, Luna 1005 513 -30: a wall in front of a candelabra stayed dark inside its halo): the
+        // light map multiplies the frame, so a mask only takes light off the occluder's own pixels. With light_occlusion on,
+        // only surface glows (light_alpha_fade's class: lightclass.bin, else the emitter's tiledata Wall/Window flags) get
+        // occluders and masks; radial lights (lamps, candles, torches) light the objects in front of them and get no stencil
+        // work (LightOcclusion.Masks). CUO_LIGHT_OCCLUSION_CHECK=1 counts the radial lights left unmasked and logs any drawn
+        // masked; CUO_LIGHT_OCCLUSION_SURFACE_ONLY=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("light_occlusion_surface_only")] public bool LightOcclusionSurfaceOnly { get; set; }
+
         // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
         // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
         // fade), so hidden walls leave no floating glows; radial glows (lamps, torches) keep full light. With light_occlusion

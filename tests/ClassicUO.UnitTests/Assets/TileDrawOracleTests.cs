@@ -342,13 +342,28 @@ namespace ClassicUO.UnitTests.Assets
     {
         public TileDataPackFactAttribute()
         {
+            Skip = TileDataPackSkip.Reason();
+        }
+    }
+
+    /// <summary><see cref="TileDataPackFactAttribute"/> for a theory.</summary>
+    public sealed class TileDataPackTheoryAttribute : TheoryAttribute
+    {
+        public TileDataPackTheoryAttribute()
+        {
+            Skip = TileDataPackSkip.Reason();
+        }
+    }
+
+    internal static class TileDataPackSkip
+    {
+        public static string Reason()
+        {
             var path = Path.Combine(TileDrawOracleTests.PackDir(), TableConst.TileDataFile);
 
             if (!File.Exists(path))
             {
-                Skip = $"integration data not on this machine: {path}";
-
-                return;
+                return $"integration data not on this machine: {path}";
             }
 
             using var fs = File.OpenRead(path);
@@ -356,8 +371,10 @@ namespace ClassicUO.UnitTests.Assets
 
             if (fs.Read(magic, 0, 4) != 4 || BitConverter.ToUInt32(magic, 0) != TableConst.MagicTileData)
             {
-                Skip = $"{path} is a pack 1.0 tiledata.bin; set CUO_TEST_PACK to a pack 1.1 folder";
+                return $"{path} is a pack 1.0 tiledata.bin; set CUO_TEST_PACK to a pack 1.1 folder";
             }
+
+            return null;
         }
     }
 }
