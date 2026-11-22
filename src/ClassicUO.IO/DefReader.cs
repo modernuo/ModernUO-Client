@@ -176,9 +176,16 @@ namespace ClassicUO.IO
                 throw new IndexOutOfRangeException();
             }
 
-            SanitizeStringNumber(ref group[index]);
+            string token = group[index].Trim();
 
-            return int.Parse(group[index]);
+            if (TryParseHex(token, out int hex))
+            {
+                return hex;
+            }
+
+            SanitizeStringNumber(ref token);
+
+            return int.Parse(token);
         }
 
         public int[] ReadGroup()
@@ -197,16 +204,15 @@ namespace ClassicUO.IO
 
                         for (int i = 0; i < splitRes.Length; i++)
                         {
-                            if (!string.IsNullOrEmpty(splitRes[i]) && char.IsNumber(splitRes[i][0]))
+                            string token = splitRes[i].Trim();
+
+                            if (token.Length != 0 && char.IsNumber(token[0]))
                             {
-                                NumberStyles style = NumberStyles.Any;
-
-                                if (splitRes[i].Length > 1 && splitRes[i][0] == '0' && splitRes[i][1] == 'x')
+                                if (TryParseHex(token, out int hex))
                                 {
-                                    style = NumberStyles.HexNumber;
+                                    results.Add(hex);
                                 }
-
-                                if (int.TryParse(splitRes[i], style, null, out int res))
+                                else if (int.TryParse(token, NumberStyles.Any, null, out int res))
                                 {
                                     results.Add(res);
                                 }
@@ -245,24 +251,25 @@ namespace ClassicUO.IO
 
         private int ReadInt(int line, int index)
         {
-            string token = TokenAt(line, index);
+            string token = TokenAt(line, index).Trim();
+
+            if (IsHex(token))
+            {
+                if (TryParseHex(token, out int hex))
+                {
+                    return hex;
+                }
+
+                Log.Error($"error while parsing {_file} - Line: {line}, index: {index}");
+
+                return -1;
+            }
 
             SanitizeStringNumber(ref token);
 
             if (!string.IsNullOrEmpty(token))
             {
-                if (token.StartsWith("0x"))
-                {
-                    if (int.TryParse(token.Remove(0, 2), NumberStyles.HexNumber, null, out var res))
-                    {
-                        return res;
-                    }
-                    else
-                    {
-                        Log.Error($"error while parsing {_file} - Line: {line}, index: {index}");
-                    }
-                }
-                else if (int.TryParse(token, out var res))
+                if (int.TryParse(token, out var res))
                 {
                     return res;
                 }
@@ -273,6 +280,18 @@ namespace ClassicUO.IO
             }
 
             return -1;
+        }
+
+        // "0x" hex, whitespace trimmed first (upstream d4a188976). The sanitizer below keeps only the leading digits, so a
+        // hex token reached it as "0" before, and NumberStyles.HexNumber refuses the "0x" prefix in a group.
+        private static bool IsHex(string token) =>
+            token.Length > 2 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X');
+
+        internal static bool TryParseHex(string token, out int value)
+        {
+            value = 0;
+
+            return IsHex(token) && int.TryParse(token.AsSpan(2).Trim(), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value);
         }
 
         private static void SanitizeStringNumber(ref string token)

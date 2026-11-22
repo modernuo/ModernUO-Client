@@ -54,29 +54,12 @@ namespace ClassicUO.Game.Managers
                 {
                     string line = reader.ReadLine();
 
-                    if (string.IsNullOrEmpty(line) || line.StartsWith("#") || line.StartsWith("//"))
+                    if (!TryParseSeasonLine(line, out string season, out bool isStatic, out ushort orig, out ushort replace))
                     {
                         continue;
                     }
 
-                    string[] seasonLine = line.Split(',');
-
-                    if (seasonLine.Length < 4)
-                    {
-                        continue;
-                    }
-
-                    ushort orig = seasonLine[2].StartsWith("0x", StringComparison.InvariantCultureIgnoreCase) ?
-                        Convert.ToUInt16(seasonLine[2], 16) :
-                        Convert.ToUInt16(seasonLine[2]);
-
-                    ushort replace = seasonLine[3].StartsWith("0x", StringComparison.InvariantCultureIgnoreCase) ?
-                        Convert.ToUInt16(seasonLine[3], 16) :
-                        Convert.ToUInt16(seasonLine[3]);
-
-                    bool isStatic = seasonLine[1].StartsWith("static", StringComparison.InvariantCultureIgnoreCase);
-
-                    switch (seasonLine[0].ToLower())
+                    switch (season)
                     {
                         case "spring":
 
@@ -173,6 +156,47 @@ namespace ClassicUO.Game.Managers
 
             return graphic;
         }
+
+        /// <summary>
+        /// One seasons.txt line, "season,static|land,original,replacement" (decimal or 0x hex). Each field is trimmed first, so
+        /// "spring, static, 0x0CA7, 0x0C84" reads as the default file's form (a space before a hex field read it as decimal,
+        /// which threw in the static constructor). False for a blank, comment or malformed line.
+        /// </summary>
+        internal static bool TryParseSeasonLine(string line, out string season, out bool isStatic, out ushort orig, out ushort replace)
+        {
+            season = null;
+            isStatic = false;
+            orig = replace = 0;
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return false;
+            }
+
+            line = line.Trim();
+
+            if (line.StartsWith("#") || line.StartsWith("//"))
+            {
+                return false;
+            }
+
+            string[] seasonLine = line.Split(',', StringSplitOptions.TrimEntries);
+
+            if (seasonLine.Length < 4 || !TryParseGraphic(seasonLine[2], out orig) || !TryParseGraphic(seasonLine[3], out replace))
+            {
+                return false;
+            }
+
+            season = seasonLine[0].ToLowerInvariant();
+            isStatic = seasonLine[1].StartsWith("static", StringComparison.InvariantCultureIgnoreCase);
+
+            return true;
+        }
+
+        private static bool TryParseGraphic(string s, out ushort value) =>
+            s.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                ? ushort.TryParse(s.AsSpan(2), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out value)
+                : ushort.TryParse(s, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value);
 
         #region CreateDefaultFile
 

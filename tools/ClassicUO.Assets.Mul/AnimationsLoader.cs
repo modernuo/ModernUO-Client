@@ -51,6 +51,49 @@ namespace ClassicUO.Assets
             };
 
 
+        /// <summary>
+        /// One mobtypes.txt line: the body id, the type name and the hex flags. False for a blank, comment or malformed line
+        /// (skipped). A "#" comment may follow the flags directly ("0#x"): the flags end at it (the old cut dropped the digit
+        /// before it). Whitespace is trimmed before the hex parse (upstream d4a188976).
+        /// </summary>
+        public static bool TryParseMobTypeLine(string line, out int id, out string type, out uint flags)
+        {
+            id = 0;
+            type = null;
+            flags = 0;
+            line = line.Trim();
+
+            if (line.Length == 0 || line[0] == '#' || !char.IsNumber(line[0]))
+            {
+                return false;
+            }
+
+            string[] parts = line.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length < 3)
+            {
+                return false;
+            }
+
+            string number = parts[2];
+            int commentIdx = number.IndexOf('#');
+
+            if (commentIdx == 0)
+            {
+                return false;
+            }
+
+            if (commentIdx > 0)
+            {
+                number = number.Substring(0, commentIdx);
+            }
+
+            type = parts[1].ToLowerInvariant();
+
+            return int.TryParse(parts[0].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out id)
+                && uint.TryParse(number.Trim(), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out flags);
+        }
+
         public override void Load()
         {
             // the verdata.mul patch map (FileID 6) is rebuilt on every file load
@@ -110,37 +153,10 @@ namespace ClassicUO.Assets
 
                         while ((line = reader.ReadLine()) != null)
                         {
-                            line = line.Trim();
-
-                            if (line.Length == 0 || line[0] == '#' || !char.IsNumber(line[0]))
+                            if (!TryParseMobTypeLine(line, out int id, out string testType, out uint number))
                             {
                                 continue;
                             }
-
-                            string[] parts = line.Split(
-                                new[] { '\t', ' ' },
-                                StringSplitOptions.RemoveEmptyEntries
-                            );
-
-                            if (parts.Length < 3)
-                            {
-                                continue;
-                            }
-
-                            int id = int.Parse(parts[0]);
-                            string testType = parts[1].ToLower();
-                            int commentIdx = parts[2].IndexOf('#');
-
-                            if (commentIdx > 0)
-                            {
-                                parts[2] = parts[2].Substring(0, commentIdx - 1);
-                            }
-                            else if (commentIdx == 0)
-                            {
-                                continue;
-                            }
-
-                            uint number = uint.Parse(parts[2].Trim(), NumberStyles.HexNumber);
 
                             for (int i = 0; i < 5; i++)
                             {
