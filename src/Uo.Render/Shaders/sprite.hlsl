@@ -69,7 +69,10 @@
 #define GEO_BOX       1u      // static over its tile: max(back edges, min(top plane, tile centre plane))
 #define GEO_WALL      2u      // vertical faces on the tile's back edges
 #define GEO_MOBILE    3u      // mobile composite: billboard through the tile centre, ground plane below, own tile's front faces
-#define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land
+#define GEO_FLAT      4u      // flat static (height 0, background or surface): its plane, lowered by FLAT_DROP like land,
+                              // never behind its tile's back edges (render-order-1, GeoDepth.FlatFloored)
+#define GEO_FLATWET   5u      // wet flat with wet_surface_depth on: its plane, lowered by WET_DROP (no floor)
+#define GEO_LAND      6u      // flat land: GEO_LINEAR's plane, never behind its tile's back edges (GeoDepth.Land)
 #define Z_GEOFLAT     32u
 #define Z_GEOBURIED   64u     // a non-flat static whose top is at or under its tile's land: lowered by FLAT_DROP like the flats
 #define Z_GEOTILE     128u    // a dynamic art instance (item, multi, captured static) in the statics' shape layout (SpriteInstance.GeoTile)
@@ -400,6 +403,13 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
         {
             o.geoLin = (wc.y + 22.0 + 4.0 * z) / 22.0 + GeoOff - FLAT_DROP;
             o.geoB.x = (z - 2) * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
+            // render-order-1: the floor's reference, the tile's north vertex (must match SpriteInstance.Tile: flat land's
+            // tile is exact from its trimmed X/Y and z)
+            int d = (inst.x + 33 >= 0 ? inst.x + 33 : inst.x + 33 - 21) / 22;
+            int s = (inst.y + 33 + z * 4 >= 0 ? inst.y + 33 + z * 4 : inst.y + 33 + z * 4 - 21) / 22;
+            int tx = (s + d) >> 1, ty = (s - d) >> 1;
+            float ny = (float)((tx + ty) * 22 - 22 - 4 * z - CamPx.y);
+            o.geoP = float4(GEO_LAND, (float)((tx - ty) * 22 - CamPx.x), ny, (ny + 22.0 + 4.0 * z) / 22.0 + GeoOff);
         }
         else if (zTest || (!lit && !indexed && (flags & FLAG_DEFORM) == 0 && !geoMob && ((inst.corners >> 16) & Z_GEOTILE) != 0))
         {
@@ -418,13 +428,12 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             float nx = (float)((tx - ty) * 22 - CamPx.x);
             float ny = (float)((tx + ty) * 22 - 22 - 4 * z - CamPx.y);
             float sum = (ny + 22.0 + 4.0 * z) / 22.0 + GeoOff;
-            o.geoP = float4(wall ? GEO_WALL : flat ? GEO_FLAT : GEO_BOX, nx, ny - 4.0 * height, sum);
+            // wet_surface_depth: a wet flat drops WET_DROP instead of FLAT_DROP, with no floor
+            bool wetFlat = flat && (DepthModel & DM_WET) != 0 && ((inst.corners >> 16) & Z_GEOWET) != 0;
+            o.geoP = float4(wall ? GEO_WALL : wetFlat ? GEO_FLATWET : flat ? GEO_FLAT : GEO_BOX, nx, ny - 4.0 * height, sum);
             o.geoB.x = (wall ? 0.02 : 0.0) + z * GEO_ZBIAS + (inst.depth & 7u) * GEO_RANKBIAS;
             if (((inst.corners >> 16) & Z_GEOBURIED) != 0)
                 o.geoB.x -= FLAT_DROP;
-            // wet_surface_depth: GEO_FLAT's FLAT_DROP in the PS becomes WET_DROP for water
-            if (flat && (DepthModel & DM_WET) != 0 && ((inst.corners >> 16) & Z_GEOWET) != 0)
-                o.geoB.x += FLAT_DROP - WET_DROP;
         }
         else if (geoMob)
         {
@@ -613,13 +622,20 @@ float GeoDepth(VSOut i)
     }
     if (cls == GEO_WALL)
         return i.geoP.w + abs((w.x - i.geoP.y) / 22.0);
+    // render-order-1: flats never sit behind their tile's back edges (GeoDepth.FlatFloored): art of the tile behind that
+    // hangs over them (a wall's foot) stays under them, as in the key's order
     if (cls == GEO_FLAT)
-        return i.geoP.w + (w.y - i.geoP.z) / 22.0 - FLAT_DROP;
+        return max(i.geoP.w + (w.y - i.geoP.z) / 22.0 - FLAT_DROP, i.geoP.w + abs((w.x - i.geoP.y) / 22.0));
+    if (cls == GEO_FLATWET)
+        return i.geoP.w + (w.y - i.geoP.z) / 22.0 - WET_DROP;
+    if (cls == GEO_LAND)
+        return max(i.geoLin, i.geoP.w + abs((w.x - i.geoP.y) / 22.0));
     if (cls == GEO_MOBILE)
     {
         float B = i.geoP.w;
         float ground = B + (w.y - i.geoP.z) / 22.0;
-        float front = B + 1.0 - abs((w.x - i.geoP.y) / 22.0);
+        // the front faces of the tile row under the column (own tile, then its side neighbours: GeoDepth.FrontFaces)
+        float front = B + abs(1.0 - fmod(abs((w.x - i.geoP.y) / 22.0), 2.0));
         return max(B, min(ground, front));
     }
     return i.geoLin;

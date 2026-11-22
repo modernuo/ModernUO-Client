@@ -9,9 +9,10 @@ namespace Uo.Render;
 /// per-pixel depth by shape does.
 /// <list type="bullet">
 /// <item>flat (land, and statics of height 0 that are Background or Surface): the plane at z, (sy + 22 + 4z) / 22, lowered by
-/// <see cref="FlatDrop"/>. A mobile's rows below its centre (feet, hooves, a titan's legs) hang over the floors ahead; the
-/// mobile is capped by its own tile's front faces so walls on those edges hide them, and the drop lets them still beat the
-/// floors. Flats keep their order among themselves; a non-flat less than FlatDrop · 5.5 z below a flat (same pixel) wins;</item>
+/// <see cref="FlatDrop"/>, but never behind its own tile's back edges (x + y + |s|, see <see cref="FlatFloored"/>). A mobile's
+/// rows below its centre (feet, hooves, a titan's legs) hang over the floors ahead; the mobile is capped by its own tile's
+/// front faces so walls on those edges hide them, and the drop lets them still beat the floors. Flats keep their order among
+/// themselves; a non-flat less than FlatDrop · 5.5 z below a flat (same pixel) wins;</item>
 /// <item>wall (tiledata Wall): vertical faces on the tile's back edges (north-east Y = y, north-west X = x, corners both):
 /// x + y + |s| with s = (sx − north vertex column) / 22. Orientation free: each half of the art can only be one edge;</item>
 /// <item>box (every other static, and items, multi pieces and captured statics with the same layout): over its tile from z
@@ -24,7 +25,9 @@ namespace Uo.Render;
 /// there with or without it;</item>
 /// <item>mobile composite (body, mount and equipment share one anchor): a billboard through the tile centre (B = x + y + 1)
 /// above the ground, the ground plane below the centre row (feet and hooves lie on the floor, so they beat it by the bias),
-/// capped by the own tile's front faces B + 1 − |s| (they lose to walls on the tile's front edges).</item>
+/// capped by the front faces of the tile under the column, B + |1 − (|s| mod 2)|: the own tile's B + 1 − |s|, and beside it
+/// (wide mounts and creatures, |s| over 1) its side neighbours', which have the same tile sum (they lose to walls on those
+/// edges, and tie the back edges of the floors ahead, which they beat by the bias).</item>
 /// </list>
 /// Ties (one plane) are broken by a small bias: walls over mobiles over flats and boxes, then z, then (baked land and
 /// statics) the key's rank. Within a mobile composite every layer has the same depth, so the depth test (LESS) keeps the
@@ -52,8 +55,21 @@ public static class GeoDepth
     /// loses only its rows more than 2.2 px under its centre row outside them (FlatDrop kept 33 px there).</summary>
     public const float WetDrop = 0.1f;
 
-    /// <summary>A flat at height <paramref name="z"/> under world pixel row <paramref name="sy"/>.</summary>
+    /// <summary>A flat at height <paramref name="z"/> under world pixel row <paramref name="sy"/>, without its floor (see
+    /// <see cref="FlatFloored"/>).</summary>
     public static float Flat(float sy, int z) => Plane(sy, z) - FlatDrop;
+
+    /// <summary>
+    /// render-order-1: a flat over tile (tx, ty) at z, lowered by <paramref name="drop"/> but never behind its tile's back edges:
+    /// max(plane − drop, x + y + |s|). The drop is for the mobile rows that hang over the floor ahead; they are capped at their
+    /// own tile's front faces, which are the floor ahead's back edges, so the floor ties them there and loses by MobileBias.
+    /// Without the floor, art of the tile behind that hangs over this tile (a wall's base and foot, Moonglow bank's parapets at
+    /// 4462 1159-1166 z 20 over the roof at 4463 z 20) beat the floor in a sawtooth, one diamond per tile: the wall's back
+    /// edge depth is up to 2 more than the floor's plane there, and FlatDrop took 1.5 of it. The floor is at most the plane
+    /// (inside the diamond, x + y + |s| ≤ plane), so a flat never moves in front of its own surface.
+    /// </summary>
+    public static float FlatFloored(int tx, int ty, int z, float sx, float sy, float drop = FlatDrop) =>
+        MathF.Max(Plane(sy, z) - drop, Wall(tx, ty, sx));
 
     /// <summary>Tile sum of the plane at height <paramref name="z"/> under world pixel row <paramref name="sy"/>.</summary>
     public static float Plane(float sy, int z) => (sy + 22f + 4f * z) / 22f;
@@ -77,24 +93,33 @@ public static class GeoDepth
         float cy = ay + 3f;
         float b = Plane(cy, z);
         float ground = b + (sy - cy) / 22f;
-        float front = b + 1f - MathF.Abs((sx - ax) / 22f);
-        return MathF.Max(b, MathF.Min(ground, front));
+        return MathF.Max(b, MathF.Min(ground, b + FrontFaces((sx - ax) / 22f)));
     }
 
-    /// <summary>A baked static's depth with its biases, as the geo VS/PS give it (rank left out): wall, flat or box over tile
-    /// (tx, ty) at z, lowered by <see cref="BuriedDrop"/> when <paramref name="buried"/>; a <paramref name="wet"/> flat (with
-    /// wet_surface_depth on) by <see cref="WetDrop"/> instead of <see cref="FlatDrop"/>.</summary>
+    /// <summary>The front faces of the row of tiles a mobile stands in (its own tile and its side neighbours, one tile sum) at
+    /// column <paramref name="s"/> tiles from its anchor, over the billboard: 1 at a tile's centre column, 0 at its side vertices.
+    /// render-order-1: beside its own tile (|s| over 1) a mobile's lower rows used to stop at the billboard, so the floors ahead,
+    /// floored at their back edges (<see cref="FlatFloored"/>), covered a wide mount's side hooves.</summary>
+    public static float FrontFaces(float s) => MathF.Abs(1f - Mod2(MathF.Abs(s)));
+
+    private static float Mod2(float a) => a - 2f * MathF.Floor(a * 0.5f);
+
+    /// <summary>A baked static's depth with its biases, as the geo VS/PS give it (rank left out): wall, flat (floored, see
+    /// <see cref="FlatFloored"/>) or box over tile (tx, ty) at z, lowered by <see cref="BuriedDrop"/> when <paramref name="buried"/>;
+    /// a <paramref name="wet"/> flat (with wet_surface_depth on) is its plane lowered by <see cref="WetDrop"/>, with no floor
+    /// (the floor would bind only in the 2.2 px under the back edges).</summary>
     public static float Static(int tx, int ty, int z, int height, bool wall, bool flat, bool buried, float sx, float sy, bool wet = false)
     {
         float d;
         if (wall) d = Wall(tx, ty, sx) + WallBias;
-        else if (flat) d = Plane(sy, z) - (wet ? WetDrop : FlatDrop);
+        else if (flat) d = wet ? Plane(sy, z) - WetDrop : FlatFloored(tx, ty, z, sx, sy);
         else d = Box(tx, ty, z, height, sx, sy);
         return d + z * ZBias - (buried ? BuriedDrop : 0f);
     }
 
-    /// <summary>A land tile's depth at height <paramref name="z"/> under world pixel row <paramref name="sy"/>, with its bias.</summary>
-    public static float Land(float sy, int z) => Flat(sy, z) + (z - 2) * ZBias;
+    /// <summary>A flat land tile (x, y, z)'s depth at world pixel (sx, sy), with its bias (floored, see <see cref="FlatFloored"/>;
+    /// stretched land keeps its corners' plane, sprite.hlsl FLAG_STRETCH).</summary>
+    public static float Land(int tx, int ty, int z, float sx, float sy) => FlatFloored(tx, ty, z, sx, sy) + (z - 2) * ZBias;
 
     /// <summary>A mobile composite's depth with its biases (see <see cref="Mobile"/>).</summary>
     public static float MobileBiased(float ax, float ay, int z, float sx, float sy) => Mobile(ax, ay, z, sx, sy) + MobileBias + z * ZBias;

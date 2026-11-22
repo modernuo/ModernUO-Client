@@ -53,8 +53,9 @@ namespace ClassicUO.Game.Scenes
             }
             else if ((bits & SpriteInstance.ZGeoFlat) != 0)
             {
-                cls = LegacyGeo.Flat;
-                baseSum -= (bits & SpriteInstance.ZGeoWet) != 0 ? GeoDepth.WetDrop : GeoDepth.FlatDrop;
+                bool wet = (bits & SpriteInstance.ZGeoWet) != 0;
+                cls = wet ? LegacyGeo.FlatWet : LegacyGeo.Flat;
+                baseSum -= wet ? GeoDepth.WetDrop : GeoDepth.FlatDrop;
                 row = ny - offY;
             }
             else

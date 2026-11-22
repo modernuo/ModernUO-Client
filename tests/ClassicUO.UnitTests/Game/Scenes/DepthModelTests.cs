@@ -113,13 +113,17 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             var (ax, ay) = GeoDepth.MobileAnchor(PX, PY, Z);
 
+            // render-order-1: each floor tile is floored at its back edges (GeoDepth.Land), so each pixel is tested against the
+            // land tile whose diamond holds it
             for (int dx = -30; dx <= 30; dx += 3)
             {
                 for (int row = 0; row <= 20; row++)
                 {
-                    float floor = GeoDepth.Flat(ay + row, Z) + (Z - 2) * GeoDepth.ZBias;
-                    MobileAt(dx, row).Should().BeGreaterThan(floor, $"feet pixel ({dx}, +{row}) over a floor at the mobile's z");
-                    _ = ax;
+                    float sx = ax + dx, sy = ay + row;
+                    float b = (sy + 22 + 4 * Z) / 22f, a = sx / 22f;
+                    int tx = (int)System.MathF.Floor((a + b) / 2f), ty = (int)System.MathF.Floor((b - a) / 2f);
+                    float floor = GeoDepth.Land(tx, ty, Z, sx, sy);
+                    MobileAt(dx, row).Should().BeGreaterThan(floor, $"feet pixel ({dx}, +{row}) over the floor {tx},{ty} at the mobile's z");
                 }
             }
         }
@@ -220,11 +224,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             float sx = nx + 7, sy = ny + 10;
 
             GeoDepth.Static(tx, ty, z, 20, true, false, false, sx, sy).Should().Be(GeoDepth.Wall(tx, ty, sx) + GeoDepth.WallBias + z * GeoDepth.ZBias);
-            GeoDepth.Static(tx, ty, z, 0, false, true, false, sx, sy).Should().Be(GeoDepth.Plane(sy, z) - GeoDepth.FlatDrop + z * GeoDepth.ZBias);
+            GeoDepth.Static(tx, ty, z, 0, false, true, false, sx, sy).Should().Be(GeoDepth.FlatFloored(tx, ty, z, sx, sy) + z * GeoDepth.ZBias);
+            GeoDepth.FlatFloored(tx, ty, z, sx, sy).Should().Be(System.MathF.Max(GeoDepth.Plane(sy, z) - GeoDepth.FlatDrop, GeoDepth.Wall(tx, ty, sx)));
             GeoDepth.Static(tx, ty, z, 6, false, false, false, sx, sy).Should().Be(GeoDepth.Box(tx, ty, z, 6, sx, sy) + z * GeoDepth.ZBias);
             GeoDepth.Static(tx, ty, z, 6, false, false, true, sx, sy)
                 .Should().BeApproximately(GeoDepth.Static(tx, ty, z, 6, false, false, false, sx, sy) - GeoDepth.BuriedDrop, 1e-4f);
-            GeoDepth.Land(sy, z).Should().Be(GeoDepth.Flat(sy, z) + (z - 2) * GeoDepth.ZBias);
+            GeoDepth.Land(tx, ty, z, sx, sy).Should().Be(GeoDepth.FlatFloored(tx, ty, z, sx, sy) + (z - 2) * GeoDepth.ZBias);
             GeoDepth.MobileBiased(nx, ny + 19, z, sx, sy).Should().Be(GeoDepth.Mobile(nx, ny + 19, z, sx, sy) + GeoDepth.MobileBias + z * GeoDepth.ZBias);
         }
 
