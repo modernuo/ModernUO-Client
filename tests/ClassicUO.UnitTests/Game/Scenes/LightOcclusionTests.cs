@@ -13,6 +13,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
     /// </summary>
     public sealed class LightOcclusionTests
     {
+        // a lit window's or wall's height: the source's top for LightOcclusion.InFront
+        private const int Top = 20;
+
         private static StaticTiles Wall() => new StaticTiles { Flags = TileFlag.Wall, Height = 20 };
 
         private static StaticTiles Floor() => new StaticTiles { Flags = TileFlag.Surface, Height = 0 };
@@ -47,12 +50,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // light flag does not let the glow through: only the light's own emitter does
             StaticTiles nearer = LitWindow();
 
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 0, 0, ref nearer, true));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 1, 0, ref nearer, true));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 2, 3, 0, ref nearer, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 0, 0, Top, ref nearer, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 1, 0, Top, ref nearer, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 2, 3, 0, Top, ref nearer, true));
             // the emitter itself
-            Assert.False(LightOcclusion.Hides(on, true, 0, 0, 0, ref nearer, true));
-            Assert.False(LightOcclusion.Hides(on, true, 1, 0, 0, ref nearer, true));
+            Assert.False(LightOcclusion.Hides(on, true, 0, 0, 0, Top, ref nearer, true));
+            Assert.False(LightOcclusion.Hides(on, true, 1, 0, 0, Top, ref nearer, true));
         }
 
         [Theory]
@@ -64,11 +67,11 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // street lamp are drawn after the source but do not stand between the viewer and it
             StaticTiles wall = Wall(), window = LitWindow(), counter = new StaticTiles { Flags = TileFlag.Surface, Height = 6 };
 
-            Assert.False(LightOcclusion.Hides(on, false, 1, 0, 0, ref window, false));
-            Assert.False(LightOcclusion.Hides(on, false, 0, 1, 0, ref wall, false));
-            Assert.False(LightOcclusion.Hides(on, false, 0, 0, 20, ref window, false));
-            Assert.False(LightOcclusion.Hides(on, false, 1, 1, -4, ref counter, false));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 1, -4, ref counter, true));
+            Assert.False(LightOcclusion.Hides(on, false, 1, 0, 0, Top, ref window, false));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 1, 0, Top, ref wall, false));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 0, 20, Top, ref window, false));
+            Assert.False(LightOcclusion.Hides(on, false, 1, 1, -4, Top, ref counter, false));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 1, -4, Top, ref counter, true));
         }
 
         [Fact]
@@ -99,8 +102,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Equal(N, LightOcclusion.Facing(66, 0, 30));
             // Hides: a facing-away wall hides without covering the source, only with the switch on
             StaticTiles wall = Wall();
-            Assert.True(LightOcclusion.Hides(true, false, 1, 1, 0, ref wall, false, true));
-            Assert.False(LightOcclusion.Hides(false, false, 1, 1, 0, ref wall, false, true));
+            Assert.True(LightOcclusion.Hides(true, false, 1, 1, 0, Top, ref wall, false, true));
+            Assert.False(LightOcclusion.Hides(false, false, 1, 1, 0, Top, ref wall, false, true));
         }
 
         [Fact]
@@ -126,12 +129,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             StaticTiles wall = Wall();
 
             // the near wall 6 tiles south of the window, straight below it on screen and to either side; the same wall line
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 6, 6, 0, ref wall, true));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, -1, 7, 0, ref wall, true));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 9, 5, -20, ref wall, true));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 3, 0, 0, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 6, 6, 0, Top, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, -1, 7, 0, Top, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 9, 5, -20, Top, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 3, 0, 0, Top, ref wall, true));
             // on the source's own tile, higher up: at its depth, it stands with the emitter
-            Assert.False(LightOcclusion.Hides(on, false, 0, 0, 5, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 0, 5, Top, ref wall, true));
         }
 
         [Theory]
@@ -142,12 +145,48 @@ namespace ClassicUO.UnitTests.Game.Scenes
             StaticTiles wall = Wall(), floor = Floor();
 
             // drawn before the source: behind it, the same diagonal, its tile lower down
-            Assert.False(LightOcclusion.Hides(on, false, -3, 0, 0, ref wall, true));
-            Assert.False(LightOcclusion.Hides(on, false, -2, -2, 0, ref wall, true));
-            Assert.False(LightOcclusion.Hides(on, false, 2, -2, 0, ref wall, true));
-            Assert.False(LightOcclusion.Hides(on, false, 0, 0, -5, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, -3, 0, 0, Top, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, -2, -2, 0, Top, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, 2, -2, 0, Top, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 0, -5, Top, ref wall, true));
             // the floor in front of the source is lit
-            Assert.False(LightOcclusion.Hides(on, false, 4, 4, 0, ref floor, true));
+            Assert.False(LightOcclusion.Hides(on, false, 4, 4, 0, Top, ref floor, true));
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Object_above_the_sources_top_is_lit_from_below_and_does_not_hide_it(bool on)
+        {
+            // round 6a (owner, Moonglow 4474 1091): a lamp post (tiledata height 15) under a roof eave at z 20 / 23 that covers
+            // its light point: the eave is above the light, which shines up onto it
+            StaticTiles roof = Roof(), wall = Wall();
+            const int lampTop = 15;
+
+            Assert.False(LightOcclusion.Hides(on, false, 2, 1, 20, lampTop, ref roof, true));
+            Assert.False(LightOcclusion.Hides(on, false, 3, 1, 23, lampTop, ref roof, true));
+            Assert.False(LightOcclusion.Hides(on, false, 1, 1, 15, lampTop, ref wall, true));
+            // below the top it still hides where it covers the light point
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 1, 14, lampTop, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 2, 1, 10, lampTop, ref roof, true));
+            // a wall piece facing away from a wall source hides it at any height (the bank's upper wall line in front of a
+            // ground floor window)
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 2, 2, 20, Top, ref wall, false, true));
+            Assert.False(LightOcclusion.Above(19, Top));
+            Assert.True(LightOcclusion.Above(20, Top));
+        }
+
+        [Fact]
+        public void Source_top_is_the_tiledata_height_or_the_light_points_height_above_the_tile_when_higher()
+        {
+            // anchor y 200: the tile centre is at y 222; a light point 40 px above it is 10 Z up
+            Assert.Equal(15, LightOcclusion.SourceTop(15, 200, 182));
+            // a wall sconce or brazier (tiledata height 0) still has its glow above the tile: a wall at its Z in front hides it
+            Assert.Equal(10, LightOcclusion.SourceTop(0, 200, 182));
+            Assert.False(LightOcclusion.Above(0, LightOcclusion.SourceTop(0, 200, 182)));
+            // a point below the tile centre: the tiledata height
+            Assert.Equal(0, LightOcclusion.SourceTop(0, 200, 230));
+            Assert.Equal(16, LightOcclusion.MobileTop);
         }
 
         [Fact]

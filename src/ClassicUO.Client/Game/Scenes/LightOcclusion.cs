@@ -71,6 +71,25 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool InFront(int dx, int dy, int dz) => dx + dy > 0;
 
+        /// <summary>Round 6a (owner, Moonglow 4474 1091: the one eave tile whose art covered a lamp post's light point stayed
+        /// dark while the eave tiles around it were lit): an object whose bottom is at or above the source's top (dz &gt;=
+        /// <paramref name="srcTop"/>, <see cref="SourceTop"/>) is above the light, which shines up onto it, so covering the
+        /// light point does not make it hide the glow. A wall piece turned away from a wall source (<see cref="FacesAway"/>)
+        /// still hides it at any height: its visible face is behind the source's plane (the bank's upper wall line in front
+        /// of a ground floor window).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool Above(int dz, int srcTop) => dz >= srcTop;
+
+        /// <summary>Round 6a: the height of a light's source above its Z, for <see cref="Above"/>: its tiledata height,
+        /// or the height of its light point above the tile (<see cref="LightPoint"/>, from the anchor's tile centre ay + 22)
+        /// when that is higher (wall sconces, hanging lanterns and braziers have tiledata height 0 but their art, and the
+        /// glow, stand above the tile); a mobile's light: <see cref="MobileTop"/>.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static int SourceTop(int height, int ay, int py) => Math.Max(height, (ay + 22 - py) >> 2);
+
+        /// <summary>Round 6a: a mobile's light's top: a person's height (the pathfinder's Constants.DEFAULT_BLOCK_HEIGHT).</summary>
+        public const int MobileTop = Constants.DEFAULT_BLOCK_HEIGHT;
+
         /// <summary>The tiledata of an object that hides a light drawn behind it: anything but a translucent or internal tile
         /// or a flat walkable surface (a roof hides).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -80,12 +99,13 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The light pass masks a light's halo over an object with tiledata <paramref name="data"/> at (dx, dy, dz)
         /// from its source: only with the switch on (<paramref name="on"/>), never over the light's own emitter
         /// (<paramref name="ownEmitter"/>), in front of the source, an occluder, and either its art covering the source's
-        /// light point (<paramref name="coversSource"/>: <see cref="CoverPoint"/> and the art's pixel there) or, for a wall
+        /// light point (<paramref name="coversSource"/>: <see cref="CoverPoint"/> and the art's pixel there) while not
+        /// <see cref="Above"/> the source (<paramref name="srcTop"/>: its height, <see cref="SourceTop"/>), or, for a wall
         /// source, a wall piece whose visible face turns away from it (<paramref name="wallFacesAway"/>,
         /// <see cref="FacesAway"/>).</summary>
-        public static bool Hides(bool on, bool ownEmitter, int dx, int dy, int dz, ref StaticTiles data, bool coversSource,
+        public static bool Hides(bool on, bool ownEmitter, int dx, int dy, int dz, int srcTop, ref StaticTiles data, bool coversSource,
             bool wallFacesAway = false) =>
-            on && !ownEmitter && (coversSource || wallFacesAway) && InFront(dx, dy, dz) && OccluderData(ref data);
+            on && !ownEmitter && (coversSource && !Above(dz, srcTop) || wallFacesAway) && InFront(dx, dy, dz) && OccluderData(ref data);
 
         /// <summary>A wall piece's line, from its art (44 px wide, its visible bounds bx..bx+bw): the slab on the tile's east
         /// edge (a line along Y, its visible face towards +X, e.g. 0x0162), on its south edge (a line along X, face towards
