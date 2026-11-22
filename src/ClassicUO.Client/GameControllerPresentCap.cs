@@ -103,14 +103,15 @@ namespace ClassicUO
             bool due = _displaySchedule.Due(now, _displayCapActive ? _displayPeriod : 0);
 #if CUO_DEVTOOLS
             if (PresentCapCheck.On)
-                PresentCapCheck.Update(now, Settings.GlobalSettings.PresentAtDisplayRate, _displayCapActive, _displayHz, _displayPeriod);
+                PresentCapCheck.Update(now, Settings.GlobalSettings.PresentAtDisplayRate, _displayCapActive, _displayHz, _displayPeriod,
+                    Settings.GlobalSettings.MotionAboveDisplayRate && _presentMode != PresentModeKind.Vsync ? LoopTiming.MotionRateMultiple : 1);
 #endif
             return due;
         }
 
         // ---- present-on-change (evloop-2) ----
         private bool _presentOnChange; // this tick: event loop and display-rate cap active
-        private bool _changePending, _continuous;
+        private bool _changePending, _continuous, _drewMotion;
         private long _lastDrawTs, _pendingNetTs, _drawnNetTs, _motionSeen, _partialReadTs;
 
         // ---- the next visual change (evloop-4, baked in after quiet-1115) ----
@@ -165,7 +166,12 @@ namespace ClassicUO
             return LoopTiming.MsUntilTick(next != long.MaxValue, next, Time.Ticks, Stopwatch.GetElapsedTime(_updateStartTs).TotalMilliseconds);
         }
 
-        private double DisplayIntervalMs => _displayPeriod * 1000.0 / Stopwatch.Frequency;
+        // motion_above_display_rate: the period while something moves (this Update's motion or the last drawn frame's, so the
+        // wait after a motion frame is planned on it) and the present does not block
+        private long PresentPeriod => LoopTiming.PresentPeriod(_displayPeriod, Settings.GlobalSettings.MotionAboveDisplayRate,
+            _presentMode != PresentModeKind.Vsync, _continuous || _drewMotion);
+
+        private double DisplayIntervalMs => PresentPeriod * 1000.0 / Stopwatch.Frequency;
 
         // The rate limit runs from the last draw start (or its deadline: LoopTiming.PresentAnchor), not the present end: anchored on
         // the present, every frame would add its own draw time to the interval (busy GPU frames fell to ~50/s in bench-000791).
@@ -260,7 +266,14 @@ namespace ClassicUO
 #if CUO_DEVTOOLS
             if (VsyncPresentCheck.On) VsyncPresentCheck.Draw(_continuous);
 #endif
-            _lastDrawTs = LoopTiming.PresentAnchor(_lastDrawTs, Stopwatch.GetTimestamp(), _presentOnChange ? _displayPeriod : 0);
+            long now = Stopwatch.GetTimestamp();
+            long period = _presentOnChange ? PresentPeriod : 0;
+#if CUO_DEVTOOLS
+            if (MotionRateCheck.On && _presentOnChange)
+                MotionRateCheck.Draw(now, _lastDrawTs, period, _displayPeriod, Settings.GlobalSettings.MotionAboveDisplayRate, _presentMode, _displayHz);
+#endif
+            _lastDrawTs = LoopTiming.PresentAnchor(_lastDrawTs, now, period);
+            _drewMotion = _continuous;
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;
             _changePending = _continuous;

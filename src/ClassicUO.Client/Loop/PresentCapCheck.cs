@@ -18,7 +18,7 @@ namespace ClassicUO.Loop
         public static bool Late(long gap, long period, long frequency) => gap > period + frequency / 1000;
         public static bool OverRate(long presents, double seconds, double hz) => presents / seconds > hz * 1.05;
 
-        public static void Update(long now, bool on, bool active, double hz, long period)
+        public static void Update(long now, bool on, bool active, double hz, long period, int rateMultiple = 1)
         {
             if (_start == 0 || active != _active || on != _switch || hz != _hz)
             {
@@ -30,7 +30,7 @@ namespace ClassicUO.Loop
             _updates++;
             if (now - _start < Stopwatch.Frequency * 5) return;
             double seconds = (now - _start) / (double)Stopwatch.Frequency;
-            bool over = active && OverRate(_presents, seconds, hz);
+            bool over = active && OverRate(_presents, seconds, hz * rateMultiple); // motion_above_display_rate: up to MotionRateMultiple x
             Log.Info(FormattableString.Invariant($"[present-cap-check] switch={on} active={active} refresh_hz={hz:F3} sec={seconds:F3} draws/s={_draws / seconds:F1} presents/s={_presents / seconds:F1} updates/s={_updates / seconds:F1} old_draws={_oldDraws} avoided={_oldDraws - _draws} max_gap_ms={_maxGap * 1000.0 / Stopwatch.Frequency:F3} period_ms={period * 1000.0 / Stopwatch.Frequency:F3} late={_late} over_rate={over} invalid={_invalid} mismatches={_invalid + (over ? 1 : 0)}"));
             _start = now;
             _updates = _draws = _presents = _oldDraws = _maxGap = _late = _invalid = 0;

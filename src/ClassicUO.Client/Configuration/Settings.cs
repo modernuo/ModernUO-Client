@@ -159,6 +159,14 @@ namespace ClassicUO.Configuration
         // quiet-1119 (bench-000921/922: quiet idle CPU 55-90 -> 9-19 ms/s, ping RTT p50 5.9 -> 0.12 ms, both renderers).
         [JsonPropertyName("vsync_present_on_change")] public bool VsyncPresentOnChange { get; set; } = true;
 
+        // motion_above_display_rate: with present on change and a present that does not wait for the vblank (vsync off, or
+        // vsync_mailbox), frames while something moves present at three times the display rate. Presenting exactly at the
+        // display rate without the vblank, the frame that lands near a refresh's scanout is shown twice or skipped depending on
+        // a fraction of a millisecond of wake jitter; with the drift between the client's clock and the panel this comes and
+        // goes as judder while walking (FramePacingSimulationTests). An idle screen still presents on change. Costs up to three
+        // times the draws while moving. CUO_MOTION_RATE_CHECK logs the extra draws against the display-rate decision. Default off.
+        [JsonPropertyName("motion_above_display_rate")] public bool MotionAboveDisplayRate { get; set; }
+
         // vsync-mailbox: vsync on presents in mailbox mode where FNA3D's SDL_GPU driver and the window support it (no tearing,
         // no queued frames; Present does not block), else in normal vsync. In mailbox mode the display-rate schedule and present
         // on change run as for vsync off. The Options menu shows the mode in force. Default on after quiet-1119 (bench-000919/920:

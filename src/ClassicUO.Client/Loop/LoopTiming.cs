@@ -126,6 +126,17 @@ namespace ClassicUO.Loop
             return now - deadline < period / 2 ? deadline : now;
         }
 
+        /// <summary>motion_above_display_rate: how many presents per display interval while something moves.</summary>
+        public const int MotionRateMultiple = 3;
+
+        /// <summary>
+        /// Present on change: the rate limit's period (ticks). motion_above_display_rate (<paramref name="on"/>) divides the
+        /// display period by <see cref="MotionRateMultiple"/> while something moves (<paramref name="motion"/>) and the present
+        /// does not wait for the vblank (<paramref name="nonBlocking"/>: vsync off or mailbox); otherwise the display period.
+        /// </summary>
+        public static long PresentPeriod(long displayPeriod, bool on, bool nonBlocking, bool motion)
+            => on && nonBlocking && motion && displayPeriod > 0 ? Math.Max(1, displayPeriod / MotionRateMultiple) : displayPeriod;
+
         /// <summary>Present on change: the longest time between two presents (owner default ~1 s).</summary>
         public const double AnimDueSafetyNetMs = 1000;
 

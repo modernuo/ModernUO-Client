@@ -43,10 +43,10 @@ namespace ClassicUO.UnitTests.Loop
         private const double PxPerMs = 22.0 / 100;
 
         internal static Result Run(Path path, double detectedHz, double panelHz, bool vsync, double fpsCap, double updateUs,
-            double drawUs, double lateMaxUs, int seed, double seconds = 60)
+            double drawUs, double lateMaxUs, int seed, double seconds = 60, int multiple = 1)
         {
             var rng = new Random(seed);
-            long period = (long)Math.Round(1_000_000 / detectedHz);
+            long period = (long)Math.Round(1_000_000 / detectedHz / multiple);
             double periodMs = period / 1000.0;
             double capMs = fpsCap > 0 ? 1000.0 / fpsCap : 0;
             double panelUs = 1_000_000 / panelHz;
@@ -246,6 +246,15 @@ namespace ClassicUO.UnitTests.Loop
                             $"phase sweep panel {panel} no vsync {p}: repeats+skips % over 40 phases min/p50/p90/max = {bad[0]:F1}/{bad[20]:F1}/{bad[36]:F1}/{bad[39]:F1}"));
                     }
 
+                    foreach (int m in new[] { 2, 3 })
+                    {
+                        var runs = Enumerable.Range(100, 40).Select(seed => Run(Path.PresentOnChangeAnchored, 72, panel, false, 0, u, 3000, late, seed, 30, m)).ToArray();
+                        var bad = runs.Select(r => r.RepeatPercent + r.SkipPercent).OrderBy(x => x).ToArray();
+                        var sd = runs.Select(r => r.AdvancePxStd).OrderBy(x => x).ToArray();
+                        _output.WriteLine(FormattableString.Invariant(
+                            $"phase sweep panel {panel} no vsync anchored x{m} ({runs[0].FramesPerSec:F0}/s): repeats+skips % min/p50/p90/max = {bad[0]:F1}/{bad[20]:F1}/{bad[36]:F1}/{bad[39]:F1}  px sd p50/max = {sd[20]:F2}/{sd[39]:F2}"));
+                    }
+
                     foreach (Path p in new[] { Path.PresentOnChangeDrawStart, Path.PresentOnChangeAnchored, Path.FpsCap })
                     {
                         var sd = Enumerable.Range(100, 40).Select(seed => Run(p, 72, panel, false, p == Path.FpsCap ? 240 : 0, u, 3000, late, seed, 30).AdvancePxStd).OrderBy(x => x).ToArray();
@@ -304,6 +313,47 @@ namespace ClassicUO.UnitTests.Loop
                 long next = LoopTiming.PresentAnchor(anchor, now, P) + P;
                 (next - now).Should().BeGreaterThan(P / 2);
             }
+        }
+
+        // motion_above_display_rate off: the display period in every case (the behaviour before the switch)
+        [Theory]
+        [InlineData(true, true)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(false, false)]
+        public void PresentPeriod_Switch_Off_Keeps_The_Display_Period(bool nonBlocking, bool motion)
+        {
+            LoopTiming.PresentPeriod(13_889, false, nonBlocking, motion).Should().Be(13_889);
+        }
+
+        [Fact]
+        public void PresentPeriod_Switch_On_Divides_Only_Motion_Without_A_Blocking_Present()
+        {
+            LoopTiming.PresentPeriod(13_889, true, true, true).Should().Be(13_889 / LoopTiming.MotionRateMultiple);
+            LoopTiming.PresentPeriod(13_889, true, false, true).Should().Be(13_889, "FIFO vsync paces itself");
+            LoopTiming.PresentPeriod(13_889, true, true, false).Should().Be(13_889, "an idle screen presents on change");
+            LoopTiming.PresentPeriod(0, true, true, true).Should().Be(0, "no display rate");
+        }
+
+        // switch on (three presents per display interval while moving, vsync off): no phase of the panel against the client's
+        // clock shows a frame twice or skips one; at the display rate (switch off) some phases do
+        [Theory]
+        [InlineData(72.0)]
+        [InlineData(71.928)]
+        public void Motion_Above_Display_Rate_Has_No_Bad_Phase_With_Vsync_Off(double panelHz)
+        {
+            double worstOff = 0, worstOn = 0;
+
+            for (int seed = 100; seed < 120; seed++)
+            {
+                var off = Run(Path.PresentOnChangeAnchored, 72, panelHz, false, 0, 300, 3000, 300, seed, 20);
+                var on = Run(Path.PresentOnChangeAnchored, 72, panelHz, false, 0, 300, 3000, 300, seed, 20, LoopTiming.MotionRateMultiple);
+                worstOff = Math.Max(worstOff, off.RepeatPercent + off.SkipPercent);
+                worstOn = Math.Max(worstOn, on.RepeatPercent + on.SkipPercent);
+            }
+
+            worstOn.Should().BeLessThan(1);
+            worstOff.Should().BeGreaterThan(3);
         }
     }
 }
