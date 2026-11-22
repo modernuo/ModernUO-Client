@@ -21,7 +21,7 @@ catch (ArgumentException e)
 bool maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, sounds = true, music = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
 string? audioReport = null;
-string? clientVersionArg = null, cuoSettingsArg = null, bodyChoicesArg = null, layerRulesArg = null;
+string? clientVersionArg = null, cuoSettingsArg = null, bodyChoicesArg = null, layerRulesArg = null, lightClassesArg = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
 {
@@ -61,6 +61,9 @@ for (int i = 0; i < args.Length; i++)
         case "--layer-rules": layerRulesArg = args[++i]; break;
         // T3b: the built-in layering rules as JSON (a shard's starting point for --layer-rules); writes only that file
         case "--export-layer-rules": return ExportLayerRules(args[++i]);
+        // light_alpha_fade: the light shape classes as JSON (a shard's own shapes); --export-light-classes writes the seed
+        case "--light-classes": lightClassesArg = args[++i]; break;
+        case "--export-light-classes": return ExportLightClasses(args[++i]);
         case "--bodies":
             AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
             break;
@@ -103,7 +106,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages] [--zstd-level 19] [--zstd-checksum] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-compress] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages] [--zstd-level 19] [--zstd-checksum] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-compress] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--cliloc-overrides <Clilocs.txt>] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,skills,multimap,stringdict,loose,lightclass,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--light-classes classes.json] [--export-light-classes classes.json] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -153,6 +156,14 @@ if (layerRulesArg != null && Want("layers"))
 {
     try { layerRules = LayerRulesJson.Load(layerRulesArg); }
     catch (LayerRulesJsonException e) { Console.Error.WriteLine($"layer rules: {e.Message}"); return 1; }
+}
+
+// light_alpha_fade: the light shape classes from JSON, read and checked before anything is written (verify compares with it)
+byte[]? lightClasses = null;
+if (lightClassesArg != null && Want("lightclass"))
+{
+    try { lightClasses = LightClassJson.Load(lightClassesArg); }
+    catch (LightClassJsonException e) { Console.Error.WriteLine($"light classes: {e.Message}"); return 1; }
 }
 
 // The bodies record a pack keeps: a run that does not rebuild the anims carries the previous manifest's record forward
@@ -300,6 +311,16 @@ if (convert)
             return $"{path} ({(layerRules != null ? Path.GetFullPath(layerRulesArg!) : "built-in rules")})";
         });
     else if (layerRulesArg != null) Console.WriteLine("  warning: --layer-rules is ignored: layers are not converted in this run");
+    // light_alpha_fade: which light shapes are surface glows (no install data: the standard shapes' seed, or the shard's
+    // --light-classes JSON)
+    if (Want("lightclass"))
+        Stage("lightclass", () =>
+        {
+            var path = Path.Combine(outDir, LightClassFile.FileName);
+            LightClassFile.Write(path, lightClasses ?? LightClassFile.Seed());
+            return $"{path} ({(lightClasses != null ? Path.GetFullPath(lightClassesArg!) : "standard shapes")})";
+        });
+    else if (lightClassesArg != null) Console.WriteLine("  warning: --light-classes is ignored: lightclass is not converted in this run");
     if (Want("gumps")) stats["gumps"] = Stage("gumps", () => GumpConvert.Run(fm, outDir));
     if (Want("fonts")) stats["fonts"] = Stage("fonts", () => TextConvert.Fonts(fm, outDir));
     if (Want("cliloc")) stats["cliloc"] = Stage("cliloc", () => TextConvert.Cliloc(fm, outDir));
@@ -351,6 +372,8 @@ Verify.Only = only;
 Verify.Maps = Want("maps");
 Verify.LayerRules = layerRules;
 Verify.LayerRulesSource = layerRulesArg;
+Verify.LightClasses = lightClasses;
+Verify.LightClassesSource = lightClassesArg;
 if (only == null && !sounds) Verify.Off.Add("sounds");
 if (only == null && !music) Verify.Off.Add("music");
 bool ok = Stage("verify (round-trip)", () => Verify.Run(fm, outDir, stats));
@@ -385,6 +408,23 @@ static int ExportLayerRules(string path)
     }
 
     Console.WriteLine($"layer rules: the built-in rules written to {Path.GetFullPath(path)}");
+    return 0;
+}
+
+// --export-light-classes: the standard shapes' classes (LightClassFile.Seed) as JSON
+static int ExportLightClasses(string path)
+{
+    try
+    {
+        LightClassJson.Save(LightClassFile.Seed(), path);
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+    {
+        Console.Error.WriteLine($"export light classes: {e.Message}");
+        return 1;
+    }
+
+    Console.WriteLine($"light classes: the standard shapes' classes written to {Path.GetFullPath(path)}");
     return 0;
 }
 
