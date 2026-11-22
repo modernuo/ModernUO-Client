@@ -59,6 +59,9 @@ namespace ClassicUO.Game.Scenes
         private int _stencilRef;
         // light_occlusion: one light's occluders, grown to the high-water mark and reused
         private LightOccluder[] _occluders = new LightOccluder[64];
+        // light_batch: where the next light's occluders go in _occluders (0 on the per-light path; the batched path keeps every
+        // light's occluders for the frame, one after the other)
+        private int _occBase;
         // one write and one test state per stencil reference (1..255), made on first use and kept with the scene
         private DepthStencilState[] _occWrite, _occTest;
         private BlendState _noColorBlend;
@@ -102,54 +105,18 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        // one light of the light pass. light_occlusion on: the drawn sprites of the occluders covering its source's light point
-        // go into the stencil (no colour) with a fresh reference, and the light is drawn where the stencil does not hold it
+        // one light of the per-light path. light_occlusion on: the drawn sprites of the occluders covering its source's light
+        // point go into the stencil (no colour) with a fresh reference, and the light is drawn where the stencil does not hold it
         private void DrawLight(UltimaBatcher2D batcher, ref Matrix matrix, ref FrameLights.Entry l, in SpriteInfo lightInfo, Vector3 hue, ref bool stencilSet)
         {
             Vector2 pos = new Vector2(l.DrawX - lightInfo.UV.Width * 0.5f, l.DrawY - lightInfo.UV.Height * 0.5f);
-            int n = 0;
 
-            // light_alpha_fade: a surface glow at its emitter's drawn alpha; a hidden emitter gives no light
-            if ((_alphaFade || LightAlphaFade.Check) && l.Source != null)
+            if (!LightShare(ref l, ref matrix, ref hue))
             {
-                float fade = EmitterFade(ref l, ref matrix, out bool surface);
-#if CUO_DEVTOOLS
-                if (LightAlphaFade.Check)
-                {
-                    CheckFade(ref l, ref matrix, fade, surface);
-                }
-#endif
-
-                float share = LightAlphaFade.Share(_alphaFade, fade);
-
-                if (share < 1f)
-                {
-                    if (share <= 0f)
-                    {
-                        return;
-                    }
-
-                    hue.Z = LightAlphaFade.HueAlpha(share);
-                }
+                return;
             }
 
-            if ((_lightOcclusion || LightOcclusion.Check) && l.Source != null)
-            {
-#if CUO_DEVTOOLS
-                // CUO_LIGHT_ALPHA_FADE_CHECK: the binary cut's occluders first, then the dithered set must hold exactly them
-                // among its occluders at least half opaque
-                bool maskCheck = LightAlphaFade.Check && _ditherMasks;
-                OccluderSums binary = maskCheck ? BinaryMaskSums(ref l, (int)pos.X, (int)pos.Y, lightInfo.UV.Width, lightInfo.UV.Height) : default;
-                n = CollectOccluders(ref l, (int)pos.X, (int)pos.Y, lightInfo.UV.Width, lightInfo.UV.Height, LightOcclusion.Check, out _, out OccluderSums sums);
-
-                if (maskCheck)
-                {
-                    CompareMasks(ref l, in binary, in sums);
-                }
-#else
-                n = CollectOccluders(ref l, (int)pos.X, (int)pos.Y, lightInfo.UV.Width, lightInfo.UV.Height, LightOcclusion.Check, out _);
-#endif
-            }
+            int n = CollectLightOccluders(ref l, pos, in lightInfo);
 
             if (!_lightOcclusion || n == 0)
             {
@@ -166,6 +133,72 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            DrawMasked(batcher, ref matrix, _occBase, n, in lightInfo, pos, hue);
+            ReleaseOccluders(n);
+            stencilSet = true;
+        }
+
+        // the share of light l drawn, as its hue alpha: light_range's range and budget fade (l.Share) times light_alpha_fade's
+        // emitter fade (a surface glow at its emitter's drawn alpha). False: a hidden emitter or a light faded out gives none
+        private bool LightShare(ref FrameLights.Entry l, ref Matrix matrix, ref Vector3 hue)
+        {
+            float share = l.Share;
+
+            if ((_alphaFade || LightAlphaFade.Check) && l.Source != null)
+            {
+                float fade = EmitterFade(ref l, ref matrix, out bool surface);
+#if CUO_DEVTOOLS
+                if (LightAlphaFade.Check)
+                {
+                    CheckFade(ref l, ref matrix, fade, surface);
+                }
+#endif
+
+                share *= LightAlphaFade.Share(_alphaFade, fade);
+            }
+
+            if (share < 1f)
+            {
+                if (share <= 0f)
+                {
+                    return false;
+                }
+
+                hue.Z = LightAlphaFade.HueAlpha(share);
+            }
+
+            return true;
+        }
+
+        // light l's occluders (light_occlusion, or its checker) into _occluders from _occBase: their count
+        private int CollectLightOccluders(ref FrameLights.Entry l, Vector2 pos, in SpriteInfo lightInfo)
+        {
+            if (!(_lightOcclusion || LightOcclusion.Check) || l.Source == null)
+            {
+                return 0;
+            }
+#if CUO_DEVTOOLS
+            // CUO_LIGHT_ALPHA_FADE_CHECK: the binary cut's occluders first, then the dithered set must hold exactly them
+            // among its occluders at least half opaque
+            bool maskCheck = LightAlphaFade.Check && _ditherMasks;
+            OccluderSums binary = maskCheck ? BinaryMaskSums(ref l, (int)pos.X, (int)pos.Y, lightInfo.UV.Width, lightInfo.UV.Height) : default;
+            int n = CollectOccluders(ref l, (int)pos.X, (int)pos.Y, lightInfo.UV.Width, lightInfo.UV.Height, LightOcclusion.Check, out _, out OccluderSums sums);
+
+            if (maskCheck)
+            {
+                CompareMasks(ref l, in binary, in sums);
+            }
+
+            return n;
+#else
+            return CollectOccluders(ref l, (int)pos.X, (int)pos.Y, lightInfo.UV.Width, lightInfo.UV.Height, LightOcclusion.Check, out _);
+#endif
+        }
+
+        // an occluded light: its n occluders from _occluders[first] into the stencil with a fresh reference, then the light where
+        // the stencil does not hold it. Leaves the stencil test set
+        private void DrawMasked(UltimaBatcher2D batcher, ref Matrix matrix, int first, int n, in SpriteInfo lightInfo, Vector2 pos, Vector3 hue)
+        {
             if (++_stencilRef > 255)
             {
                 // every reference used: clear the stencil and start over
@@ -180,7 +213,7 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(_occWrite[_stencilRef]);
             batcher.SetBlendState(_noColorBlend);
 
-            for (int i = 0; i < n; i++)
+            for (int i = first, end = first + n; i < end; i++)
             {
                 ref LightOccluder o = ref _occluders[i];
                 // an alpha above 1 marks the circle of transparency (ShaderHueTranslator.GetHueVector circletrans);
@@ -191,21 +224,19 @@ namespace ClassicUO.Game.Scenes
                 batcher.Draw(o.Texture, new Vector2(o.DrawX, o.DrawY), o.UV, maskHue, 0f);
             }
 
-            ReleaseOccluders(n);
             batcher.SetStencil(_occTest[_stencilRef]);
             batcher.SetBlendState(BlendState.Additive);
             batcher.Draw(lightInfo.Texture, pos, lightInfo.UV, hue, 0f);
-            stencilSet = true;
 #if CUO_DEVTOOLS
             _loOccludedLights++;
             _loOccluderSprites += n;
 #endif
         }
 
-        // no texture kept past the light that used it (review P2 #7)
+        // no texture kept past the light that used it (review P2 #7): the n occluders from _occBase
         private void ReleaseOccluders(int n)
         {
-            for (int i = 0; i < n; i++)
+            for (int i = _occBase, end = _occBase + n; i < end; i++)
             {
                 _occluders[i].Texture = null;
             }
@@ -307,7 +338,7 @@ namespace ClassicUO.Game.Scenes
                 rb = t.Py + 1;
             }
 
-            int n = 0;
+            int n = _occBase;
             sums = default;
             List<Chunk> chunks = _visibleChunks;
 
@@ -324,6 +355,7 @@ namespace ClassicUO.Game.Scenes
                 CollectChunk(ref l, chunk, staticData, in t, rl, rr, false, ref n, ref sums);
             }
 
+            n -= _occBase;
             hash = sums.Hash;
 #if CUO_DEVTOOLS
             if (check)
@@ -564,7 +596,7 @@ namespace ClassicUO.Game.Scenes
         // a different sprite count or hash means the pruning missed an occluder (art or Z beyond the chunk's record)
         private void CheckOccluders(ref FrameLights.Entry l, in LightTarget t, int n, uint hash, StaticTiles[] staticData)
         {
-            int refN = n;
+            int end = _occBase + n, refN = end;
             OccluderSums refSums = default;
             List<Chunk> chunks = _visibleChunks;
 
@@ -579,12 +611,12 @@ namespace ClassicUO.Game.Scenes
             uint refHash = refSums.Hash;
 
             // the reference's sprites were appended past the light's own: drop them
-            for (int i = n; i < refN; i++)
+            for (int i = end; i < refN; i++)
             {
                 _occluders[i].Texture = null;
             }
 
-            int refCount = refN - n;
+            int refCount = refN - end;
             _loLights++;
 
             if (refCount != n || refHash != hash)

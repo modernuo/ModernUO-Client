@@ -72,6 +72,9 @@ namespace ClassicUO.Game.Scenes
         internal static bool ChunkStaticLights;
         private uint _lightViewFrame;
         private int _lvLeft, _lvTop, _lvRight, _lvBottom, _lvPx, _lvPy;
+        // light_range (LightRange, with chunk_lights): this frame's range limit and budget are on; the range in tiles
+        private bool _lightRange;
+        private int _lvRange;
         private Item _multi;
         private Rectangle _rectangleObj = Rectangle.Empty,
             _rectanglePlayer;
@@ -506,10 +509,19 @@ namespace ClassicUO.Game.Scenes
             _lvBottom = vMax.Y;
             _lvPx = _world.Player != null ? _world.Player.RealScreenPosition.X + 22 : (vMin.X + vMax.X) >> 1;
             _lvPy = _world.Player != null ? _world.Player.RealScreenPosition.Y + 22 : (vMin.Y + vMax.Y) >> 1;
+
+            if (_lightMargin < 0)
+            {
+                _lightMargin = ViewMargin.LightMargin(Client.Game.UO.FileManager.Lights.MaxExtent(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT));
+            }
+
+            // light_range: the zoom-1 view is the game window's size in screen pixels
+            _lvRange = LightRange.Range(Settings.GlobalSettings?.LightRangeTiles ?? 0,
+                LightRange.AutoRange(Camera.Bounds.Width, Camera.Bounds.Height, _lightMargin));
         }
 
         // 0 added, 1 lights off, 2 refused by the cap, 3 hidden by an object above, 4 light index out of range, 5 its halo
-        // cannot reach the view (view_margin) (LightSlotDiag)
+        // cannot reach the view (view_margin), 6 past light_range's range (LightSlotDiag)
         private byte AddLightCore(GameObject obj, GameObject lightObject, int x, int y)
         {
             if (
@@ -568,6 +580,7 @@ namespace ClassicUO.Game.Scenes
             if (canBeAdded)
             {
                 ref FrameLights.Entry light = ref _frameLights.Next();
+                light.Share = 1f;
 
                 ushort graphic = lightObject.Graphic;
 
@@ -683,6 +696,27 @@ namespace ClassicUO.Game.Scenes
                     if (!ViewMargin.LightReaches(x, y, lw, lh, _lvLeft, _lvTop, _lvRight, _lvBottom))
                     {
                         return 5;
+                    }
+
+                    // light_range: no slot past the range, a fade over its last tiles
+                    if (_lightRange || LightRange.Check)
+                    {
+                        float d = LightRange.TileDistance(x, y, _lvPx, _lvPy);
+
+                        if (!LightRange.InRange(d, _lvRange))
+                        {
+#if CUO_DEVTOOLS
+                            _lrDropped++;
+#endif
+                            if (_lightRange)
+                            {
+                                return 6;
+                            }
+                        }
+                        else if (_lightRange)
+                        {
+                            light.Share = LightRange.RangeShare(d, _lvRange);
+                        }
                     }
 
                     _frameLights.Commit(FrameLights.Priority(x, y, _lvLeft, _lvTop, _lvRight, _lvBottom, _lvPx, _lvPy));
@@ -1505,7 +1539,11 @@ namespace ClassicUO.Game.Scenes
             // chunk_lights: a growing list with a safety bound and priorities instead of the classic 100 (ChunkLights)
             _vmLights = ChunkLights.Enabled;
             ChunkStaticLights = _vmLights;
-            _frameLights.BeginFrame(++_lightsFrame, _vmLights ? FrameLights.SafetyBound : LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT, _vmLights);
+            // light_range: the ranked list keeps at most light_budget lights
+            _lightRange = _vmLights && LightRange.Enabled;
+            _frameLights.BeginFrame(++_lightsFrame,
+                _lightRange ? LightRange.Budget(Settings.GlobalSettings?.LightBudget ?? 0)
+                : _vmLights ? FrameLights.SafetyBound : LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT, _vmLights);
             Viewport r_viewport = batcher.GraphicsDevice.Viewport;
             Matrix matrix = Camera.ViewTransformMatrix;
 
@@ -1791,36 +1829,41 @@ namespace ClassicUO.Game.Scenes
             // halo reaches into it (ViewMargin)
             AddChunkLights();
             int lightCount = _frameLights.CountFor(_lightsFrame);
+
+            // light_range: past the budget the lowest-ranked kept lights fade by rank
+            if (_lightRange && _frameLights.Refused > 0 && lightCount > 0)
+            {
+                _frameLights.FadeLowest(LightRange.FadeRanks);
+            }
 #if CUO_DEVTOOLS
+            LightRangeCheck(lightCount);
+
             if (LightSlotDiag.Armed)
             {
                 Point vMin = Camera.ScreenToWorld(Point.Zero);
                 Point vMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
                 LightSlotDiag.EndFrame(vMin.X, vMin.Y, vMax.X, vMax.Y, lightCount);
             }
-#endif
-#if CUO_DEVTOOLS
+
             _lightTargetMode = UseAltLights ? 2 : 1;
 #endif
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
-            batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Black, 0f, 0);
+            // light_batch: the batched path runs with light_occlusion (LightBatch)
+            bool batch = LightBatch.Enabled;
+#if CUO_DEVTOOLS
+            // CUO_LIGHT_BATCH_CHECK: the other path first, read back, then the active one over it
+            bool compare = LightBatchCompareDue();
 
-            if (!UseAltLights)
+            if (compare)
             {
-                float lightColor = _world.Light.IsometricLevel;
-
-                if (ProfileManager.CurrentProfile.UseDarkNights)
-                {
-                    lightColor -= 0.04f;
-                }
-
-                batcher.GraphicsDevice.Clear(
-                    ClearOptions.Target,
-                    new Vector4(lightColor, lightColor, lightColor, 1),
-                    0f,
-                    0
-                );
+                ClearLightTarget(batcher.GraphicsDevice);
+                DrawLightPass(batcher, ref matrix, lightCount, !batch);
+                batcher.GraphicsDevice.SetRenderTarget(null);
+                LightBatchReadback(renderTargets.LightRenderTarget, true);
+                batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
             }
+#endif
+            ClearLightTarget(batcher.GraphicsDevice);
 
 #if CUO_DEVTOOLS
             if (LightFrameLog.Active)
@@ -1838,49 +1881,11 @@ namespace ClassicUO.Game.Scenes
                 LightFrameLog.OnLightPass(true, UseLights, UseAltLights, _world.Light.IsometricLevel, lightCount, h, _offset.X, _offset.Y);
             }
 #endif
-            // light_occlusion: the stencil the occluders of each light are written to (LightOcclusion)
-            BeginLightOcclusion(batcher.GraphicsDevice);
-            batcher.Begin(null, matrix);
-            BeginLightOcclusionBatch(batcher);
-            batcher.SetBlendState(BlendState.Additive);
-
-            Vector3 hue = Vector3.Zero;
-
-            hue.Z = 1f;
-            bool stencilSet = false;
-
-            for (int i = 0; i < lightCount; i++)
-            {
-                ref FrameLights.Entry l = ref _frameLights[i];
-                ref readonly var lightInfo = ref Client.Game.UO.Lights.GetLight(l.ID);
-
-                if (lightInfo.Texture == null)
-                {
-                    continue;
-                }
-
-                hue.X = l.Color;
-                hue.Y =
-                    hue.X > 1.0f
-                        ? l.IsHue
-                            ? ShaderHueTranslator.SHADER_HUED
-                            : ShaderHueTranslator.SHADER_LIGHTS
-                        : ShaderHueTranslator.SHADER_NONE;
-
-                DrawLight(batcher, ref matrix, ref l, in lightInfo, hue, ref stencilSet);
-            }
-
-            if (stencilSet)
-            {
-                batcher.SetStencil(null);
-            }
-
-            EndLightOcclusionBatch(batcher);
-            batcher.SetBlendState(null);
-            batcher.End();
+            DrawLightPass(batcher, ref matrix, lightCount, batch);
 #if CUO_DEVTOOLS
             LightOcclusionSummary();
             LightAlphaFadeSummary();
+            LightRangeSummary();
 #endif
 #if CUO_DEVTOOLS
             if (GeometryProbe.Active)
@@ -1891,6 +1896,14 @@ namespace ClassicUO.Game.Scenes
 #endif
 
             batcher.GraphicsDevice.SetRenderTarget(null);
+#if CUO_DEVTOOLS
+            if (compare)
+            {
+                LightBatchReadback(renderTargets.LightRenderTarget, false);
+            }
+
+            LightBatchSummary();
+#endif
 
             return true;
         }

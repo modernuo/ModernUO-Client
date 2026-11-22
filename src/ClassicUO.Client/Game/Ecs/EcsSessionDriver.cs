@@ -1118,6 +1118,33 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // lightrange on|off [tiles] [budget]: light_range, light_range_tiles (0 auto), light_budget (LightRange;
+                // CUO_LIGHT_RANGE overrides the switch)
+                case "lightrange" when args.Length > 0:
+                    Settings.GlobalSettings.LightRange = args[0] == "on";
+
+                    if (args.Length > 1 && int.TryParse(args[1], out int rangeTiles))
+                    {
+                        Settings.GlobalSettings.LightRangeTiles = rangeTiles;
+                    }
+
+                    if (args.Length > 2 && int.TryParse(args[2], out int budget))
+                    {
+                        Settings.GlobalSettings.LightBudget = budget;
+                    }
+
+                    Log.Info($"[ECS] driver: light_range {Settings.GlobalSettings.LightRange} (effective {LightRange.Enabled}), " +
+                             $"tiles {Settings.GlobalSettings.LightRangeTiles}, budget {Settings.GlobalSettings.LightBudget}");
+
+                    return false;
+
+                // lightbatch on|off: light_batch (LightBatch; CUO_LIGHT_BATCH overrides it)
+                case "lightbatch" when args.Length > 0:
+                    Settings.GlobalSettings.LightBatch = args[0] == "on";
+                    Log.Info($"[ECS] driver: light_batch {Settings.GlobalSettings.LightBatch} (effective {LightBatch.Enabled})");
+
+                    return false;
+
                 // wetdepth on|off: wet_surface_depth (WetSurfaceDepth; CUO_WET_SURFACE_DEPTH overrides it)
                 case "wetdepth" when args.Length > 0:
                     Settings.GlobalSettings.WetSurfaceDepth = args[0] == "on";
