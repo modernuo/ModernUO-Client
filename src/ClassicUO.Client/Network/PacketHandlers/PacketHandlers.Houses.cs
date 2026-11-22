@@ -304,7 +304,6 @@ namespace ClassicUO.Network
             {
                 case 0x00: // accepted
                     Log.Trace("Krrios special packet accepted");
-                    world.WMapManager.SetACKReceived();
                     world.WMapManager.SetEnable(true);
 
                     break;

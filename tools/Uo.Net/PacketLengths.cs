@@ -294,8 +294,8 @@ public sealed class PacketLengths
         if (AtLeast(6, 0, 1, 7)) { _table[0x08] = 0x0F; _table[0x25] = 0x15; }
         else { _table[0x08] = 0x0E; _table[0x25] = 0x14; }
 
-        if (AtLeast(6, 0, 6)) { _table[0xEE] = 0x2000; _table[0xEF] = 0x2000; _table[0xF1] = 0x09; }
-        else { _table[0xEE] = -1; _table[0xEF] = 0x15; _table[0xF1] = -1; }
+        if (AtLeast(6, 0, 6)) { _table[0xEE] = 0x2000; _table[0xEF] = 0x2000; }
+        else { _table[0xEE] = -1; _table[0xEF] = 0x15; }
 
         _table[0xB9] = AtLeast(6, 0, 14, 2) ? (short)0x05 : (short)0x03;
 
@@ -305,12 +305,10 @@ public sealed class PacketLengths
         if (AtLeast(7, 0, 9))
         {
             _table[0x24] = 0x09; _table[0x99] = 0x1E; _table[0xBA] = 0x0A; _table[0xF3] = 0x1A;
-            _table[0xF1] = 0x09; _table[0xF2] = 0x19;
         }
         else
         {
             _table[0x24] = 0x07; _table[0x99] = 0x1A; _table[0xBA] = 0x06; _table[0xF3] = 0x18;
-            _table[0xF1] = -1; _table[0xF2] = -1;
         }
 
         _table[0x00] = AtLeast(7, 0, 18) ? (short)0x6A : (short)0x68;
