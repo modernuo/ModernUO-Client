@@ -57,6 +57,11 @@ namespace ClassicUO.Game.Scenes
 
         private Point _lastSelectedMultiPositionInHouseCustomization;
         private readonly FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
+#if CUO_DEVTOOLS
+        // LightFrameLog: the light configuration the composite uses and the one the light target was drawn for (0 none,
+        // 1 darkness, 2 alternative)
+        private int _composeMode, _lightTargetMode;
+#endif
         // counts the drawn frames (Draw past the death screen); the light pass draws only its own frame's lights
         private uint _lightsFrame;
         private Item _multi;
@@ -1534,6 +1539,7 @@ namespace ClassicUO.Game.Scenes
             batcher.GraphicsDevice.Viewport = r_viewport;
 #if CUO_DEVTOOLS
             LightFrameLog.OnWorldOffset(_offset.X, _offset.Y);
+            LightFrameLog.OnCompose(_composeMode, _lightTargetMode, _world.Light.Overall, _world.Light.Personal, _world.Light.RealOverall, _world.Light.RealPersonal, _world.Player.X, _world.Player.Y);
 #endif
 
             return base.Draw(batcher, renderTargets);
@@ -1670,6 +1676,7 @@ namespace ClassicUO.Game.Scenes
                 batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Transparent, 0f, 0);
                 batcher.GraphicsDevice.SetRenderTarget(null);
 #if CUO_DEVTOOLS
+                _lightTargetMode = 0;
                 LightFrameLog.OnLightPass(false, UseLights, UseAltLights, _world.Light.IsometricLevel, _frameLights.Count, 0, _offset.X, _offset.Y);
 #endif
 
@@ -1677,6 +1684,9 @@ namespace ClassicUO.Game.Scenes
             }
 
             int lightCount = _frameLights.CountFor(_lightsFrame);
+#if CUO_DEVTOOLS
+            _lightTargetMode = UseAltLights ? 2 : 1;
+#endif
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
             batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Black, 0f, 0);
 
@@ -1760,6 +1770,9 @@ namespace ClassicUO.Game.Scenes
 
         private void InitializeRenderTargets(RenderTargets renderTargets)
         {
+#if CUO_DEVTOOLS
+            _composeMode = UseAltLights ? 2 : UseLights ? 1 : 0;
+#endif
             renderTargets.SetLightsConfiguration(
                 UseAltLights ? _altLightsBlend : (UseLights ? _darknessBlend : _noLightsBlend),
                 UseAltLights ? _altLightsHue : _lightsHue

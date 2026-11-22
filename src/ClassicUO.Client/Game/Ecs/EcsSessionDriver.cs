@@ -1089,6 +1089,25 @@ namespace ClassicUO.Game
                 }
 
 #if CUO_DEVTOOLS
+                // lightframes N: the light pass probe for the next N drawn frames (LightFrameLog, DevBench's lightframes:)
+                case "lightframes" when args.Length > 0 && int.TryParse(args[0], out int lightFrames):
+                    Scenes.LightFrameLog.Start(lightFrames);
+
+                    return false;
+
+                // altlights on|off, coloredlights on|off: the profile's light options (DevBench's altlights:)
+                case "altlights" when args.Length > 0 && ProfileManager.CurrentProfile is { } altProfile:
+                    altProfile.UseAlternativeLights = args[0] == "on";
+                    Log.Info($"[ECS] driver: alternative lights {args[0]}");
+
+                    return false;
+
+                case "coloredlights" when args.Length > 0 && ProfileManager.CurrentProfile is { } colProfile:
+                    colProfile.UseColoredLights = args[0] == "on";
+                    Log.Info($"[ECS] driver: colored lights {args[0]}");
+
+                    return false;
+
                 // fx N graphic [blend [radius [z [f|m|l|e]]]]: N client-side effects round the player (BenchEffects; e: on mobiles and items), fx 0 removes them all
                 case "fx" when args.Length > 0:
                     BenchEffects.Spawn(world, "effects:" + string.Join(":", args));
