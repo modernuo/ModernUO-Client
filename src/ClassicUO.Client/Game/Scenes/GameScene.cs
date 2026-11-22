@@ -584,11 +584,8 @@ namespace ClassicUO.Game.Scenes
 
                 ushort graphic = lightObject.Graphic;
 
-                if (
-                    graphic >= 0x3E02 && graphic <= 0x3E0B
-                    || graphic >= 0x3914 && graphic <= 0x3929
-                    || graphic == 0x0B1D
-                )
+                // the light index rules live in LightEmitters, so chunk_lights' emitter table follows them
+                if (LightEmitters.ForcedLight2(graphic))
                 {
                     light.ID = 2;
                 }
@@ -653,10 +650,10 @@ namespace ClassicUO.Game.Scenes
 
                 if (ProfileManager.CurrentProfile.UseColoredLights)
                 {
-                    if (light.ID > 200)
+                    if (LightEmitters.ColoredIndex(light.ID, out byte shape, out ushort tint))
                     {
-                        light.Color = (ushort)(light.ID - 200);
-                        light.ID = 1;
+                        light.Color = tint;
+                        light.ID = shape;
                     }
 
                     if (LightColors.GetHue(graphic, out ushort color, out bool ishue))
