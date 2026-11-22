@@ -250,8 +250,8 @@ namespace ClassicUO.Network
             0x0A,   // ee
             0x0015, // ef
             -1,     // f0
-            0x09,   // f1
-            0x19,   // f2
+            -1,     // f1
+            -1,     // f2
             0x1A,   // f3
             -1,     // f4
             0x15,   // f5
@@ -326,13 +326,11 @@ namespace ClassicUO.Network
             {
                 _packetsTable[0xEE] = 0x2000;
                 _packetsTable[0xEF] = 0x2000;
-                _packetsTable[0xF1] = 0x09;
             }
             else
             {
                 _packetsTable[0xEE] = -1;
                 _packetsTable[0xEF] = 0x15;
-                _packetsTable[0xF1] = -1;
             }
 
             if (version >= ClientVersion.CV_60142)
@@ -361,8 +359,6 @@ namespace ClassicUO.Network
                 _packetsTable[0x99] = 0x1E;
                 _packetsTable[0xBA] = 0x0A;
                 _packetsTable[0xF3] = 0x1A;
-                _packetsTable[0xF1] = 0x09;
-                _packetsTable[0xF2] = 0x19;
             }
             else
             {
@@ -370,8 +366,6 @@ namespace ClassicUO.Network
                 _packetsTable[0x99] = 0x1A;
                 _packetsTable[0xBA] = 0x06;
                 _packetsTable[0xF3] = 0x18;
-                _packetsTable[0xF1] = -1;
-                _packetsTable[0xF2] = -1;
             }
 
             if (version >= ClientVersion.CV_70180)
