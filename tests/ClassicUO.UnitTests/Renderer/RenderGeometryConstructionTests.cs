@@ -201,6 +201,65 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
+        [Fact]
+        public void ViewportPartlyOffWindow_DrawsAndPicksTheVisiblePart()
+        {
+            foreach (float scale in new[] { 1f, 1.5f })
+            {
+                int bw = (int)Math.Ceiling(1280 * scale), bh = (int)Math.Ceiling(900 * scale);
+                var g0 = RenderGeometry.Compute(bw, bh, bw, bh, scale, Rectangle.Empty);
+                const int w = 854, h = 705;
+                // gump placements (border included) off each edge and corner, past the clamp, then clamped as the gump does
+                var asked = new[]
+                {
+                    new Point(-700, 50), new Point(g0.UiWidth - 40, 50), new Point(50, -600), new Point(50, g0.UiHeight - 10),
+                    new Point(-5000, -5000), new Point(5000, -5000), new Point(-5000, 5000), new Point(5000, 5000), new Point(-300, -200)
+                };
+
+                foreach (Point ask in asked)
+                {
+                    int gw = w + 10, gh = h + 10;
+                    Point at = RenderGeometry.ClampPlacement(ask, gw, gh, g0.UiWidth, g0.UiHeight);
+                    var gump = new Rectangle(at.X, at.Y, gw, gh);
+                    var visible = Rectangle.Intersect(gump, g0.UiBounds);
+
+                    Assert.True(visible.Width >= RenderGeometry.ViewportKeepVisible && visible.Height >= RenderGeometry.ViewportKeepVisible,
+                        $"scale {scale} ask {ask}: only {visible} of the viewport gump stays on screen");
+
+                    var viewport = new Rectangle(at.X + 5, at.Y + 5, w, h);
+                    var g = g0.WithViewport(viewport);
+
+                    // the passes' device viewport is the target's bounds (FNA rejects negative or out-of-target viewports)
+                    Rectangle vp = g.WorldTargetBounds;
+                    Assert.True(vp.X == 0 && vp.Y == 0 && vp.Width == w && vp.Height == h);
+
+                    Camera camera = MakeCamera(viewport, 1f, 1000 - (w >> 1), 2000 - (h >> 1));
+                    Matrix m = camera.ViewTransformMatrix;
+                    Rectangle onScreen = Rectangle.Intersect(g.WorldOnScreen, g.BackBufferBounds);
+
+                    for (int k = 0; k < 9; k++)
+                    {
+                        // a back-buffer pixel inside the visible part of the world composite
+                        int px = onScreen.X + (k % 3 + 1) * onScreen.Width / 4, py = onScreen.Y + (k / 3 + 1) * onScreen.Height / 4;
+
+                        if (onScreen.Width <= 0 || onScreen.Height <= 0)
+                        {
+                            break;
+                        }
+
+                        Vector2 t = g.BackBufferToWorldTarget(px + 0.5f, py + 0.5f);
+                        Vector2 ui = g.BackBufferToUi(px + 0.5f, py + 0.5f);
+                        Point world = GameScene.MouseToWorld(g, camera, ui);
+                        // the world pixel drawn at that target pixel
+                        float wx = (t.X - m.M41) / m.M11, wy = (t.Y - m.M42) / m.M22;
+
+                        Assert.InRange(Math.Abs(world.X - wx), 0, 2);
+                        Assert.InRange(Math.Abs(world.Y - wy), 0, 2);
+                    }
+                }
+            }
+        }
+
         // The same checks with the formulas of the code before RenderGeometry (b0feb5877), kept as models: they must fail where
         // that code was wrong, at least the owner's 854x705 viewport at scale 1.5.
 
