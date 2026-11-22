@@ -7,7 +7,7 @@ namespace ClassicUO.Game.UI.Controls
 {
     internal class RadioButton : Checkbox
     {
-        public RadioButton(int group, List<string> parts, string[] lines) : base(parts, lines)
+        public RadioButton(int group, GumpArgs parts, string[] lines) : base(parts, lines)
         {
             GroupIndex = group;
             IsFromServer = true;

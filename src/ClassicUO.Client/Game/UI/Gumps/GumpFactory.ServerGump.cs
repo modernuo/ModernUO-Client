@@ -118,6 +118,11 @@ namespace ClassicUO.Game.UI.Gumps
             string[] lines
         )
         {
+            if (GumpLayoutSwitch.Enabled)
+            {
+                return OpenServerGumpV2(world, sender, gumpID, x, y, layout, lines);
+            }
+
             List<string> cmdlist = _parser.GetTokens(layout);
             int cmdlen = cmdlist.Count;
 
@@ -132,10 +137,13 @@ namespace ClassicUO.Game.UI.Gumps
             List<string>[] commands = TokenizeEntries(cmdlist);
 
             PrefetchLayoutGumps(commands);
-            BuildControls(world, gump, commands, lines);
+            BuildControls(world, gump, commands, lines, false);
 
             return FinishServerGump(gump, mustBeAdded);
         }
+
+        /// <summary>CUO_GUMP_LAYOUT_CHECK: the old tokenizer's entries of <paramref name="layout"/>.</summary>
+        internal static List<string>[] TokenizeForCheck(string layout) => TokenizeEntries(_parser.GetTokens(layout));
 
         private static List<string>[] TokenizeEntries(List<string> cmdlist)
         {
@@ -222,8 +230,11 @@ namespace ClassicUO.Game.UI.Gumps
             return gump;
         }
 
-        /// <summary>The control loop over the tokenized entries.</summary>
-        private static void BuildControls(World world, Gump gump, List<string>[] commands, string[] lines)
+        /// <summary>
+        /// The old control loop over the old tokenizer's entries. <paramref name="shadow"/>: a checker's copy
+        /// (CUO_GUMP_LAYOUT_CHECK) that takes no keyboard focus and sends no requests.
+        /// </summary>
+        internal static void BuildControls(World world, Gump gump, List<string>[] commands, string[] lines, bool shadow)
         {
             int cmdlen = commands.Length;
             int group = 0;
@@ -465,7 +476,7 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     StbTextBox textBox = new StbTextBox(gparams, lines);
 
-                    if (!textBoxFocused)
+                    if (!textBoxFocused && !shadow)
                     {
                         textBox.SetKeyboardFocus();
                         textBoxFocused = true;
@@ -588,7 +599,8 @@ namespace ClassicUO.Game.UI.Gumps
                         );
 
                         if (
-                            uint.TryParse(gparams[1], out uint s)
+                            !shadow
+                            && uint.TryParse(gparams[1], out uint s)
                             && (!world.OPL.TryGetRevision(s, out uint rev) || rev == 0)
                         )
                         {

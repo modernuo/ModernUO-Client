@@ -250,6 +250,12 @@ namespace ClassicUO.Configuration
         // overrides it in developer builds); CUO_GUMP_BUDGET_CHECK=1 compares held and admitted bytes. Default off.
         [JsonPropertyName("gump_decode_budget")] public bool GumpDecodeBudget { get; set; }
 
+        // gump-system G3: server gumps (0xB0/0xDD) parse their layout in one pass over the string into token ranges (GumpLayout)
+        // and build the controls by entry kind, instead of two tokenizer passes that make a string per token and a list per
+        // entry. Read at every open; CUO_GUMP_LAYOUT_V2=1|0 overrides it in developer builds, CUO_GUMP_LAYOUT_CHECK=1 compares
+        // each parse and built tree with the old path. Default off.
+        [JsonPropertyName("gump_layout_v2")] public bool GumpLayoutV2 { get; set; }
+
         // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
         // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
         // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.

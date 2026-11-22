@@ -13,7 +13,8 @@ using Xunit;
 namespace ClassicUO.UnitTests.Network.Packets
 {
     // G1: a server-gump resend rebuilds the open gump also without a position-cache entry and starts the gump's flags over;
-    // a vendor without a shop layer opens its shop instead of throwing (a throw disconnects with span_reader on).
+    // a vendor without a shop layer opens its shop instead of throwing (a throw disconnects with span_reader on). Both
+    // gump_layout_v2 states.
     [Collection(nameof(SpanBuffersCollection))]
     public sealed class ServerGumpReplaceTests : IDisposable
     {
@@ -25,6 +26,7 @@ namespace ClassicUO.UnitTests.Network.Packets
 
         public void Dispose()
         {
+            GumpLayoutSwitch.OverrideForTests = null;
             UIManager.RemovePosition(GUMP_ID);
             _seam.Dispose();
         }
@@ -41,10 +43,13 @@ namespace ClassicUO.UnitTests.Network.Packets
 
         // ---- G1 the replace fix
 
-        [Fact]
-        public void Resend_Replaces_The_Open_Gump_Without_A_Position_Cache_Entry()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Resend_Replaces_The_Open_Gump_Without_A_Position_Cache_Entry(bool v2)
         {
             World world = InGame();
+            GumpLayoutSwitch.OverrideForTests = v2;
 
             Gump first = GumpFactory.OpenServerGump(world, MOB, GUMP_ID, 100, 150, "{ text 1 2 0 0 }", new[] { "a" });
             first.X = 300;
@@ -60,10 +65,13 @@ namespace ClassicUO.UnitTests.Network.Packets
             pos.X.Should().Be(300, "the open gump's place is cached again");
         }
 
-        [Fact]
-        public void Resend_Starts_The_Gump_Flags_Over()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Resend_Starts_The_Gump_Flags_Over(bool v2)
         {
             World world = InGame();
+            GumpLayoutSwitch.OverrideForTests = v2;
 
             Gump first = GumpFactory.OpenServerGump(world, MOB, GUMP_ID, 0, 0, "{ nomove }{ noclose }{ nodispose }{ mastergump 77 }", Array.Empty<string>());
             first.CanMove.Should().BeFalse();

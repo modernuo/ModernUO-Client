@@ -17,16 +17,16 @@ namespace ClassicUO.Game.UI.Controls
         private RenderedText _gameText;
         private ScrollBarBase _scrollBar;
 
-        public HtmlControl(List<string> parts, string[] lines) : this()
+        public HtmlControl(GumpArgs parts, string[] lines) : this()
         {
             X = int.Parse(parts[1]);
             Y = int.Parse(parts[2]);
             Width = int.Parse(parts[3]);
             Height = int.Parse(parts[4]);
             int textIndex = int.Parse(parts[5]);
-            HasBackground = parts[6] == "1";
-            HasScrollbar = parts[7] != "0";
-            UseFlagScrollbar = HasScrollbar && parts[7] == "2";
+            HasBackground = parts.Is(6, "1");
+            HasScrollbar = !parts.Is(7, "0");
+            UseFlagScrollbar = HasScrollbar && parts.Is(7, "2");
             _gameText.IsHTML = true;
             _gameText.MaxWidth = Width - (HasScrollbar ? 16 : 0) - (HasBackground ? 8 : 0);
             IsFromServer = true;
