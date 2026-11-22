@@ -65,7 +65,8 @@ for (int i = 0; i < args.Length; i++)
         case "--light-classes": lightClassesArg = args[++i]; break;
         case "--export-light-classes": return ExportLightClasses(args[++i]);
         case "--bodies":
-            AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
+            // BodyChoices.ParseId trims ("0x190, 0x191" has a space before the second id) and checks the range
+            AnimConvert.Bodies = args[++i].Split(',').Select(s => BodyChoices.ParseId(s, "--bodies")).ToHashSet();
             break;
         case "--format":
             formatGiven = true;
