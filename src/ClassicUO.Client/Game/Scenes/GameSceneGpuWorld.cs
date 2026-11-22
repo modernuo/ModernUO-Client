@@ -39,9 +39,38 @@ namespace ClassicUO.Game.Scenes
         {
             var w = Client.Game.GetGpuWorld()?.World;
 
-            return w == null
+            return (w == null
                 ? $"gpu off hold {_settle.Holding}"
-                : $"gpu hold {_settle.Holding} ep {_settle.Episode} pagesMiss {w.Pages.MissingVisible} animMiss {w.AnimPages?.MissingVisible ?? 0} animEvict {w.AnimPages?.Evictions ?? 0}";
+                : $"gpu hold {_settle.Holding} ep {_settle.Episode} pagesMiss {w.Pages.MissingVisible} animMiss {w.AnimPages?.MissingVisible ?? 0} animEvict {w.AnimPages?.Evictions ?? 0}")
+                + BurstLights();
+        }
+
+        // the frame's light list: count and the sources that hold more than one entry (one emitter lit twice)
+        private string BurstLights()
+        {
+            int dup = 0;
+            string first = "";
+
+            for (int i = 0; i < _frameLights.Count; i++)
+            {
+                GameObject src = _frameLights[i].Source;
+
+                for (int j = 0; j < i; j++)
+                {
+                    if (src != null && ReferenceEquals(_frameLights[j].Source, src))
+                    {
+                        if (dup++ == 0)
+                        {
+                            first = $" dup0 0x{src.Graphic:X4}@{src.X},{src.Y},{src.Z} id {_frameLights[i].ID} " +
+                                $"animOff {Client.Game.UO.FileManager.Arts.GetEntry(src.Graphic + 0x4000).AnimOffset}";
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return $" lights {_frameLights.Count} dupSrc {dup}{first}";
         }
 #endif
 
