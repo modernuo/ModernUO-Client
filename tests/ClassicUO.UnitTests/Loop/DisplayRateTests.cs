@@ -113,11 +113,11 @@ public class DisplayRateTests
     }
 
     [Fact]
-    public void VsyncMailboxIsOnByDefaultAndRoundTrips()
+    public void VsyncMailboxIsOffByDefaultAndRoundTrips()
     {
-        Assert.True(new Settings().VsyncMailbox);
-        Assert.False(JsonSerializer.Deserialize<Settings>("{\"vsync_mailbox\":false}").VsyncMailbox);
-        Assert.Contains("\"vsync_mailbox\":true", JsonSerializer.Serialize(new Settings()));
+        Assert.False(new Settings().VsyncMailbox);
+        Assert.True(JsonSerializer.Deserialize<Settings>("{\"vsync_mailbox\":true}").VsyncMailbox);
+        Assert.Contains("\"vsync_mailbox\":false", JsonSerializer.Serialize(new Settings()));
     }
 
     // FNA3D's choice (XNAToSDL_PresentMode) by driver: SDL_GPU honours the hint where the window supports mailbox, else vsync;
