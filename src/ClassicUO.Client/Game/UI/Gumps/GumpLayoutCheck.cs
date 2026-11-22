@@ -13,7 +13,7 @@ namespace ClassicUO.Game.UI.Gumps
     /// CUO_GUMP_LAYOUT_CHECK=1 (developer builds; gump_layout_v2 on): each server-gump open is also tokenized by the old
     /// two-pass tokenizer and built by the old control loop into a detached shadow gump; the entries (token by token) and the
     /// built trees (type, bounds, page, alpha, input flags, tooltip, serial and the type's key fields; the gump's flags) are
-    /// compared. Logs the gump id and the first mismatch, and a
+    /// compared. A cached layout (gump_layout_cache) is compared at every hit. Logs the gump id and the first mismatch, and a
     /// summary with the switch states every 50 checks.
     /// </summary>
     internal static class GumpLayoutCheck
@@ -196,7 +196,8 @@ namespace ClassicUO.Game.UI.Gumps
             if (_checks % 50 == 0)
             {
                 Log.Info(
-                    $"[gump-layout-check] gump_layout_v2={GumpLayoutSwitch.Enabled} checks={_checks} mismatches={_mismatches}"
+                    $"[gump-layout-check] gump_layout_v2={GumpLayoutSwitch.Enabled} gump_layout_cache={GumpLayoutCache.Enabled} "
+                        + $"checks={_checks} mismatches={_mismatches} cache hits={GumpLayoutCache.Hits} misses={GumpLayoutCache.Misses}"
                 );
             }
         }

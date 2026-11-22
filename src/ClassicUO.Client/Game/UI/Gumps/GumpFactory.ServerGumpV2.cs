@@ -49,7 +49,7 @@ namespace ClassicUO.Game.UI.Gumps
             string[] lines
         )
         {
-            GumpLayout parsed = GumpLayout.Parse(layout);
+            GumpLayout parsed = GumpLayoutCache.Enabled ? GumpLayoutCache.GetOrParse(gumpID, layout) : GumpLayout.Parse(layout);
 
 #if CUO_DEVTOOLS
             if (GumpLayoutCheck.Active)

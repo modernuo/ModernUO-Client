@@ -13,8 +13,8 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Network.Packets
 {
-    // gump_layout_v2 (G3): the one-pass parser against the old two tokenizers, the kind builder
-    // against the old loop (control-tree signatures), both switch states.
+    // gump_layout_v2 (G3) and gump_layout_cache (G4): the one-pass parser against the old two tokenizers, the kind builder
+    // against the old loop (control-tree signatures), both switch states; the server-gump replace fix (G1).
     [Collection(nameof(SpanBuffersCollection))]
     public sealed class GumpLayoutV2Tests : IDisposable
     {
@@ -27,6 +27,8 @@ namespace ClassicUO.UnitTests.Network.Packets
         public void Dispose()
         {
             GumpLayoutSwitch.OverrideForTests = null;
+            GumpLayoutCache.OverrideForTests = null;
+            GumpLayoutCache.Clear();
             UIManager.RemovePosition(GUMP_ID);
             _seam.Dispose();
         }
@@ -304,10 +306,12 @@ namespace ClassicUO.UnitTests.Network.Packets
             }
         }
 
-        // ---- the round-5 server-gump tests, unchanged, with gump_layout_v2 on
+        // ---- the round-5 server-gump tests, unchanged, with gump_layout_v2 on (and with the cache)
 
-        [Fact]
-        public void Round5_Server_Gump_Tests_Pass_With_V2()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Round5_Server_Gump_Tests_Pass_With_V2(bool cache)
         {
             foreach (object[] m in PacketPipe.Modes().Take(6))
             {
@@ -315,31 +319,95 @@ namespace ClassicUO.UnitTests.Network.Packets
                 var read = (PipeRead)m[1];
                 bool compressed = (bool)m[2];
 
-                Run(t => t.ServerGump_0xB0_Builds_The_Layout(mode, read, compressed));
-                Run(t => t.ServerGump_0xDD_Compressed_Builds_The_Same_Layout(mode, read, compressed));
-                Run(t => t.ServerGump_0xB0_Same_Sender_And_Id_Is_Rebuilt_In_Place(mode, read, compressed));
-                Run(t => t.ServerGump_Missing_Pictures_Empty_Layout_And_Bad_Streams(mode, read, compressed));
+                Run(t => t.ServerGump_0xB0_Builds_The_Layout(mode, read, compressed), cache);
+                Run(t => t.ServerGump_0xDD_Compressed_Builds_The_Same_Layout(mode, read, compressed), cache);
+                Run(t => t.ServerGump_0xB0_Same_Sender_And_Id_Is_Rebuilt_In_Place(mode, read, compressed), cache);
+                Run(t => t.ServerGump_Missing_Pictures_Empty_Layout_And_Bad_Streams(mode, read, compressed), cache);
             }
         }
 
-        private void Run(Action<IncomingGumpTests> test)
+        private void Run(Action<IncomingGumpTests> test, bool cache)
         {
             // the round-5 class makes its own seam: this one's is set aside while it runs
             _seam.Dispose();
 
             using var t = new IncomingGumpTests();
             GumpLayoutSwitch.OverrideForTests = true;
+            GumpLayoutCache.OverrideForTests = cache;
+            GumpLayoutCache.Clear();
             test(t);
+
+            if (cache)
+            {
+                GumpLayoutCache.Misses.Should().BeGreaterThan(0, "the v2 path ran");
+            }
+        }
+
+        // ---- G4 the layout cache
+
+        [Fact]
+        public void Cache_Hands_The_Same_Layout_To_An_Identical_Resend()
+        {
+            GumpLayoutSwitch.OverrideForTests = true;
+            GumpLayoutCache.OverrideForTests = true;
+            GumpLayoutCache.Clear();
+            string a = "{ page 0 }{ text 1 2 3 0 }";
+            string b = new StringBuilder(a).ToString(); // equal text, another instance
+
+            GumpLayout first = GumpLayoutCache.GetOrParse(1, a);
+            GumpLayoutCache.GetOrParse(1, b).Should().BeSameAs(first);
+            GumpLayoutCache.GetOrParse(2, a).Should().NotBeSameAs(first, "another gump id");
+            GumpLayoutCache.GetOrParse(1, "{ page 0 }{ text 1 2 3 1 }").Should().NotBeSameAs(first, "same length, other text");
+            GumpLayoutCache.Hits.Should().Be(1);
+            GumpLayoutCache.Misses.Should().Be(3);
+        }
+
+        [Fact]
+        public void Cache_Drops_The_Least_Recently_Used_Layout()
+        {
+            GumpLayoutSwitch.OverrideForTests = true;
+            GumpLayoutCache.OverrideForTests = true;
+            GumpLayoutCache.Clear();
+
+            GumpLayout keep = GumpLayoutCache.GetOrParse(0, "{ page 0 }");
+            GumpLayout drop = GumpLayoutCache.GetOrParse(1, "{ page 0 }");
+
+            for (uint id = 2; id < GumpLayoutCache.Capacity; id++)
+            {
+                GumpLayoutCache.GetOrParse(id, "{ page 0 }");
+            }
+
+            GumpLayoutCache.GetOrParse(0, "{ page 0 }").Should().BeSameAs(keep);
+            GumpLayoutCache.GetOrParse(1000, "{ page 0 }");
+            GumpLayoutCache.Count.Should().Be(GumpLayoutCache.Capacity);
+            GumpLayoutCache.GetOrParse(0, "{ page 0 }").Should().BeSameAs(keep);
+            GumpLayoutCache.GetOrParse(1, "{ page 0 }").Should().NotBeSameAs(drop, "id 1 was the least recently used");
+        }
+
+        [Fact]
+        public void Cache_Is_Off_Without_V2_And_Keeps_No_Empty_Layout()
+        {
+            GumpLayoutSwitch.OverrideForTests = false;
+            GumpLayoutCache.OverrideForTests = true;
+            GumpLayoutCache.Enabled.Should().BeFalse();
+
+            GumpLayoutSwitch.OverrideForTests = true;
+            GumpLayoutCache.Enabled.Should().BeTrue();
+            GumpLayoutCache.Clear();
+            GumpLayoutCache.GetOrParse(1, "   ");
+            GumpLayoutCache.Count.Should().Be(0);
         }
 
         [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Resend_Rebuilds_The_Open_Gump_In_Both_States(bool v2)
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public void Resend_Rebuilds_The_Open_Gump_In_Every_State(bool v2, bool cache)
         {
             World world = InGame();
             MakeResident();
             GumpLayoutSwitch.OverrideForTests = v2;
+            GumpLayoutCache.OverrideForTests = cache;
             var (layout, lines) = ServerGumpFixture.Build();
 
             Gump first = GumpFactory.OpenServerGump(world, MOB, GUMP_ID, 100, 100, layout, lines);
