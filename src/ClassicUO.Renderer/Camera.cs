@@ -61,9 +61,37 @@ namespace ClassicUO.Renderer
 
         public void ZoomOut() => Zoom += ZoomStep;
 
-        public Viewport GetViewport() => new Viewport(Bounds.X, Bounds.Y, Bounds.Width, Bounds.Height);
 
         public Vector2 Offset => _lerpOffset;
+
+        private int _worldOffsetX, _worldOffsetY;
+
+        /// <summary>
+        /// The world's draw offset (the world pixel drawn at the viewport's top-left before zoom and peek). The matrix snaps the
+        /// world's screen origin (its translation minus offset x scale) to whole target pixels, so the FNA passes (Legacy world,
+        /// lights) and the Gpu world, which derives its centre from this matrix (<see cref="GpuCenter"/>), draw a world pixel at
+        /// the same target pixel at any viewport size, zoom and peek.
+        /// </summary>
+        public void SetWorldOffset(int x, int y)
+        {
+            if (x != _worldOffsetX || y != _worldOffsetY)
+            {
+                _worldOffsetX = x;
+                _worldOffsetY = y;
+                _updateMatrixes = true;
+            }
+        }
+
+        /// <summary>The world pixel at the centre of a <paramref name="targetWidth"/> x <paramref name="targetHeight"/> target
+        /// drawn with <see cref="ViewTransformMatrix"/>, and the scale (target pixels per world pixel).</summary>
+        public (double X, double Y, float Scale) GpuCenter(int targetWidth, int targetHeight)
+        {
+            UpdateMatrices();
+
+            double scale = _transform.M11;
+
+            return (_worldOffsetX + (targetWidth * 0.5 - _transform.M41) / scale, _worldOffsetY + (targetHeight * 0.5 - _transform.M42) / scale, (float)scale);
+        }
 
         public bool PeekingToMouse;
 
@@ -140,16 +168,6 @@ namespace ClassicUO.Renderer
             result.Y = (int) y;
         }
 
-        public Point MouseToWorldPosition()
-        {
-            Point mouse = _mousePos;
-
-            mouse.X -= Bounds.X;
-            mouse.Y -= Bounds.Y;
-
-            return ScreenToWorld(mouse);
-        }
-
         private void UpdateMatrices()
         {
             if (!_updateMatrixes)
@@ -172,6 +190,10 @@ namespace ClassicUO.Renderer
 
             Matrix.CreateTranslation(origin.X - _lerpOffset.X, origin.Y - _lerpOffset.Y, 0f, out temp);
             Matrix.Multiply(ref _transform, ref temp, out _transform);
+
+            double ox = _transform.M41 - (double)_worldOffsetX * _lerpZoom, oy = _transform.M42 - (double)_worldOffsetY * _lerpZoom;
+            _transform.M41 += (float)(Math.Round(ox) - ox);
+            _transform.M42 += (float)(Math.Round(oy) - oy);
 
 
             Matrix.Invert(ref _transform, out _inverseTransform);

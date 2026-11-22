@@ -1295,8 +1295,9 @@ namespace ClassicUO
             if (_mouse.HasValue && game.Scene is Game.Scenes.GameScene scene)
             {
                 Input.Mouse.Position = _mouse.Value;
+                Input.Mouse.PositionF = new Microsoft.Xna.Framework.Vector2(_mouse.Value.X + 0.5f, _mouse.Value.Y + 0.5f);
                 scene.Camera.Update(true, Time.Delta, _mouse.Value);
-                SelectedObject.TranslatedMousePositionByViewport = scene.Camera.MouseToWorldPosition();
+                SelectedObject.TranslatedMousePositionByViewport = scene.MouseToWorld();
             }
         }
 

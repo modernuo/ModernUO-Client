@@ -68,6 +68,9 @@ namespace ClassicUO.Renderer
 
         private Matrix TransformMatrix => _transformMatrix;
 
+        /// <summary>The device viewport size the current projection was built for (dev probes).</summary>
+        public Point AppliedProjectionSize => new Point(_appliedViewportW, _appliedViewportH);
+
 
         private DepthStencilState Stencil { get; } = new DepthStencilState
         {

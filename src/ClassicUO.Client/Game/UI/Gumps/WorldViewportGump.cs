@@ -53,8 +53,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 if (!ProfileManager.CurrentProfile.GameWindowLock)
                 {
-                    var s = new Point(Client.Game.ScaleWithDpi(_lastSize.X), Client.Game.ScaleWithDpi(_lastSize.Y));
-                    Point n = ResizeGameWindow(s);
+                    Point n = ResizeViewport(_lastSize);
 
                     UIManager.GetGump<OptionsGump>()?.UpdateVideo();
 
@@ -100,6 +99,9 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 return;
             }
+
+            // a window shrink or scale change can leave the viewport outside the new UI bounds: keep it grabbable
+            KeepOnScreen();
 
             if (Mouse.IsDragging)
             {
@@ -158,31 +160,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             base.OnDragEnd(x, y);
 
-            Point position = Location;
-
-            if (position.X + Width - BORDER_WIDTH > Client.Game.ClientBounds.Width)
-            {
-                position.X = Client.Game.ClientBounds.Width - (Width - BORDER_WIDTH);
-            }
-
-            if (position.X < -BORDER_WIDTH)
-            {
-                position.X = -BORDER_WIDTH;
-            }
-
-            if (position.Y + Height - BORDER_WIDTH > Client.Game.ClientBounds.Height)
-            {
-                position.Y = Client.Game.ClientBounds.Height - (Height - BORDER_WIDTH);
-            }
-
-            if (position.Y < -BORDER_WIDTH)
-            {
-                position.Y = -BORDER_WIDTH;
-            }
-
-            Location = position;
-            _scene.Camera.Bounds.X = position.X + BORDER_WIDTH;
-            _scene.Camera.Bounds.Y = position.Y + BORDER_WIDTH;
+            KeepOnScreen();
 
             UIManager.GetGump<OptionsGump>()?.UpdateVideo();
             UpdateGameWindowPos();
@@ -192,10 +170,33 @@ namespace ClassicUO.Game.UI.Gumps
         {
             base.OnMove(x, y);
 
-            _scene.Camera.Bounds.X = ScreenCoordinateX + BORDER_WIDTH;
-            _scene.Camera.Bounds.Y = ScreenCoordinateY + BORDER_WIDTH;
-
+            KeepOnScreen();
             UpdateGameWindowPos();
+        }
+
+        /// <summary>
+        /// The viewport may sit partly outside the window (its world composite is clipped there), but at least
+        /// RenderGeometry.ViewportKeepVisible UI units stay inside on every side so it can be dragged back; the camera bounds
+        /// follow the gump.
+        /// </summary>
+        private void KeepOnScreen()
+        {
+            Rectangle client = Client.Game.ClientBounds;
+            Point p = RenderGeometry.ClampPlacement(Location, Width, Height, client.Width, client.Height);
+
+            if (p != Location)
+            {
+                Location = p;
+            }
+
+            int cx = ScreenCoordinateX + BORDER_WIDTH, cy = ScreenCoordinateY + BORDER_WIDTH;
+
+            if (_scene.Camera.Bounds.X != cx || _scene.Camera.Bounds.Y != cy)
+            {
+                _scene.Camera.Bounds.X = cx;
+                _scene.Camera.Bounds.Y = cy;
+                UpdateGameWindowPos();
+            }
         }
 
         private void UpdateGameWindowPos()
@@ -223,17 +224,22 @@ namespace ClassicUO.Game.UI.Gumps
         public void SetGameWindowPosition(Point pos)
         {
             Location = pos;
-
-            _scene.Camera.Bounds.X = ScreenCoordinateX + BORDER_WIDTH;
-            _scene.Camera.Bounds.Y = ScreenCoordinateY + BORDER_WIDTH;
-
+            KeepOnScreen();
             UpdateGameWindowPos();
         }
 
+        /// <summary>Sizes the viewport to a window size in back-buffer pixels (the full-size viewport): the same UI units the
+        /// UI target has (RenderGeometry.UiUnits), at least 640x480.</summary>
         public Point ResizeGameWindow(Point newSize)
         {
-            newSize.X = (int)(newSize.X / Client.Game.DpiScale);
-            newSize.Y = (int)(newSize.Y / Client.Game.DpiScale);
+            float scale = Client.Game.DpiScale;
+
+            return ResizeViewport(new Point(RenderGeometry.UiUnits(newSize.X, scale), RenderGeometry.UiUnits(newSize.Y, scale)));
+        }
+
+        /// <summary>Sizes the viewport in UI units, at least 640x480; returns the size set.</summary>
+        public Point ResizeViewport(Point newSize)
+        {
             int targetWidth = 640;
             int targetHeight = 480;
             if (newSize.X < targetWidth)
@@ -246,7 +252,6 @@ namespace ClassicUO.Game.UI.Gumps
                 newSize.Y = targetHeight;
             }
 
-            //Resize();
             _lastSize = _savedSize = newSize;
 
             if (
@@ -263,6 +268,17 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             return newSize;
+        }
+
+        /// <summary>Sets the viewport's size in UI units without the 640x480 floor (driver geometry checks).</summary>
+        public void SetViewportSize(Point size)
+        {
+            _lastSize = _savedSize = size;
+            _scene.Camera.Bounds.Width = size.X;
+            _scene.Camera.Bounds.Height = size.Y;
+            Width = size.X + BORDER_WIDTH * 2;
+            Height = size.Y + BORDER_WIDTH * 2;
+            Resize();
         }
 
         public override bool Contains(int x, int y)

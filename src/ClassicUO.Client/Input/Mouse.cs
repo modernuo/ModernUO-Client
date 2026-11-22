@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
+using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
 using SDL3;
 
@@ -79,6 +80,10 @@ namespace ClassicUO.Input
 
         public static Point Position;
 
+        /// <summary>The mouse in UI units before truncation (RenderGeometry.WindowToUi); a scripted position (Override) is its
+        /// unit's centre.</summary>
+        public static Vector2 PositionF;
+
         /// <summary>Dev (DevBench's ui scene): the position Update reports instead of the OS cursor's, without moving it.</summary>
         public static Point? Override;
 
@@ -114,6 +119,15 @@ namespace ClassicUO.Input
 
         public static bool MouseInWindow { get; set; }
 
+        /// <summary>A window position in UI units through the client's render geometry (Mouse.Update's mapping).</summary>
+        internal static Point MapToUi(int x, int y) => Client.Game.Geometry.WindowToUi(x, y);
+
+        // Window coordinates to UI coordinates: through the back buffer, which FNA presents stretched over the window's
+        // client area, then the UI target's exact per-axis scale (RenderGeometry). The integer ratio this replaced was 1 when
+        // the back buffer was somewhat taller than the window (borderless on a maximized window) and 0 when it was smaller.
+        internal static Point MapToUi(int x, int y, int backBufferWidth, int backBufferHeight, int windowWidth, int windowHeight, float dpiScale) =>
+            RenderGeometry.Compute(windowWidth, windowHeight, backBufferWidth, backBufferHeight, dpiScale, Rectangle.Empty).WindowToUi(x, y);
+
         public static void Update()
         {
             if (Override.HasValue)
@@ -125,29 +139,31 @@ namespace ClassicUO.Input
                 }
 
                 Position = Override.Value;
+                PositionF = new Vector2(Position.X + 0.5f, Position.Y + 0.5f);
                 IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
 
                 return;
             }
 
+            float mx, my;
+
             if (!MouseInWindow)
             {
                 SDL.SDL_GetGlobalMouseState(out float x, out float y);
                 SDL.SDL_GetWindowPosition(Client.Game.Window.Handle, out int winX, out int winY);
-                Position.X = (int)x - winX;
-                Position.Y = (int)y - winY;
+                mx = x - winX;
+                my = y - winY;
             }
             else
             {
-                SDL.SDL_GetMouseState(out float x, out float y);
-                Position.X = (int)x;
-                Position.Y = (int)y;
+                SDL.SDL_GetMouseState(out mx, out my);
             }
 
-            // Scale the mouse coordinates for the faux-backbuffer and DPI settings
-            Position.X = (int) ((double) Position.X * (Client.Game.GraphicManager.PreferredBackBufferWidth / Client.Game.Window.ClientBounds.Width) / Client.Game.DpiScale);
-
-            Position.Y = (int) ((double) Position.Y * (Client.Game.GraphicManager.PreferredBackBufferHeight / Client.Game.Window.ClientBounds.Height) / Client.Game.DpiScale);
+            // window -> back buffer -> UI units (RenderGeometry): the inverse of the UI composite
+            var geometry = Client.Game.Geometry;
+            Vector2 b = geometry.WindowToBackBuffer(mx, my);
+            PositionF = geometry.BackBufferToUi(b.X, b.Y);
+            Position = new Point((int)System.MathF.Floor(PositionF.X), (int)System.MathF.Floor(PositionF.Y));
 
             IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
         }
