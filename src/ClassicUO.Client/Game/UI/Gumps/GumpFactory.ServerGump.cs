@@ -126,61 +126,106 @@ namespace ClassicUO.Game.UI.Gumps
                 return null;
             }
 
-            Gump gump = null;
-            bool mustBeAdded = true;
-
-            if (UIManager.GetGumpCachePosition(gumpID, out Point pos))
-            {
-                x = pos.X;
-                y = pos.Y;
-
-                for (
-                    LinkedListNode<Gump> last = UIManager.Gumps.Last;
-                    last != null;
-                    last = last.Previous
-                )
-                {
-                    Control g = last.Value;
-
-                    if (!g.IsDisposed && g.LocalSerial == sender && g.ServerSerial == gumpID)
-                    {
-                        g.Clear();
-                        gump = g as Gump;
-                        mustBeAdded = false;
-
-                        break;
-                    }
-                }
-            }
-            else
-            {
-                UIManager.SavePosition(gumpID, new Point(x, y));
-            }
-
-            if (gump == null)
-            {
-                gump = new Gump(world, sender, gumpID)
-                {
-                    X = x,
-                    Y = y,
-                    CanMove = true,
-                    CanCloseWithRightClick = true,
-                    CanCloseWithEsc = true,
-                    InvalidateContents = false,
-                    IsFromServer = true
-                };
-            }
+            Gump gump = FindOrCreateServerGump(world, sender, gumpID, x, y, out bool mustBeAdded);
 
             // the layout is tokenized once: the prefetch scan and the control loop below share the tokens
-            var commands = new List<string>[cmdlen];
+            List<string>[] commands = TokenizeEntries(cmdlist);
 
-            for (int cnt = 0; cnt < cmdlen; cnt++)
+            PrefetchLayoutGumps(commands);
+            BuildControls(world, gump, commands, lines);
+
+            return FinishServerGump(gump, mustBeAdded);
+        }
+
+        private static List<string>[] TokenizeEntries(List<string> cmdlist)
+        {
+            var commands = new List<string>[cmdlist.Count];
+
+            for (int cnt = 0; cnt < commands.Length; cnt++)
             {
                 commands[cnt] = _cmdparser.GetTokens(cmdlist[cnt], false);
             }
 
-            PrefetchLayoutGumps(commands);
+            return commands;
+        }
 
+        /// <summary>
+        /// The open gump with this sender and id, cleared for a rebuild in place, else a new one at the cached position (the
+        /// packet's position is cached on a first open). The open gump is found also when its position-cache entry was removed
+        /// (a closed gump with the same id), so a resend never opens a duplicate.
+        /// </summary>
+        private static Gump FindOrCreateServerGump(World world, uint sender, uint gumpID, int x, int y, out bool mustBeAdded)
+        {
+            bool cached = UIManager.GetGumpCachePosition(gumpID, out Point pos);
+
+            if (cached)
+            {
+                x = pos.X;
+                y = pos.Y;
+            }
+
+            for (LinkedListNode<Gump> last = UIManager.Gumps.Last; last != null; last = last.Previous)
+            {
+                Gump g = last.Value;
+
+                if (!g.IsDisposed && g.LocalSerial == sender && g.ServerSerial == gumpID)
+                {
+                    if (!cached)
+                    {
+                        UIManager.SavePosition(gumpID, g.Location);
+                    }
+
+                    g.Clear();
+                    // the flags the layout sets start from a new gump's values again (a rebuild in place equals a fresh build)
+                    g.CanMove = true;
+                    g.CanCloseWithRightClick = true;
+                    g.CanCloseWithEsc = true;
+                    g.MasterGumpSerial = 0;
+                    mustBeAdded = false;
+
+                    return g;
+                }
+            }
+
+            if (!cached)
+            {
+                UIManager.SavePosition(gumpID, new Point(x, y));
+            }
+
+            mustBeAdded = true;
+
+            return NewServerGump(world, sender, gumpID, x, y);
+        }
+
+        private static Gump NewServerGump(World world, uint sender, uint gumpID, int x, int y) =>
+            new Gump(world, sender, gumpID)
+            {
+                X = x,
+                Y = y,
+                CanMove = true,
+                CanCloseWithRightClick = true,
+                CanCloseWithEsc = true,
+                InvalidateContents = false,
+                IsFromServer = true
+            };
+
+        private static Gump FinishServerGump(Gump gump, bool mustBeAdded)
+        {
+            if (mustBeAdded)
+            {
+                UIManager.Add(gump);
+            }
+
+            gump.Update();
+            gump.SetInScreen();
+
+            return gump;
+        }
+
+        /// <summary>The control loop over the tokenized entries.</summary>
+        private static void BuildControls(World world, Gump gump, List<string>[] commands, string[] lines)
+        {
+            int cmdlen = commands.Length;
             int group = 0;
             int page = 0;
 
@@ -253,118 +298,7 @@ namespace ClassicUO.Game.UI.Gumps
                         pic = new VirtueGumpPic(world, gparams);
                         pic.ContainsByBounds = true;
 
-                        string s,
-                            lvl;
-
-                        switch (pic.Hue)
-                        {
-                            case 2403:
-                                lvl = "";
-
-                                break;
-
-                            case 1154:
-                            case 1547:
-                            case 2213:
-                            case 235:
-                            case 18:
-                            case 2210:
-                            case 1348:
-                                lvl = "Seeker of ";
-
-                                break;
-
-                            case 2404:
-                            case 1552:
-                            case 2216:
-                            case 2302:
-                            case 2118:
-                            case 618:
-                            case 2212:
-                            case 1352:
-                                lvl = "Follower of ";
-
-                                break;
-
-                            case 43:
-                            case 53:
-                            case 1153:
-                            case 33:
-                            case 318:
-                            case 67:
-                            case 98:
-                                lvl = "Knight of ";
-
-                                break;
-
-                            case 2406:
-                                if (pic.Graphic == 0x6F)
-                                {
-                                    lvl = "Seeker of ";
-                                }
-                                else
-                                {
-                                    lvl = "Knight of ";
-                                }
-
-                                break;
-
-                            default:
-                                lvl = "";
-
-                                break;
-                        }
-
-                        switch (pic.Graphic)
-                        {
-                            case 0x69:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 2);
-
-                                break;
-
-                            case 0x6A:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 7);
-
-                                break;
-
-                            case 0x6B:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 5);
-
-                                break;
-
-                            case 0x6D:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 6);
-
-                                break;
-
-                            case 0x6E:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 1);
-
-                                break;
-
-                            case 0x6F:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 3);
-
-                                break;
-
-                            case 0x70:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 4);
-
-                                break;
-
-                            case 0x6C:
-                            default:
-                                s = Client.Game.UO.FileManager.Clilocs.GetString(1051000);
-
-                                break;
-                        }
-
-                        if (string.IsNullOrEmpty(s))
-                        {
-                            s = "Unknown virtue";
-                        }
-
-                        pic.SetTooltip(lvl + s, 100);
+                        SetVirtueTooltip(pic);
                     }
                     else
                     {
@@ -711,16 +645,122 @@ namespace ClassicUO.Game.UI.Gumps
                     Log.Warn($"Invalid Gump Command: \"{gparams[0]}\"");
                 }
             }
+        }
 
-            if (mustBeAdded)
+        private static void SetVirtueTooltip(GumpPic pic)
+        {
+            string s,
+                lvl;
+
+            switch (pic.Hue)
             {
-                UIManager.Add(gump);
+                case 2403:
+                    lvl = "";
+
+                    break;
+
+                case 1154:
+                case 1547:
+                case 2213:
+                case 235:
+                case 18:
+                case 2210:
+                case 1348:
+                    lvl = "Seeker of ";
+
+                    break;
+
+                case 2404:
+                case 1552:
+                case 2216:
+                case 2302:
+                case 2118:
+                case 618:
+                case 2212:
+                case 1352:
+                    lvl = "Follower of ";
+
+                    break;
+
+                case 43:
+                case 53:
+                case 1153:
+                case 33:
+                case 318:
+                case 67:
+                case 98:
+                    lvl = "Knight of ";
+
+                    break;
+
+                case 2406:
+                    if (pic.Graphic == 0x6F)
+                    {
+                        lvl = "Seeker of ";
+                    }
+                    else
+                    {
+                        lvl = "Knight of ";
+                    }
+
+                    break;
+
+                default:
+                    lvl = "";
+
+                    break;
             }
 
-            gump.Update();
-            gump.SetInScreen();
+            switch (pic.Graphic)
+            {
+                case 0x69:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 2);
 
-            return gump;
+                    break;
+
+                case 0x6A:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 7);
+
+                    break;
+
+                case 0x6B:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 5);
+
+                    break;
+
+                case 0x6D:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 6);
+
+                    break;
+
+                case 0x6E:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 1);
+
+                    break;
+
+                case 0x6F:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 3);
+
+                    break;
+
+                case 0x70:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000 + 4);
+
+                    break;
+
+                case 0x6C:
+                default:
+                    s = Client.Game.UO.FileManager.Clilocs.GetString(1051000);
+
+                    break;
+            }
+
+            if (string.IsNullOrEmpty(s))
+            {
+                s = "Unknown virtue";
+            }
+
+            pic.SetTooltip(lvl + s, 100);
         }
 
         private static void ApplyTrans(
