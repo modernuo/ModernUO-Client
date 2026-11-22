@@ -103,30 +103,114 @@ namespace ClassicUO.Renderer
             _background = background ?? throw new ArgumentNullException(nameof(background));
         }
 
-        public void Draw(UltimaBatcher2D batcher)
-        {
-            // draw world
-            Vector3 fullAlphaNoColor = Vector3.UnitZ;
+        /// <summary>
+        /// ui_border_bake (G11a, default off): the composite copies a baked border texture instead of clearing the back buffer,
+        /// drawing the background pattern over the whole window and blending the whole UI target. The border holds black, the
+        /// pattern and, outside the world viewport, the UI target over them: those pixels change only with the UI target or
+        /// the geometry, so they are baked on such a change (<see cref="BorderBakeState"/>) and copied opaque each frame. Then
+        /// the world, lights and fade go into the viewport as before, and the UI target is blended only inside the viewport
+        /// (a scissor, so each pixel gets the same blend as before). FNA still clears the back buffer when it is bound (its
+        /// RenderTargetUsage is DiscardContents); the explicit clears and blended full-window passes are what go. Set per frame
+        /// by the caller; CUO_UI_COMPOSITE_CHECK compares both composites pixel for pixel (GameControllerUiComposite).
+        /// </summary>
+        public bool BorderBake { get; set; }
 
+        /// <summary>ui_border_bake: where the border texture is stale. The caller reports UI target changes here.</summary>
+        public UiBorderBake BorderBakeState { get; } = new();
+
+        /// <summary>ui_border_bake: the baked border (back-buffer sized; null until the first baked composite).</summary>
+        public RenderTarget2D BorderRenderTarget => _borderRenderTarget;
+
+        private RenderTarget2D _borderRenderTarget;
+
+        /// <summary>ui_border_bake turned off: frees the border target (the next baked composite bakes it whole again).</summary>
+        public void ReleaseBorder()
+        {
+            _borderRenderTarget?.Dispose();
+            _borderRenderTarget = null;
+        }
+
+        private static readonly Vector3 BackgroundHue = new Vector3(0, 0, 0.1f);
+
+        public void Draw(UltimaBatcher2D batcher) => Draw(batcher, null, BorderBake);
+
+        /// <summary>The composite into <paramref name="target"/> (null: the back buffer), which must be bound.</summary>
+        public void Draw(UltimaBatcher2D batcher, RenderTarget2D target, bool borderBake)
+        {
+            if (borderBake && EnsureBorder(batcher, target))
+            {
+                DrawBaked(batcher);
+            }
+            else
+            {
+                DrawFull(batcher);
+            }
+        }
+
+        private void DrawFull(UltimaBatcher2D batcher)
+        {
             batcher.Begin();
             batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Black, 0f, 0);
 
             Rectangle rect = _geometry.BackBufferBounds;
-            Rectangle world = _geometry.WorldOnScreen;
             batcher.DrawTiled(
                 _background,
                 rect,
                 _background.Bounds,
-                new Vector3(0, 0, 0.1f),
+                BackgroundHue,
                 0f
             );
 
             batcher.SetSampler(_defaultSamplerState);
 
+            DrawWorldLayers(batcher);
+
+            // the UI target covers the back buffer exactly (RenderGeometry's per-axis scales)
+            batcher.Draw(
+                UiRenderTarget,
+                rect,
+                Vector3.UnitZ,
+                0f
+            );
+
+            // Reset sampler to default
+            batcher.SetSampler(null);
+            batcher.End();
+        }
+
+        private void DrawBaked(UltimaBatcher2D batcher)
+        {
+            Rectangle rect = _geometry.BackBufferBounds;
+
+            batcher.Begin();
+            batcher.SetBlendState(BlendState.Opaque);
+            batcher.SetSampler(SamplerState.PointClamp);
+            batcher.Draw(_borderRenderTarget, new Rectangle(0, 0, _borderRenderTarget.Width, _borderRenderTarget.Height), Vector3.UnitZ, 0f);
+            batcher.SetBlendState(null);
+            batcher.SetSampler(_defaultSamplerState);
+
+            DrawWorldLayers(batcher);
+
+            Rectangle world = UiBorderBake.Intersect(_geometry.WorldOnScreen, rect);
+
+            if (world.Width > 0 && world.Height > 0 && batcher.ClipBegin(world.X, world.Y, world.Width, world.Height))
+            {
+                batcher.Draw(UiRenderTarget, rect, Vector3.UnitZ, 0f);
+                batcher.ClipEnd();
+            }
+
+            batcher.SetSampler(null);
+            batcher.End();
+        }
+
+        private void DrawWorldLayers(UltimaBatcher2D batcher)
+        {
+            Rectangle world = _geometry.WorldOnScreen;
+
             batcher.Draw(
                 WorldRenderTarget,
                 world,
-                fullAlphaNoColor,
+                Vector3.UnitZ,
                 0f
             );
 
@@ -151,18 +235,117 @@ namespace ClassicUO.Renderer
                     0f
                 );
             }
+        }
 
-            // the UI target covers the back buffer exactly (RenderGeometry's per-axis scales)
-            batcher.Draw(
-                UiRenderTarget,
-                rect,
-                fullAlphaNoColor,
-                0f
-            );
-            
-            // Reset sampler to default
+        // ui_border_bake: brings the border texture up to date and binds target again. False when there is nothing to bake
+        // into (a zero-sized back buffer, no UI target): the full composite is drawn instead.
+        private bool EnsureBorder(UltimaBatcher2D batcher, RenderTarget2D target)
+        {
+            RenderTarget2D ui = _uiRenderTarget;
+            GraphicsDevice device = batcher.GraphicsDevice;
+
+            if (ui == null || ui.IsDisposed || _background == null || _geometry.BackBufferWidth <= 0 || _geometry.BackBufferHeight <= 0)
+            {
+                return false;
+            }
+
+            EnsureSize(device, ref _borderRenderTarget, _geometry.BackBufferWidth, _geometry.BackBufferHeight, RenderTargetUsage.PreserveContents);
+
+            if (_borderRenderTarget == null || _borderRenderTarget.IsDisposed)
+            {
+                return false;
+            }
+
+            BorderBakeKind kind = BorderBakeState.Next(_geometry, UiTargetsVersion, _borderRenderTarget, _background, out Rectangle region);
+
+            if (kind != BorderBakeKind.None)
+            {
+                device.SetRenderTarget(_borderRenderTarget);
+                Bake(batcher, region);
+                device.SetRenderTarget(target);
+            }
+
+            return true;
+        }
+
+        // Bakes region (back-buffer pixels) of the border with the draws the full composite makes there, each clipped to
+        // region: black, the background tiles, then the UI target clipped to the border rects outside the viewport.
+        private void Bake(UltimaBatcher2D batcher, Rectangle region)
+        {
+            Rectangle rect = _geometry.BackBufferBounds;
+
+            batcher.Begin();
+
+            if (batcher.ClipBegin(region.X, region.Y, region.Width, region.Height))
+            {
+                batcher.SetBlendState(BlendState.Opaque);
+                batcher.Draw(SolidColorTextureCache.GetTexture(Color.Black), region, Vector3.UnitZ, 0f);
+                batcher.SetBlendState(null);
+                DrawBackgroundTiles(batcher, rect, region);
+                batcher.ClipEnd();
+            }
+
+            batcher.SetSampler(_defaultSamplerState);
+
+            Span<Rectangle> border = stackalloc Rectangle[4];
+            int n = UiBorderBake.BorderRects(rect, _geometry.WorldOnScreen, border);
+
+            for (int i = 0; i < n; i++)
+            {
+                Rectangle r = UiBorderBake.Intersect(border[i], region);
+
+                if (r.Width > 0 && r.Height > 0 && batcher.ClipBegin(r.X, r.Y, r.Width, r.Height))
+                {
+                    batcher.Draw(UiRenderTarget, rect, Vector3.UnitZ, 0f);
+                    batcher.ClipEnd();
+                }
+            }
+
             batcher.SetSampler(null);
             batcher.End();
+        }
+
+        // UltimaBatcher2D.DrawTiled over rect, only the tiles that reach region: the same quads, so the same pixels
+        private void DrawBackgroundTiles(UltimaBatcher2D batcher, Rectangle rect, Rectangle region)
+        {
+            Rectangle source = _background.Bounds;
+            int tw = source.Width, th = source.Height;
+
+            if (tw <= 0 || th <= 0)
+            {
+                return;
+            }
+
+            int i0 = Math.Max(0, (region.X - rect.X) / tw), i1 = (region.X + region.Width - 1 - rect.X) / tw;
+            int j0 = Math.Max(0, (region.Y - rect.Y) / th), j1 = (region.Y + region.Height - 1 - rect.Y) / th;
+
+            for (int j = j0; j <= j1; j++)
+            {
+                int h = rect.Height - j * th;
+
+                if (h <= 0)
+                {
+                    break;
+                }
+
+                for (int i = i0; i <= i1; i++)
+                {
+                    int w = rect.Width - i * tw;
+
+                    if (w <= 0)
+                    {
+                        break;
+                    }
+
+                    batcher.Draw(
+                        _background,
+                        new Vector2(rect.X + i * tw, rect.Y + j * th),
+                        new Rectangle(source.X, source.Y, Math.Min(w, tw), Math.Min(h, th)),
+                        BackgroundHue,
+                        0f
+                    );
+                }
+            }
         }
     }
 }

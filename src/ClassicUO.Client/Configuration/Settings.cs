@@ -84,6 +84,11 @@ namespace ClassicUO.Configuration
         [JsonConverter(typeof(NullablePoint2Converter))] [JsonPropertyName("window_position")] public Point? WindowPosition { get; set; }
         [JsonConverter(typeof(NullablePoint2Converter))] [JsonPropertyName("window_size")] public Point? WindowSize { get; set; }
 
+        // The monitor the window opens on: an SDL display index (0-based) or a display name (or part of one); the -display
+        // argument sets it. Empty: window_position alone decides. An index or name that matches nothing opens on the primary
+        // (WindowPlacement).
+        [JsonPropertyName("window_display")] public string WindowDisplay { get; set; }
+
         [JsonPropertyName("is_win_maximized")] public bool IsWindowMaximized { get; set; } = true;
 
         [JsonPropertyName("saveaccount")] public bool SaveAccount { get; set; }
@@ -272,6 +277,14 @@ namespace ClassicUO.Configuration
         // a second and compares the light targets pixel by pixel; CUO_LIGHT_BATCH=1|0 overrides the setting in developer
         // builds. Default off.
         [JsonPropertyName("light_batch")] public bool LightBatch { get; set; }
+
+        // G11a composite fill (gump-system survey, addendum 4): the final composite copies one opaque border texture (black,
+        // the background pattern and the UI outside the world viewport, baked when the UI target or the geometry changes)
+        // instead of a full-window clear, a full-window pattern pass and a full-window UI blend; the UI is blended only inside
+        // the viewport (RenderTargets.BorderBake, UiComposite). Costs one back-buffer-sized target (8 MB at 1080p, 33 MB at
+        // 4K). Live. CUO_UI_COMPOSITE_CHECK=1|N compares both composites pixel for pixel; CUO_UI_BORDER_BAKE=1|0 overrides the
+        // setting in developer builds. Default off.
+        [JsonPropertyName("ui_border_bake")] public bool UiBorderBake { get; set; }
 
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild

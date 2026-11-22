@@ -1458,8 +1458,19 @@ namespace ClassicUO
             {
                 vp.ResizeGameWindow(new Microsoft.Xna.Framework.Point(game.Window.ClientBounds.Width, game.Window.ClientBounds.Height));
                 vp.SetGameWindowPosition(new Microsoft.Xna.Framework.Point(-5, -5));
+
+                if (_viewport is { } r && Configuration.ProfileManager.CurrentProfile is { } vpProfile)
+                {
+                    vpProfile.GameWindowFullSize = false;
+                    vp.SetViewportSize(new Microsoft.Xna.Framework.Point(r.Width, r.Height));
+                    vp.SetGameWindowPosition(new Microsoft.Xna.Framework.Point(r.X - Game.UI.Gumps.WorldViewportGump.BORDER_WIDTH,
+                        r.Y - Game.UI.Gumps.WorldViewportGump.BORDER_WIDTH));
+                }
             }
         }
+
+        // viewport: plan step (ApplySize keeps it at every spot)
+        private static Microsoft.Xna.Framework.Rectangle? _viewport;
 
         private static void LogSize(GameController game)
         {
@@ -2157,6 +2168,20 @@ namespace ClassicUO
                         Log.Info($"[bench] size {_size}");
                         _planIndex++;
                         _stepAt = now + sec * 3;
+
+                        break;
+                    }
+
+                    // viewport:W H X Y (after size:): the game viewport W x H at X,Y (UI units) instead of filling the window, kept
+                    // at every spot; viewport:off fills the window again. ui_border_bake timing needs a border around it.
+                    if (_plan[_planIndex].StartsWith("viewport:"))
+                    {
+                        string[] v = _plan[_planIndex].Substring(9).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        _viewport = v.Length == 4 ? new Microsoft.Xna.Framework.Rectangle(int.Parse(v[2]), int.Parse(v[3]), int.Parse(v[0]), int.Parse(v[1])) : null;
+                        ApplySize(game);
+                        Log.Info($"[bench] viewport {(_viewport.HasValue ? _viewport.Value.ToString() : "fills the window")}");
+                        _planIndex++;
+                        _stepAt = now + sec * 2;
 
                         break;
                     }
