@@ -230,11 +230,13 @@ namespace ClassicUO.Configuration
         // setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
-        // light-edges: a light's halo is not drawn over a wall, roof or other non-surface static or multi piece standing in
-        // front of its source on both axes (x and y greater), so lit windows on a far wall no longer glow through the near
-        // wall (Game/Scenes/LightOcclusion: per light, the occluders' art goes into the light target's stencil). Both
-        // renderers. CUO_LIGHT_OCCLUSION_CHECK=1 compares the occluders found with a wide reference scan in both states;
-        // CUO_LIGHT_OCCLUSION=1|0 overrides the setting in developer builds. Default off.
+        // light-edges: a light's halo is not drawn where another static, multi piece or ground item in front of its source
+        // covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a far
+        // wall no longer glow through the near wall. Its own emitter, objects on its own tile, translucent tiles, floors and
+        // mobiles do not hide it. Per light, the occluders' drawn sprites go into the light target's stencil
+        // (GameSceneLightOcclusion, LightOcclusion). Both renderers. CUO_LIGHT_OCCLUSION_CHECK=1 compares the occluders found
+        // with a scan of every tile of the drawn chunks; CUO_LIGHT_OCCLUSION=1|0 overrides the setting in developer builds.
+        // Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
 
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
