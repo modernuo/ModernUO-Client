@@ -797,7 +797,7 @@ namespace ClassicUO.Game
                     return false;
 
                 // roofs on|off: the profile's draw roofs, applied as the macro does (off: roofs over the player are hidden);
-                // cot on|off [radius]: the circle of transparency (clip-5's translucent shots with depth_model)
+                // cot on|off [radius] [gradient|full]: the circle of transparency (clip-5's translucent shots with depth_model)
                 case "roofs" when args.Length > 0 && ProfileManager.CurrentProfile is { } roofProfile:
                     roofProfile.DrawRoofs = args[0] == "on";
                     Client.Game.GetScene<GameScene>()?.UpdateMaxDrawZ(true);
@@ -813,7 +813,14 @@ namespace ClassicUO.Game
                         cotProfile.CircleOfTransparencyRadius = Convert.ToInt32(args[1]);
                     }
 
-                    Log.Info($"[ECS] driver: circle of transparency {cotProfile.UseCircleOfTransparency} radius {cotProfile.CircleOfTransparencyRadius}");
+                    // light_alpha_fade scenes: "gradient" is the original client's circle (type 1, CPU alpha), "full" the shader's (0)
+                    if (args.Length > 2)
+                    {
+                        cotProfile.CircleOfTransparencyType = args[2] == "gradient" ? 1 : 0;
+                    }
+
+                    Log.Info($"[ECS] driver: circle of transparency {cotProfile.UseCircleOfTransparency} radius {cotProfile.CircleOfTransparencyRadius} " +
+                             $"type {cotProfile.CircleOfTransparencyType}");
 
                     return false;
 
@@ -1094,6 +1101,13 @@ namespace ClassicUO.Game
                 case "lightocclusion" when args.Length > 0:
                     Settings.GlobalSettings.LightOcclusion = args[0] == "on";
                     Log.Info($"[ECS] driver: light_occlusion {Settings.GlobalSettings.LightOcclusion} (effective {LightOcclusion.Enabled})");
+
+                    return false;
+
+                // lightalphafade on|off: light_alpha_fade (LightAlphaFade; CUO_LIGHT_ALPHA_FADE overrides it)
+                case "lightalphafade" when args.Length > 0:
+                    Settings.GlobalSettings.LightAlphaFade = args[0] == "on";
+                    Log.Info($"[ECS] driver: light_alpha_fade {Settings.GlobalSettings.LightAlphaFade} (effective {LightAlphaFade.Enabled})");
 
                     return false;
 

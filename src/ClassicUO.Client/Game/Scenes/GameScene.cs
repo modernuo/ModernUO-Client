@@ -1880,6 +1880,7 @@ namespace ClassicUO.Game.Scenes
             batcher.End();
 #if CUO_DEVTOOLS
             LightOcclusionSummary();
+            LightAlphaFadeSummary();
 #endif
 #if CUO_DEVTOOLS
             if (GeometryProbe.Active)

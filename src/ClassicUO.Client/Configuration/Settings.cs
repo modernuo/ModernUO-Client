@@ -242,6 +242,14 @@ namespace ClassicUO.Configuration
         // Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
 
+        // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
+        // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
+        // fade), so hidden walls leave no floating glows; radial glows (lamps, torches) keep full light. With light_occlusion
+        // on, occluder masks are dithered to their drawn alpha instead of cut at 128 (LightAlphaFade). Both renderers.
+        // CUO_LIGHT_ALPHA_FADE_CHECK=1 compares with the unfaded path; CUO_LIGHT_ALPHA_FADE=1|0 overrides the setting in
+        // developer builds. Default off.
+        [JsonPropertyName("light_alpha_fade")] public bool LightAlphaFade { get; set; }
+
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
         // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the
