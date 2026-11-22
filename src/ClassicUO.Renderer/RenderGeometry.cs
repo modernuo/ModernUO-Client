@@ -98,6 +98,28 @@ namespace ClassicUO.Renderer
 
         public Rectangle UiBounds => new Rectangle(0, 0, UiWidth, UiHeight);
 
+        /// <summary>The device viewport of the world and light passes: the target's own bounds, never the on-screen rect (which
+        /// may lie partly outside the back buffer; only the composite uses it, clipped).</summary>
+        public Rectangle WorldTargetBounds => new Rectangle(0, 0, Math.Max(1, Viewport.Width), Math.Max(1, Viewport.Height));
+
+        /// <summary>The UI units of the game viewport's gump kept inside the UI target on each side when it is placed partly
+        /// off-window, so its border and resize handle can still be grabbed.</summary>
+        public const int ViewportKeepVisible = 32;
+
+        /// <summary>
+        /// Clamps the top-left of a gump of <paramref name="width"/> x <paramref name="height"/> UI units so at least
+        /// <paramref name="keep"/> units of it (or all of it, when smaller) stay inside a <paramref name="uiWidth"/> x
+        /// <paramref name="uiHeight"/> UI target on every side.
+        /// </summary>
+        public static Point ClampPlacement(Point location, int width, int height, int uiWidth, int uiHeight, int keep = ViewportKeepVisible)
+        {
+            int kx = Math.Min(keep, Math.Max(0, width)), ky = Math.Min(keep, Math.Max(0, height));
+            int minX = kx - width, maxX = Math.Max(minX, uiWidth - kx);
+            int minY = ky - height, maxY = Math.Max(minY, uiHeight - ky);
+
+            return new Point(Math.Clamp(location.X, minX, maxX), Math.Clamp(location.Y, minY, maxY));
+        }
+
         public Rectangle BackBufferBounds => new Rectangle(0, 0, BackBufferWidth, BackBufferHeight);
 
         /// <summary>Whether the UI target is sampled 1:1 or at an integer ratio (point sampling keeps it sharp).</summary>

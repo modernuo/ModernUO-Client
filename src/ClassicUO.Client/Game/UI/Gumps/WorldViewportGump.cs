@@ -100,6 +100,9 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
+            // a window shrink or scale change can leave the viewport outside the new UI bounds: keep it grabbable
+            KeepOnScreen();
+
             if (Mouse.IsDragging)
             {
                 Point offset = Mouse.LDragOffset;
@@ -157,31 +160,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             base.OnDragEnd(x, y);
 
-            Point position = Location;
-
-            if (position.X + Width - BORDER_WIDTH > Client.Game.ClientBounds.Width)
-            {
-                position.X = Client.Game.ClientBounds.Width - (Width - BORDER_WIDTH);
-            }
-
-            if (position.X < -BORDER_WIDTH)
-            {
-                position.X = -BORDER_WIDTH;
-            }
-
-            if (position.Y + Height - BORDER_WIDTH > Client.Game.ClientBounds.Height)
-            {
-                position.Y = Client.Game.ClientBounds.Height - (Height - BORDER_WIDTH);
-            }
-
-            if (position.Y < -BORDER_WIDTH)
-            {
-                position.Y = -BORDER_WIDTH;
-            }
-
-            Location = position;
-            _scene.Camera.Bounds.X = position.X + BORDER_WIDTH;
-            _scene.Camera.Bounds.Y = position.Y + BORDER_WIDTH;
+            KeepOnScreen();
 
             UIManager.GetGump<OptionsGump>()?.UpdateVideo();
             UpdateGameWindowPos();
@@ -191,10 +170,33 @@ namespace ClassicUO.Game.UI.Gumps
         {
             base.OnMove(x, y);
 
-            _scene.Camera.Bounds.X = ScreenCoordinateX + BORDER_WIDTH;
-            _scene.Camera.Bounds.Y = ScreenCoordinateY + BORDER_WIDTH;
-
+            KeepOnScreen();
             UpdateGameWindowPos();
+        }
+
+        /// <summary>
+        /// The viewport may sit partly outside the window (its world composite is clipped there), but at least
+        /// RenderGeometry.ViewportKeepVisible UI units stay inside on every side so it can be dragged back; the camera bounds
+        /// follow the gump.
+        /// </summary>
+        private void KeepOnScreen()
+        {
+            Rectangle client = Client.Game.ClientBounds;
+            Point p = RenderGeometry.ClampPlacement(Location, Width, Height, client.Width, client.Height);
+
+            if (p != Location)
+            {
+                Location = p;
+            }
+
+            int cx = ScreenCoordinateX + BORDER_WIDTH, cy = ScreenCoordinateY + BORDER_WIDTH;
+
+            if (_scene.Camera.Bounds.X != cx || _scene.Camera.Bounds.Y != cy)
+            {
+                _scene.Camera.Bounds.X = cx;
+                _scene.Camera.Bounds.Y = cy;
+                UpdateGameWindowPos();
+            }
         }
 
         private void UpdateGameWindowPos()
@@ -222,10 +224,7 @@ namespace ClassicUO.Game.UI.Gumps
         public void SetGameWindowPosition(Point pos)
         {
             Location = pos;
-
-            _scene.Camera.Bounds.X = ScreenCoordinateX + BORDER_WIDTH;
-            _scene.Camera.Bounds.Y = ScreenCoordinateY + BORDER_WIDTH;
-
+            KeepOnScreen();
             UpdateGameWindowPos();
         }
 
