@@ -33,6 +33,18 @@ namespace ClassicUO.Game.Scenes
 
         public bool IsGpuWorldActive => _gpuWorld != null;
 
+#if CUO_DEVTOOLS
+        // FrameBurst's per-frame line: the settle gate and the Gpu world's missing pages
+        internal string BurstState()
+        {
+            var w = Client.Game.GetGpuWorld()?.World;
+
+            return w == null
+                ? $"gpu off hold {_settle.Holding}"
+                : $"gpu hold {_settle.Holding} ep {_settle.Episode} pagesMiss {w.Pages.MissingVisible} animMiss {w.AnimPages?.MissingVisible ?? 0} animEvict {w.AnimPages?.Evictions ?? 0}";
+        }
+#endif
+
         // Holds the last presented world frame across discontinuities (WorldSettleGate). CUO_WORLD_HOLD=0: observe only.
         private readonly WorldSettleGate _settle = CreateSettleGate();
         private RenderTarget2D _settleTarget;
