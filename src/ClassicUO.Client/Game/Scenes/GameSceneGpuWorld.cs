@@ -33,6 +33,47 @@ namespace ClassicUO.Game.Scenes
 
         public bool IsGpuWorldActive => _gpuWorld != null;
 
+#if CUO_DEVTOOLS
+        // FrameBurst's per-frame line: the settle gate and the Gpu world's missing pages
+        internal string BurstState()
+        {
+            var w = Client.Game.GetGpuWorld()?.World;
+
+            return (w == null
+                ? $"gpu off hold {_settle.Holding}"
+                : $"gpu hold {_settle.Holding} ep {_settle.Episode} pagesMiss {w.Pages.MissingVisible} animMiss {w.AnimPages?.MissingVisible ?? 0} animEvict {w.AnimPages?.Evictions ?? 0}")
+                + BurstLights();
+        }
+
+        // the frame's light list: count and the sources that hold more than one entry (one emitter lit twice)
+        private string BurstLights()
+        {
+            int dup = 0;
+            string first = "";
+
+            for (int i = 0; i < _frameLights.Count; i++)
+            {
+                GameObject src = _frameLights[i].Source;
+
+                for (int j = 0; j < i; j++)
+                {
+                    if (src != null && ReferenceEquals(_frameLights[j].Source, src))
+                    {
+                        if (dup++ == 0)
+                        {
+                            first = $" dup0 0x{src.Graphic:X4}@{src.X},{src.Y},{src.Z} id {_frameLights[i].ID} " +
+                                $"animOff {Client.Game.UO.FileManager.Arts.GetEntry(src.Graphic + 0x4000).AnimOffset}";
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return $" lights {_frameLights.Count} dupSrc {dup}{first}";
+        }
+#endif
+
         // Holds the last presented world frame across discontinuities (WorldSettleGate). CUO_WORLD_HOLD=0: observe only.
         private readonly WorldSettleGate _settle = CreateSettleGate();
         private RenderTarget2D _settleTarget;
@@ -215,7 +256,7 @@ namespace ClassicUO.Game.Scenes
                 _gpuStatics.Add(st);
                 _gpuStaticsShadowOnly.Add(true);
             }
-            else if (st.ItemData.IsLight)
+            else if (ViewMargin.WalkLightsStatic(st.ItemData.IsLight, ChunkStaticLights))
             {
                 AddLightTimed(st, st.RealScreenPosition.X + 22, st.RealScreenPosition.Y + 22);
             }
