@@ -105,6 +105,27 @@ namespace ClassicUO.Loop
             return changePending ? limit : Math.Max(limit, Math.Min(msUntilVisualDue, AnimDueSafetyNetMs - msSinceLastPresent));
         }
 
+        /// <summary>
+        /// Present on change: the time the next present's rate limit runs from, set at each draw start. A draw less than half
+        /// an interval past its deadline (the previous anchor plus one interval) keeps the deadline as the anchor, so the wake's
+        /// lateness and the Update that runs before the draw decision are not added to every interval: anchored on the draw
+        /// start, a continuous scene (walking) presented at 1000 / (interval + lateness + Update) frames/s, below the display
+        /// rate, and with vsync off the refreshes it missed showed the same frame twice. A later draw (after an idle screen or
+        /// a stall) starts a new phase at <paramref name="now"/>, so no two presents are less than half an interval apart.
+        /// Ticks of any unit; <paramref name="anchor"/> 0 = no present yet, <paramref name="period"/> 0 = no display rate.
+        /// </summary>
+        public static long PresentAnchor(long anchor, long now, long period)
+        {
+            if (anchor == 0 || period <= 0)
+            {
+                return now;
+            }
+
+            long deadline = anchor + period;
+
+            return now - deadline < period / 2 ? deadline : now;
+        }
+
         /// <summary>Present on change: the longest time between two presents (owner default ~1 s).</summary>
         public const double AnimDueSafetyNetMs = 1000;
 

@@ -167,8 +167,8 @@ namespace ClassicUO
 
         private double DisplayIntervalMs => _displayPeriod * 1000.0 / Stopwatch.Frequency;
 
-        // The rate limit runs from the last draw start, not the present end: anchored on the present, every frame would add
-        // its own draw time to the interval (busy GPU frames fell to ~50/s in bench-000791).
+        // The rate limit runs from the last draw start (or its deadline: LoopTiming.PresentAnchor), not the present end: anchored on
+        // the present, every frame would add its own draw time to the interval (busy GPU frames fell to ~50/s in bench-000791).
         private double MsSinceLastPresent(long now)
             => _lastDrawTs == 0 ? double.PositiveInfinity : (now - _lastDrawTs) * 1000.0 / Stopwatch.Frequency;
 
@@ -252,13 +252,15 @@ namespace ClassicUO
             => LoopTiming.MsUntilPresent(_changePending, MsSinceLastPresent(Stopwatch.GetTimestamp()), DisplayIntervalMs, MsUntilVisualDue());
 
         // Draw start: what changed so far is in this frame; later changes stay pending for the next one. A frame drawn during
-        // motion or effects keeps the next one due one interval later (the motion advances in Update, after the wait).
+        // motion or effects keeps the next one due one interval later (the motion advances in Update, after the wait). The
+        // interval runs from this draw's deadline when it was drawn soon after it (LoopTiming.PresentAnchor), so continuous
+        // motion presents at the display rate.
         private void BeginPresentedChange()
         {
 #if CUO_DEVTOOLS
             if (VsyncPresentCheck.On) VsyncPresentCheck.Draw(_continuous);
 #endif
-            _lastDrawTs = Stopwatch.GetTimestamp();
+            _lastDrawTs = LoopTiming.PresentAnchor(_lastDrawTs, Stopwatch.GetTimestamp(), _presentOnChange ? _displayPeriod : 0);
             _drawnNetTs = _pendingNetTs;
             _pendingNetTs = 0;
             _changePending = _continuous;
