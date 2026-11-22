@@ -114,13 +114,32 @@ namespace ClassicUO.Input
 
         public static bool MouseInWindow { get; set; }
 
-        // Scale the mouse coordinates for the faux-backbuffer and DPI settings
         internal static Point MapToUi(int x, int y)
         {
-            return new Point(
-                (int) ((double) x * (Client.Game.GraphicManager.PreferredBackBufferWidth / Client.Game.Window.ClientBounds.Width) / Client.Game.DpiScale),
-                (int) ((double) y * (Client.Game.GraphicManager.PreferredBackBufferHeight / Client.Game.Window.ClientBounds.Height) / Client.Game.DpiScale)
+            Rectangle client = Client.Game.Window.ClientBounds;
+
+            return MapToUi(
+                x,
+                y,
+                Client.Game.GraphicManager.PreferredBackBufferWidth,
+                Client.Game.GraphicManager.PreferredBackBufferHeight,
+                client.Width,
+                client.Height,
+                Client.Game.DpiScale
             );
+        }
+
+        // Window coordinates to UI coordinates: through the back buffer, which FNA presents stretched over the window's
+        // client area, then the DPI scale the UI target is drawn at. The ratio is a real number: the integer one it
+        // replaced was 1 when the back buffer was somewhat taller than the window (borderless on a maximized window: the
+        // UI was drawn squeezed and the mouse was not) and 0 when it was smaller.
+        internal static Point MapToUi(int x, int y, int backBufferWidth, int backBufferHeight, int windowWidth, int windowHeight, float dpiScale)
+        {
+            double sx = windowWidth > 0 && backBufferWidth > 0 ? (double) backBufferWidth / windowWidth : 1.0;
+            double sy = windowHeight > 0 && backBufferHeight > 0 ? (double) backBufferHeight / windowHeight : 1.0;
+            double dpi = dpiScale > 0 ? dpiScale : 1.0;
+
+            return new Point((int) (x * sx / dpi), (int) (y * sy / dpi));
         }
 
         public static void Update()
