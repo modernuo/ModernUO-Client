@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
+using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
 using SDL3;
 
@@ -117,6 +118,15 @@ namespace ClassicUO.Input
         public static Point MDragOffset => MButtonPressed ? Position - MClickPosition : Point.Zero;
 
         public static bool MouseInWindow { get; set; }
+
+        /// <summary>A window position in UI units through the client's render geometry (Mouse.Update's mapping).</summary>
+        internal static Point MapToUi(int x, int y) => Client.Game.Geometry.WindowToUi(x, y);
+
+        // Window coordinates to UI coordinates: through the back buffer, which FNA presents stretched over the window's
+        // client area, then the UI target's exact per-axis scale (RenderGeometry). The integer ratio this replaced was 1 when
+        // the back buffer was somewhat taller than the window (borderless on a maximized window) and 0 when it was smaller.
+        internal static Point MapToUi(int x, int y, int backBufferWidth, int backBufferHeight, int windowWidth, int windowHeight, float dpiScale) =>
+            RenderGeometry.Compute(windowWidth, windowHeight, backBufferWidth, backBufferHeight, dpiScale, Rectangle.Empty).WindowToUi(x, y);
 
         public static void Update()
         {

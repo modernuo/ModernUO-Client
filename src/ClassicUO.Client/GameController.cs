@@ -647,6 +647,10 @@ namespace ClassicUO
             RefreshGeometry();
         }
 
+        // The windowed state before going borderless at runtime, restored when the border comes back.
+        private Rectangle? _windowedBeforeBorderless;
+        private bool _maximizedBeforeBorderless;
+
         public void SetWindowBorderless(bool borderless)
         {
             SDL_WindowFlags flags = (SDL_WindowFlags)SDL_GetWindowFlags(Window.Handle);
@@ -661,37 +665,72 @@ namespace ClassicUO
                 return;
             }
 
-            SDL_SetWindowBordered(
-                Window.Handle,
-                !borderless
-            );
-            SDL_DisplayMode* displayMode = (SDL_DisplayMode * )SDL_GetCurrentDisplayMode(
-                SDL_GetDisplayForWindow(Window.Handle)
-            );
-
-            int width = displayMode->w;
-            int height = displayMode->h;
+            uint display = SDL_GetDisplayForWindow(Window.Handle);
 
             if (borderless)
             {
-                SetWindowSize(width, height);
-                SDL_GetDisplayUsableBounds(
-                    SDL_GetDisplayForWindow(Window.Handle),
-                    out SDL_Rect rect
-                );
-                SDL_SetWindowPosition(Window.Handle, rect.x, rect.y);
+                _maximizedBeforeBorderless = (flags & SDL_WindowFlags.SDL_WINDOW_MAXIMIZED) != 0;
+
+                // A maximized window keeps its maximized rectangle when the caption goes away: Windows then shows the
+                // content below where the client area starts (the mouse is off by the caption height), and SDL defers
+                // the size and position below until the window is restored. So restore it first.
+                if (_maximizedBeforeBorderless)
+                {
+                    SDL_RestoreWindow(Window.Handle);
+                    SDL_SyncWindow(Window.Handle);
+                }
+                else
+                {
+                    SDL_GetWindowPosition(Window.Handle, out int wx, out int wy);
+                    SDL_GetWindowSize(Window.Handle, out int ww, out int wh);
+                    _windowedBeforeBorderless = new Rectangle(wx, wy, ww, wh);
+                }
+
+                SDL_SetWindowBordered(Window.Handle, false);
+                SDL_GetDisplayBounds(display, out SDL_Rect bounds);
+                SDL_SetWindowSize(Window.Handle, bounds.w, bounds.h);
+                SDL_SetWindowPosition(Window.Handle, bounds.x, bounds.y);
             }
             else
             {
-                SDL_GetWindowBordersSize(Window.Handle, out int top, out _, out int bottom, out _);
+                SDL_SetWindowBordered(Window.Handle, true);
 
-                SetWindowSize(width, height - (top - bottom));
-                SetWindowPositionBySettings();
+                if (_windowedBeforeBorderless is { } before && !_maximizedBeforeBorderless)
+                {
+                    SDL_SetWindowSize(Window.Handle, before.Width, before.Height);
+                    SDL_SetWindowPosition(Window.Handle, before.X, before.Y);
+                }
+                else
+                {
+                    // Started borderless, or maximized before: fill the usable area with the border back.
+                    SDL_MaximizeWindow(Window.Handle);
+                }
+
+                _windowedBeforeBorderless = null;
+                _maximizedBeforeBorderless = false;
             }
+
+            SDL_SyncWindow(Window.Handle);
+            ApplyWindowPixelSize();
+        }
+
+        // The back buffer (and the UI target sized from it) must match the window's real client area: FNA presents the
+        // back buffer stretched over it, and Mouse maps window coordinates through it. FNA forwards the resize event only
+        // while the window has focus, so a change made here (or with the window unfocused) is applied directly.
+        private void ApplyWindowPixelSize()
+        {
+            SDL_GetWindowSizeInPixels(Window.Handle, out int width, out int height);
+
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            SetWindowSize(width, height);
 
             WorldViewportGump viewport = UIManager.GetGump<WorldViewportGump>();
 
-            if (viewport != null && ProfileManager.CurrentProfile.GameWindowFullSize)
+            if (viewport != null && ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.GameWindowFullSize)
             {
                 viewport.ResizeGameWindow(new Point(width, height));
                 viewport.X = -5;
@@ -779,12 +818,32 @@ namespace ClassicUO
 
         private uint _poolTrimTick;
 
+        // set by the event filter, which may run on another thread; read on the main thread in Update
+        private volatile bool _windowSizeDirty;
+
+        private void SyncBackBufferToWindow()
+        {
+            _windowSizeDirty = false;
+            SDL_GetWindowSizeInPixels(Window.Handle, out int width, out int height);
+
+            if (width > 0 && height > 0
+                && (width != GraphicManager.PreferredBackBufferWidth || height != GraphicManager.PreferredBackBufferHeight))
+            {
+                WindowOnClientSizeChanged(width, height);
+            }
+        }
+
         protected override void Update(GameTime gameTime)
         {
 #if CUO_DEVTOOLS
             if (Diagnostics.On) Diagnostics.Update();
 #endif
             RenderInfoCheck();
+
+            if (_windowSizeDirty)
+            {
+                SyncBackBufferToWindow();
+            }
             FrameStats.Begin(FramePhase.Update);
             FrameStats.Inc(FrameCounter.LoopTicks);
             _updateStartTs = Stopwatch.GetTimestamp();
@@ -1436,6 +1495,15 @@ namespace ClassicUO
 
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_REMOVED:
                     Log.Trace($"Audio device removed: {sdlEvent->adevice.which}");
+
+                    break;
+
+                // FNA applies a resize only while the window has focus (and never for PIXEL_SIZE_CHANGED): a resize while
+                // unfocused (a minimum-size change, the OS, a border change) left the back buffer on the old size, presented
+                // stretched with the mouse unscaled. Update compares the two (SyncBackBufferToWindow).
+                case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
+                case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    _windowSizeDirty = true;
 
                     break;
 
