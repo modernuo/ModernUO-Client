@@ -31,6 +31,20 @@ namespace ClassicUO.Game.GameObjects
             return r;
         }
 
+        /// <summary>Where Draw draws the piece anchored at (x, y): moved by its render offset (a moving boat); light_occlusion's
+        /// masks use it too.</summary>
+        internal void DrawPosition(ref int x, ref int y)
+        {
+            x += (int)Offset.X;
+            y += (int)(Offset.Y + Offset.Z);
+        }
+
+        /// <summary>Draw skips the piece (a custom house component ignored in render).</summary>
+        internal bool IgnoredInRender => (State & CUSTOM_HOUSE_MULTI_OBJECT_FLAGS.CHMOF_IGNORE_IN_RENDER) != 0;
+
+        /// <summary>The alpha Draw gives the piece: 192 for a custom house component drawn transparent, else AlphaHue.</summary>
+        internal byte DrawnAlpha => (State & CUSTOM_HOUSE_MULTI_OBJECT_FLAGS.CHMOF_TRANSPARENT) != 0 ? (byte)192 : AlphaHue;
+
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
             if (!AllowedToDraw || IsDestroyed)
@@ -88,8 +102,7 @@ namespace ClassicUO.Game.GameObjects
                 hueVec.Z *= 0.5f;
             }
 
-            posX += (int)Offset.X;
-            posY += (int)(Offset.Y + Offset.Z);
+            DrawPosition(ref posX, ref posY);
 
             DrawStaticAnimated(batcher, graphic, posX, posY, hueVec, false, depth);
 

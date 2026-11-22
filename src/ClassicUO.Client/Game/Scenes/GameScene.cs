@@ -532,6 +532,9 @@ namespace ClassicUO.Game.Scenes
             int testX = obj.X + 1;
             int testY = obj.Y + 1;
 
+            // light_occlusion keeps this whole-light rejection for now (review P1 #3, round 5): it hides the lit windows under
+            // a roof eave (Moonglow house by the street lamps), whose glow the cover test alone drew over the roof in front.
+            // It goes when the occluder rule hides glow over intervening faces, not only over the light point
             TileListObject tile = _world.Map.GetTile(testX, testY);
 
             if (tile != null)
@@ -1838,6 +1841,7 @@ namespace ClassicUO.Game.Scenes
             // light_occlusion: the stencil the occluders of each light are written to (LightOcclusion)
             BeginLightOcclusion(batcher.GraphicsDevice);
             batcher.Begin(null, matrix);
+            BeginLightOcclusionBatch(batcher);
             batcher.SetBlendState(BlendState.Additive);
 
             Vector3 hue = Vector3.Zero;
@@ -1871,6 +1875,7 @@ namespace ClassicUO.Game.Scenes
                 batcher.SetStencil(null);
             }
 
+            EndLightOcclusionBatch(batcher);
             batcher.SetBlendState(null);
             batcher.End();
 #if CUO_DEVTOOLS

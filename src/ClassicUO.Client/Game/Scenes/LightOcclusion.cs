@@ -25,8 +25,12 @@ namespace ClassicUO.Game.Scenes
     /// corner of the keep's zig-zag wall, a parallel line in front; never the pieces of its own line.
     /// Tiles that never hide anything: translucent ones (water, glass: drawn see-through), internal (no-draw) ones, and flat
     /// walkable surfaces (floors). Mobiles do not occlude.
-    /// CUO_LIGHT_OCCLUSION_CHECK=1 compares each light's occluders (the window <see cref="Window"/> walks) with a reference
-    /// scan of every tile up to <see cref="ReferenceReach"/> around the source, in both states, and logs each difference.
+    /// Round 5: an object hides only as the world draws it (<see cref="MinOccluderAlpha"/>, circle of transparency, custom house
+    /// render flags, the drawn sprite and its offsets), and the search walks the drawn chunks whose recorded art and Z can reach
+    /// the light (<see cref="ChunkReaches"/>). GameScene.AddLightCore's whole-light rejection (an object 5 Z above on tile x+1,
+    /// y+1 drops the light) stays: without it the lit windows under a roof eave glow over the roof in front (round 5).
+    /// CUO_LIGHT_OCCLUSION_CHECK=1 compares each light's occluders with a reference scan of every tile of every drawn chunk, in
+    /// both states, and logs each difference.
     /// </summary>
     internal static class LightOcclusion
     {
@@ -49,15 +53,16 @@ namespace ClassicUO.Game.Scenes
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.LightOcclusion ?? false);
 
-        /// <summary>The occluder art the window assumes: half width past the anchor's 44 px box, height above its bottom.
-        /// Larger art further away is missed (the checker's reference scan reports it).</summary>
-        public const int ArtSide = 128, ArtUp = 256;
+        /// <summary>Round 5 (review P1 #2): an object hides a glow only where the world draws it at least half opaque (its
+        /// AlphaHue, a custom house component's 192, an item sprite's alpha). The stencil is binary, and UO art texels are
+        /// either clear or opaque, so this is the stencil's alpha test at 0.5: a fading roof or a foliage piece behind which
+        /// the player stands (faded to 76) stops hiding the glow half way through its fade, a 75 % opaque custom house
+        /// component still hides it.</summary>
+        public const byte MinOccluderAlpha = 128;
 
-        /// <summary>The occluder Z the window assumes, relative to the light's source (one floor each way, plus slack).</summary>
-        public const int ZBelow = 30, ZAbove = 40;
-
-        /// <summary>CUO_LIGHT_OCCLUSION_CHECK: the reference scan's reach on each axis.</summary>
-        public const int ReferenceReach = 32;
+        /// <summary>Round 5 (review P2 #5): what an item's drawn sprites may reach past the chunk's art record (Chunk
+        /// StaticOver*): a moving item's render offset (up to a tile) and a stack's second sprite (5 px up-left).</summary>
+        public const int ItemSlack = 48;
 
         /// <summary>An object at (dx, dy, dz) from the light's source stands in front of it: on a later diagonal (dx + dy
         /// greater), so it is drawn after it. Objects on the source's own tile are at its depth (drawn after it only by Z):
@@ -145,20 +150,38 @@ namespace ClassicUO.Game.Scenes
             return (uint)lx < (uint)w && (uint)ly < (uint)h;
         }
 
-        /// <summary>The tile window (S = dx + dy, D = dx - dy, from the light's source tile) whose occluders, with the art
-        /// and Z <see cref="ArtSide"/>/<see cref="ArtUp"/>/<see cref="ZBelow"/>/<see cref="ZAbove"/> assume, can overlap the
-        /// light quad (left, top, right, bottom) of a source anchored at (anchorX, anchorY) (GameObject.RealScreenPosition).
-        /// The walk takes S from 1 (later diagonals).</summary>
-        public static void Window(int anchorX, int anchorY, int left, int top, int right, int bottom,
-            out int sLo, out int sHi, out int dLo, out int dHi)
+        /// <summary>Round 5 (review P2 #5, replaces the tile window that assumed art up to 300 x 256 and Z within -30..+40 of
+        /// the source): the sprites of chunk (cx, cy) (8 x 8 tiles), whose art reaches <paramref name="overLeft"/> /
+        /// <paramref name="overRight"/> / <paramref name="overUp"/> px past a tile's 44 px box (Chunk.StaticOver*) and whose
+        /// objects stand between Z <paramref name="zLo"/> and <paramref name="zHi"/> (Chunk.OccZLo/Hi; empty when low is above
+        /// high), can overlap the screen rectangle (left, top, right, bottom) with the draw offset (offX, offY).</summary>
+        public static bool ChunkReaches(int cx, int cy, int overLeft, int overRight, int overUp, int zLo, int zHi, int offX, int offY,
+            int left, int top, int right, int bottom)
         {
-            // an occluder at (dx, dy, dz) is anchored at (anchorX + D * 22, anchorY + S * 22 - 4 * dz); its art spans
-            // x [ax - ArtSide, ax + 44 + ArtSide], y [ay + 44 - ArtUp, ay + 44]
-            dLo = FloorDiv22(left - anchorX - 44 - ArtSide);
-            dHi = CeilDiv22(right - anchorX + ArtSide);
-            sLo = Math.Max(1, FloorDiv22(top - anchorY - 44 - 4 * ZBelow));
-            sHi = CeilDiv22(bottom - anchorY - 44 + ArtUp + 4 * ZAbove);
+            if (zLo > zHi)
+            {
+                return false;
+            }
+
+            int x0 = cx << 3, y0 = cy << 3;
+            // anchors: ax = (x - y) * 22 - offX - 22, ay = (x + y) * 22 - 4z - offY - 22 over the chunk's tiles and Z range
+            int axLo = (x0 - (y0 + 7)) * 22 - offX - 22, axHi = (x0 + 7 - y0) * 22 - offX - 22;
+            int ayLo = (x0 + y0) * 22 - (zHi << 2) - offY - 22, ayHi = (x0 + y0 + 14) * 22 - (zLo << 2) - offY - 22;
+
+            return axLo - overLeft - ItemSlack < right && axHi + 44 + overRight + ItemSlack > left &&
+                ayLo - overUp - ItemSlack < bottom && ayHi + 44 + ItemSlack > top;
         }
+
+        /// <summary>A tile anchored at screen x <paramref name="ax"/> can hold a sprite overlapping columns left..right, with
+        /// its chunk's art record (<see cref="ChunkReaches"/>).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TileReachesX(int ax, int overLeft, int overRight, int left, int right) =>
+            ax - overLeft - ItemSlack < right && ax + 44 + overRight + ItemSlack > left;
+
+        /// <summary>A sprite at (x, y), w x h, overlaps the screen rectangle.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool RectOverlaps(int x, int y, int w, int h, int left, int top, int right, int bottom) =>
+            x < right && x + w > left && y < bottom && y + h > top;
 
         /// <summary>The art rectangle of a static anchored at (ax, ay) (View.DrawStatic) overlaps the light quad.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -173,8 +196,5 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint Mix(int x, int y, int z, ushort graphic, bool item) => ViewMargin.Mix(x, y, z, graphic, item);
 
-        private static int FloorDiv22(int v) => v >= 0 ? v / 22 : -((-v + 21) / 22);
-
-        private static int CeilDiv22(int v) => -FloorDiv22(-v);
     }
 }

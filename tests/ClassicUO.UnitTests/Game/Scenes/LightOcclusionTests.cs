@@ -1,3 +1,4 @@
+using System;
 using ClassicUO.Assets;
 using ClassicUO.Game.Scenes;
 using Xunit;
@@ -7,8 +8,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
     /// <summary>
     /// light_occlusion (light-edges): which objects hide a light's halo (drawn after the source, not its own emitter, not a
     /// flat walkable surface, translucent or internal tile, and covering the source's light point), the switch in both states,
-    /// and the tile window the light pass walks for occluders: every occluder whose art overlaps a rectangle (within the art
-    /// and Z the window assumes) lies in it. The owner's spots with the real layout, art and tiledata: LightOcclusionSceneTests.
+    /// and the chunk search the light pass runs for occluders: every sprite whose art overlaps a rectangle lies in a chunk and
+    /// tile it walks, whatever the art size or Z (round 5). The owner's spots with the real layout, art and tiledata: LightOcclusionSceneTests.
     /// </summary>
     public sealed class LightOcclusionTests
     {
@@ -167,72 +168,96 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.False(LightOcclusion.OccluderData(ref floor));
         }
 
+        // a static's art rectangle (View.StaticArt) at tile (x, y, z) with the draw offset (offX, offY)
+        private static (int X, int Y) ArtTopLeft(int x, int y, int z, int w, int h, int offX, int offY)
+        {
+            ViewMargin.Anchor(x, y, z, offX, offY, out int ax, out int ay);
+
+            return (ax - ((w >> 1) - 22), ay - (h - 44));
+        }
+
         [Theory]
         [InlineData(350, 350, 0)]
-        [InlineData(120, 90, 0)]
-        [InlineData(350, 350, 37)]
-        [InlineData(64, 64, -11)]
-        public void Window_holds_every_overlapping_occluder(int lightW, int lightH, int offset)
+        [InlineData(120, 90, 37)]
+        [InlineData(1, 1, -11)]
+        public void Chunk_search_holds_every_overlapping_sprite_whatever_its_size_or_elevation(int rectW, int rectH, int offset)
         {
-            // the source anchored at (ax, ay) (any offset), its light quad centred on anchor + 22 as AddLight places it
-            int ax = 500 + offset, ay = 300 - offset;
-            int left = ax + 22 - lightW / 2, top = ay + 22 - lightH / 2, right = left + lightW, bottom = top + lightH;
-            LightOcclusion.Window(ax, ay, left, top, right, bottom, out int sLo, out int sHi, out int dLo, out int dHi);
-            int[] widths = { 44, 100, 2 * LightOcclusion.ArtSide + 44 };
-            int[] heights = { 44, 120, LightOcclusion.ArtUp };
+            // round 5 (review P2 #5): the source at tile (800, 800, 0), a rectangle (a light point or a wall source's quad)
+            // around it; any sprite of any size (up to 44 x 421, 0x0D42, and 600 px wide) at any Z whose art overlaps it is in a
+            // chunk ChunkReaches accepts and a tile TileReachesX accepts, with the chunk's record made from that sprite alone
+            int offX = 1000 + offset, offY = 2000 - offset;
+            ViewMargin.Anchor(800, 800, 0, offX, offY, out int sax, out int say);
+            int left = sax + 22 - rectW / 2, top = say + 22 - rectH / 2, right = left + Math.Max(rectW, 1), bottom = top + Math.Max(rectH, 1);
+            (int W, int H)[] arts = { (44, 44), (44, 421), (600, 120), (100, 260) };
+            int found = 0;
 
-            for (int dx = -60; dx <= 60; dx++)
+            for (int dx = -40; dx <= 40; dx++)
             {
-                for (int dy = -60; dy <= 60; dy++)
+                for (int dy = -40; dy <= 40; dy++)
                 {
-                    if (dx + dy < 1)
+                    for (int z = -128; z <= 127; z += 17)
                     {
-                        continue;
-                    }
+                        int x = 800 + dx, y = 800 + dy;
 
-                    for (int dz = -LightOcclusion.ZBelow; dz <= LightOcclusion.ZAbove; dz += 5)
-                    {
-                        int oax = ax + (dx - dy) * 22, oay = ay + (dx + dy) * 22 - 4 * dz;
-
-                        foreach (int w in widths)
+                        foreach (var (w, h) in arts)
                         {
-                            foreach (int h in heights)
-                            {
-                                if (!LightOcclusion.ArtOverlaps(oax, oay, w, h, left, top, right, bottom))
-                                {
-                                    continue;
-                                }
+                            var (ox, oy) = ArtTopLeft(x, y, z, w, h, offX, offY);
 
-                                int s = dx + dy, d = dx - dy;
-                                Assert.True(s >= sLo && s <= sHi && d >= dLo && d <= dHi,
-                                    $"occluder at ({dx},{dy},{dz}) art {w}x{h} overlaps the light but is outside S {sLo}..{sHi} D {dLo}..{dHi}");
+                            if (!LightOcclusion.RectOverlaps(ox, oy, w, h, left, top, right, bottom))
+                            {
+                                continue;
                             }
+
+                            found++;
+                            int overL = (w >> 1) - 22, overR = w - (w >> 1) - 22, overUp = h - 44;
+                            Assert.True(LightOcclusion.ChunkReaches(x >> 3, y >> 3, overL, overR, overUp, z, z, offX, offY, left, top, right, bottom),
+                                $"{w}x{h} at ({dx},{dy},{z}) overlaps but its chunk is skipped");
+                            Assert.True(LightOcclusion.TileReachesX((x - y) * 22 - offX - 22, overL, overR, left, right),
+                                $"{w}x{h} at ({dx},{dy},{z}) overlaps but its tile is skipped");
                         }
                     }
                 }
             }
+
+            Assert.True(found > 0);
         }
 
         [Fact]
-        public void Window_stays_small()
+        public void Review_counterexample_elevated_wall_is_searched()
         {
-            // the largest classic light (350 px): the window must stay a few hundred tiles per light, not the whole view
-            int ax = 500, ay = 300;
-            LightOcclusion.Window(ax, ay, ax + 22 - 175, ay + 22 - 175, ax + 22 + 175, ay + 22 + 175, out int sLo, out int sHi, out int dLo, out int dHi);
-            int tiles = 0;
+            // review P2 #5: a 22 x 100 lamp at (0, 0, 0), its light point (22, -6) from its anchor; an opaque 44 x 112 wall at
+            // (10, 10, 100) covers it, outside the round 4 window (S = 20 > 17)
+            int offX = 0, offY = 0;
+            ViewMargin.Anchor(400, 400, 0, offX, offY, out int sax, out int say);
+            int px = sax + 22, py = say - 6;
+            var (wx, wy) = ArtTopLeft(410, 410, 100, 44, 112, offX, offY);
+            Assert.True(LightOcclusion.RectOverlaps(wx, wy, 44, 112, px, py, px + 1, py + 1));
+            Assert.True(LightOcclusion.ChunkReaches(410 >> 3, 410 >> 3, 0, 0, 112 - 44, 100, 100, offX, offY, px, py, px + 1, py + 1));
+        }
 
-            for (int s = sLo; s <= sHi; s++)
-            {
-                for (int d = dLo; d <= dHi; d++)
-                {
-                    if (((s + d) & 1) == 0)
-                    {
-                        tiles++;
-                    }
-                }
-            }
+        [Fact]
+        public void Chunk_far_away_or_empty_is_skipped()
+        {
+            ViewMargin.Anchor(800, 800, 0, 0, 0, out int sax, out int say);
+            int px = sax + 22, py = say + 22;
+            // empty record (no statics, items or multis)
+            Assert.False(LightOcclusion.ChunkReaches(100, 100, 0, 0, 0, int.MaxValue, int.MinValue, 0, 0, px, py, px + 1, py + 1));
+            // 10 chunks to the side, ordinary art
+            Assert.False(LightOcclusion.ChunkReaches(110, 90, 10, 10, 60, 0, 0, 0, 0, px, py, px + 1, py + 1));
+            // the light's own chunk
+            Assert.True(LightOcclusion.ChunkReaches(100, 100, 10, 10, 60, 0, 0, 0, 0, px, py, px + 1, py + 1));
+        }
 
-            Assert.InRange(tiles, 1, 600);
+        [Theory]
+        [InlineData(255, true)]
+        [InlineData(192, true)] // a custom house component drawn transparent (MultiView)
+        [InlineData(128, true)]
+        [InlineData(127, false)]
+        [InlineData(76, false)]  // foliage the player stands behind
+        [InlineData(0, false)]   // faded out (above the max Z, hidden roof)
+        public void Partly_transparent_object_hides_only_from_half_opaque(byte alpha, bool hides)
+        {
+            Assert.Equal(hides, alpha >= LightOcclusion.MinOccluderAlpha);
         }
     }
 }

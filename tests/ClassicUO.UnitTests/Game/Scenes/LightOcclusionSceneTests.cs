@@ -481,5 +481,68 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Empty(hidden);
             AssertWindowsKeepTheirWallLine(pack, scene, "fountain");
         }
+
+        // GameScene.AddLightCore's old whole-light rejection (kept with the switch off): an object with art, not transparent
+        // by tiledata, on tile (x + 1, y + 1) at least 5 Z above the source drops the light
+        private static bool OldNeighbourRejects(PackArt pack, Obj src, IEnumerable<Obj> scene) =>
+            scene.Any(o => o.X == src.X + 1 && o.Y == src.Y + 1 && o.Z >= src.Z + 5 && !pack.Statics[o.Graphic].IsTransparent &&
+                pack.Art(o.Graphic).W != 0);
+
+        [TileDataPackFact]
+        public void Neighbour_rejection_drops_lights_the_cover_test_keeps()
+        {
+            // review P1 #3, kept for now (round 5): AddLightCore drops a whole light when a candle (0x0B1A) stands on tile
+            // x + 1, y + 1 of a lamp post 10 Z up, although the candle does not cover the post's light point; a wall piece
+            // there, 20 Z up, both drops it and covers it. The rejection stays under light_occlusion until the occluder rule
+            // hides glow over intervening faces (without it the lit windows under the Moonglow house's eave glowed over
+            // the roof, bench-001035): this records where the two rules part
+            PackArt pack = PackArt.Get();
+            Obj lamp = new Obj(800, 800, 0, 0x0B20);
+            var candle = new List<Obj> { lamp, new Obj(801, 801, 10, 0x0B1A) };
+            Assert.True(OldNeighbourRejects(pack, lamp, candle));
+            Assert.Empty(Occluders(pack, lamp, candle));
+
+            var wall = new List<Obj> { lamp, new Obj(801, 801, 20, 0x0162) };
+            Assert.True(OldNeighbourRejects(pack, lamp, wall));
+            Assert.Contains(new Obj(801, 801, 20, 0x0162), Occluders(pack, lamp, wall));
+        }
+
+        [TileDataPackFact]
+        public void Oversized_static_covering_the_light_is_found_by_the_chunk_search()
+        {
+            // review P2 #5: 0x0D42 is 44 x 421 (1,786 statics exceed the round 4 window's 300 x 256). Placed where its art covers
+            // a lamp post's light point from far down the diagonals, it hides the glow and the chunk search reaches it
+            PackArt pack = PackArt.Get();
+            Obj lamp = new Obj(800, 800, 0, 0x0B20);
+            var a = pack.Art(0x0D42);
+            Assert.True(a.H > 256);
+            var (sax, say) = Anchor(lamp);
+            var la = pack.Art(lamp.Graphic);
+            LightOcclusion.LightPoint(sax, say, la.W, la.H, la.BX, la.BY, la.BW, la.BH, out int px, out int py);
+            Obj found = default;
+            bool any = false;
+
+            for (int d = 9; d <= 16 && !any; d++)
+            {
+                for (int z = 0; z <= 60 && !any; z += 5)
+                {
+                    Obj o = new Obj(800 + d, 800 + d, z, 0x0D42);
+                    var (ax, ay) = Anchor(o);
+
+                    if (LightOcclusion.CoverPoint(ax, ay, a.W, a.H, px, py, out int lx, out int ly) && pack.Pixel(o.Graphic, lx, ly))
+                    {
+                        found = o;
+                        any = true;
+                    }
+                }
+            }
+
+            Assert.True(any, "no placement of 0x0D42 covers the lamp's point");
+            _output.WriteLine($"0x0D42 covering the lamp: {found} (S = {found.X - lamp.X + found.Y - lamp.Y}, round 4 window ended at S 17)");
+            Assert.Contains(found, Occluders(pack, lamp, new[] { lamp, found }));
+            // Anchor() here is ViewMargin.Anchor without the draw offset
+            Assert.True(LightOcclusion.ChunkReaches(found.X >> 3, found.Y >> 3, (a.W >> 1) - 22, a.W - (a.W >> 1) - 22, a.H - 44, found.Z, found.Z,
+                0, 0, px, py, px + 1, py + 1));
+        }
     }
 }
