@@ -554,6 +554,41 @@ namespace ClassicUO.UnitTests.Network.Packets
             book.BookLines[2].TrimEnd('\n').Should().BeEmpty();
         }
 
+        // Upstream impl/ecs af136f343: page content (0x66) sent right behind the open, in the same read, was dropped there
+        // (the window spawned later), and non-ASCII text was garbled. Here the open adds the gump synchronously, so the 0x66
+        // that follows in the same drain finds it; title, author and lines are UTF-8 for a new book.
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void Book_0xD4_With_0x66_In_The_Same_Read_Fills_The_Book_With_Utf8_Text(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            World world = InGame();
+            static byte[] Utf8(string s) => Encoding.UTF8.GetBytes(s);
+            byte[] title = Utf8("Tîtle ü"), author = Utf8("Åuthor");
+
+            var open = new PacketBuilder(0xD4, true).U32(ITEM).U8(1).U8(0).U16(2)
+                .U16(title.Length + 1).Bytes(title).U8(0)
+                .U16(author.Length + 1).Bytes(author).U8(0).Build();
+            var pages = new PacketBuilder(0x66, true).U32(ITEM).U16(2)
+                .U16(1).U16(2).Bytes(Utf8("café € naïve")).U8(0).Bytes(Utf8("plain")).U8(0)
+                .U16(2).U16(1).Bytes(Utf8("日本語")).U8(0).Build();
+
+            var r = PacketPipe.Deliver(world, mode, read, compressed, open, pages);
+
+            NoDisconnect(r, 2);
+            var book = Open<ModernBookGump>().Should().ContainSingle().Subject;
+            book.BookPageCount.Should().Be(2);
+            book.KnownPages.Should().Contain(new[] { 0, 1 });
+            book.BookLines[0].TrimEnd('\n').Should().Be("café € naïve");
+            book.BookLines[1].TrimEnd('\n').Should().Be("plain");
+            book.BookLines[ModernBookGump.MAX_BOOK_LINES].TrimEnd('\n').Should().Be("日本語");
+
+            string Field(string name) =>
+                ((StbTextBox)typeof(ModernBookGump).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(book)!).Text;
+
+            Field("_titleTextBox").Should().Be("Tîtle ü");
+            Field("_authorTextBox").Should().Be("Åuthor");
+        }
+
         [Theory]
         [MemberData(nameof(Modes))]
         public void Book_0x93_Old_Header_And_A_Second_Open_Updates_The_Book(SpanBufferMode mode, PipeRead read, bool compressed)
