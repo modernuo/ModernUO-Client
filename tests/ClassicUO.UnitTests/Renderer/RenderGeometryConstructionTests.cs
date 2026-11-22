@@ -294,6 +294,12 @@ namespace ClassicUO.UnitTests.Renderer
             double screenDelta = Math.Abs(light - gpu) * rectH / h;
 
             Assert.True(screenDelta > 0.5, $"base light vs Gpu world: {screenDelta} px");
+
+            // Math.Round rounds the half-pixel centre to even: the error's sign flips with the offset's parity, so the Gpu
+            // world jitters against the lights by a target pixel while walking
+            double d0 = BaseLightScreen(offY + 100, offY, h, 1f) - BaseGpuScreen(offY + 100, offY, h, 1f);
+            double d1 = BaseLightScreen(offY + 101, offY + 1, h, 1f) - BaseGpuScreen(offY + 101, offY + 1, h, 1f);
+            Assert.Equal(1.0, Math.Abs(d0 - d1), 6);
             Assert.Equal(0.0, Math.Abs(BaseLightScreen(offY + 100, offY, 704, 1f) - BaseGpuScreen(offY + 100, offY, 704, 1f)), 6);
         }
 
