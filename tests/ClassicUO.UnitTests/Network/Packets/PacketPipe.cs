@@ -130,7 +130,8 @@ namespace ClassicUO.UnitTests.Network.Packets
             byte[] wire = compressed ? NetDrainTests.HuffmanEncode(plain) : plain;
 
             var client = new NetClient();
-            client.Load(Version, EncryptionType.NONE);
+            // the packet lengths of the version the test seam runs (GameSeam.UseVersion), else 7.0.13
+            client.Load(Client.Game?.UO?.Version ?? Version, EncryptionType.NONE);
             var socket = new ModeSocket(wire, read, seed: wire.Length, splitAt);
             client.AttachSocket(socket);
 

@@ -21,12 +21,18 @@ namespace ClassicUO.Renderer.Arts
         private readonly HuesLoader _huesLoader;
 
         public Art(ArtLoader artLoader, HuesLoader huesLoader, GraphicsDevice device)
+            : this(artLoader, huesLoader, device, artLoader.Count)
+        {
+        }
+
+        /// <summary>Test seam: room for <paramref name="count"/> sprites whatever the loader holds (see <see cref="SetResidentForTests"/>).</summary>
+        internal Art(ArtLoader artLoader, HuesLoader huesLoader, GraphicsDevice device, int count)
         {
             _artLoader = artLoader;
             _huesLoader = huesLoader;
             int page = TextureAtlas.PageSize(4096, 1024);
             _atlas = new TextureAtlas(device, page, page, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[_artLoader.Count];
+            _spriteInfos = new SpriteInfo[count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
             _picker = new PixelPicker(_spriteInfos.Length);
             _missing = new ulong[(_spriteInfos.Length + 63) >> 6];
@@ -356,6 +362,17 @@ namespace ClassicUO.Renderer.Arts
 
         public ref readonly SpriteInfo GetArt(uint idx)
             => ref Get(idx + 0x4000);
+
+        /// <summary>
+        /// Test seam: item art <paramref name="graphic"/> as if it were in the atlas already, <paramref name="width"/> x
+        /// <paramref name="height"/> on <paramref name="texture"/> (a texture without a device). GetArt then returns it without a decode.
+        /// </summary>
+        internal void SetResidentForTests(uint graphic, Texture2D texture, int width, int height)
+        {
+            ref var spriteInfo = ref _spriteInfos[graphic + 0x4000];
+            spriteInfo.Texture = texture;
+            spriteInfo.UV = new Rectangle(0, 0, width, height);
+        }
 
         private ref readonly SpriteInfo Get(uint idx)
         {

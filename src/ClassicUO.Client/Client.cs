@@ -58,11 +58,11 @@ namespace ClassicUO
         /// <summary>
         /// Test seam: the renderer's asset front ends on the real loaders of <see cref="FileManager"/>, without a graphics device.
         /// An asset the loaders have no pixels for is missing (no texture), as in a pack without it; one with pixels would need a device,
-        /// so the test passes the gump front end it built and makes the gumps it needs resident (Renderer.Gumps.Gump.SetResidentForTests).
+        /// so the test passes the gump and art front ends it built and makes the sprites it needs resident (SetResidentForTests on each).
         /// </summary>
-        internal void SetRendererForTests(Renderer.Gumps.Gump gumps)
+        internal void SetRendererForTests(Renderer.Gumps.Gump gumps, Renderer.Arts.Art arts)
         {
-            Arts = new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, null);
+            Arts = arts;
             Gumps = gumps;
             MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, null);
             Animations = new Renderer.Animations.Animations(FileManager.Animations, null);

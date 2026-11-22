@@ -3,6 +3,7 @@ using System.IO;
 using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game;
+using FluentAssertions;
 
 namespace ClassicUO.UnitTests.Network.Packets
 {
@@ -21,6 +22,8 @@ namespace ClassicUO.UnitTests.Network.Packets
         private readonly TileDataLoader _tiles;
         private readonly StaticTiles[] _oldStatics;
         private readonly LandTiles[] _oldLand;
+        private readonly PackAssets _pack;
+        private readonly int _oldMapsCount;
 
         public GameController Game { get; }
 
@@ -76,13 +79,31 @@ namespace ClassicUO.UnitTests.Network.Packets
             return (asciiPath, uniPath);
         });
 
-        public GameSeam(bool profile = true)
+        /// <param name="mapBlocks">Above 0: a map store, facet 0 of <paramref name="mapBlocks"/> x <paramref name="mapBlocks"/> blocks in a pack
+        /// that holds only its manifest (no region files: every block is empty), so World.MapIndex can build a Map (0x1B).</param>
+        public GameSeam(bool profile = true, int mapBlocks = 0)
         {
             string empty = Path.Combine(Path.GetTempPath(), "cuo-gameseam-empty");
             Directory.CreateDirectory(empty);
 
+            if (mapBlocks > 0)
+            {
+                string packDir = Path.Combine(Path.GetTempPath(), $"cuo-gameseam-pack-{Environment.ProcessId}");
+                Directory.CreateDirectory(packDir);
+                _pack = PackAssets.OpenForTests(packDir);
+                _pack.Manifest.Facets.Add(new Uo.Pack.FacetInfo
+                    { Index = 0, Width = mapBlocks * 8, Height = mapBlocks * 8, BlocksX = mapBlocks, BlocksY = mapBlocks });
+            }
+
             var uo = new UltimaOnline();
-            var fm = new UOFileManager(PacketPipe.Version, empty, null);
+            var fm = new UOFileManager(PacketPipe.Version, empty, _pack);
+            _oldMapsCount = MapLoader.MAPS_COUNT;
+
+            if (_pack != null)
+            {
+                fm.Maps.Load(); // sets the process-wide MAPS_COUNT: restored on Dispose
+            }
+
             // tile data of all zeros (no flags, layer 0, weight 0) for every graphic, as Item.ItemData reads it; the loader's
             // arrays are static, so the previous ones come back on Dispose
             _tiles = fm.TileData;
@@ -97,7 +118,8 @@ namespace ClassicUO.UnitTests.Network.Packets
             // text controls measure as they do in the client
             fm.Fonts.LoadStores(FontStores.Value.Ascii, FontStores.Value.Unicode);
             uo.SetForTests(PacketPipe.Version, "7.0.13.0", fm, new GameCursor(new World()));
-            uo.SetRendererForTests(new ClassicUO.Renderer.Gumps.Gump(fm.Gumps, null, GumpsLoader.MAX_GUMP_DATA_INDEX_COUNT));
+            uo.SetRendererForTests(new ClassicUO.Renderer.Gumps.Gump(fm.Gumps, null, GumpsLoader.MAX_GUMP_DATA_INDEX_COUNT),
+                new ClassicUO.Renderer.Arts.Art(fm.Arts, fm.Hues, null, ArtLoader.MAX_STATIC_DATA_INDEX_COUNT));
             ClassicUO.Renderer.SolidColorTextureCache.TextureWithoutDeviceForTests ??= static _ => TextureWithoutDevice();
             Game = GameController.CreateForTests(uo);
             Client.UseForTests(Game);
@@ -119,6 +141,20 @@ namespace ClassicUO.UnitTests.Network.Packets
         public void Resident(ushort graphic, int width, int height) =>
             Game.UO.Gumps.SetResidentForTests(graphic, TextureWithoutDevice(), width, height);
 
+        /// <summary>Item art <paramref name="graphic"/> as if it were in the atlas, <paramref name="width"/> x <paramref name="height"/>.</summary>
+        public void ResidentArt(ushort graphic, int width, int height) =>
+            Game.UO.Arts.SetResidentForTests(graphic, TextureWithoutDevice(), width, height);
+
+        /// <summary>
+        /// The client version the handlers, the senders and <see cref="PacketPipe"/> see from now on (default 7.0.13). The UO object
+        /// is this seam's own, so Dispose needs no restore.
+        /// </summary>
+        public static void UseVersion(string text)
+        {
+            ClassicUO.Utility.ClientVersionHelper.IsClientVersionValid(text, out var version).Should().BeTrue(text);
+            Client.Game.UO.SetForTests(version, text, Client.Game.UO.FileManager, Client.Game.UO.GameCursor);
+        }
+
         public ItemHold ItemHold => Game.UO.GameCursor.ItemHold;
 
         public void Dispose()
@@ -129,6 +165,8 @@ namespace ClassicUO.UnitTests.Network.Packets
             Client.UseForTests(null);
             _tiles.StaticData = _oldStatics;
             _tiles.LandData = _oldLand;
+            MapLoader.MAPS_COUNT = _oldMapsCount;
+            _pack?.Dispose();
             _profile.SetValue(null, null);
         }
     }
