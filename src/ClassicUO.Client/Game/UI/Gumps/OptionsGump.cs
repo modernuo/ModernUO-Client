@@ -4097,9 +4097,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 if (vp != null)
                 {
-                    var s = new Point(Client.Game.ScaleWithDpi(gameWindowSizeWidth), Client.Game.ScaleWithDpi(gameWindowSizeHeight));
-
-                    Point n = vp.ResizeGameWindow(s);
+                    Point n = vp.ResizeViewport(new Point(gameWindowSizeWidth, gameWindowSizeHeight));
 
                     _gameWindowWidth.SetText(n.X.ToString());
                     _gameWindowHeight.SetText(n.Y.ToString());
@@ -4136,19 +4134,23 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     if (vp != null)
                     {
-                        var size = new Point(Client.Game.Window.ClientBounds.Width, Client.Game.Window.ClientBounds.Height);
-                        n = vp.ResizeGameWindow(size);
+                        // remember the windowed viewport so turning full size off restores it
+                        _currentProfile.GameWindowWindowedPosition = vp.Location;
+                        _currentProfile.GameWindowWindowedSize = new Point(vp.Width - WorldViewportGump.BORDER_WIDTH * 2, vp.Height - WorldViewportGump.BORDER_WIDTH * 2);
+                        n = vp.ResizeViewport(new Point(Client.Game.ClientBounds.Width, Client.Game.ClientBounds.Height));
                         vp.SetGameWindowPosition(new Point(-5, -5));
                         _currentProfile.GameWindowPosition = vp.Location;
+                        loc = vp.Location;
                     }
                 }
                 else
                 {
                     if (vp != null)
                     {
-                        n = vp.ResizeGameWindow(new Point(600, 480));
-                        vp.SetGameWindowPosition(new Point(20, 20));
+                        n = vp.ResizeViewport(_currentProfile.GameWindowWindowedSize);
+                        vp.SetGameWindowPosition(_currentProfile.GameWindowWindowedPosition);
                         _currentProfile.GameWindowPosition = vp.Location;
+                        loc = vp.Location;
                     }
                 }
 

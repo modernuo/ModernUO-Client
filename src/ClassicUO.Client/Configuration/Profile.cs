@@ -163,6 +163,9 @@ namespace ClassicUO.Configuration
         public bool GameWindowFullSize { get; set; }
         public bool WindowBorderless { get; set; } = false;
         [JsonConverter(typeof(Point2Converter))] public Point GameWindowSize { get; set; } = new Point(600, 480);
+        // the windowed viewport kept while GameWindowFullSize is on, restored when it is turned off
+        [JsonConverter(typeof(Point2Converter))] public Point GameWindowWindowedPosition { get; set; } = new Point(20, 20);
+        [JsonConverter(typeof(Point2Converter))] public Point GameWindowWindowedSize { get; set; } = new Point(600, 480);
         [JsonConverter(typeof(Point2Converter))] public Point TopbarGumpPosition { get; set; } = new Point(0, 0);
         public bool TopbarGumpIsMinimized { get; set; }
         public bool TopbarGumpIsDisabled { get; set; }

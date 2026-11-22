@@ -12,10 +12,7 @@ namespace ClassicUO.Renderer
         private RenderTarget2D _worldRenderTarget;
         private RenderTarget2D _uiCacheRenderTarget;
 
-        private Rectangle _gameWindowOnScreen;
-        private Rectangle _gameWindowAfterDPI;
-        private Rectangle _gameWorldSceneOnScreen;
-        private Rectangle _gameWorldSceneAfterDPI;
+        private RenderGeometry _geometry;
 
         private Func<Vector3> _lightsHue;
         private Func<BlendState> _lightsBlendState;
@@ -28,7 +25,7 @@ namespace ClassicUO.Renderer
         public RenderTarget2D WorldRenderTarget { get => _worldRenderTarget; }
 
         /// <summary>Where the world and light targets are drawn in the back buffer (window pixels).</summary>
-        public Rectangle WorldSceneOnScreen => _gameWorldSceneOnScreen;
+        public Rectangle WorldSceneOnScreen => _geometry.WorldOnScreen;
 
         /// <summary>B8: the scene UI and gumps without the cursor, kept between frames (null until the first <see cref="EnsureSizes"/>).</summary>
         public RenderTarget2D UiCacheRenderTarget { get => _uiCacheRenderTarget; }
@@ -49,47 +46,31 @@ namespace ClassicUO.Renderer
             _lightsHue = lightsHue;
         }
 
-        public void EnsureSizes(GraphicsDevice graphicsDevice, Rectangle gameWindowOnScreen, Rectangle gameWorldSceneAfterDPI, float dpiScale)
+        /// <summary>The geometry the targets were sized for, and the composite draws with.</summary>
+        public RenderGeometry Geometry => _geometry;
+
+        public void EnsureSizes(GraphicsDevice graphicsDevice, in RenderGeometry geometry)
         {
-            _gameWindowOnScreen = gameWindowOnScreen;
-            _gameWindowAfterDPI = ScaleRectangle(gameWindowOnScreen, dpiScale);
-            _gameWorldSceneOnScreen = ScaleRectangle(gameWorldSceneAfterDPI, 1/dpiScale);
-            _gameWorldSceneAfterDPI = gameWorldSceneAfterDPI;
+            _geometry = geometry;
 
             RenderTarget2D ui = _uiRenderTarget, uiCache = _uiCacheRenderTarget;
-            EnsureSize(graphicsDevice, ref _uiRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height,
-                RenderTargetUsage.PreserveContents);
+            EnsureSize(graphicsDevice, ref _uiRenderTarget, geometry.UiWidth, geometry.UiHeight, RenderTargetUsage.PreserveContents);
             // B8, the UI render cache: the UI target keeps its contents between frames and a second UI-sized target holds the
             // UI without the cursor
-            EnsureSize(graphicsDevice, ref _uiCacheRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height,
-                RenderTargetUsage.PreserveContents);
+            EnsureSize(graphicsDevice, ref _uiCacheRenderTarget, geometry.UiWidth, geometry.UiHeight, RenderTargetUsage.PreserveContents);
 
             if (ui != _uiRenderTarget || uiCache != _uiCacheRenderTarget)
             {
                 UiTargetsVersion++;
             }
-            EnsureSize(graphicsDevice, ref _lightRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height);
-            EnsureSize(graphicsDevice, ref _worldRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height,
+
+            EnsureSize(graphicsDevice, ref _lightRenderTarget, geometry.WorldWidth, geometry.WorldHeight);
+            EnsureSize(graphicsDevice, ref _worldRenderTarget, geometry.WorldWidth, geometry.WorldHeight,
                 PreserveWorldContents ? RenderTargetUsage.PreserveContents : (RenderTargetUsage?)null);
 
-            if (dpiScale == Math.Floor(dpiScale))
-            {
-                // Use PointClamp for integer DPI scaling to avoid blurriness
-                _defaultSamplerState = SamplerState.PointClamp;
-            }
-            else
-            {
-                // Use LinearClamp for non-integer DPI scaling for smoother results
-                _defaultSamplerState = SamplerState.LinearClamp;
-            }
+            // point sampling keeps an integer scale sharp; a fractional one is filtered
+            _defaultSamplerState = geometry.IntegerScale ? SamplerState.PointClamp : SamplerState.LinearClamp;
         }
-
-        private static Rectangle ScaleRectangle(Rectangle gameWindowOnScreen, float dpiScale) => new(
-                (int)(gameWindowOnScreen.X / dpiScale),
-                (int)(gameWindowOnScreen.Y / dpiScale),
-                (int)(gameWindowOnScreen.Width / dpiScale),
-                (int)(gameWindowOnScreen.Height / dpiScale)
-            );
 
         private static void EnsureSize(GraphicsDevice graphicsDevice, ref RenderTarget2D renderTarget, int width, int height, RenderTargetUsage? usage = null)
         {
@@ -130,12 +111,8 @@ namespace ClassicUO.Renderer
             batcher.Begin();
             batcher.GraphicsDevice.Clear(ClearOptions.Target, Color.Black, 0f, 0);
 
-            var rect = new Rectangle(
-                0,
-                0,
-                _gameWindowOnScreen.Width,
-                _gameWindowOnScreen.Height
-            );
+            Rectangle rect = _geometry.BackBufferBounds;
+            Rectangle world = _geometry.WorldOnScreen;
             batcher.DrawTiled(
                 _background,
                 rect,
@@ -148,7 +125,7 @@ namespace ClassicUO.Renderer
 
             batcher.Draw(
                 WorldRenderTarget,
-                _gameWorldSceneOnScreen,
+                world,
                 fullAlphaNoColor,
                 0f
             );
@@ -158,7 +135,7 @@ namespace ClassicUO.Renderer
 
             batcher.Draw(
                 LightRenderTarget,
-                _gameWorldSceneOnScreen,
+                world,
                 _lightsHue?.Invoke() ?? Vector3.Up,
                 0f
             );
@@ -169,16 +146,16 @@ namespace ClassicUO.Renderer
             {
                 batcher.Draw(
                     SolidColorTextureCache.GetTexture(Color.Black),
-                    _gameWorldSceneOnScreen,
+                    world,
                     new Vector3(0, 0, 1f - Math.Max(0f, WorldFade)),
                     0f
                 );
             }
 
-            // Draw UI at original window size (render target is DPI-scaled but destination is not)
+            // the UI target covers the back buffer exactly (RenderGeometry's per-axis scales)
             batcher.Draw(
                 UiRenderTarget,
-                _gameWindowOnScreen,
+                rect,
                 fullAlphaNoColor,
                 0f
             );
