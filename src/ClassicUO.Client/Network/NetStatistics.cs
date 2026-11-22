@@ -121,6 +121,15 @@ namespace ClassicUO.Network
 
         public static string GetSizeAdaptive(long bytes)
         {
+            Span<char> buffer = stackalloc char[48];
+            FormatSizeAdaptive(bytes, buffer, out int written);
+
+            return buffer.Slice(0, written).ToString();
+        }
+
+        // GetSizeAdaptive's text written into a buffer (48 chars always fit), for the refreshing network stats gump (G2)
+        public static void FormatSizeAdaptive(long bytes, Span<char> destination, out int written)
+        {
             decimal num = bytes;
             string arg = "B";
 
@@ -142,7 +151,10 @@ namespace ClassicUO.Network
                 }
             }
 
-            return $"{Math.Round(num, 2):0.##} {arg}";
+            written = 0;
+            ClassicUO.Game.UI.UiFormat.Put(destination, ref written, Math.Round(num, 2), "0.##");
+            ClassicUO.Game.UI.UiFormat.Put(destination, ref written, " ");
+            ClassicUO.Game.UI.UiFormat.Put(destination, ref written, arg);
         }
     }
 }

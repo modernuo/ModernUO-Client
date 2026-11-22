@@ -1247,6 +1247,7 @@ namespace ClassicUO
             }
 
             SelectedObject.HealthbarObject = null;
+            SelectedObject.UiSelectedContainerSerial = SelectedObject.SelectedContainer?.Serial ?? 0;
             SelectedObject.SelectedContainer = null;
 
             FrameStats.Begin(FramePhase.UiPass);

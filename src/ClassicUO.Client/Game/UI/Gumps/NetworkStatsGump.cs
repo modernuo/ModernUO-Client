@@ -20,7 +20,10 @@ namespace ClassicUO.Game.UI.Gumps
         private uint _ping, _deltaBytesReceived, _deltaBytesSent;
         private uint _time_to_update;
         private readonly AlphaBlendControl _trans;
-        private string _cacheText = string.Empty;
+        // G2: the shown text lives in this buffer and is drawn from it; a refresh that formats the same text does nothing
+        private readonly char[] _text = new char[TEXT_CAPACITY];
+        private int _textLength;
+        private const int TEXT_CAPACITY = 128;
 
 
         public NetworkStatsGump(World world, int x, int y) : base(world, 0, 0)
@@ -84,31 +87,51 @@ namespace ClassicUO.Game.UI.Gumps
                     _deltaBytesSent = NetClient.Socket.Statistics.DeltaBytesSent;
                 }
 
-                Span<char> span = stackalloc char[128];
-                ValueStringBuilder sb = new ValueStringBuilder(span);
+                Span<char> span = stackalloc char[TEXT_CAPACITY];
+                int length = FormatText(span, IsMinimized, _ping, _deltaBytesReceived, _deltaBytesSent);
 
-                if (IsMinimized)
+                if (!span.Slice(0, length).SequenceEqual(_text.AsSpan(0, _textLength)))
                 {
-                    sb.Append($"Ping: {_ping} ms");
+                    span.Slice(0, length).CopyTo(_text);
+                    _textLength = length;
+
+                    Vector2 size = Fonts.Bold.MeasureString(_text.AsSpan(0, _textLength));
+
+                    _trans.Width = Width = (int) (size.X + 20);
+                    _trans.Height = Height = (int) (size.Y + 20);
+                    WantUpdateSize = true;
                 }
-                else
-                {
-                    sb.Append($"Ping: {_ping} ms\n{"In:"} {NetStatistics.GetSizeAdaptive(_deltaBytesReceived),-6} {"Out:"} {NetStatistics.GetSizeAdaptive(_deltaBytesSent),-6}");
-                }
-
-                _cacheText = sb.ToString();
-
-                sb.Dispose();
-
-                Vector2 size = Fonts.Bold.MeasureString(_cacheText);
-
-                _trans.Width = Width = (int) (size.X + 20);
-                _trans.Height = Height = (int) (size.Y + 20);
-                WantUpdateSize = true;
             }
 
             // visual-due tracking: the next timed change
             ClassicUO.Loop.VisualDue.At(_time_to_update, ClassicUO.Loop.VisualSource.Gump);
+        }
+
+        // the shown text: "Ping: N ms", plus the received and sent rates when expanded; returns its length
+        internal static int FormatText(Span<char> destination, bool minimized, uint ping, uint received, uint sent)
+        {
+            int n = 0;
+            UiFormat.Put(destination, ref n, "Ping: ");
+            UiFormat.Put(destination, ref n, ping);
+            UiFormat.Put(destination, ref n, " ms");
+
+            if (minimized)
+            {
+                return n;
+            }
+
+            UiFormat.Put(destination, ref n, "\nIn: ");
+            int start = n;
+            NetStatistics.FormatSizeAdaptive(received, destination.Slice(n), out int written);
+            n += written;
+            UiFormat.PadRight(destination, ref n, start, 6);
+            UiFormat.Put(destination, ref n, " Out: ");
+            start = n;
+            NetStatistics.FormatSizeAdaptive(sent, destination.Slice(n), out written);
+            n += written;
+            UiFormat.PadRight(destination, ref n, start, 6);
+
+            return n;
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
@@ -150,7 +173,7 @@ namespace ClassicUO.Game.UI.Gumps
             batcher.DrawString
             (
                 Fonts.Bold,
-                _cacheText,
+                _text.AsSpan(0, _textLength),
                 x + 10,
                 y + 10,
                 hueVector,
