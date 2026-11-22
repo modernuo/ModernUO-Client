@@ -205,6 +205,75 @@ namespace ClassicUO.UnitTests.Network.Packets
             world.Mobiles.Get(MOB).FindItemByLayer(Layer.OneHanded).Should().BeNull();
         }
 
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void UpdateObject_0x78_Header_Only_Is_An_Empty_List(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            World world = InGame();
+            byte[] dressed = new PacketBuilder(0x78, true).U32(MOB).U16(0x0190).U16(300).U16(400).I8(0).U8(2).U16(0).U8(0).U8(1)
+                .U32(ITEM).U16(0x13B9).U8((int)Layer.OneHanded).U32(0).Build();
+            byte[] headerOnly = new PacketBuilder(0x78, true).U32(MOB).U16(0x0190).U16(300).U16(400).I8(0).U8(2).U16(0).U8(0).U8(1)
+                .Build();
+
+            PacketPipe.Deliver(world, mode, read, compressed, dressed).Disconnects.Should().Be(0);
+            world.Mobiles.Get(MOB).FindItemByLayer(Layer.OneHanded).Should().NotBeNull();
+
+            var r = PacketPipe.Deliver(world, mode, read, compressed, headerOnly);
+
+            r.Packets.Should().Be(1);
+            r.Disconnects.Should().Be(0, r.Reason);
+            world.Mobiles.Get(MOB).FindItemByLayer(Layer.OneHanded).Should().BeNull("a header-only packet clears like an empty list");
+        }
+
+        // ---- 0x99 MultiPlacement
+
+        private static byte[] MultiPlacement(bool withHue)
+        {
+            var b = new PacketBuilder(0x99, false).U8(1).U32(0x4000_0500).U8(0);
+
+            for (int i = 0; i < 11; i++)
+            {
+                b.U8(0);
+            }
+
+            b.U16(0x1234).U16(5).U16(6).U16(7);
+
+            // 7.0.9+: hue word and two trailing bytes (30); before: 26
+            return (withHue ? b.U16(0x0455).U16(0) : b).Build();
+        }
+
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void MultiPlacement_0x99_Reads_The_Hue_From_7_0_9(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            World world = InGame();
+
+            var r = PacketPipe.Deliver(world, mode, read, compressed, MultiPlacement(true));
+
+            r.Packets.Should().Be(1);
+            r.Disconnects.Should().Be(0, r.Reason);
+            world.TargetManager.MultiTargetInfo.Model.Should().Be(0x1234);
+            world.TargetManager.MultiTargetInfo.ZOff.Should().Be(7);
+            world.TargetManager.MultiTargetInfo.Hue.Should().Be(0x0455);
+        }
+
+        // before 7.0.9 the server sends 26 bytes without the hue (ModernUO: every client that is not HighSeas)
+        [Theory]
+        [MemberData(nameof(Modes))]
+        public void MultiPlacement_0x99_Short_Form_Before_7_0_9_Keeps_The_Connection(SpanBufferMode mode, PipeRead read, bool compressed)
+        {
+            GameSeam.UseVersion("7.0.8.0");
+            World world = InGame();
+
+            var r = PacketPipe.Deliver(world, mode, read, compressed, MultiPlacement(false));
+
+            r.Packets.Should().Be(1);
+            r.Disconnects.Should().Be(0, r.Reason);
+            world.TargetManager.MultiTargetInfo.Model.Should().Be(0x1234);
+            world.TargetManager.MultiTargetInfo.ZOff.Should().Be(7);
+            world.TargetManager.MultiTargetInfo.Hue.Should().Be(0);
+        }
+
         // ---- 0x20 UpdatePlayer
 
         [Theory]
