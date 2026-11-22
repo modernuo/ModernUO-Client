@@ -49,6 +49,13 @@ namespace ClassicUO.Game.UI.Gumps
             string[] lines
         )
         {
+            bool resendPatch = GumpResendPatchSwitch.Enabled;
+
+            if (resendPatch && TryPatchServerGump(world, sender, gumpID, layout, lines) is Gump patched)
+            {
+                return patched;
+            }
+
             GumpLayout parsed = GumpLayoutCache.Enabled ? GumpLayoutCache.GetOrParse(gumpID, layout) : GumpLayout.Parse(layout);
 
 #if CUO_DEVTOOLS
@@ -64,9 +71,11 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             Gump gump = FindOrCreateServerGump(world, sender, gumpID, x, y, out bool mustBeAdded);
+            ServerGumpPatch patch = resendPatch ? new ServerGumpPatch(layout, lines) : null;
 
             PrefetchLayoutGumps(parsed);
-            BuildControls(world, gump, parsed, lines, false);
+            BuildControls(world, gump, parsed, lines, false, patch);
+            gump.ResendPatch = patch;
 
 #if CUO_DEVTOOLS
             if (GumpLayoutCheck.Active)
@@ -76,6 +85,45 @@ namespace ClassicUO.Game.UI.Gumps
 #endif
 
             return FinishServerGump(gump, mustBeAdded);
+        }
+
+        /// <summary>
+        /// gump_resend_patch: the open gump with this sender and id when it was built from <paramref name="layout"/> and every
+        /// changed line could be patched into its controls; null: the caller rebuilds.
+        /// </summary>
+        private static Gump TryPatchServerGump(World world, uint sender, uint gumpID, string layout, string[] lines)
+        {
+            Gump gump = FindOpenServerGump(sender, gumpID);
+            ServerGumpPatch patch = gump?.ResendPatch;
+
+            if (patch == null || !patch.TryApply(layout, lines))
+            {
+#if CUO_DEVTOOLS
+                if (patch != null)
+                {
+                    Client.Game.UO.GumpResendCheck.Rebuilt++;
+                }
+#endif
+                return null;
+            }
+
+            // as a rebuild in place: the open gump's place is cached again when its entry was removed
+            if (!UIManager.GetGumpCachePosition(gumpID, out _))
+            {
+                UIManager.SavePosition(gumpID, gump.Location);
+            }
+
+#if CUO_DEVTOOLS
+            GumpResendCheck check = Client.Game.UO.GumpResendCheck;
+            check.Patched++;
+
+            if (check.Active)
+            {
+                check.Compare(world, gump, patch, lines);
+            }
+#endif
+
+            return FinishServerGump(gump, false);
         }
 
         /// <summary>The gump pictures <paramref name="layout"/> names, decoded on workers in one batch (as the old token scan).</summary>
@@ -133,6 +181,9 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
+        // the line a text control shows (out of range: no line, an empty text)
+        private static int LineIndex(GumpArgs p, int index) => p.Count > index && int.TryParse(p[index], out int line) ? line : -1;
+
         private static void AddLayoutGump(GumpArgs p, int index)
         {
             if (p.Count > index)
@@ -145,7 +196,7 @@ namespace ClassicUO.Game.UI.Gumps
         /// The control loop of gump_layout_v2: the old loop's controls and order, dispatched on the parsed kind. Strings are
         /// made only for text a control keeps (cliloc arguments, tooltips).
         /// </summary>
-        internal static void BuildControls(World world, Gump gump, GumpLayout layout, string[] lines, bool shadow)
+        internal static void BuildControls(World world, Gump gump, GumpLayout layout, string[] lines, bool shadow, ServerGumpPatch patch = null)
         {
             int group = 0;
             int page = 0;
@@ -180,7 +231,9 @@ namespace ClassicUO.Game.UI.Gumps
                         break;
 
                     case GumpEntryKind.CroppedText:
-                        gump.Add(new CroppedText(p, lines), page);
+                        var croppedText = new CroppedText(p, lines);
+                        gump.Add(croppedText, page);
+                        patch?.BindCroppedText(croppedText, LineIndex(p, 6));
 
                         break;
 
@@ -209,7 +262,9 @@ namespace ClassicUO.Game.UI.Gumps
                         break;
 
                     case GumpEntryKind.HtmlGump:
-                        gump.Add(new HtmlControl(p, lines), page);
+                        var html = new HtmlControl(p, lines);
+                        gump.Add(html, page);
+                        patch?.BindHtml(html, LineIndex(p, 5));
 
                         break;
 
@@ -315,7 +370,9 @@ namespace ClassicUO.Game.UI.Gumps
                     case GumpEntryKind.Text:
                         if (p.Count >= 5)
                         {
-                            gump.Add(new Label(p, lines), page);
+                            var label = new Label(p, lines);
+                            gump.Add(label, page);
+                            patch?.BindLabel(label, LineIndex(p, 4));
                         }
 
                         break;
@@ -331,6 +388,7 @@ namespace ClassicUO.Game.UI.Gumps
                         }
 
                         gump.Add(textBox, page);
+                        patch?.BindTextEntry(textBox, LineIndex(p, 7));
 
                         break;
 

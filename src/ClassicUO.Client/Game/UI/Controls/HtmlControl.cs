@@ -99,6 +99,23 @@ namespace ClassicUO.Game.UI.Controls
             set => _gameText.Text = value;
         }
 
+        /// <summary>
+        /// gump_resend_patch: a new server line for an html text that had one and keeps one (the colours InternalBuild chose for
+        /// the first text stay); the scroll position is kept within the new height.
+        /// </summary>
+        internal void SetServerText(string text)
+        {
+            _gameText.Text = text;
+
+            if (_scrollBar != null)
+            {
+                _scrollBar.MaxValue = _gameText.Height - Height + (HasBackground ? 8 : 0);
+                ScrollY = _scrollBar.Value;
+            }
+
+            InvalidateDraw();
+        }
+
         private void InternalBuild(string text, int hue)
         {
             if (!string.IsNullOrEmpty(text))

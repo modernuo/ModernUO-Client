@@ -172,27 +172,25 @@ namespace ClassicUO.Game.UI.Gumps
                 y = pos.Y;
             }
 
-            for (LinkedListNode<Gump> last = UIManager.Gumps.Last; last != null; last = last.Previous)
+            Gump g = FindOpenServerGump(sender, gumpID);
+
+            if (g != null)
             {
-                Gump g = last.Value;
-
-                if (!g.IsDisposed && g.LocalSerial == sender && g.ServerSerial == gumpID)
+                if (!cached)
                 {
-                    if (!cached)
-                    {
-                        UIManager.SavePosition(gumpID, g.Location);
-                    }
-
-                    g.Clear();
-                    // the flags the layout sets start from a new gump's values again (a rebuild in place equals a fresh build)
-                    g.CanMove = true;
-                    g.CanCloseWithRightClick = true;
-                    g.CanCloseWithEsc = true;
-                    g.MasterGumpSerial = 0;
-                    mustBeAdded = false;
-
-                    return g;
+                    UIManager.SavePosition(gumpID, g.Location);
                 }
+
+                g.Clear();
+                g.ResendPatch = null;
+                // the flags the layout sets start from a new gump's values again (a rebuild in place equals a fresh build)
+                g.CanMove = true;
+                g.CanCloseWithRightClick = true;
+                g.CanCloseWithEsc = true;
+                g.MasterGumpSerial = 0;
+                mustBeAdded = false;
+
+                return g;
             }
 
             if (!cached)
@@ -203,6 +201,22 @@ namespace ClassicUO.Game.UI.Gumps
             mustBeAdded = true;
 
             return NewServerGump(world, sender, gumpID, x, y);
+        }
+
+        /// <summary>The open (not disposed) server gump with this sender and id, the most recently added first.</summary>
+        private static Gump FindOpenServerGump(uint sender, uint gumpID)
+        {
+            for (LinkedListNode<Gump> last = UIManager.Gumps.Last; last != null; last = last.Previous)
+            {
+                Gump g = last.Value;
+
+                if (!g.IsDisposed && g.LocalSerial == sender && g.ServerSerial == gumpID)
+                {
+                    return g;
+                }
+            }
+
+            return null;
         }
 
         private static Gump NewServerGump(World world, uint sender, uint gumpID, int x, int y) =>
