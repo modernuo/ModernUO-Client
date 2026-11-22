@@ -816,12 +816,32 @@ namespace ClassicUO
 
         private uint _poolTrimTick;
 
+        // set by the event filter, which may run on another thread; read on the main thread in Update
+        private volatile bool _windowSizeDirty;
+
+        private void SyncBackBufferToWindow()
+        {
+            _windowSizeDirty = false;
+            SDL_GetWindowSizeInPixels(Window.Handle, out int width, out int height);
+
+            if (width > 0 && height > 0
+                && (width != GraphicManager.PreferredBackBufferWidth || height != GraphicManager.PreferredBackBufferHeight))
+            {
+                WindowOnClientSizeChanged(width, height);
+            }
+        }
+
         protected override void Update(GameTime gameTime)
         {
 #if CUO_DEVTOOLS
             if (Diagnostics.On) Diagnostics.Update();
 #endif
             RenderInfoCheck();
+
+            if (_windowSizeDirty)
+            {
+                SyncBackBufferToWindow();
+            }
             FrameStats.Begin(FramePhase.Update);
             FrameStats.Inc(FrameCounter.LoopTicks);
             _updateStartTs = Stopwatch.GetTimestamp();
@@ -1472,6 +1492,15 @@ namespace ClassicUO
 
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_REMOVED:
                     Log.Trace($"Audio device removed: {sdlEvent->adevice.which}");
+
+                    break;
+
+                // FNA applies a resize only while the window has focus (and never for PIXEL_SIZE_CHANGED): a resize while
+                // unfocused (a minimum-size change, the OS, a border change) left the back buffer on the old size, presented
+                // stretched with the mouse unscaled. Update compares the two (SyncBackBufferToWindow).
+                case SDL_EventType.SDL_EVENT_WINDOW_RESIZED:
+                case SDL_EventType.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                    _windowSizeDirty = true;
 
                     break;
 
