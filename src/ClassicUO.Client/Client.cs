@@ -60,9 +60,9 @@ namespace ClassicUO
         /// An asset the loaders have no pixels for is missing (no texture), as in a pack without it; one with pixels would need a device,
         /// so the test passes the gump front end it built and makes the gumps it needs resident (Renderer.Gumps.Gump.SetResidentForTests).
         /// </summary>
-        internal void SetRendererForTests(Renderer.Gumps.Gump gumps)
+        internal void SetRendererForTests(Renderer.Gumps.Gump gumps, Renderer.Arts.Art arts = null)
         {
-            Arts = new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, null);
+            Arts = arts ?? new Renderer.Arts.Art(FileManager.Arts, FileManager.Hues, null);
             Gumps = gumps;
             MultiMaps = new Renderer.MultiMaps.MultiMap(FileManager.MultiMaps, null);
             Animations = new Renderer.Animations.Animations(FileManager.Animations, null);

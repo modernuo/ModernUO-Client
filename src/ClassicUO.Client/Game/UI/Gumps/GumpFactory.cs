@@ -56,6 +56,12 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 Item item = vendor.FindItemByLayer(layer);
 
+                // a vendor without this shop layer lists nothing from it (a throw here would disconnect: span_reader)
+                if (item == null)
+                {
+                    continue;
+                }
+
                 // T2: the shop's list from the ECS (reversed unless 0x2AF8: hardcoded logic in original client that we must match)
                 bool backwards = item.Graphic != 0x2AF8;
                 ReadOnlySpan<uint> shopContents = world.State.Contents(item.Serial);

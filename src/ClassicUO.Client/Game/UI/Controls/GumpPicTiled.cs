@@ -35,7 +35,7 @@ namespace ClassicUO.Game.UI.Controls
             }
         }
 
-        public GumpPicTiled(List<string> parts) : this(UInt16Converter.Parse(parts[5]))
+        public GumpPicTiled(GumpArgs parts) : this(UInt16Converter.Parse(parts[5]))
         {
             X = int.Parse(parts[1]);
             Y = int.Parse(parts[2]);

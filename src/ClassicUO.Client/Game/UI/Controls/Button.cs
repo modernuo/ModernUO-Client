@@ -76,7 +76,7 @@ namespace ClassicUO.Game.UI.Controls
             CanCloseWithEsc = false;
         }
 
-        public Button(List<string> parts)
+        public Button(GumpArgs parts)
             : this(
                 parts.Count >= 8 ? int.Parse(parts[7]) : 0,
                 UInt16Converter.Parse(parts[3]),

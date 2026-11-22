@@ -16,7 +16,7 @@ namespace ClassicUO.Game.UI.Controls
             _tileY;
         private ushort _graphic;
 
-        public ButtonTileArt(List<string> gparams) : base(gparams)
+        public ButtonTileArt(GumpArgs gparams) : base(gparams)
         {
             X = int.Parse(gparams[1]);
             Y = int.Parse(gparams[2]);

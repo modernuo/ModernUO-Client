@@ -20,7 +20,7 @@ namespace ClassicUO.Game.UI.Controls
             WantUpdateSize = false;
         }
 
-        public StaticPic(List<string> parts)
+        public StaticPic(GumpArgs parts)
             : this(
                 UInt16Converter.Parse(parts[3]),
                 parts.Count > 4 ? UInt16Converter.Parse(parts[4]) : (ushort)0
