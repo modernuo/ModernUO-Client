@@ -41,6 +41,22 @@ namespace ClassicUO.Assets
 
         public bool Exists(int idx) => (uint)idx < (uint)_sprites.Length && _sprites[idx].OrigW != 0 && _sprites[idx].OrigH != 0;
 
+        /// <summary>Sprite <paramref name="idx"/>'s untrimmed size (false and 0 x 0 when absent).</summary>
+        public bool TrySize(int idx, out int width, out int height)
+        {
+            if (!Exists(idx))
+            {
+                width = height = 0;
+
+                return false;
+            }
+
+            width = _sprites[idx].OrigW;
+            height = _sprites[idx].OrigH;
+
+            return true;
+        }
+
         public ref ArtEntry GetEntry(int idx)
         {
             if (!Exists(idx))

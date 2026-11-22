@@ -265,6 +265,11 @@ namespace ClassicUO.Game.GameObjects
                 {
                     // Chunk.Tiles[cell] must not keep pointing at an object that left (it is how the walk finds the list)
                     TileChunk.ReleaseAnchor(node);
+
+                    if (TileChunk.LightSourceCount != 0)
+                    {
+                        TileChunk.ForgetLightSource(node);
+                    }
                 }
                 else
                 {
