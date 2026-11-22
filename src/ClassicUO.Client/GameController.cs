@@ -1350,6 +1350,7 @@ namespace ClassicUO
             {
                 Game.Scenes.GeometryProbe.AfterComposite(this, _renderTargets, geomScene.Camera.Bounds, geomScene.Camera.Zoom);
             }
+            Game.Scenes.FrameBurst.AfterComposite(GraphicsDevice, _renderTargets, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight);
 #endif
 
             if (_worldShotPath != null)

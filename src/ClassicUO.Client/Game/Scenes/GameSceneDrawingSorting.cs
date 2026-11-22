@@ -556,7 +556,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 // view_margin: static lights come from the chunks' emitter lists (AddChunkLights), not from the walk
-                if (!_vmLights && itemData.IsLight)
+                if (ViewMargin.WalkLightsStatic(itemData.IsLight, ChunkStaticLights))
                 {
                     AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                 }
@@ -1096,7 +1096,7 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
 
-                    if (!_vmLights && meshItemData.IsLight)
+                    if (ViewMargin.WalkLightsStatic(meshItemData.IsLight, ChunkStaticLights))
                     {
                         AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                     }

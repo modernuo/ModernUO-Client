@@ -817,6 +817,23 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // fading on|off: the profile's object fading (statics in front of the player fade)
+                case "fading" when args.Length > 0 && ProfileManager.CurrentProfile is { } fadeProfile:
+                    fadeProfile.UseObjectsFading = args[0] == "on";
+                    Log.Info($"[ECS] driver: object fading {fadeProfile.UseObjectsFading}");
+
+                    return false;
+
+#if CUO_DEVTOOLS
+                // burst <name> <frames>: raw world + screen dumps of the next <frames> drawn frames (FrameBurst); the script
+                // goes on at once, so the lines after it (a turn) land inside the burst
+                case "burst" when args.Length > 1 && Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS") is { Length: > 0 } burstDir:
+                    Directory.CreateDirectory(burstDir);
+                    FrameBurst.Request(Path.Combine(burstDir, args[0]), int.Parse(args[1]));
+
+                    return true;
+#endif
+
                 // aura <0-3>: the profile's aura under feet (3 = always; E12 checks that the probe pass doesn't draw them)
                 case "aura" when args.Length > 0 && ProfileManager.CurrentProfile is { } auraProfile:
                     auraProfile.AuraUnderFeetType = Convert.ToInt32(args[0]);

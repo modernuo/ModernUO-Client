@@ -38,6 +38,12 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
 
+        /// <summary>Whether the world walk (or the view it draws) lights a static or multi component: never under
+        /// view_margin (<paramref name="chunkLights"/>, GameScene.ChunkStaticLights), whose chunk emitter lists already hold
+        /// it. A second walk-side entry doubles the halo (the torch flash: the Gpu fill collected an animated light static's
+        /// light on the frames its animation offset is 0).</summary>
+        public static bool WalkLightsStatic(bool isLight, bool chunkLights) => isLight && !chunkLights;
+
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.ViewMargin ?? false);
 
         /// <summary>Sprite margin: how far a mobile's frame (its shadow included) may reach past its anchor box, beside it and
