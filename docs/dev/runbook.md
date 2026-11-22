@@ -168,7 +168,7 @@ Settings come from `settings.json` next to the executable, or from the file name
 | `pack` | `-pack` | Pack folder |
 | `username`, `password` | `-username`, `-password` | Account; `saveaccount` must be true for the file to keep them |
 | `autologin`, `saveaccount` | `-autologin true`, `-saveaccount false` | Log in at startup; do not store the account |
-| `fps`, `vsync` | `-fps 0`, `-vsync false` | `0` is uncapped |
+| `fps`, `vsync` | `-fps 0`, `-vsync false` | `0` is uncapped (the frame-limit slider's "Off" step in Options) |
 | `world_renderer` | `-worldrenderer auto\|gpu\|compatibility` | See below |
 | `profilespath` | `-profilespath <dir>` | Profile folder (never saved to the file) |
 | | `-skiploginscreen`, `-nomessagebox`, `-packetlog` | Flags |
@@ -243,12 +243,16 @@ CUO_WRITE_BUDGET_REGEN=1 dotnet test <repo>/tests/ClassicUO.UnitTests -c Release
 
 ## Settings switches
 
-These `settings.json` keys select ECS and renderer paths. Defaults are from `src/ClassicUO.Client/Configuration/Settings.cs`. A new ECS path lands with its switch off; the old path stays until the new one is the default and has been verified.
+These `settings.json` keys select ECS, renderer, network and frame-pacing paths. Defaults are from `src/ClassicUO.Client/Configuration/Settings.cs`. A new ECS path lands with its switch off; the old path stays until the new one is the default and has been verified.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `compatibility` (or `legacy`) |
 | `gump_decode_budget` | `false` | Count gump worker decodes in their own 32 MiB in-flight budget ([buffer-pools.md](buffer-pools.md)) |
+| `vsync_mailbox` | `false` | With vsync on, present in mailbox mode where supported. Off (since 2026-11-22): FIFO vsync with present on change is the default; mailbox at the display rate can show a frame twice or skip one as presents drift against the scanout. A saved value is kept |
+| `motion_above_display_rate` | `false` | With present on change and a present that does not wait for the vblank (vsync off, or mailbox), frames while something moves present at three times the display rate; an idle screen still presents on change. Up to three times the draws while moving |
+| `span_reader` | `true` | Read packets with SpanReader and build them with SpanWriter. A packet a handler reads past its end ends the connection, logged with its bytes. Off: the old StackDataReader/Writer path. Read once at startup |
+| `net_ring` | `false` | Decode received bytes into a double-mapped 256 KB ring per connection and frame and read packets in place; send through a bounded 128 KB ring that ends the connection when the socket takes nothing for 5 s. A platform that cannot map the ring keeps the old path (one log line). Read once at startup |
 | `event_loop_macos` | `false` | macOS: wait between frames in SDL's Cocoa wait, ended by a kqueue over the socket and the cross-thread wake, instead of the legacy loop. Windows always uses its event loop and ignores the key |
 
 ## Environment variables
@@ -272,6 +276,10 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_NET_TRACE=1` | Track per-frame network parse cost |
 | `CUO_FRAMESTATS=1` | Dev. Per-phase frame timings every 5 s (see DevBench) |
 | `CUO_EVENT_LOOP_MACOS=1\|0` | Dev. Override `event_loop_macos` |
+| `CUO_SPAN_READER=1\|0`, `CUO_SPAN_READER_CHECK=1` | Dev. Override `span_reader`; run both readers and writers on every packet and log differences |
+| `CUO_NET_RING=1\|0`, `CUO_NET_RING_CHECK=1` | Dev. Override `net_ring`; frame every received slice with the old path too and compare, and shadow the sends |
+| `CUO_MOTION_RATE_CHECK=1` | Dev. Run the display-rate present decision beside the one in force and log the draws only `motion_above_display_rate` made, draws closer than half the display period, and extra draws with the switch off |
+| `CUO_GEOM_LOG=1` | Dev. Log each pass's target, device viewport, projection and camera next to the window, back buffer, DPI scale and composite rects whenever one of them changes (`[geom]` lines) |
 | `CUO_LOOP_STATS=1`, `CUO_LOOP_STATS_SEC=<s>` | Dev. Log a `[loop]` line (mode, ticks, draws, waits, wake reasons, late waits, process CPU ms/s) every 5 s or `<s>` |
 
 DevBench variables are in the next section.
@@ -289,7 +297,7 @@ DevBench variables are in the next section.
 | `CUO_BENCH_PICK=1` | Hover-and-click picking test |
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS="x y;x y"`, `CUO_BENCH_GO="x y"`, `CUO_BENCH_EXIT=1` | UI tour, screenshot spots, go to a spot, walk and quit |
 
-Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan. The entries of retired switches (`uicache`, `gpuskip`, `itemcache`, `itemmixed`, `fxserve`, `textskip`, `w5`) are skipped.
+Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, `lightframes:N` (log N consecutive frames of the light pass: the offset its lights were placed at and the world's offset; `CUO_LIGHT_FRAMES=N` does it in every measured scene, `CUO_LIGHT_FRAMES_READBACK=0` skips the readbacks), `altlights:on|off`, and `on|off` entries that switch a setting for the rest of the plan. The entries of retired switches (`uicache`, `gpuskip`, `itemcache`, `itemmixed`, `fxserve`, `textskip`, `w5`) are skipped.
 
 Typical run:
 
