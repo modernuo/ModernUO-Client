@@ -90,11 +90,12 @@ namespace ClassicUO.UnitTests.Network.Packets
         [MemberData(nameof(Modes))]
         public void Many_Packets_Of_Every_Shape_Come_Out_Whole_And_In_Order(SpanBufferMode mode, PipeRead read, bool compressed)
         {
-            byte[][] sent = Mixed(read == PipeRead.Byte ? 300 : 2000, 11);
+            byte[][] sent = Mixed(read is PipeRead.Byte or PipeRead.RingByte ? 300 : 2000, 11);
             var (r, seen) = Run(mode, read, compressed, -1, sent);
 
             ShouldSeeExactly(seen, sent);
             r.Disconnects.Should().Be(0);
+            r.Ring.Should().Be(read >= PipeRead.RingByte, "the ring read modes run on net_ring's receive ring");
         }
 
         [Theory]

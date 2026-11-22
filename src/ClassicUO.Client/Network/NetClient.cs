@@ -25,6 +25,15 @@ namespace ClassicUO.Network
         private uint? _localIP;
         private readonly CircularBuffer _sendStream;
 
+        // net_ring (NetRings): the receive ring (main thread only) and the bounded send ring (under _sendLock), mapped on the
+        // first connection; null with the switch off or when the platform cannot map them (the CircularBuffer path then).
+        private NetRing _recvRing, _sendRing;
+        private bool _ringsTried;
+        private int _ringGeneration;
+        private int _lastRingSlice;
+        private bool _sendExhausted;
+        private bool _ringFullLogged;
+
         // The send lock. It guards _sendStream, _isCompressionEnabled as the send side reads it, the send-side cipher
         // (Encryption.Encrypt and Initialize), the send admission state below, and the send statistics: a packet is
         // encrypted and queued in one critical section, so the order the stream cipher consumed keystream is the order
@@ -126,6 +135,7 @@ namespace ClassicUO.Network
 
         internal void AttachSocket(SocketWrapper socket)
         {
+            EnsureRings();
             _socket?.Dispose();
             _socket = socket;
             TransportVersion++;
@@ -210,6 +220,8 @@ namespace ClassicUO.Network
             {
                 _isCompressionEnabled = false;
                 _sendStream.Clear();
+                _sendRing?.DiscardReadable();
+                _sendExhausted = false;
 #if CUO_DEVTOOLS
                 if (Diagnostics.On) _diagWritten = _diagQueued;
 #endif
@@ -355,6 +367,7 @@ namespace ClassicUO.Network
                 Encryption?.Initialize(false, seed);
                 _isCompressionEnabled = true;
                 _sendStream.Clear();
+                _sendRing?.DiscardReadable();
 #if CUO_DEVTOOLS
                 if (Diagnostics.On) _diagWritten = _diagQueued;
 #endif
@@ -455,7 +468,17 @@ namespace ClassicUO.Network
                 Encryption?.Encrypt(!_isCompressionEnabled, message, message, message.Length);
             }
 
-            _sendStream.Enqueue(message);
+            if (_sendRing != null)
+            {
+                if (!EnqueueRingLocked(message))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                _sendStream.Enqueue(message);
+            }
 
             Statistics.TotalBytesSent += (uint)message.Length;
             Statistics.TotalPacketsSent++;
@@ -467,6 +490,7 @@ namespace ClassicUO.Network
             {
                 _isCompressionEnabled = true;
                 _sendStream.Clear();
+                _sendRing?.DiscardReadable();
 #if CUO_DEVTOOLS
                 if (Diagnostics.On) _diagWritten = _diagQueued;
 #endif
@@ -549,7 +573,7 @@ namespace ClassicUO.Network
                     break;
                 }
 
-                if (!ReadSlice(out var raw, out var data))
+                if (!ReadSlice(out var raw, out var data, out var decoded))
                 {
                     // An empty read only ends the connection if it was made after the close had been seen: a receive task
                     // enqueues its last frame and then reports the close, so a read that was empty a moment earlier can
@@ -575,7 +599,7 @@ namespace ClassicUO.Network
                 LastDrainBytes += raw;
                 LastDrainSlices++;
 
-                if (data.Count > 0)
+                if (decoded > 0)
                 {
                     packets += sink(data);
                     sinkCalled = true;
@@ -614,13 +638,15 @@ namespace ClassicUO.Network
         /// <summary>One slice, for callers that do not drain (kept for compatibility). Empty when nothing is ready.</summary>
         public ArraySegment<byte> CollectAvailableData()
         {
-            return ReadSlice(out _, out var data) ? data : ArraySegment<byte>.Empty;
+            return ReadSlice(out _, out var data, out _) ? data : ArraySegment<byte>.Empty;
         }
 
         // False when nothing was read (empty socket, close, error); true with the decoded slice otherwise (possibly empty).
-        private bool ReadSlice(out int rawBytes, out ArraySegment<byte> data)
+        // net_ring: data stays empty and the slice is in the receive ring (decoded = its length).
+        private bool ReadSlice(out int rawBytes, out ArraySegment<byte> data, out int decoded)
         {
             rawBytes = 0;
+            decoded = 0;
             data = ArraySegment<byte>.Empty;
 
             if (_socket == null || _connection is { Retired: true })
@@ -630,7 +656,28 @@ namespace ClassicUO.Network
 
             try
             {
-                var size = _socket.Read(_compressedBuffer);
+                int limit = _compressedBuffer.Length;
+
+                if (_recvRing != null)
+                {
+                    SyncRing();
+                    int room = _recvRing.WritableBytes;
+                    // a compressed byte decodes to at most 4 (NetRingTests): read only what is sure to fit
+                    limit = Math.Min(limit, _isCompressionEnabled ? room / 4 : room);
+
+                    if (limit <= 0)
+                    {
+                        if (!_ringFullLogged)
+                        {
+                            _ringFullLogged = true;
+                            Log.Warn($"[net-ring] receive ring full ({_recvRing.ReadableBytes} bytes unread): reading stops for this frame");
+                        }
+
+                        return false;
+                    }
+                }
+
+                var size = limit < _compressedBuffer.Length ? _socket.Read(_compressedBuffer, limit) : _socket.Read(_compressedBuffer);
 #if CUO_DEVTOOLS
                 if (Diagnostics.On && size > 0) DiagReadTimestamp = Stopwatch.GetTimestamp();
 #endif
@@ -651,7 +698,15 @@ namespace ClassicUO.Network
                 if (Harness.NetCapture.On) Harness.NetCapture.Inbound(span, _isCompressionEnabled);
 #endif
 
+                if (_recvRing != null)
+                {
+                    decoded = DecodeIntoRing(span);
+
+                    return decoded >= 0;
+                }
+
                 data = DecompressBuffer(segment);
+                decoded = data.Count;
 
                 return true;
             }
@@ -686,6 +741,7 @@ namespace ClassicUO.Network
         public void Flush()
         {
             ProcessSend();
+            ProcessSendExhausted();
 
             lock (_sendLock)
             {
@@ -754,6 +810,195 @@ namespace ClassicUO.Network
             }
         }
 
+        /// <summary>net_ring: the receive ring (null: the CircularBuffer path).</summary>
+        internal NetRing ReceiveRing => _recvRing;
+
+        /// <summary>net_ring: the bytes the last read added to the receive ring (taken once, for the checker shadow).</summary>
+        internal Span<byte> TakeRingSlice()
+        {
+            int n = _lastRingSlice;
+            _lastRingSlice = 0;
+
+            if (n == 0 || _recvRing == null)
+            {
+                return Span<byte>.Empty;
+            }
+
+            Span<byte> all = _recvRing.GetReadSpan();
+
+            return all.Slice(Math.Max(0, all.Length - n));
+        }
+
+        /// <summary>net_ring: a new connection (or the end of one) drops what the ring still holds of the old stream.</summary>
+        internal void SyncRing()
+        {
+            int generation = Volatile.Read(ref _generation);
+
+            if (_ringGeneration != generation)
+            {
+                _ringGeneration = generation;
+                _lastRingSlice = 0;
+                _recvRing.DiscardReadable();
+            }
+        }
+
+        private void EnsureRings()
+        {
+            if (_ringsTried || !NetRings.On)
+            {
+                return;
+            }
+
+            _ringsTried = true;
+            NetRing recv = NetRings.Create(NetRings.ReceiveSizeOverride ?? NetRings.ReceiveSize, "receive");
+            NetRing send = recv == null ? null : NetRings.Create(NetRings.SendSizeOverride ?? NetRings.SendSize, "send");
+
+            if (send == null)
+            {
+                recv?.Dispose();
+
+                return;
+            }
+
+            _recvRing = recv;
+            _ringGeneration = Volatile.Read(ref _generation);
+
+            lock (_sendLock)
+            {
+                _sendRing = send;
+            }
+        }
+
+        // the decoded slice goes straight into the ring: -1 when the Huffman stream is broken (the connection is ended)
+        private int DecodeIntoRing(Span<byte> raw)
+        {
+            Span<byte> dest = _recvRing.GetWriteSpan();
+            int size = raw.Length;
+
+            if (!_isCompressionEnabled)
+            {
+                raw.CopyTo(dest);
+            }
+            else
+            {
+                size = Math.Min(dest.Length, BUFF_SIZE);
+
+                if (!_huffman.Decompress(raw, dest, ref size))
+                {
+                    Terminate(SocketError.SocketError);
+
+                    return -1;
+                }
+            }
+
+            _recvRing.CommitWrite(size);
+            _lastRingSlice = size;
+
+            return size;
+        }
+
+        // net_ring, under _sendLock: a packet that does not fit flushes the ring in place first; still no room (the socket
+        // took nothing within its 5 s budget, or failed) marks the connection exhausted, which the next Flush ends.
+        private bool EnqueueRingLocked(Span<byte> message)
+        {
+            if (_sendExhausted)
+            {
+                return false;
+            }
+
+            if (message.Length > _sendRing.WritableBytes)
+            {
+                try
+                {
+                    FlushRingLocked();
+                }
+                catch (Exception e)
+                {
+                    Log.Error($"[net] send failed while the send ring was full: {e.Message}");
+                }
+            }
+
+            if (message.Length > _sendRing.WritableBytes)
+            {
+                _sendExhausted = true;
+
+                return false;
+            }
+
+            message.CopyTo(_sendRing.GetWriteSpan());
+            _sendRing.CommitWrite(message.Length);
+#if CUO_DEVTOOLS
+            if (NetRings.CheckOn) _sendStream.Enqueue(message);
+#endif
+
+            return true;
+        }
+
+        private void FlushRingLocked()
+        {
+            while (_sendRing.ReadableBytes > 0)
+            {
+                Span<byte> pending = _sendRing.GetReadSpan();
+#if CUO_DEVTOOLS
+                long diagSendStart = Diagnostics.On ? Stopwatch.GetTimestamp() : 0;
+#endif
+                _socket.Send((ReadOnlySpan<byte>)pending);
+#if CUO_DEVTOOLS
+                if (Diagnostics.On)
+                {
+                    Diagnostics.PingWrite(Statistics, _diagWritten, _diagWritten + pending.Length, diagSendStart, Stopwatch.GetTimestamp());
+                    _diagWritten += pending.Length;
+                }
+
+                if (NetRings.CheckOn)
+                {
+                    CheckSent(pending);
+                }
+#endif
+                _sendRing.CommitRead(pending.Length);
+            }
+        }
+
+        private void ProcessSendExhausted()
+        {
+            bool exhausted;
+
+            lock (_sendLock)
+            {
+                exhausted = _sendExhausted;
+            }
+
+            if (exhausted)
+            {
+                Log.Error("[net] send buffer exhausted: the socket took no data within its 5 s budget; dropping the connection");
+                DisconnectReason = "Send buffer exhausted";
+                Terminate(SocketError.NoBufferSpaceAvailable);
+            }
+        }
+#if CUO_DEVTOOLS
+
+        // net_ring checker: the CircularBuffer queue as a shadow of the send ring; every flushed byte must match it
+        private void CheckSent(ReadOnlySpan<byte> sent)
+        {
+            NetRings.CheckedSends++;
+
+            while (!sent.IsEmpty)
+            {
+                int n = _sendStream.Dequeue(_sendingBuffer, 0, Math.Min(sent.Length, _sendingBuffer.Length));
+
+                if (n <= 0 || !sent.Slice(0, n).SequenceEqual(_sendingBuffer.AsSpan(0, n)))
+                {
+                    NetRings.Mismatch($"send: {sent.Length} bytes flushed from the ring did not match the shadow queue ({_sendStream.Length} left)");
+                    _sendStream.Clear();
+
+                    return;
+                }
+
+                sent = sent.Slice(n);
+            }
+        }
+#endif
+
         private void ProcessEncryption(Span<byte> buffer)
         {
             if (!_isCompressionEnabled)
@@ -771,7 +1016,12 @@ namespace ClassicUO.Network
             {
                 lock (_sendLock)
                 {
-                    while (_sendStream.Length > 0)
+                    if (_sendRing != null)
+                    {
+                        FlushRingLocked();
+                    }
+
+                    while (_sendRing == null && _sendStream.Length > 0)
                     {
                         var read = _sendStream.Dequeue(_sendingBuffer, 0, _sendingBuffer.Length);
 

@@ -106,16 +106,7 @@ namespace ClassicUO.Network
 
                         if (item != null)
                         {
-                            BulletinBoardGump bulletinBoard = UIManager.GetGump<BulletinBoardGump>(
-                                serial
-                            );
-                            bulletinBoard?.Dispose();
-
-                            int x = (Client.Game.ClientBounds.Width >> 1) - 245;
-                            int y = (Client.Game.ClientBounds.Height >> 1) - 205;
-
-                            bulletinBoard = new BulletinBoardGump(world, item, x, y, p.ReadUTF8Safe(22)); //p.ReadCp1252(22));
-                            UIManager.Add(bulletinBoard);
+                            GumpFactory.OpenBulletinBoard(world, item, p.ReadUTF8Safe(22)); //p.ReadCp1252(22));
 
                             item.Opened = true;
                         }
@@ -204,22 +195,7 @@ namespace ClassicUO.Network
                             string msg = sb.ToString();
                             byte variant = (byte)(1 + (poster == world.Player.Name ? 1 : 0));
 
-                            UIManager.Add(
-                                new BulletinBoardItem(
-                                    world,
-                                    boardSerial,
-                                    serial,
-                                    poster,
-                                    subject,
-                                    dataTime,
-                                    msg.TrimStart(),
-                                    variant
-                                )
-                                {
-                                    X = 40,
-                                    Y = 40
-                                }
-                            );
+                            GumpFactory.OpenBulletinMessage(world, boardSerial, serial, poster, subject, dataTime, msg.TrimStart(), variant);
 
                             sb.Dispose();
                         }
@@ -253,89 +229,28 @@ namespace ClassicUO.Network
 
             if (menuid != 0)
             {
-                MenuGump gump = new MenuGump(world, serial, id, name) { X = 100, Y = 100 };
-
-                int posX = 0;
+                var items = new MenuItemData[count];
 
                 for (int i = 0; i < count; i++)
                 {
                     ushort graphic = p.ReadUInt16();
                     ushort hue = p.ReadUInt16();
-                    name = p.ReadCp1252(p.ReadByte());
-
-                    ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(graphic);
-
-                    if (artInfo.UV.Width != 0 && artInfo.UV.Height != 0)
-                    {
-                        int posY = artInfo.UV.Height;
-
-                        if (posY >= 47)
-                        {
-                            posY = 0;
-                        }
-                        else
-                        {
-                            posY = (47 - posY) >> 1;
-                        }
-
-                        gump.AddItem(graphic, hue, name, posX, posY, i + 1);
-
-                        posX += artInfo.UV.Width;
-                    }
+                    items[i] = new MenuItemData(graphic, hue, p.ReadCp1252(p.ReadByte()));
                 }
 
-                UIManager.Add(gump);
+                GumpFactory.OpenMenu(world, serial, id, name, items);
             }
             else
             {
-                GrayMenuGump gump = new GrayMenuGump(world, serial, id, name)
-                {
-                    X = (Client.Game.ClientBounds.Width >> 1) - 200,
-                    Y = (Client.Game.ClientBounds.Height >> 1) - ((121 + count * 21) >> 1)
-                };
-
-                int offsetY = 35 + gump.Height;
-                int gumpHeight = 70 + offsetY;
+                var names = new string[count];
 
                 for (int i = 0; i < count; i++)
                 {
                     p.Skip(4);
-                    name = p.ReadCp1252(p.ReadByte());
-
-                    int addHeight = gump.AddItem(name, offsetY);
-
-                    if (addHeight < 21)
-                    {
-                        addHeight = 21;
-                    }
-
-                    offsetY += addHeight - 1;
-                    gumpHeight += addHeight;
+                    names[i] = p.ReadCp1252(p.ReadByte());
                 }
 
-                offsetY += 5;
-
-                gump.Add(
-                    new Button(0, 0x1450, 0x1451, 0x1450)
-                    {
-                        ButtonAction = ButtonAction.Activate,
-                        X = 70,
-                        Y = offsetY
-                    }
-                );
-
-                gump.Add(
-                    new Button(1, 0x13B2, 0x13B3, 0x13B2)
-                    {
-                        ButtonAction = ButtonAction.Activate,
-                        X = 200,
-                        Y = offsetY
-                    }
-                );
-
-                gump.SetHeight(gumpHeight);
-                gump.WantUpdateSize = false;
-                UIManager.Add(gump);
+                GumpFactory.OpenGrayMenu(world, serial, id, name, names);
             }
         }
 
@@ -395,29 +310,14 @@ namespace ClassicUO.Network
             ushort width = p.ReadUInt16();
             ushort height = p.ReadUInt16();
 
-            MapGump gump = new MapGump(world, serial, gumpid, width, height);
-            SpriteInfo multiMapInfo;
+            int? facet = null;
 
             if (p[0] == 0xF5 || Client.Game.UO.Version >= Utility.ClientVersion.CV_308Z)
             {
-                ushort facet = 0;
-
-                if (p[0] == 0xF5)
-                {
-                    facet = p.ReadUInt16();
-                }
-
-                multiMapInfo = Client.Game.UO.MultiMaps.GetMap(facet, width, height, startX, startY, endX, endY);
-            }
-            else
-            {
-                multiMapInfo = Client.Game.UO.MultiMaps.GetMap(null, width, height, startX, startY, endX, endY);
+                facet = p[0] == 0xF5 ? p.ReadUInt16() : 0;
             }
 
-            if (multiMapInfo.Texture != null)
-                gump.SetMapTexture(multiMapInfo.Texture);
-
-            UIManager.Add(gump);
+            GumpFactory.OpenMap(world, serial, gumpid, width, height, facet, startX, startY, endX, endY);
 
             Item it = world.FindItem(serial);
 
@@ -454,13 +354,7 @@ namespace ClassicUO.Network
                     ? p.ReadUTF8Safe(30)
                     : p.ReadUTF8Safe(p.ReadUInt16());
 
-                UIManager.Add(
-                    new ModernBookGump(world, serial, page_count, title, author, editable, oldpacket)
-                    {
-                        X = 100,
-                        Y = 100
-                    }
-                );
+                GumpFactory.OpenBook(world, serial, page_count, title, author, editable, oldpacket);
 
                 NetClient.Socket.Send_BookPageDataRequest(serial, 1);
             }
@@ -488,21 +382,7 @@ namespace ClassicUO.Network
             p.Skip(2);
             ushort graphic = p.ReadUInt16();
 
-            ref readonly var gumpInfo = ref Client.Game.UO.Gumps.GetGump(0x0906);
-
-            int x = (Client.Game.ClientBounds.Width >> 1) - (gumpInfo.UV.Width >> 1);
-            int y = (Client.Game.ClientBounds.Height >> 1) - (gumpInfo.UV.Height >> 1);
-
-            ColorPickerGump gump = UIManager.GetGump<ColorPickerGump>(serial);
-
-            if (gump == null || gump.IsDisposed || gump.Graphic != graphic)
-            {
-                gump?.Dispose();
-
-                gump = new ColorPickerGump(world, serial, graphic, x, y, null);
-
-                UIManager.Add(gump);
-            }
+            GumpFactory.OpenColorPicker(world, serial, graphic);
         }
 
         private static void ASCIIPrompt(World world, ref NetReader p)
@@ -602,11 +482,7 @@ namespace ClassicUO.Network
 
             string body = p.ReadBigUni();
 
-            UIManager.GetGump<ProfileGump>(serial)?.Dispose();
-
-            UIManager.Add(
-                new ProfileGump(world, serial, header, footer, body, serial == world.Player.Serial)
-            );
+            GumpFactory.OpenProfile(world, serial, header, footer, body);
         }
 
         private static void DisplayQuestArrow(World world, ref NetReader p)
