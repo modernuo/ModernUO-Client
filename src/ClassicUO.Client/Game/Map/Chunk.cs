@@ -102,10 +102,25 @@ namespace ClassicUO.Game.Map
         /// </summary>
         internal int StaticOverLeft, StaticOverRight, StaticOverUp;
 
+        /// <summary>light_occlusion (GameScene.CollectOccluders): the lowest and highest Z of the chunk's statics, multi
+        /// components and items, grow-only like the overhang (empty: low above high), so a light's occluder search skips the
+        /// chunks whose sprites cannot reach it whatever their art size or elevation.</summary>
+        internal int OccZLo = int.MaxValue, OccZHi = int.MinValue;
+
         private bool _loading;
 
-        private void RecordOverhang(ushort graphic)
+        private void RecordOverhang(ushort graphic, int z)
         {
+            if (z < OccZLo)
+            {
+                OccZLo = z;
+            }
+
+            if (z > OccZHi)
+            {
+                OccZHi = z;
+            }
+
             ArtLoader arts = Client.Game?.UO?.FileManager?.Arts;
 
             if (arts == null || !arts.TrySize(graphic + 0x4000, out int w, out int h))
@@ -323,6 +338,8 @@ namespace ClassicUO.Game.Map
 
             bool gargoyle = GameObject.PlayerIsGargoyle(_world);
             StaticOverLeft = StaticOverRight = StaticOverUp = 0;
+            OccZLo = int.MaxValue;
+            OccZHi = int.MinValue;
             _loading = true;
 
             foreach (ref readonly var sb in block.Statics)
@@ -474,7 +491,7 @@ namespace ClassicUO.Game.Map
 
                 if (obj is Item { IsMulti: false } overItem)
                 {
-                    RecordOverhang(overItem.Graphic);
+                    RecordOverhang(overItem.Graphic, overItem.Z);
                 }
 
                 return;
@@ -487,7 +504,7 @@ namespace ClassicUO.Game.Map
 
             if (node is Static || node is Multi)
             {
-                RecordOverhang(node.Graphic);
+                RecordOverhang(node.Graphic, node.Z);
             }
 
             int cell = obj.TileCell;

@@ -172,6 +172,20 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary>The art <see cref="DrawStaticAnimated"/> draws for <paramref name="graphic"/> at (x, y): the animated frame
+        /// (returned), its sprite and top left (<paramref name="left"/>, <paramref name="top"/>). light_occlusion's masks resolve
+        /// statics and multi pieces through it, so a mask is the drawn sprite.</summary>
+        internal static ushort StaticArt(ushort graphic, int x, int y, out SpriteInfo art, out int left, out int top)
+        {
+            ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
+            ushort drawn = (ushort)(graphic + index.AnimOffset);
+            art = Client.Game.UO.Arts.GetArt(drawn);
+            left = x - ((art.UV.Width >> 1) - 22);
+            top = y - (art.UV.Height - 44);
+
+            return drawn;
+        }
+
         protected static void DrawStaticAnimated(
             UltimaBatcher2D batcher,
             ushort graphic,
@@ -183,20 +197,13 @@ namespace ClassicUO.Game.GameObjects
             bool isWet = false
         )
         {
-            ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
-
-            graphic = (ushort)(graphic + index.AnimOffset);
-
-            ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(graphic);
+            ushort drawn = StaticArt(graphic, x, y, out SpriteInfo artInfo, out x, out y);
 
             if (artInfo.Texture != null)
             {
-                index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
+                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(drawn + 0x4000);
                 index.Width = (short)((artInfo.UV.Width >> 1) - 22);
                 index.Height = (short)(artInfo.UV.Height - 44);
-
-                x -= index.Width;
-                y -= index.Height;
 
                 Vector2 pos = new Vector2(x, y);
 
