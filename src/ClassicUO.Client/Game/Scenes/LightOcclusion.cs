@@ -10,14 +10,17 @@ namespace ClassicUO.Game.Scenes
     /// <summary>
     /// light_occlusion (light-edges, default off): the light layer is screen-space additive quads without depth, so at the
     /// Moonglow bank the halo of a lit window was drawn over the window and wall in front of it. With the switch on, the light
-    /// pass (GameScene.DrawLight) writes the art of every occluder drawn in front of a light's source into the light target's
-    /// stencil and draws that light where the stencil does not hold it.
-    /// Owner rule (2026-11-22): a light's glow passes through its own emitter only. Any other object drawn in front of the
-    /// source hides it, whatever its kind: another window (lit or not), a wall, a light-flagged static, a ground item. In
-    /// front means drawn after the source (<see cref="InFront"/>: a later diagonal, or the source's tile higher up). The
-    /// exceptions are the tiles that never hid anything: translucent ones (water, glass: drawn see-through), internal
-    /// (no-draw) ones, and flat walkable surfaces (floors), which receive the glow rather than cover the source.
-    /// Mobiles do not occlude.
+    /// pass (GameScene.DrawLight) writes the art of every occluder of a light into the light target's stencil and draws that
+    /// light where the stencil does not hold it.
+    /// Owner rule (2026-11-22, restated for round 4): a light's glow passes through its own emitter only; another object
+    /// rendered over the light, between the viewer and the source, hides it, whatever its kind (another window, lit or not,
+    /// a wall, a light-flagged static, a ground item). An occluder is drawn after the source (<see cref="InFront"/>) and its
+    /// art covers the source's light point on screen (<see cref="LightPoint"/>, <see cref="CoverPoint"/> and the art's pixel
+    /// mask). Objects the source stands on, or that stand beside it on the same wall line, are drawn after it but do not cover
+    /// its point: they are lit by it, not blockers (round 3 masked every object drawn after the source, which cut the candles' glow on the
+    /// bank counter, the windows' halo on their own wall and the street lamps' halos on fences, roofs and flowers).
+    /// Tiles that never hide anything: translucent ones (water, glass: drawn see-through), internal (no-draw) ones, and flat
+    /// walkable surfaces (floors). Mobiles do not occlude.
     /// CUO_LIGHT_OCCLUSION_CHECK=1 compares each light's occluders (the window <see cref="Window"/> walks) with a reference
     /// scan of every tile up to <see cref="ReferenceReach"/> around the source, in both states, and logs each difference.
     /// </summary>
@@ -65,9 +68,33 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>The light pass masks a light's halo over an object with tiledata <paramref name="data"/> at (dx, dy, dz)
         /// from its source: only with the switch on (<paramref name="on"/>), never over the light's own emitter
-        /// (<paramref name="ownEmitter"/>), in front of the source, an occluder.</summary>
-        public static bool Hides(bool on, bool ownEmitter, int dx, int dy, int dz, ref StaticTiles data) =>
-            on && !ownEmitter && InFront(dx, dy, dz) && OccluderData(ref data);
+        /// (<paramref name="ownEmitter"/>), drawn after the source, an occluder, and its art covering the source's light point
+        /// (<paramref name="coversSource"/>: <see cref="CoverPoint"/> and the art's pixel there).</summary>
+        public static bool Hides(bool on, bool ownEmitter, int dx, int dy, int dz, ref StaticTiles data, bool coversSource) =>
+            on && !ownEmitter && coversSource && InFront(dx, dy, dz) && OccluderData(ref data);
+
+        /// <summary>The light point an occluder must cover: the centre of the emitter's visible art (its art w x h anchored at
+        /// (ax, ay), View.DrawStatic; its visible bounds bx, by, bw, bh in the art): a window's glass, a lamp post's upper
+        /// post, a candle. Pieces drawn after the emitter that overlap only the edge of its art (the next piece of the same wall
+        /// line) and low objects in front of its foot (the counter a candle stands on, the fence before a street lamp) do not
+        /// cover it.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void LightPoint(int ax, int ay, int w, int h, int bx, int by, int bw, int bh, out int px, out int py)
+        {
+            px = ax - ((w >> 1) - 22) + bx + (bw >> 1);
+            py = ay - (h - 44) + by + (bh >> 1);
+        }
+
+        /// <summary>The art (w x h) of a static anchored at (ax, ay) (View.DrawStatic) holds the screen point (px, py): its
+        /// pixel there is (lx, ly) in the art.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool CoverPoint(int ax, int ay, int w, int h, int px, int py, out int lx, out int ly)
+        {
+            lx = px - (ax - ((w >> 1) - 22));
+            ly = py - (ay - (h - 44));
+
+            return (uint)lx < (uint)w && (uint)ly < (uint)h;
+        }
 
         /// <summary>The tile window (S = dx + dy, D = dx - dy, from the light's source tile) whose occluders, with the art
         /// and Z <see cref="ArtSide"/>/<see cref="ArtUp"/>/<see cref="ZBelow"/>/<see cref="ZAbove"/> assume, can overlap the

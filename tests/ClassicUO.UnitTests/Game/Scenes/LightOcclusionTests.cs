@@ -5,10 +5,10 @@ using Xunit;
 namespace ClassicUO.UnitTests.Game.Scenes
 {
     /// <summary>
-    /// light_occlusion (light-edges): which objects hide a light's halo (drawn after the source and not its own emitter, not a
-    /// flat walkable surface, translucent or internal tile), the switch in both states, and the tile window the light pass walks for occluders: every occluder whose art
-    /// overlaps the light quad (within the art and Z the window assumes) lies in it. Moonglow bank: a lit window on the far
-    /// (north) wall, the near (south) wall several tiles in front.
+    /// light_occlusion (light-edges): which objects hide a light's halo (drawn after the source, not its own emitter, not a
+    /// flat walkable surface, translucent or internal tile, and covering the source's light point), the switch in both states,
+    /// and the tile window the light pass walks for occluders: every occluder whose art overlaps a rectangle (within the art
+    /// and Z the window assumes) lies in it. The owner's spots with the real layout, art and tiledata: LightOcclusionSceneTests.
     /// </summary>
     public sealed class LightOcclusionTests
     {
@@ -46,12 +46,43 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // light flag does not let the glow through: only the light's own emitter does
             StaticTiles nearer = LitWindow();
 
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 0, 0, ref nearer));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 1, 0, ref nearer));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 2, 3, 0, ref nearer));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 0, 0, ref nearer, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 1, 0, ref nearer, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 2, 3, 0, ref nearer, true));
             // the emitter itself
-            Assert.False(LightOcclusion.Hides(on, true, 0, 0, 0, ref nearer));
-            Assert.False(LightOcclusion.Hides(on, true, 1, 0, 0, ref nearer));
+            Assert.False(LightOcclusion.Hides(on, true, 0, 0, 0, ref nearer, true));
+            Assert.False(LightOcclusion.Hides(on, true, 1, 0, 0, ref nearer, true));
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Objects_drawn_after_the_source_that_do_not_cover_its_light_point_never_hide(bool on)
+        {
+            // round 4 (owner 2026-11-22): the counter under a candle, the next piece of a window's wall line, the fence before a
+            // street lamp are drawn after the source but do not stand between the viewer and it
+            StaticTiles wall = Wall(), window = LitWindow(), counter = new StaticTiles { Flags = TileFlag.Surface, Height = 6 };
+
+            Assert.False(LightOcclusion.Hides(on, false, 1, 0, 0, ref window, false));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 1, 0, ref wall, false));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 0, 20, ref window, false));
+            Assert.False(LightOcclusion.Hides(on, false, 1, 1, -4, ref counter, false));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 1, 1, -4, ref counter, true));
+        }
+
+        [Fact]
+        public void Light_point_is_the_centre_of_the_emitters_visible_art_and_cover_point_maps_into_the_art()
+        {
+            // a 44x112 wall piece anchored at (100, 200): its art starts at (100, 132); visible bounds (12, 0, 32, 112)
+            LightOcclusion.LightPoint(100, 200, 44, 112, 12, 0, 32, 112, out int px, out int py);
+            Assert.Equal((128, 188), (px, py));
+            Assert.True(LightOcclusion.CoverPoint(100, 200, 44, 112, px, py, out int lx, out int ly));
+            Assert.Equal((28, 56), (lx, ly));
+            // the next piece of a line along y, 22 px left and down: its art ends at x 122
+            Assert.False(LightOcclusion.CoverPoint(78, 222, 44, 112, px, py, out _, out _));
+            // a 22 px wide lamp post art is centred on the tile
+            LightOcclusion.LightPoint(100, 200, 22, 100, 0, 0, 22, 100, out px, out py);
+            Assert.Equal((122, 194), (px, py));
         }
 
         [Theory]
@@ -62,12 +93,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             StaticTiles wall = Wall();
 
             // the near wall 6 tiles south of the window, straight below it on screen and to either side; the same wall line
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 6, 6, 0, ref wall));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, -1, 7, 0, ref wall));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 9, 5, -20, ref wall));
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 3, 0, 0, ref wall));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 6, 6, 0, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, -1, 7, 0, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 9, 5, -20, ref wall, true));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 3, 0, 0, ref wall, true));
             // on the source's tile, higher up
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 0, 5, ref wall));
+            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 0, 5, ref wall, true));
         }
 
         [Theory]
@@ -78,12 +109,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             StaticTiles wall = Wall(), floor = Floor();
 
             // drawn before the source: behind it, the same diagonal, its tile lower down
-            Assert.False(LightOcclusion.Hides(on, false, -3, 0, 0, ref wall));
-            Assert.False(LightOcclusion.Hides(on, false, -2, -2, 0, ref wall));
-            Assert.False(LightOcclusion.Hides(on, false, 2, -2, 0, ref wall));
-            Assert.False(LightOcclusion.Hides(on, false, 0, 0, -5, ref wall));
+            Assert.False(LightOcclusion.Hides(on, false, -3, 0, 0, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, -2, -2, 0, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, 2, -2, 0, ref wall, true));
+            Assert.False(LightOcclusion.Hides(on, false, 0, 0, -5, ref wall, true));
             // the floor in front of the source is lit
-            Assert.False(LightOcclusion.Hides(on, false, 4, 4, 0, ref floor));
+            Assert.False(LightOcclusion.Hides(on, false, 4, 4, 0, ref floor, true));
         }
 
         [Fact]

@@ -39,17 +39,16 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        // one light of the light pass. light_occlusion on: the art of the occluders in front of its source goes into the
-        // stencil (no colour) with a fresh reference, and the light is drawn where the stencil does not hold it
+        // one light of the light pass. light_occlusion on: the art of the occluders covering its source's light point goes
+        // into the stencil (no colour) with a fresh reference, and the light is drawn where the stencil does not hold it
         private void DrawLight(UltimaBatcher2D batcher, ref Matrix matrix, ref FrameLights.Entry l, in SpriteInfo lightInfo, Vector3 hue, ref bool stencilSet)
         {
             Vector2 pos = new Vector2(l.DrawX - lightInfo.UV.Width * 0.5f, l.DrawY - lightInfo.UV.Height * 0.5f);
-            int left = (int)pos.X, top = (int)pos.Y, right = left + lightInfo.UV.Width, bottom = top + lightInfo.UV.Height;
             int n = 0;
 
             if ((_lightOcclusion || LightOcclusion.Check) && l.Source != null)
             {
-                n = CollectOccluders(ref l, left, top, right, bottom, LightOcclusion.Check, out _);
+                n = CollectOccluders(ref l, LightOcclusion.Check, out _);
             }
 
             if (!_lightOcclusion || n == 0)
@@ -132,17 +131,35 @@ namespace ClassicUO.Game.Scenes
             _noColorBlend = new BlendState { ColorWriteChannels = ColorWriteChannels.None };
         }
 
-        // the occluders of light l whose art overlaps its quad, into _occluders (LightOcclusion); with check, compared with a
-        // reference scan of every tile up to ReferenceReach around the source
-        private int CollectOccluders(ref FrameLights.Entry l, int left, int top, int right, int bottom, bool check, out uint hash)
+        // the occluders of light l, whose art covers its light point (LightOcclusion.LightPoint), into _occluders
+        // (LightOcclusion); with check, compared with a reference scan of every tile up to ReferenceReach around the source
+        private int CollectOccluders(ref FrameLights.Entry l, bool check, out uint hash)
         {
             ViewMargin.Anchor(l.SrcX, l.SrcY, l.SrcZ, _offset.X, _offset.Y, out int sax, out int say);
-            LightOcclusion.Window(sax, say, left, top, right, bottom, out int sLo, out int sHi, out int dLo, out int dHi);
             StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
+            int px = l.DrawX, py = l.DrawY;
+            GameObject src = l.Source;
+
+            // a static or item emitter: the centre of its visible art; a mobile's light: the glow's centre
+            if (!(src is Mobile))
+            {
+                ushort g = src is Item srcItem ? srcItem.DisplayedGraphic : src.Graphic;
+                ref ArtEntry srcEntry = ref Client.Game.UO.FileManager.Arts.GetEntry(g + 0x4000);
+                uint srcDrawn = (uint)(g + srcEntry.AnimOffset);
+                SpriteInfo srcArt = Client.Game.UO.Arts.GetArt(srcDrawn);
+                Rectangle b = Client.Game.UO.Arts.GetRealArtBounds(srcDrawn);
+
+                if (srcArt.Texture != null && b.Width > 0 && b.Height > 0)
+                {
+                    LightOcclusion.LightPoint(sax, say, srcArt.UV.Width, srcArt.UV.Height, b.X, b.Y, b.Width, b.Height, out px, out py);
+                }
+            }
+
+            LightOcclusion.Window(sax, say, px, py, px + 1, py + 1, out int sLo, out int sHi, out int dLo, out int dHi);
             int n = 0;
             hash = 0;
             // the source's own tile: what stands on it higher up
-            CollectTile(ref l, l.SrcX, l.SrcY, staticData, left, top, right, bottom, ref n, ref hash);
+            CollectTile(ref l, l.SrcX, l.SrcY, staticData, px, py, ref n, ref hash);
 
             for (int s = sLo; s <= sHi; s++)
             {
@@ -150,14 +167,14 @@ namespace ClassicUO.Game.Scenes
 
                 for (int d = d0; d <= dHi; d += 2)
                 {
-                    CollectTile(ref l, l.SrcX + ((s + d) >> 1), l.SrcY + ((s - d) >> 1), staticData, left, top, right, bottom, ref n, ref hash);
+                    CollectTile(ref l, l.SrcX + ((s + d) >> 1), l.SrcY + ((s - d) >> 1), staticData, px, py, ref n, ref hash);
                 }
             }
 
 #if CUO_DEVTOOLS
             if (check)
             {
-                CheckOccluders(ref l, left, top, right, bottom, n, hash, staticData, sLo, sHi, dLo, dHi);
+                CheckOccluders(ref l, px, py, n, hash, staticData, sLo, sHi, dLo, dHi);
             }
 #endif
 
@@ -165,8 +182,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         // one tile's occluders: its statics and multi pieces, and its ground items
-        private void CollectTile(ref FrameLights.Entry l, int tx, int ty, StaticTiles[] staticData, int left, int top, int right, int bottom,
-            ref int n, ref uint hash)
+        private void CollectTile(ref FrameLights.Entry l, int tx, int ty, StaticTiles[] staticData, int px, int py, ref int n, ref uint hash)
         {
             Chunk chunk = tx < 0 || ty < 0 ? null : _world.Map.GetChunk(tx, ty, false);
 
@@ -179,7 +195,7 @@ namespace ClassicUO.Game.Scenes
 
             for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
             {
-                if (Occluder(ref l, o, o.Graphic, staticData, left, top, right, bottom, out SpriteInfo art, out int x, out int y))
+                if (Occluder(ref l, o, o.Graphic, staticData, px, py, out SpriteInfo art, out int x, out int y))
                 {
                     hash += LightOcclusion.Mix(o.X, o.Y, o.Z, o.Graphic, false);
                     AddOccluder(n++, in art, x, y);
@@ -194,7 +210,7 @@ namespace ClassicUO.Game.Scenes
             foreach (ref readonly DynamicTileIndex.Entry en in chunk.Dynamic.Cell(cell))
             {
                 if (en.Obj is Item item && !item.IsMulti && !item.IsCorpse &&
-                    Occluder(ref l, item, item.DisplayedGraphic, staticData, left, top, right, bottom, out SpriteInfo art, out int x, out int y))
+                    Occluder(ref l, item, item.DisplayedGraphic, staticData, px, py, out SpriteInfo art, out int x, out int y))
                 {
                     hash += LightOcclusion.Mix(item.X, item.Y, item.Z, item.Graphic, true);
                     AddOccluder(n++, in art, x, y);
@@ -216,9 +232,10 @@ namespace ClassicUO.Game.Scenes
             o.DrawY = y;
         }
 
-        // a drawn static, multi piece or ground item, not light l's own emitter, in front of its source, that hides the light
-        // where its art is (LightOcclusion.Hides); with its art and draw position (View.DrawStaticAnimated)
-        private bool Occluder(ref FrameLights.Entry l, GameObject o, ushort graphic, StaticTiles[] staticData, int left, int top, int right, int bottom,
+        // a drawn static, multi piece or ground item, not light l's own emitter, drawn after its source, whose art covers the
+        // light point (px, py), so it hides the light where its art is (LightOcclusion.Hides); with its art and draw position
+        // (View.DrawStaticAnimated)
+        private bool Occluder(ref FrameLights.Entry l, GameObject o, ushort graphic, StaticTiles[] staticData, int px, int py,
             out SpriteInfo art, out int x, out int y)
         {
             art = default;
@@ -233,13 +250,14 @@ namespace ClassicUO.Game.Scenes
             ref StaticTiles data = ref staticData[o.Graphic];
 
             if (_noDrawRoofs && data.IsRoof ||
-                !LightOcclusion.Hides(true, ReferenceEquals(o, l.Source), o.X - l.SrcX, o.Y - l.SrcY, o.Z - l.SrcZ, ref data))
+                !LightOcclusion.Hides(true, ReferenceEquals(o, l.Source), o.X - l.SrcX, o.Y - l.SrcY, o.Z - l.SrcZ, ref data, true))
             {
                 return false;
             }
 
             ref ArtEntry entry = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
-            art = Client.Game.UO.Arts.GetArt((uint)(graphic + entry.AnimOffset));
+            uint drawn = (uint)(graphic + entry.AnimOffset);
+            art = Client.Game.UO.Arts.GetArt(drawn);
 
             if (art.Texture == null)
             {
@@ -248,7 +266,8 @@ namespace ClassicUO.Game.Scenes
 
             ViewMargin.Anchor(o.X, o.Y, o.Z, _offset.X, _offset.Y, out int ax, out int ay);
 
-            if (!LightOcclusion.ArtOverlaps(ax, ay, art.UV.Width, art.UV.Height, left, top, right, bottom))
+            if (!LightOcclusion.CoverPoint(ax, ay, art.UV.Width, art.UV.Height, px, py, out int lx, out int ly) ||
+                !Client.Game.UO.Arts.PixelCheck(drawn, lx, ly))
             {
                 return false;
             }
@@ -265,7 +284,7 @@ namespace ClassicUO.Game.Scenes
 
         // CUO_LIGHT_OCCLUSION_CHECK: every tile up to ReferenceReach around the source, the same occluder test; a different
         // count or hash means the window missed an occluder (art or Z beyond what it assumes)
-        private void CheckOccluders(ref FrameLights.Entry l, int left, int top, int right, int bottom, int n, uint hash, StaticTiles[] staticData,
+        private void CheckOccluders(ref FrameLights.Entry l, int px, int py, int n, uint hash, StaticTiles[] staticData,
             int sLo, int sHi, int dLo, int dHi)
         {
             Map.Map map = _world.Map;
@@ -291,7 +310,7 @@ namespace ClassicUO.Game.Scenes
 
                     for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
                     {
-                        if (Occluder(ref l, o, o.Graphic, staticData, left, top, right, bottom, out _, out _, out _))
+                        if (Occluder(ref l, o, o.Graphic, staticData, px, py, out _, out _, out _))
                         {
                             refCount++;
                             refHash += LightOcclusion.Mix(o.X, o.Y, o.Z, o.Graphic, false);
@@ -311,7 +330,7 @@ namespace ClassicUO.Game.Scenes
                     foreach (ref readonly DynamicTileIndex.Entry en in chunk.Dynamic.Cell(cell))
                     {
                         if (en.Obj is Item item && !item.IsMulti && !item.IsCorpse &&
-                            Occluder(ref l, item, item.DisplayedGraphic, staticData, left, top, right, bottom, out _, out _, out _))
+                            Occluder(ref l, item, item.DisplayedGraphic, staticData, px, py, out _, out _, out _))
                         {
                             refCount++;
                             refHash += LightOcclusion.Mix(item.X, item.Y, item.Z, item.Graphic, true);
