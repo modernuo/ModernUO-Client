@@ -191,7 +191,7 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    float stat = land ? GeoDepth.Land(sy, z) : GeoDepth.Static(tx, ty, z, height, wall, flat, buried, sx, sy);
+                    float stat = land ? GeoDepth.Land(tx, ty, z, sx, sy) : GeoDepth.Static(tx, ty, z, height, wall, flat, buried, sx, sy);
                     bool newFront = GeoDepth.MobileBiased(ax, ay, mz, sx, sy) > stat;
                     samples++;
 

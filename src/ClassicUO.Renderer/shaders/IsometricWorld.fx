@@ -223,6 +223,7 @@ float GeoCam; // the integer tile sum the frame's depths are relative to (Legacy
 
 static const float GEO_SCALE = 1.0 / 2500.0; // WorldRenderer.GeoScale: tile sums -> depth, +-1250 around GeoCam
 static const float GEO_KEY = -0.77;          // the key's tile sum: Gpu's (D - Dcam) / 100 + 0.5 for D = 100 key
+static const float GEO_FLAT_DROP = 1.5;      // GeoDepth.FlatDrop: carried in a flat's base; its floor (the back edges) adds it back
 
 struct PS_GEO_INPUT
 {
@@ -264,10 +265,12 @@ float GeoSum(float4 g)
 		return b + max(s, min(v, 1.0));
 	if (cls == 3.0) // wall: the back edges
 		return b + s;
-	if (cls == 4.0) // flat: its plane
+	if (cls == 4.0) // flat: its plane, never behind its tile's back edges (render-order-1, GeoDepth.FlatFloored)
+		return b + max(v, s + GEO_FLAT_DROP);
+	if (cls == 6.0) // wet flat (wet_surface_depth): its plane
 		return b + v;
-	if (cls == 5.0) // mobile composite: billboard, ground plane below the centre row, own tile's front faces
-		return b + max(0.0, min(v, 1.0 - s));
+	if (cls == 5.0) // mobile composite: billboard, ground plane below the centre row, the tile row's front faces (GeoDepth.FrontFaces)
+		return b + max(0.0, min(v, abs(1.0 - fmod(s, 2.0))));
 
 	return b; // 1: linear (land corners)
 }

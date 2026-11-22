@@ -18,8 +18,14 @@ namespace ClassicUO.Renderer
     /// </summary>
     public static class LegacyGeo
     {
-        /// <summary>Shape classes (IsometricWorld.fx GeoSum): per-vertex linear (land corners), box, wall, flat, mobile composite.</summary>
-        public const int Linear = 1, Box = 2, Wall = 3, Flat = 4, Mobile = 5;
+        /// <summary>Shape classes (IsometricWorld.fx GeoSum): per-vertex linear (land corners), box, wall, flat (its base carries
+        /// <see cref="FlatDrop"/>; floored at its tile's back edges, Uo.Render.GeoDepth.FlatFloored), mobile composite, and a wet
+        /// flat (wet_surface_depth: its base carries GeoDepth.WetDrop, no floor).</summary>
+        public const int Linear = 1, Box = 2, Wall = 3, Flat = 4, Mobile = 5, FlatWet = 6;
+
+        /// <summary>Uo.Render.GeoDepth.FlatDrop (IsometricWorld.fx GEO_FLAT_DROP): the drop in a <see cref="Flat"/>'s base, which its
+        /// floor adds back.</summary>
+        public const float FlatDrop = 1.5f;
 
         /// <summary>TexCoord.z = class · ClassStride + LocalOffset + local; |local| is clamped to LocalMax.</summary>
         public const float ClassStride = 64f, LocalOffset = 32f, LocalMax = 30f;
@@ -95,8 +101,9 @@ namespace ClassicUO.Renderer
             {
                 Box => b + MathF.Max(s, MathF.Min(v, 1f)),
                 Wall => b + s,
-                Flat => b + v,
-                Mobile => b + MathF.Max(0f, MathF.Min(v, 1f - s)),
+                Flat => b + MathF.Max(v, s + FlatDrop),
+                FlatWet => b + v,
+                Mobile => b + MathF.Max(0f, MathF.Min(v, MathF.Abs(1f - (s - 2f * MathF.Floor(s * 0.5f))))),
                 _ => b
             };
         }

@@ -90,7 +90,10 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             for (int sy = centreRow - 80; sy <= centreRow + 22; sy++)
             {
-                float water = GeoDepth.Static(MX + 1, MY, WaterZ, 0, false, true, false, ax, sy, wet);
+                // render-order-1: the water tile whose diamond holds the pixel (a flat is floored at its tile's back edges)
+                float a = ax / 22f, b = (sy + 22 + 4 * WaterZ) / 22f;
+                int wx = (int)MathF.Floor((a + b) / 2f), wy = (int)MathF.Floor((b - a) / 2f);
+                float water = GeoDepth.Static(wx, wy, WaterZ, 0, false, true, false, ax, sy, wet);
 
                 if (water > GeoDepth.MobileBiased(ax, ay, mobileZ, ax, sy))
                 {
@@ -104,8 +107,10 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [Fact]
         public void DepthModelWaterlineFollowsTheWaterHeight()
         {
-            // the report: 10 z under the surface; FlatDrop's line is 7 px above the centre row, WetDrop's 38 (true: 40)
-            Waterline(false, FloorZ, out int c).Should().Be(c - 7);
+            // the report: 10 z under the surface; FlatDrop's line is 7 px above the centre row, WetDrop's 38 (true: 40).
+            // render-order-1: with the flat floored at its back edges, the water tile ahead of the mobile covers its billboard
+            // from that tile's top vertex, 18 px above the centre row
+            Waterline(false, FloorZ, out int c).Should().Be(c - 18);
             Waterline(true, FloorZ, out c).Should().Be(c - 38);
 
             // 5 z under (wfd_DSm10): FlatDrop hid nothing above the feet; WetDrop cuts 17 px above the centre (true: 20)
