@@ -406,15 +406,17 @@ namespace ClassicUO
             SetScene(new LoginScene(UO.World));
 #endif
             SetWindowPositionBySettings();
+            LogDisplayAndAdapter();
         }
 
         protected override void UnloadContent()
         {
             SDL_GetWindowBordersSize(Window.Handle, out int top, out int left, out _, out _);
 
+            // negative on a monitor left of or above the primary (WindowPlacement)
             Settings.GlobalSettings.WindowPosition = new Point(
-                Math.Max(0, Window.ClientBounds.X - left),
-                Math.Max(0, Window.ClientBounds.Y - top)
+                Window.ClientBounds.X - left,
+                Window.ClientBounds.Y - top
             );
 
             Audio?.StopMusic();
@@ -758,52 +760,6 @@ namespace ClassicUO
         public void RestoreWindow()
         {
             SDL_RestoreWindow(Window.Handle);
-        }
-
-        public void SetWindowPositionBySettings()
-        {
-            var borderSizesRetrieved = SDL_GetWindowBordersSize(Window.Handle, out int top, out int left, out _, out _);
-
-            if (!borderSizesRetrieved)
-            {
-                top = 0;
-                left = 0;
-            }
-
-            if (Settings.GlobalSettings.WindowPosition.HasValue)
-            {
-                int x = left + Settings.GlobalSettings.WindowPosition.Value.X;
-                int y = top + Settings.GlobalSettings.WindowPosition.Value.Y;
-                x = Math.Max(0, x);
-                y = Math.Max(0, y);
-
-                SDL_Point desiredStartPoint = new() { x = x, y = y };
-                var displayId = SDL_GetDisplayForPoint(ref desiredStartPoint);
-                if (displayId <= 0)
-                {
-                    // Make sure the window is actually in view and not out of bounds
-                    SetWindowPosition(left, top);
-                }
-
-                var boundsRetrieved = SDL_GetDisplayUsableBounds(displayId, out SDL_Rect displayBounds);
-                if (!boundsRetrieved)
-                {
-                    return; // we have no clue - the user is unfortunately on their own
-                }
-
-                if (x < displayBounds.x || x >= displayBounds.x + displayBounds.w)
-                {
-                    // Make sure the window is actually in view and not out of bounds
-                    x = left + displayBounds.x;
-                }
-
-                if (y < displayBounds.y || y >= displayBounds.y + displayBounds.h)
-                {
-                    y = top + displayBounds.y;
-                }
-
-                SetWindowPosition(x, y);
-            }
         }
 
         // L1: the per-frame network drain. CUO_NET_CAP_BYTES / CUO_NET_CAP_PACKETS override the caps for measurements

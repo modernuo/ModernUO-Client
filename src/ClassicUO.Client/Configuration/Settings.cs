@@ -84,6 +84,11 @@ namespace ClassicUO.Configuration
         [JsonConverter(typeof(NullablePoint2Converter))] [JsonPropertyName("window_position")] public Point? WindowPosition { get; set; }
         [JsonConverter(typeof(NullablePoint2Converter))] [JsonPropertyName("window_size")] public Point? WindowSize { get; set; }
 
+        // The monitor the window opens on: an SDL display index (0-based) or a display name (or part of one); the -display
+        // argument sets it. Empty: window_position alone decides. An index or name that matches nothing opens on the primary
+        // (WindowPlacement).
+        [JsonPropertyName("window_display")] public string WindowDisplay { get; set; }
+
         [JsonPropertyName("is_win_maximized")] public bool IsWindowMaximized { get; set; } = true;
 
         [JsonPropertyName("saveaccount")] public bool SaveAccount { get; set; }

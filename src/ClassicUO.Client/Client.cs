@@ -278,6 +278,7 @@ namespace ClassicUO
             Log.Trace("Running game...");
 
             Microsoft.Xna.Framework.FNALoggerEXT.LogError = GpuDeviceLost.OnFnaError;
+            Microsoft.Xna.Framework.FNALoggerEXT.LogInfo = FnaInfoLog.Info;
 
             using (Game = new GameController())
             {
