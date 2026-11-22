@@ -74,6 +74,9 @@ namespace ClassicUO.Game.Scenes
             _lightOcclusion = LightOcclusion.Enabled;
             _surfaceOnly = _lightOcclusion && LightOcclusion.SurfaceOnly;
             _stencilRef = 0;
+#if CUO_DEVTOOLS
+            _loPassLights = _loPassMasked = _loPassRadial = 0;
+#endif
             Profile profile = ProfileManager.CurrentProfile;
             _loCot = profile != null && profile.UseCircleOfTransparency && profile.CircleOfTransparencyType != 1 && _world.Player != null;
             _loCotZ = _world.Player != null ? _world.Player.Z + 5 : 0;
@@ -198,6 +201,7 @@ namespace ClassicUO.Game.Scenes
                 if (found > 0)
                 {
                     _loRadialUnmasked++;
+                    _loPassRadial++;
                 }
 
                 ReleaseOccluders(found);
@@ -273,6 +277,7 @@ namespace ClassicUO.Game.Scenes
             batcher.Draw(lightInfo.Texture, pos, lightInfo.UV, hue, 0f);
 #if CUO_DEVTOOLS
             _loOccludedLights++;
+            _loPassMasked++;
             _loOccluderSprites += n;
 #endif
         }
@@ -634,6 +639,9 @@ namespace ClassicUO.Game.Scenes
 
 #if CUO_DEVTOOLS
         private long _loFrames, _loLights, _loOccludedLights, _loOccluderSprites, _loMismatches, _loRadialUnmasked;
+        // the last light pass's lights checked, lights drawn masked and radial lights with occluders left unmasked
+        // (light_occlusion_surface_only), for the summary
+        private int _loPassLights, _loPassMasked, _loPassRadial;
         private uint _loSummaryAt;
 
         // CUO_LIGHT_OCCLUSION_CHECK: every tile of every drawn chunk with the same occluder test, no chunk or column pruning;
@@ -662,6 +670,7 @@ namespace ClassicUO.Game.Scenes
 
             int refCount = refN - end;
             _loLights++;
+            _loPassLights++;
 
             if (refCount != n || refHash != hash)
             {
@@ -690,7 +699,8 @@ namespace ClassicUO.Game.Scenes
                 _loSummaryAt = Time.Ticks + 5000;
                 Log.Info($"[light-occlusion-check] light_occlusion {(_lightOcclusion ? "on" : "off")} (surface_only {(_surfaceOnly ? "on" : "off")}): " +
                          $"{_loFrames} light passes, {_loLights} lights checked, {_loOccludedLights} drawn with occluders ({_loOccluderSprites} occluder sprites), " +
-                         $"{_loRadialUnmasked} radial lights with occluders left unmasked; mismatches {_loMismatches}");
+                         $"{_loRadialUnmasked} radial lights with occluders left unmasked; last pass: {_loPassLights} lights, {_loPassMasked} masked, " +
+                         $"{_loPassRadial} radial unmasked; mismatches {_loMismatches}");
             }
         }
 #endif
