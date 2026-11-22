@@ -24,6 +24,9 @@ namespace ClassicUO.Game.UI.Gumps
 
         internal UiGumpRecording Recording;
 
+        /// <summary>gump_resend_patch: what a resend of this server gump's layout patches (null: a resend rebuilds).</summary>
+        internal ServerGumpPatch ResendPatch;
+
         public World World { get; }
 
         public bool CanBeSaved => GumpType != Gumps.GumpType.None;

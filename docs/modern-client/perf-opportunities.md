@@ -42,6 +42,11 @@ From a comparison with a reference client (reports in cuo-poc-state/audits (paci
 
 | What | Where | Estimate | Status |
 |---|---|---|---|
+| Every control carries an eager child list (Collection + List, ~64 B) and 13 event fields (~104 B): ~320 B per leaf control, ~16 KB of the 26.7 KB left per 50-entry server-gump open | Control.cs:43, :527-535 | lazy child list and one lazily made event holder; survey G5 "lazy holders" | open (gump-system round 3) |
+| RenderedText lays every text out twice: GenerateUnicode/ASCII builds a layout to measure, then the Text setter builds the kept one again | RenderedText.cs Text setter, CreateTexture | keep the measuring layout when the widths match; CPU per text set (labels, journal, overhead text) | open (gump-system round 3) |
+| GetHeightASCII/GetWidthExASCII-style helpers drop their GetInfoASCII layouts instead of returning them to the node pool | FontsLoader.cs GetHeightASCII callers (~615-680) | release as GenerateASCII now does; allocation per measured ASCII string | open (gump-system round 3) |
+| GetInfoHTML makes a `List<string>` of URLs per parse even without links | FontsLoader.cs GetInfoHTML | make it on the first `<a href>`; 32 B per html text set | open (gump-system round 3) |
+| HtmlControl always builds a scroll bar and (with a background) a ResizePic, also for a hidden scroll bar | HtmlControl.cs InternalBuild | build the scroll bar only when shown; ~0.4 KB per html entry | open (survey G5) |
 | Pool `Item`s entering range | `World.GetOrCreateItem` (280 B each) | ~4.3 MB per 15 s of ls_walk | switch `item_pool` (default off, `bg/item-pool`); alloc jobs pending, then flip |
 | Prefill the item pool at login (8,192 x 280 B, ~2.3 MB per client) | `ItemPool` | first-walk Item reuse | open; behaviour change, needs switch + checker (queue presize done, a119ae333) |
 | `MobileSpriteExtract.Emit` per-call arrays | MobileSpriteExtract | small, per mobile drawn | open (alloc-ui-1 report) |

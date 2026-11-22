@@ -59,6 +59,9 @@ namespace ClassicUO.Game
         private List<TextQuadRun> _quadCheckRuns;
         private static long _quadChecks, _quadMismatches;
         private static uint _quadLogAt;
+        // CUO_FONT_LAYOUT_CHECK: a private copy of _info, compared at draws and when the layout is dropped
+        private FontLayoutCheck.Snapshot _layoutSnapshot;
+        private int _layoutCheckDraws;
 #endif
 
         public bool IsUnicode { get; set; }
@@ -120,6 +123,7 @@ namespace ClassicUO.Game
                     _quadRunsValid = false;
                     _quadKey = default;
                     _quadRuns?.Clear();
+                    DropLayout();
                     _text = value;
 
                     if (string.IsNullOrEmpty(value))
@@ -219,8 +223,45 @@ namespace ClassicUO.Game
                         {
                             Client.Game.UO.FileManager.Fonts.SetUseHTML(false);
                         }
+#if CUO_DEVTOOLS
+                        FontLayoutCheck check = Client.Game?.UO?.FontLayoutCheck;
+
+                        if (check != null && check.Active)
+                        {
+                            _layoutSnapshot = check.Take(_info);
+                        }
+#endif
                     }
                 }
+            }
+        }
+
+        // The layout is replaced or dropped: with font_layout_pool its nodes go back to the font loader's pool (nothing else
+        // keeps them: readers of GetInfo use it within one call). Off: the nodes are left to the GC, as before.
+        private void DropLayout()
+        {
+            MultilinesFontInfo info = _info;
+
+            if (info == null)
+            {
+                return;
+            }
+
+            _info = null;
+#if CUO_DEVTOOLS
+            FontLayoutCheck check = Client.Game?.UO?.FontLayoutCheck;
+
+            if (check != null && check.Active)
+            {
+                check.Compare(_text, info, _layoutSnapshot, "release");
+            }
+
+            _layoutSnapshot = null;
+#endif
+
+            if (FontLayoutPoolSwitch.Enabled)
+            {
+                Client.Game.UO.FileManager.Fonts.ReleaseLayout(info);
             }
         }
 
@@ -508,6 +549,17 @@ namespace ClassicUO.Game
             {
                 return false;
             }
+#if CUO_DEVTOOLS
+            if ((++_layoutCheckDraws & 15) == 0)
+            {
+                FontLayoutCheck check = Client.Game.UO.FontLayoutCheck;
+
+                if (check.Active)
+                {
+                    check.Compare(_text, _info, _layoutSnapshot, "draw");
+                }
+            }
+#endif
 
             var atlas = Client.Game.UO.FontGlyphAtlas;
             if (atlas == null)
@@ -989,6 +1041,11 @@ namespace ClassicUO.Game
             if (Texture != null && !Texture.IsDisposed)
             {
                 Texture.Dispose();
+            }
+
+            if (FontLayoutPoolSwitch.Enabled)
+            {
+                DropLayout();
             }
 
             // a pooled object no longer keeps its last string alive

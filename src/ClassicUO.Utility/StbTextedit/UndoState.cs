@@ -8,10 +8,16 @@ namespace StbTextEditSharp
     {
         public int redo_char_point;
         public short redo_point;
-        public int[] undo_char = new int[999];
         public int undo_char_point;
         public short undo_point;
-        public UndoRecord[] undo_rec = new UndoRecord[99];
+
+        // made on first use: a text box that is never edited (most server-gump entries) does not carry ~5.6 KB of undo
+        // buffers. Same contents as the eager arrays (zeroed at creation).
+        private int[] _undoChar;
+        private UndoRecord[] _undoRec;
+
+        public int[] undo_char => _undoChar ??= new int[999];
+        public UndoRecord[] undo_rec => _undoRec ??= new UndoRecord[99];
 
         public void FlushRedo()
         {

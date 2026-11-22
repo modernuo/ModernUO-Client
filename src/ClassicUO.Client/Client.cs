@@ -39,6 +39,10 @@ namespace ClassicUO
         public ClientFlags Protocol { get; set; }
         public string ClientPath { get; private set; }
         public UOFileManager FileManager { get; private set; }
+#if CUO_DEVTOOLS
+        public FontLayoutCheck FontLayoutCheck { get; } = new FontLayoutCheck();
+        public Game.UI.Gumps.GumpResendCheck GumpResendCheck { get; } = new Game.UI.Gumps.GumpResendCheck();
+#endif
 
 
         public UltimaOnline()
