@@ -158,8 +158,6 @@ namespace ClassicUO.Game.Scenes
             LightOcclusion.Window(sax, say, px, py, px + 1, py + 1, out int sLo, out int sHi, out int dLo, out int dHi);
             int n = 0;
             hash = 0;
-            // the source's own tile: what stands on it higher up
-            CollectTile(ref l, l.SrcX, l.SrcY, staticData, px, py, ref n, ref hash);
 
             for (int s = sLo; s <= sHi; s++)
             {

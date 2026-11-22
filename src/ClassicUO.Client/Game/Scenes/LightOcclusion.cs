@@ -14,7 +14,7 @@ namespace ClassicUO.Game.Scenes
     /// light where the stencil does not hold it.
     /// Owner rule (2026-11-22, restated for round 4): a light's glow passes through its own emitter only; another object
     /// rendered over the light, between the viewer and the source, hides it, whatever its kind (another window, lit or not,
-    /// a wall, a light-flagged static, a ground item). An occluder is drawn after the source (<see cref="InFront"/>) and its
+    /// a wall, a light-flagged static, a ground item). An occluder stands on a later diagonal (<see cref="InFront"/>) and its
     /// art covers the source's light point on screen (<see cref="LightPoint"/>, <see cref="CoverPoint"/> and the art's pixel
     /// mask). Objects the source stands on, or that stand beside it on the same wall line, are drawn after it but do not cover
     /// its point: they are lit by it, not blockers (round 3 masked every object drawn after the source, which cut the candles' glow on the
@@ -55,10 +55,12 @@ namespace ClassicUO.Game.Scenes
         /// <summary>CUO_LIGHT_OCCLUSION_CHECK: the reference scan's reach on each axis.</summary>
         public const int ReferenceReach = 32;
 
-        /// <summary>An object at (dx, dy, dz) from the light's source is drawn after it: a later diagonal (dx + dy greater),
-        /// or the source's own tile higher up.</summary>
+        /// <summary>An object at (dx, dy, dz) from the light's source stands in front of it: on a later diagonal (dx + dy
+        /// greater), so it is drawn after it. Objects on the source's own tile are at its depth (drawn after it only by Z):
+        /// they stand with the emitter, not in front of it (round 4: the fountain piece sharing the Moonglow fountain lamp's
+        /// tile masked its glow), so they never hide it.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool InFront(int dx, int dy, int dz) => dx + dy > 0 || dx == 0 && dy == 0 && dz > 0;
+        public static bool InFront(int dx, int dy, int dz) => dx + dy > 0;
 
         /// <summary>The tiledata of an object that hides a light drawn behind it: anything but a translucent or internal tile
         /// or a flat walkable surface (a roof hides).</summary>
@@ -99,7 +101,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The tile window (S = dx + dy, D = dx - dy, from the light's source tile) whose occluders, with the art
         /// and Z <see cref="ArtSide"/>/<see cref="ArtUp"/>/<see cref="ZBelow"/>/<see cref="ZAbove"/> assume, can overlap the
         /// light quad (left, top, right, bottom) of a source anchored at (anchorX, anchorY) (GameObject.RealScreenPosition).
-        /// The walk takes S from 1 (later diagonals) and the source's own tile.</summary>
+        /// The walk takes S from 1 (later diagonals).</summary>
         public static void Window(int anchorX, int anchorY, int left, int top, int right, int bottom,
             out int sLo, out int sHi, out int dLo, out int dHi)
         {

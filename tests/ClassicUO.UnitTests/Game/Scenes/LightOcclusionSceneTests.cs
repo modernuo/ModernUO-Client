@@ -140,7 +140,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             {
                 int dx = o.X - src.X, dy = o.Y - src.Y;
 
-                if (o != src && Math.Abs(dx) <= reach && Math.Abs(dy) <= reach && LightOcclusion.InFront(dx, dy, o.Z - src.Z) &&
+                if (o != src && Math.Abs(dx) <= reach && Math.Abs(dy) <= reach && (dx + dy > 0 || dx == 0 && dy == 0 && o.Z > src.Z) &&
                     LightOcclusion.OccluderData(ref pack.Statics[o.Graphic]))
                 {
                     n++;
@@ -391,7 +391,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [TileDataPackFact]
-        public void Moonglow_fountain_lamp_is_hidden_only_by_the_fountain_piece_drawn_over_it()
+        public void Moonglow_fountain_lamp_lights_the_fountain_planters_and_fences()
         {
             // owner 2026-11-22 (4471 1178 0): the lamp post by the fountain (ModernUO decoration: LampPost1 4471 1180 0, a
             // StoneFountainAddon centred on 4472 1182 11, planters and flowers, iron fences) and the bank's south wall windows
@@ -401,8 +401,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var hidden = Occluders(pack, lamp, scene);
             _output.WriteLine($"fountain lamp: round 3 masked {Round3Count(pack, lamp, scene, 10)}, now {hidden.Count}: {string.Join(", ", hidden)}");
             Assert.True(Round3Count(pack, lamp, scene, 10) > 10);
-            // the fountain's corner piece stands on the lamp's tile, higher up, and is drawn over the post
-            Assert.Equal(new[] { new Obj(4471, 1180, 11, 0x173F) }, hidden);
+            // the fountain's corner piece shares the lamp's tile (z 11): drawn over the post but at its depth, it stands with
+            // the lamp (bench-001032 showed it as a dark wedge on the lit fountain)
+            Assert.Empty(hidden);
             AssertWindowsKeepTheirWallLine(pack, scene, "fountain");
         }
     }

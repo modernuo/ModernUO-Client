@@ -97,8 +97,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Equal(on, LightOcclusion.Hides(on, false, -1, 7, 0, ref wall, true));
             Assert.Equal(on, LightOcclusion.Hides(on, false, 9, 5, -20, ref wall, true));
             Assert.Equal(on, LightOcclusion.Hides(on, false, 3, 0, 0, ref wall, true));
-            // on the source's tile, higher up
-            Assert.Equal(on, LightOcclusion.Hides(on, false, 0, 0, 5, ref wall, true));
+            // on the source's own tile, higher up: at its depth, it stands with the emitter
+            Assert.False(LightOcclusion.Hides(on, false, 0, 0, 5, ref wall, true));
         }
 
         [Theory]
