@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 using ClassicUO.Configuration;
+using ClassicUO.Loop;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework.Graphics;
 using static SDL3.SDL;
@@ -18,6 +19,12 @@ namespace ClassicUO
         private int _riWinW, _riWinH, _riPixW, _riPixH, _riBackW, _riBackH, _riTargetW, _riTargetH;
         private float _riDisplayScale, _riScreenScale, _riZoom, _riGpuScale;
         private bool _riForcePoint;
+        // frame pacing: the present mode, refresh, frame limit, loop mode and present-on-change state (a jitter report)
+        private PresentModeKind _riPresent;
+        private double _riHz;
+        private int _riFps;
+        private LoopMode _riLoop;
+        private bool _riCap, _riMotionFast;
 
         private void RenderInfoCheck()
         {
@@ -47,10 +54,14 @@ namespace ClassicUO
             float screenScale = ScreenScale;
             float zoom = Scene?.Camera.Zoom ?? 0f;
             float gpuScale = _gpuWorld != null && zoom > 0f ? 1f / zoom : 0f;
+            int fps = Settings.GlobalSettings.FPS;
+            bool motionFast = Settings.GlobalSettings.MotionAboveDisplayRate;
 
             if (_renderInfoLogged && winW == _riWinW && winH == _riWinH && pixW == _riPixW && pixH == _riPixH && pp.BackBufferWidth == _riBackW &&
                 pp.BackBufferHeight == _riBackH && targetW == _riTargetW && targetH == _riTargetH && displayScale == _riDisplayScale &&
-                screenScale == _riScreenScale && zoom == _riZoom && gpuScale == _riGpuScale && forcePoint == _riForcePoint)
+                screenScale == _riScreenScale && zoom == _riZoom && gpuScale == _riGpuScale && forcePoint == _riForcePoint &&
+                _presentMode == _riPresent && _displayHz == _riHz && fps == _riFps && _tickMode == _riLoop && _displayCapActive == _riCap &&
+                motionFast == _riMotionFast)
             {
                 return;
             }
@@ -58,6 +69,7 @@ namespace ClassicUO
             _renderInfoLogged = true;
             (_riWinW, _riWinH, _riPixW, _riPixH, _riBackW, _riBackH, _riTargetW, _riTargetH) = (winW, winH, pixW, pixH, pp.BackBufferWidth, pp.BackBufferHeight, targetW, targetH);
             (_riDisplayScale, _riScreenScale, _riZoom, _riGpuScale, _riForcePoint) = (displayScale, screenScale, zoom, gpuScale, forcePoint);
+            (_riPresent, _riHz, _riFps, _riLoop, _riCap, _riMotionFast) = (_presentMode, _displayHz, fps, _tickMode, _displayCapActive, motionFast);
 
             // the Gpu world's pixel path (Uo.Render WorldRenderer/Renderer): scale < 0.999 trilinear (SampleTile for flat
             // tiles), else sharp-bilinear (texel-centre snap, point-sampled coverage for flat tiles); force_point: point sampler
@@ -67,7 +79,10 @@ namespace ClassicUO
                 $"[render-info] renderer={RendererStartup.Summary} world_renderer_setting={Settings.GlobalSettings.WorldRendererSetting} " +
                 $"window={winW}x{winH} window_pixels={pixW}x{pixH} backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight} world_target={targetW}x{targetH} " +
                 $"display_scale={displayScale:0.###} screen_scale={screenScale:0.###} high_dpi={CUOEnviroment.IsHighDPI} camera_zoom={zoom:0.###} " +
-                $"gpu_world_scale={gpuScale:0.####} gpu_path={path}");
+                $"gpu_world_scale={gpuScale:0.####} gpu_path={path} " +
+                $"present={_presentMode} vsync={GraphicManager.SynchronizeWithVerticalRetrace} refresh_hz={_displayHz:0.###} fps_limit={fps} loop={_tickMode} " +
+                $"present_at_display_rate={Settings.GlobalSettings.PresentAtDisplayRate} present_cap_active={_displayCapActive} " +
+                $"vsync_present_on_change={Settings.GlobalSettings.VsyncPresentOnChange} motion_above_display_rate={motionFast}");
         }
     }
 }
