@@ -17,25 +17,31 @@ namespace ClassicUO.Game.Scenes
         // light; for a surface glow the emitter's drawn alpha times the shader circle's fade at its light point
         private float EmitterFade(ref FrameLights.Entry l, ref Matrix matrix, out bool surface)
         {
-            surface = false;
-            GameObject src = l.Source;
-
-            if (src is Mobile)
-            {
-                return 1f;
-            }
-
             StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
-            ushort g = src.Graphic;
-            bool wallOrWindow = (uint)g < (uint)staticData.Length && (staticData[g].IsWall || staticData[g].IsWindow);
-            surface = LightAlphaFade.IsSurface(Client.Game.UO.FileManager.Lights.Class(l.ID), wallOrWindow);
+            surface = SurfaceGlow(l.Source, l.ID, staticData);
 
             if (!surface)
             {
                 return 1f;
             }
 
-            return LightAlphaFade.Fade(EmitterAlpha(src), EmitterCot(ref l, ref matrix, staticData));
+            return LightAlphaFade.Fade(EmitterAlpha(l.Source), EmitterCot(ref l, ref matrix, staticData));
+        }
+
+        // light id's glow from emitter src is a surface glow (LightAlphaFade.IsSurface: its shape's class in lightclass.bin,
+        // else the emitter's tiledata Wall/Window flags); a mobile's light is radial. light_alpha_fade and
+        // light_occlusion_surface_only share it
+        private static bool SurfaceGlow(GameObject src, byte id, StaticTiles[] staticData)
+        {
+            if (src == null || src is Mobile)
+            {
+                return false;
+            }
+
+            ushort g = src.Graphic;
+            bool wallOrWindow = (uint)g < (uint)staticData.Length && (staticData[g].IsWall || staticData[g].IsWindow);
+
+            return LightAlphaFade.IsSurface(Client.Game.UO.FileManager.Lights.Class(id), wallOrWindow);
         }
 
         private static byte EmitterAlpha(GameObject src) => src is Multi m ? m.DrawnAlpha : src.AlphaHue;
