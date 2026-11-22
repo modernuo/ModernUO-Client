@@ -268,6 +268,13 @@ namespace ClassicUO.Configuration
         // CUO_FONT_LAYOUT_CHECK=1 keeps a private copy of each layout and compares it at draws and on release. Default off.
         [JsonPropertyName("font_layout_pool")] public bool FontLayoutPool { get; set; }
 
+        // gump-system Q1 (b) (needs gump_layout_v2): a server gump resent with the open gump's layout keeps its controls and
+        // only the text lines that changed are patched in; typed text, checkbox/radio states, html scroll and the page survive
+        // the refresh (a text entry whose own line changed takes the server's value). Off: the gump is rebuilt, as before.
+        // Read at every open; CUO_GUMP_RESEND_PATCH=1|0 overrides it in developer builds, CUO_GUMP_RESEND_CHECK=1 compares
+        // each patched gump with an old-path rebuild. Default off.
+        [JsonPropertyName("gump_resend_patch")] public bool GumpResendPatch { get; set; }
+
         // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
         // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
         // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.

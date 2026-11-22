@@ -34,6 +34,16 @@ namespace ClassicUO.Game.UI.Controls
             IsFromServer = true;
         }
 
+        /// <summary>gump_resend_patch: the server sent a new line for this text.</summary>
+        internal void SetText(string text)
+        {
+            if (_gameText.Text != text)
+            {
+                _gameText.Text = text;
+                InvalidateDraw();
+            }
+        }
+
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
             renderLists.AddGumpNoAtlas(_gameText, x, y, layerDepthRef);
