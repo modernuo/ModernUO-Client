@@ -172,6 +172,53 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void Chunk_rect_grows_by_the_chunks_overhang_and_the_mobile_reach()
+        {
+            ViewMargin.ChunkRect(0, 0, 800, 600, 10, 400, 20, out float minX, out float minY, out float maxX, out float maxY);
+            Assert.Equal(-400, minX);
+            Assert.Equal(0, minY);
+            Assert.Equal(800 + ViewMargin.MobileSide, maxX);
+            Assert.Equal(600 + ViewMargin.MobileUp, maxY);
+        }
+
+        // the owner's tree repro, generalised: a static whose art reaches the view from beside or below it is on a tile of
+        // the chunk's walk mask (the chunk rect's diamond), for random positions, Z and art within the chunk's record
+        [Fact]
+        public void Every_sprite_reaching_the_view_is_on_a_walked_tile_of_its_chunk()
+        {
+            var rng = new Random(11);
+            const int vMinX = -44, vMinY = -44, vMaxX = 844, vMaxY = 644;
+
+            for (int round = 0; round < 30; round++)
+            {
+                int px = 300 + rng.Next(600), py = 300 + rng.Next(600);
+                int offX = (px - py) * 22 - 400, offY = (px + py) * 22 - 300;
+                int w = 44 + rng.Next(400), h = 44 + rng.Next(600);
+                int overLeft = (w >> 1) - 22, overRight = w - (w >> 1) - 22, overUp = h - 44;
+                ViewMargin.ChunkRect(vMinX, vMinY, vMaxX, vMaxY, overLeft, overRight, overUp, out float minX, out float minY, out float maxX, out float maxY);
+                FillDiamond.Bounds b = FillDiamond.Compute(offX, offY, new Microsoft.Xna.Framework.Vector2(minX, minY), new Microsoft.Xna.Framework.Vector2(maxX, maxY), false, default, 0);
+
+                for (int x = px - 60; x <= px + 60; x++)
+                {
+                    for (int y = py - 60; y <= py + 60; y++)
+                    {
+                        int z = rng.Next(-20, 60);
+                        ViewMargin.Anchor(x, y, z, offX, offY, out int ax, out int ay);
+                        int x0 = ax - (w >> 1) + 22, y0 = ay - h + 44;
+
+                        if (x0 + w < 0 || x0 > 800 || y0 + h < 0 || y0 > 600)
+                        {
+                            continue;
+                        }
+
+                        ulong mask = FillDiamond.ChunkMask(x >> 3, y >> 3, in b);
+                        Assert.True((mask & 1UL << ((x & 7) << 3 | (y & 7))) != 0, $"tile {x},{y},{z} art {w}x{h}");
+                    }
+                }
+            }
+        }
+
+        [Fact]
         public void Candidate_hash_is_order_independent_and_tells_objects_apart()
         {
             uint a = ViewMargin.Mix(10, 20, 5, Torch, false), b = ViewMargin.Mix(11, 20, 5, Torch, false);

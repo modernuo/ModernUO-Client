@@ -40,6 +40,52 @@ namespace ClassicUO.Game.Scenes
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.ViewMargin ?? false);
 
+        /// <summary>Sprite margin: how far a mobile's frame (its shadow included) may reach past its anchor box, beside it and
+        /// above it (the large bodies' frames). Items, statics and multis use the chunks' recorded art (Chunk.StaticOver*).</summary>
+        public const int MobileSide = 160, MobileUp = 260;
+
+        /// <summary>A chunk's overhang record grew after its load (a multi or an item with larger art joined): the walk
+        /// recomputes its positions once (tiles joining the walk kept stale ones).</summary>
+        public static bool OverhangGrew;
+
+        private static int _artSide = -1, _artUp;
+
+        /// <summary>The largest static art's reach past its anchor box (beside, above), computed once from the pack.</summary>
+        public static void ArtReach(ClassicUO.Assets.ArtLoader arts, out int side, out int up)
+        {
+            if (_artSide < 0)
+            {
+                int s = 0, u = 0;
+
+                for (int g = 0; g < 0x10000; g++)
+                {
+                    if (arts.TrySize(g + 0x4000, out int w, out int h))
+                    {
+                        s = Math.Max(s, w - (w >> 1) - 22);
+                        u = Math.Max(u, h - 44);
+                    }
+                }
+
+                _artUp = u;
+                _artSide = s;
+            }
+
+            side = Math.Max(_artSide, MobileSide);
+            up = Math.Max(_artUp, MobileUp);
+        }
+
+        /// <summary>The walk's culling rectangle for one chunk: the view's (vMin..vMax, the walk's tile of slack included)
+        /// grown by what the chunk's sprites can reach into it from beside it: objects left of the view by their right
+        /// overhang, right of it by their left one, below it by their height. Mobiles may stand anywhere.</summary>
+        public static void ChunkRect(float vMinX, float vMinY, float vMaxX, float vMaxY, int overLeft, int overRight, int overUp,
+            out float minX, out float minY, out float maxX, out float maxY)
+        {
+            minX = vMinX - Math.Max(overRight, MobileSide);
+            maxX = vMaxX + Math.Max(overLeft, MobileSide);
+            minY = vMinY;
+            maxY = vMaxY + Math.Max(overUp, MobileUp);
+        }
+
         /// <summary>The light margin for lights whose largest texture side is <paramref name="maxExtent"/> px: the halo's
         /// radius (the light is drawn centred on anchor + 22, and the walked rectangle already has 44 px of slack).</summary>
         public static int LightMargin(int maxExtent) => (maxExtent + 1) >> 1;

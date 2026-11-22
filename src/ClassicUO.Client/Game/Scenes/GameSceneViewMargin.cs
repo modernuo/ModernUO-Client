@@ -31,7 +31,8 @@ namespace ClassicUO.Game.Scenes
             }
 
             int margin = _lightMargin;
-            int left = (int)_minPixel.X, top = (int)_minPixel.Y, right = (int)_maxPixel.X, bottom = (int)_maxPixel.Y;
+            // the view before the sprite margin: a light source in a tile the sprite margin walks but did not draw is a band candidate
+            int left = (int)_viewMinPixel.X, top = (int)_viewMinPixel.Y, right = (int)_viewMaxPixel.X, bottom = (int)_viewMaxPixel.Y;
             int offX = _offset.X, offY = _offset.Y;
             ViewMargin.Bands(left - margin, top - margin, right + margin, bottom + margin, offX, offY, out int dLo, out int dHi, out int sLo, out int sHi);
             ViewMargin.ChunkRange(dLo, dHi, sLo, sHi, out int cx0, out int cy0, out int cx1, out int cy1);

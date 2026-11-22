@@ -845,6 +845,7 @@ namespace ClassicUO.Game.Scenes
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
                     // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
                     ulong inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
+                    inWalk = WalkChunkMask(chunk, chunkX, chunkY, inWalk);
 
                     if (inHidden == 0)
                         continue;
@@ -1042,6 +1043,9 @@ namespace ClassicUO.Game.Scenes
 
             long textStart = FrameStats.AddSince(FramePhase.PrepFoliageFinish, foliageStart);
             FlushWalkCounters();
+#if CUO_DEVTOOLS
+            CheckSpriteMargin();
+#endif
             UpdateTextServerEntities();
 
             if (PrepCheck.On)

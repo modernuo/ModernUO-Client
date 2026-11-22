@@ -94,25 +94,38 @@ namespace ClassicUO.Game.Map
         internal int LightSourceCount;
 
         /// <summary>
-        /// view_margin: how far the art of the chunk's map statics (Load; map statics never change) reaches past their tiles'
-        /// 44 x 44 anchor box, in world pixels, with the tile's anchor taken at Z 0: left and right of it, above it (art height
-        /// and 4 px per Z) and below it (4 px per negative Z). Read by the sprite margin (next step, handoff light-edges);
-        /// the light margin does not need it.
+        /// view_margin (sprite margin): how far the art of the chunk's statics, multi components and items reaches past its
+        /// anchor's 44 x 44 box, in world pixels: left and right of it, above it. Grows only (map statics at Load, multis and
+        /// items as they join; reset when the chunk is loaded again), so the walk's per-chunk tile mask (GameScene
+        /// FillGameObjectList) covers every sprite of the chunk that can reach the view. A growth after Load sets
+        /// ViewMargin.OverhangGrew: tiles joining the walk get their positions recomputed.
         /// </summary>
-        internal int StaticOverLeft, StaticOverRight, StaticOverUp, StaticOverDown;
+        internal int StaticOverLeft, StaticOverRight, StaticOverUp;
 
-        private void RecordStaticOverhang(ushort graphic, sbyte z)
+        private bool _loading;
+
+        private void RecordOverhang(ushort graphic)
         {
-            if (!Client.Game.UO.FileManager.Arts.TrySize(graphic + 0x4000, out int w, out int h))
+            ArtLoader arts = Client.Game?.UO?.FileManager?.Arts;
+
+            if (arts == null || !arts.TrySize(graphic + 0x4000, out int w, out int h))
             {
                 return;
             }
 
-            int left = (w >> 1) - 22;
-            StaticOverLeft = Math.Max(StaticOverLeft, left);
-            StaticOverRight = Math.Max(StaticOverRight, w - left - 44);
-            StaticOverUp = Math.Max(StaticOverUp, h - 44 + (z << 2));
-            StaticOverDown = Math.Max(StaticOverDown, -(z << 2));
+            int left = (w >> 1) - 22, right = w - (w >> 1) - 22, up = h - 44;
+
+            if (left > StaticOverLeft || right > StaticOverRight || up > StaticOverUp)
+            {
+                StaticOverLeft = Math.Max(StaticOverLeft, left);
+                StaticOverRight = Math.Max(StaticOverRight, right);
+                StaticOverUp = Math.Max(StaticOverUp, up);
+
+                if (!_loading)
+                {
+                    Scenes.ViewMargin.OverhangGrew = true;
+                }
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -309,7 +322,8 @@ namespace ClassicUO.Game.Map
             }
 
             bool gargoyle = GameObject.PlayerIsGargoyle(_world);
-            StaticOverLeft = StaticOverRight = StaticOverUp = StaticOverDown = 0;
+            StaticOverLeft = StaticOverRight = StaticOverUp = 0;
+            _loading = true;
 
             foreach (ref readonly var sb in block.Statics)
             {
@@ -320,10 +334,10 @@ namespace ClassicUO.Game.Map
                 staticObject.Y = (ushort)(by + sb.Y);
                 staticObject.Z = sb.Z;
                 staticObject.UpdateScreenPosition();
-                RecordStaticOverhang(staticObject.Graphic, sb.Z);
-
                 AddGameObject(staticObject, sb.X, sb.Y);
             }
+
+            _loading = false;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -458,12 +472,22 @@ namespace ClassicUO.Game.Map
             {
                 (Dynamic ??= new DynamicTileIndex()).Add(obj, obj.TileCell);
 
+                if (obj is Item { IsMulti: false } overItem)
+                {
+                    RecordOverhang(overItem.Graphic);
+                }
+
                 return;
             }
 
             if (IsLightSource(node))
             {
                 NoteLightSource(node);
+            }
+
+            if (node is Static || node is Multi)
+            {
+                RecordOverhang(node.Graphic);
             }
 
             int cell = obj.TileCell;
