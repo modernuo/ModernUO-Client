@@ -157,7 +157,7 @@ namespace ClassicUO.Game.Scenes
                 Vector3 hue = LightHue(ref l);
                 hue.Z = _lbHueZ[j];
                 Vector2 pos = new Vector2(l.DrawX - lightInfo.UV.Width * 0.5f, l.DrawY - lightInfo.UV.Height * 0.5f);
-                DrawMasked(batcher, ref matrix, _lbFirst[j], _lbCount[j], in lightInfo, pos, hue);
+                DrawMasked(batcher, ref matrix, ref l, _lbFirst[j], _lbCount[j], in lightInfo, pos, hue);
             }
 
             if (occluded > 0)

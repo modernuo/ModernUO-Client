@@ -42,16 +42,42 @@ namespace ClassicUO.Game.Scenes
             _ => null
         };
 
+        private static readonly bool? _surfaceOnlyEnv = Environment.GetEnvironmentVariable("CUO_LIGHT_OCCLUSION_SURFACE_ONLY") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+
         public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_LIGHT_OCCLUSION_CHECK") == "1";
 #else
         private static readonly bool? _env = null;
+        private static readonly bool? _surfaceOnlyEnv = null;
         public const bool Check = false;
 #endif
 
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
 
+        /// <summary>Tests: light_occlusion_surface_only (null: the setting).</summary>
+        [ThreadStatic] internal static bool? SurfaceOnlyOverrideForTests;
+
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.LightOcclusion ?? false);
+
+        /// <summary>light_occlusion_surface_only (round 7, default off; it acts only with <see cref="Enabled"/>): only surface
+        /// glows are masked (<see cref="Masks"/>).</summary>
+        public static bool SurfaceOnly =>
+            SurfaceOnlyOverrideForTests ?? _surfaceOnlyEnv ?? (Settings.GlobalSettings?.LightOcclusionSurfaceOnly ?? false);
+
+        /// <summary>Round 7 (owner, Luna 1005 513 -30 Malas: the wall in front of a candelabra stayed dark inside its halo):
+        /// the light map multiplies the finished frame, so a mask only takes light off the occluder's own pixels; occlusion
+        /// decides whether an object in front of a light is lit by it. A surface glow (a lit window's beam,
+        /// LightAlphaFade.IsSurface) must not light the nearer walls (the Moonglow bank's window behind a window); a radial
+        /// light (candelabra, lamp, torch) does spill onto the objects in front of it. With
+        /// <paramref name="surfaceOnly"/> a light gets occluders and masks only when it is a surface glow
+        /// (<paramref name="surface"/>); without it every light does, as before.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool Masks(bool surfaceOnly, bool surface) => !surfaceOnly || surface;
 
         /// <summary>Round 5 (review P1 #2): an object hides a glow only where the world draws it at least half opaque (its
         /// AlphaHue, a custom house component's 192, an item sprite's alpha). The stencil is binary, and UO art texels are
