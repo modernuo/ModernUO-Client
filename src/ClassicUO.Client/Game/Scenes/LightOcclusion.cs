@@ -17,8 +17,12 @@ namespace ClassicUO.Game.Scenes
     /// a wall, a light-flagged static, a ground item). An occluder stands on a later diagonal (<see cref="InFront"/>) and its
     /// art covers the source's light point on screen (<see cref="LightPoint"/>, <see cref="CoverPoint"/> and the art's pixel
     /// mask). Objects the source stands on, or that stand beside it on the same wall line, are drawn after it but do not cover
-    /// its point: they are lit by it, not blockers (round 3 masked every object drawn after the source, which cut the candles' glow on the
-    /// bank counter, the windows' halo on their own wall and the street lamps' halos on fences, roofs and flowers).
+    /// its point: they are lit by it, not blockers (round 3 masked every object drawn after the source, which cut the
+    /// candles' glow on the bank table, the windows' halo on their own wall and the street lamps' halos on fences, roofs and
+    /// flowers).
+    /// A wall source (a lit window) is also hidden by wall pieces in front whose visible face turns away from it
+    /// (<see cref="FacesAway"/>, the line taken from the art, <see cref="Facing"/>): the perpendicular line at an inside
+    /// corner of the keep's zig-zag wall, a parallel line in front; never the pieces of its own line.
     /// Tiles that never hide anything: translucent ones (water, glass: drawn see-through), internal (no-draw) ones, and flat
     /// walkable surfaces (floors). Mobiles do not occlude.
     /// CUO_LIGHT_OCCLUSION_CHECK=1 compares each light's occluders (the window <see cref="Window"/> walks) with a reference
@@ -70,10 +74,53 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>The light pass masks a light's halo over an object with tiledata <paramref name="data"/> at (dx, dy, dz)
         /// from its source: only with the switch on (<paramref name="on"/>), never over the light's own emitter
-        /// (<paramref name="ownEmitter"/>), drawn after the source, an occluder, and its art covering the source's light point
-        /// (<paramref name="coversSource"/>: <see cref="CoverPoint"/> and the art's pixel there).</summary>
-        public static bool Hides(bool on, bool ownEmitter, int dx, int dy, int dz, ref StaticTiles data, bool coversSource) =>
-            on && !ownEmitter && coversSource && InFront(dx, dy, dz) && OccluderData(ref data);
+        /// (<paramref name="ownEmitter"/>), in front of the source, an occluder, and either its art covering the source's
+        /// light point (<paramref name="coversSource"/>: <see cref="CoverPoint"/> and the art's pixel there) or, for a wall
+        /// source, a wall piece whose visible face turns away from it (<paramref name="wallFacesAway"/>,
+        /// <see cref="FacesAway"/>).</summary>
+        public static bool Hides(bool on, bool ownEmitter, int dx, int dy, int dz, ref StaticTiles data, bool coversSource,
+            bool wallFacesAway = false) =>
+            on && !ownEmitter && (coversSource || wallFacesAway) && InFront(dx, dy, dz) && OccluderData(ref data);
+
+        /// <summary>A wall piece's line, from its art (44 px wide, its visible bounds bx..bx+bw): the slab on the tile's east
+        /// edge (a line along Y, its visible face towards +X, e.g. 0x0162), on its south edge (a line along X, face towards
+        /// +Y, e.g. 0x0163), or neither (posts, arches, odd art: <see cref="FacingNone"/>).</summary>
+        public const byte FacingNone = 0, FacingEast = 1, FacingSouth = 2;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte Facing(int w, int bx, int bw)
+        {
+            if (w != 44 || bw <= 0)
+            {
+                return FacingNone;
+            }
+
+            int c = 2 * bx + bw; // twice the bounds' centre
+
+            return c >= 52 ? FacingEast : c <= 36 ? FacingSouth : FacingNone;
+        }
+
+        /// <summary>Round 4 (owner 2026-11-22, the Moonglow keep's inside corners): a wall source's glow spilled onto the
+        /// perpendicular wall in front of it, which does not cover the window itself. A wall piece facing
+        /// <paramref name="occFacing"/> at (dx, dy) from a wall source facing <paramref name="srcFacing"/> turns its visible
+        /// face away from the source when the source lies behind that face's plane: a piece of the same line (same facing,
+        /// aligned: dx 0 for east-facing, dy 0 for south-facing) is lit, a parallel line in front or the perpendicular line
+        /// at a corner is not. Unknown facings never count (the cover test still applies).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool FacesAway(byte srcFacing, byte occFacing, int dx, int dy)
+        {
+            if (srcFacing == FacingNone)
+            {
+                return false;
+            }
+
+            return occFacing switch
+            {
+                FacingEast => srcFacing == FacingEast ? dx > 0 : dx >= 0,
+                FacingSouth => srcFacing == FacingSouth ? dy > 0 : dy >= 0,
+                _ => false
+            };
+        }
 
         /// <summary>The light point an occluder must cover: the centre of the emitter's visible art (its art w x h anchored at
         /// (ax, ay), View.DrawStatic; its visible bounds bx, by, bw, bh in the art): a window's glass, a lamp post's upper

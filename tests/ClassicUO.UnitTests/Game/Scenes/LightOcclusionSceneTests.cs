@@ -44,7 +44,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 TileDataLoader.Read(Path.Combine(dir, TableConst.TileDataFile), out _, out Statics);
                 _sprites = SpriteTable.Read(Path.Combine(dir, "art", "sprites.bin"));
                 _pages = new PackPages(Path.Combine(dir, "art"), 64 << 20);
+                (_lights, _) = LightFile.Read(Path.Combine(dir, TableConst.LightsFile));
             }
+
+            private readonly LightEntry[] _lights;
+
+            // light shape id's texture size (LightsLoader.Extent)
+            public (int W, int H) Light(int id) => (uint)id < (uint)_lights.Length ? (_lights[id].Width, _lights[id].Height) : (0, 0);
 
             private static PackArt _instance;
             private static readonly object _lock = new object();
@@ -102,12 +108,17 @@ namespace ClassicUO.UnitTests.Game.Scenes
         // ViewMargin.Anchor with no offset: the static's anchor
         private static (int X, int Y) Anchor(Obj o) => ((o.X - o.Y) * 22 - 22, (o.X + o.Y) * 22 - (o.Z << 2) - 22);
 
-        // the objects that hide the glow of src's light with the switch on (GameScene.Occluder without the draw state)
+        // the objects that hide the glow of src's light with the switch on (GameScene.Occluder without the draw state): art
+        // covering the light point, or for a wall source a wall piece under the light quad (the light shape's size, centred
+        // on anchor + 22 as AddLight places it) facing away from it
         private static List<Obj> Occluders(PackArt pack, Obj src, IEnumerable<Obj> scene, bool on = true)
         {
             var (sax, say) = Anchor(src);
             var a = pack.Art(src.Graphic);
             LightOcclusion.LightPoint(sax, say, a.W, a.H, a.BX, a.BY, a.BW, a.BH, out int px, out int py);
+            byte srcFacing = pack.Statics[src.Graphic].IsWall ? LightOcclusion.Facing(a.W, a.BX, a.BW) : LightOcclusion.FacingNone;
+            var (lw, lh) = pack.Light(pack.Statics[src.Graphic].Layer);
+            int left = sax + 22 - lw / 2, top = say + 22 - lh / 2;
             var hidden = new List<Obj>();
 
             foreach (Obj o in scene)
@@ -118,11 +129,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 }
 
                 ref StaticTiles data = ref pack.Statics[o.Graphic];
-                var (w, h) = pack.Size(o.Graphic);
+                var oa = pack.Art(o.Graphic);
                 var (ax, ay) = Anchor(o);
-                bool covers = w != 0 && LightOcclusion.CoverPoint(ax, ay, w, h, px, py, out int lx, out int ly) && pack.Pixel(o.Graphic, lx, ly);
+                bool covers = oa.W != 0 && LightOcclusion.CoverPoint(ax, ay, oa.W, oa.H, px, py, out int lx, out int ly) && pack.Pixel(o.Graphic, lx, ly);
+                bool facesAway = data.IsWall && oa.W != 0 && LightOcclusion.ArtOverlaps(ax, ay, oa.W, oa.H, left, top, left + lw, top + lh) &&
+                    LightOcclusion.FacesAway(srcFacing, LightOcclusion.Facing(oa.W, oa.BX, oa.BW), o.X - src.X, o.Y - src.Y);
 
-                if (LightOcclusion.Hides(on, false, o.X - src.X, o.Y - src.Y, o.Z - src.Z, ref data, covers))
+                if (LightOcclusion.Hides(on, false, o.X - src.X, o.Y - src.Y, o.Z - src.Z, ref data, covers, facesAway))
                 {
                     hidden.Add(o);
                 }
@@ -319,9 +332,21 @@ namespace ClassicUO.UnitTests.Game.Scenes
 ";
 
 
-        // the wall line a window or wall piece of these walls stands on: 0x0162 / 0x0160-type pieces on the tile's east edge
-        // (a line along y, X fixed), 0x0163 on the south edge (a line along x, Y fixed)
-        private static bool SameWallLine(Obj window, Obj other) => window.Graphic is 0x0162 ? other.X == window.X : other.Y == window.Y;
+        private static byte Facing(PackArt pack, Obj o)
+        {
+            var a = pack.Art(o.Graphic);
+
+            return pack.Statics[o.Graphic].IsWall ? LightOcclusion.Facing(a.W, a.BX, a.BW) : LightOcclusion.FacingNone;
+        }
+
+        // the same wall line, by the pieces' facing from their art (LightOcclusion.Facing), not by distance: an east-facing
+        // line keeps X, a south-facing one keeps Y
+        private static bool SameWallLine(PackArt pack, Obj window, Obj other)
+        {
+            byte f = Facing(pack, window);
+
+            return f != LightOcclusion.FacingNone && Facing(pack, other) == f && (f == LightOcclusion.FacingEast ? other.X == window.X : other.Y == window.Y);
+        }
 
         private void AssertWindowsKeepTheirWallLine(PackArt pack, List<Obj> scene, string name)
         {
@@ -329,8 +354,58 @@ namespace ClassicUO.UnitTests.Game.Scenes
             {
                 var hidden = Occluders(pack, window, scene);
                 _output.WriteLine($"{name} window {window}: round 3 masked {Round3Count(pack, window, scene, 10)}, now {hidden.Count}: {string.Join(", ", hidden)}");
-                Assert.DoesNotContain(hidden, o => SameWallLine(window, o));
+                Assert.DoesNotContain(hidden, o => SameWallLine(pack, window, o));
             }
+        }
+
+        [TileDataPackFact]
+        public void Wall_facing_from_the_art_matches_the_wall_lines()
+        {
+            PackArt pack = PackArt.Get();
+
+            // lines along Y (X fixed) face east, lines along X face south: the bank's sandstone and the house's wooden walls
+            foreach (ushort g in new ushort[] { 0x015F, 0x0162, 0x00A7, 0x00B9 })
+            {
+                Assert.Equal(LightOcclusion.FacingEast, Facing(pack, new Obj(0, 0, 0, g)));
+            }
+
+            foreach (ushort g in new ushort[] { 0x0160, 0x0163, 0x00A8, 0x00BA })
+            {
+                Assert.Equal(LightOcclusion.FacingSouth, Facing(pack, new Obj(0, 0, 0, g)));
+            }
+
+            // a lamp post is no wall; the iron fence's art is 66 px wide (no single tile edge): neither faces anywhere
+            Assert.Equal(LightOcclusion.FacingNone, Facing(pack, new Obj(0, 0, 0, 0x0B20)));
+            Assert.Equal(LightOcclusion.FacingNone, Facing(pack, new Obj(0, 0, 0, 0x084B)));
+        }
+
+        [TileDataPackFact]
+        public void Inside_corner_window_glow_is_cut_by_the_perpendicular_wall_in_front()
+        {
+            // owner 2026-11-22 (the keep's zig-zag wall, screenshot 232455-noted): at each inside corner the glow of the window
+            // next to the corner spilled onto the perpendicular wall line in front of it, which does not cover the window. That
+            // line's visible face turns away from the window, so it hides the glow; the pieces of the window's own line do not
+            PackArt pack = PackArt.Get();
+            var zigzag = Parse(ZigZag).ToList();
+            var hall = Parse(BankHall).ToList();
+            var lamps = Parse(Lamps).ToList();
+            var fountain = Parse(Fountain).ToList();
+
+            var westCorner = Occluders(pack, new Obj(4462, 1166, 20, 0x0162), zigzag);
+            Assert.Contains(new Obj(4463, 1167, 0, 0x0160), westCorner);
+            Assert.Contains(new Obj(4463, 1167, 20, 0x0163), westCorner);
+            Assert.DoesNotContain(new Obj(4462, 1167, 20, 0x0162), westCorner);
+
+            var southCorner = Occluders(pack, new Obj(4467, 1174, 20, 0x0162), zigzag);
+            Assert.Contains(new Obj(4468, 1175, 0, 0x0160), southCorner);
+            Assert.Contains(new Obj(4468, 1175, 20, 0x0163), southCorner);
+            Assert.DoesNotContain(new Obj(4467, 1175, 20, 0x0162), southCorner);
+
+            Assert.Contains(new Obj(4468, 1155, 0, 0x0160), Occluders(pack, new Obj(4467, 1155, 20, 0x0162), hall));
+            Assert.Contains(new Obj(4446, 1167, 0, 0x00A8), Occluders(pack, new Obj(4447, 1165, 0, 0x00B9), lamps));
+            Assert.Contains(new Obj(4468, 1175, 0, 0x0160), Occluders(pack, new Obj(4467, 1175, 20, 0x0162), fountain));
+            // the switch off: nothing hides
+            Assert.Empty(Occluders(pack, new Obj(4462, 1166, 20, 0x0162), zigzag, on: false));
         }
 
         [TileDataPackFact]

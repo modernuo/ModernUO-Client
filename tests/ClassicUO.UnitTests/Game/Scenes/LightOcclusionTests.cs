@@ -71,6 +71,38 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void Wall_faces_away_from_a_wall_source_behind_its_plane_but_not_along_the_same_line()
+        {
+            const byte E = LightOcclusion.FacingEast, S = LightOcclusion.FacingSouth, N = LightOcclusion.FacingNone;
+
+            // an east-facing window (line along Y): its own line (dx 0) is lit, the parallel line east of it and the
+            // south-facing line south of it (the inside corner) face away
+            Assert.False(LightOcclusion.FacesAway(E, E, 0, 1));
+            Assert.True(LightOcclusion.FacesAway(E, E, 2, -1));
+            Assert.True(LightOcclusion.FacesAway(E, S, 1, 1));
+            Assert.True(LightOcclusion.FacesAway(E, S, 1, 0));
+            Assert.False(LightOcclusion.FacesAway(E, S, 2, -1));
+            // a south-facing window (line along X): mirrored
+            Assert.False(LightOcclusion.FacesAway(S, S, 1, 0));
+            Assert.True(LightOcclusion.FacesAway(S, S, -1, 2));
+            Assert.True(LightOcclusion.FacesAway(S, E, 1, 1));
+            Assert.True(LightOcclusion.FacesAway(S, E, 0, 1));
+            Assert.False(LightOcclusion.FacesAway(S, E, -1, 2));
+            // not a wall source, or a piece of unknown facing: never
+            Assert.False(LightOcclusion.FacesAway(N, S, 1, 1));
+            Assert.False(LightOcclusion.FacesAway(E, N, 1, 1));
+            // the facing from the art's visible bounds (44 px art): right half east, left half south, else none
+            Assert.Equal(E, LightOcclusion.Facing(44, 12, 32));
+            Assert.Equal(S, LightOcclusion.Facing(44, 0, 32));
+            Assert.Equal(N, LightOcclusion.Facing(44, 0, 44));
+            Assert.Equal(N, LightOcclusion.Facing(66, 0, 30));
+            // Hides: a facing-away wall hides without covering the source, only with the switch on
+            StaticTiles wall = Wall();
+            Assert.True(LightOcclusion.Hides(true, false, 1, 1, 0, ref wall, false, true));
+            Assert.False(LightOcclusion.Hides(false, false, 1, 1, 0, ref wall, false, true));
+        }
+
+        [Fact]
         public void Light_point_is_the_centre_of_the_emitters_visible_art_and_cover_point_maps_into_the_art()
         {
             // a 44x112 wall piece anchored at (100, 200): its art starts at (100, 132); visible bounds (12, 0, 32, 112)
