@@ -170,6 +170,7 @@ Settings come from `settings.json` next to the executable, or from the file name
 | `autologin`, `saveaccount` | `-autologin true`, `-saveaccount false` | Log in at startup; do not store the account |
 | `fps`, `vsync` | `-fps 0`, `-vsync false` | `0` is uncapped (the frame-limit slider's "Off" step in Options) |
 | `world_renderer` | `-worldrenderer auto\|gpu\|compatibility` | See below |
+| `window_display` | `-display <index\|name>` | The monitor the window opens on; see [Monitor and GPU](#monitor-and-gpu) |
 | `profilespath` | `-profilespath <dir>` | Profile folder (never saved to the file) |
 | | `-skiploginscreen`, `-nomessagebox`, `-packetlog` | Flags |
 
@@ -196,6 +197,18 @@ Several clients can run on one machine against one install and one pack.
 ### World renderer
 
 `world_renderer` (or `-worldrenderer`, which wins for one run and is not saved) is `auto`, `gpu` or `compatibility` (`legacy` is still accepted). Players set it in Options (Video): Automatic (recommended), GPU or Compatibility; it takes effect on the next start. The choice is made once at startup and logged as a `[renderer]` line. `auto` picks the Gpu renderer when SDL_GPU on Vulkan works and the Compatibility (FNA batcher, code name Legacy) renderer otherwise. `gpu` exits with an error if the Gpu world cannot run. The window title shows `[Compatibility renderer]` in dev builds only.
+
+### Monitor and GPU
+
+`window_display` (or `-display`, which also writes the key) picks the monitor the window opens on: an SDL display index (0-based, in SDL's display order) or a display name, matched exactly first (ignoring case), then as part of a name, so `-display 1` and `-display "LG HDR"` both work. The window keeps its saved `window_position` when that lies on the chosen monitor and is centred on it otherwise; a maximized or borderless window then fills that monitor. An index or name that matches nothing opens on the primary. Without `window_display`, `window_position` alone decides, on whatever monitor holds it: positions left of or above the primary are negative and are kept (they were clamped to 0 before); a position on no monitor opens at the primary's top-left. The client saves the window position at exit.
+
+At startup the client logs one `[display]` line: the display index, name, id and usable bounds, what chose it, the graphics adapter in use and its driver (FNA3D D3D11, OpenGL or SDLGPU with its backend), and `FNA3D_PREFER_LOW_POWER`. With FNA3D on D3D11 or OpenGL the adapter name is the one FNA3D reports (`D3D11 Adapter`, `OpenGL Renderer`); with SDL_GPU it is the SDL_GPU device name.
+
+Rendering on an integrated GPU (a laptop or a desktop with a monitor on the integrated GPU's output):
+
+- Set `FNA3D_PREFER_LOW_POWER=1` in the environment before starting the client. FNA3D's D3D11 driver then opens the low-power adapter, and the SDL_GPU (Vulkan) device is created with `preferlowpower` (the same hint is checked by the Gpu renderer probe, `RendererStartup.cs`). Check the adapter in the `[display]` line.
+- If the driver still picks the discrete GPU, use the Windows per-app GPU preference: Settings > System > Display > Graphics, add `cuo.exe`, Options > Power saving. It applies at the next start.
+- A window on a monitor wired to one GPU while another GPU renders works, but every presented frame is copied across adapters; time on the GPU that owns the monitor.
 
 ## Unit tests
 
@@ -263,6 +276,7 @@ Overrides (`CUO_<NAME>=1|0`) work only with `CuoDevTools=true`, and so do most c
 | `item_prep_rows` | `false` | The world fill's item branch reads the graphic and flags from the item's packed `ItemDrawRow` (one record lookup) instead of the `Graphic` and `Flags` getters. Env `CUO_ITEM_PREP_ROWS=1\|0`; checker `CUO_ITEM_PREP_CHECK=1` |
 | `item_pick_early_reject` | `false` | An art item's pick test rejects a mouse outside every box its pack sprite can be tested in, before it looks up the stored draw offset. Env `CUO_ITEM_PICK_EARLY_REJECT=1\|0`; checker `CUO_ITEM_PICK_CHECK=1` |
 | `ui_gump_dirty` | `false` | The UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the cursor is drawn over a kept copy of the UI. Off: the UI is drawn every frame. Checkers `CUO_UI_DIRTY_CHECK=1`, `CUO_UI_CACHE_CHECK=1\|N` |
+| `ui_border_bake` | `false` | The final composite copies one opaque window-sized border texture (black, the 10 % background pattern and, outside the world viewport, the UI over them) instead of the explicit back-buffer clears (FNA still clears it when bound), the pattern drawn over the whole window and blending the whole UI target; the UI is then blended only inside the viewport. The border is baked when the UI target, the viewport or the window changes: a frame whose only UI change is the cursor bakes just the cursor's old and new rects, a gump change bakes it whole. FrameStats `ui_border_bake_px` counts the pixels baked per frame. Costs one back-buffer-sized target (8 MB at 1080p, 33 MB at 4K), freed when the switch is turned off. Both renderers; live (driver `uiborderbake on\|off`). Env `CUO_UI_BORDER_BAKE=1\|0`; checker `CUO_UI_COMPOSITE_CHECK=1\|N` |
 | `text_quad_cache` | `false` | A text control keeps the glyph quad runs of its last draw and reuses them while its layout, atlas, width, font, style, hue and cell are unchanged. Checker `CUO_TEXT_QUAD_CHECK=1` |
 | `anim_frame_count_tables` | `false` | While the Gpu world draws, the animation advance reads a mobile's frame count from the pack's animation tables instead of the Legacy frame cache, which decodes and uploads the direction into an atlas the Gpu world never samples. Legacy keeps the cache read. Read once. Env `CUO_ANIM_FRAME_COUNT_TABLES=1\|0`; checker `CUO_ANIM_FRAME_COUNT_CHECK=1` |
 | `anim_async_turn` | `true` | A turn or new action of a body already drawn decodes its direction on a worker; the mobile keeps its previous look until the direction is uploaded, for at most 50 ms. Moves, turns and war-mode changes request the facing direction and its two neighbours early. Off: the Gpu world draws a mobile part whose direction page is not resident as nothing for a frame. Env `CUO_ANIM_ASYNC_TURN=1\|0`; checker `CUO_ANIM_ASYNC_TURN_CHECK=1` |
@@ -345,6 +359,7 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_ACTIVE_ITEMS_CHECK=1`, `CUO_ANIM_ADVANCE_CHECK=1` | Dev. Compare the active item list with the `ItemActive` tags every frame; compare a corpse's animation component with the Item's fields before each advance |
 | `CUO_MOBILE_INPUT_BENCH=1` | Time the legacy and the pushed mobile input sample of the same mobile in the same frame (paired, 8 calls each, alternating which goes first); logged with the `[mobile-input-check]` timer |
 | `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI render cache's target with a replay of its recordings every N frames (default 30). `CUO_UI_CACHE_CHECK_DIR=<dir>` saves the first mismatches as PNGs. `CUO_UI_CACHE_FORCE=1` counts every frame as changed, to measure what the cache costs when the UI never repeats. Dev. `CUO_UI_DIRTY_CHECK=1` checks the gump recordings behind `ui_gump_dirty` |
+| `CUO_UI_COMPOSITE_CHECK=1\|N` | Dev. Checker of `ui_border_bake`: every N frames (default 30) the composite the switch did not draw is drawn into a scratch target and compared with the back buffer pixel for pixel; mismatches are logged with the count inside and outside the viewport and the first pixel, and `[ui-composite-check]` prints a summary (switch state, checks, mismatches, full and partial bakes) every 5 s. Pass: 0 mismatches in both states |
 | `CUO_TILE_ORDER_CHECK=1\|every\|N`, `CUO_RECYCLE_CHECK=1\|reuse` | Check the tile lists (order, links, no item, mobile or effect in a list), the dynamic tile index (entries valid and sorted, the merged walk in key order, every placed object reachable) and map object reuse |
 | `CUO_CLIP_ORDER_CHECK=1` | Dev. Compare the two depth models (`depth_model` off and on) on the pairs a mobile forms with the land and statics around it: about every 2 s one Gpu frame is armed, a standing mobile's animation layers are sampled every 4 px, and pairs whose order changes are logged as `[clip-order]` lines with a summary |
 | `CUO_HEALTH_LINES_CHECK=1`, `CUO_EFFECT_CHECK=1`, `CUO_PAPERDOLL_SLOTS_CHECK=1`, `CUO_PICK_RECORDS_CHECK=1`, `CUO_CONTAINER_CONTROLS_CHECK=1` | Dev. Compare the health line draws, the effect system, the paperdoll slots' prepared worn items (with `FindItemByLayer`), the record-served pick state, and a container's incremental item controls (with a full rebuild) with their older paths |
@@ -366,6 +381,7 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 |---|---|
 | `CUO_EVENT_LOOP_MACOS=1\|0` | Dev. Override `event_loop_macos` |
 | `CUO_SPAN_READER=1\|0` | Dev. Override `span_reader` |
+| `CUO_UI_BORDER_BAKE=1\|0` | Dev. Override `ui_border_bake` (the driver's `uiborderbake` then has no effect) |
 | `CUO_NET_RING=1\|0` | Dev. Override `net_ring` |
 | `CUO_GUMP_DECODE_BUDGET=1\|0` | Dev. Override `gump_decode_budget` |
 | `CUO_OPL_REQUEST_BUDGET=<n>` | Dev. Override `opl_request_budget` (0 turns it off) |
