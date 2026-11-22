@@ -19,26 +19,42 @@ namespace ClassicUO.Game.Scenes
                 DrawY;
         }
 
+        /// <summary>view_margin: the lights a frame may hold (the classic cap is LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT, 100,
+        /// which a full-size town view exceeds: the walk's first 100 were kept, so lamps came and went with the position).</summary>
+        public const int WideCapacity = 512;
+
         private readonly Entry[] _entries;
-        private int _count;
+        private int _count, _limit;
         private uint _frame;
 
         public FrameLights(int capacity)
         {
             _entries = new Entry[capacity];
+            _limit = capacity;
         }
 
         public int Count => _count;
 
-        public bool Full => _count >= _entries.Length;
+        /// <summary>The lights this frame may hold (BeginFrame).</summary>
+        public int Limit => _limit;
+
+        public bool Full => _count >= _limit;
+
+        /// <summary>Lights offered (GameScene.AddLight) while the frame was full: dropped by the cap.</summary>
+        public int Refused;
 
         public ref Entry this[int index] => ref _entries[index];
 
         /// <summary>A drawn frame starts: the lights of earlier frames are dropped.</summary>
-        public void BeginFrame(uint frame)
+        public void BeginFrame(uint frame) => BeginFrame(frame, _entries.Length);
+
+        /// <summary><see cref="BeginFrame(uint)"/> with at most <paramref name="limit"/> lights (clamped to the capacity).</summary>
+        public void BeginFrame(uint frame, int limit)
         {
             _frame = frame;
             _count = 0;
+            _limit = System.Math.Clamp(limit, 0, _entries.Length);
+            Refused = 0;
         }
 
         /// <summary>The next free entry; <see cref="Commit"/> keeps it. Callers check <see cref="Full"/> first.</summary>

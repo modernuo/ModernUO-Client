@@ -56,7 +56,7 @@ namespace ClassicUO.Game.Scenes
         private HealthLinesManager _healthLinesManager;
 
         private Point _lastSelectedMultiPositionInHouseCustomization;
-        private readonly FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
+        private readonly FrameLights _frameLights = new FrameLights(FrameLights.WideCapacity);
 #if CUO_DEVTOOLS
         // LightFrameLog: the light configuration the composite uses and the one the light target was drawn for (0 none,
         // 1 darkness, 2 alternative)
@@ -470,11 +470,17 @@ namespace ClassicUO.Game.Scenes
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
             if (
-                _frameLights.Full
-                || !UseLights && !UseAltLights
+                !UseLights && !UseAltLights
                 || obj == null
             )
             {
+                return;
+            }
+
+            if (_frameLights.Full)
+            {
+                _frameLights.Refused++;
+
                 return;
             }
 
@@ -1406,7 +1412,8 @@ namespace ClassicUO.Game.Scenes
                 return true;
             }
 
-            _frameLights.BeginFrame(++_lightsFrame);
+            // view_margin: the wide cap (FrameLights.WideCapacity) instead of the classic 100 (ViewMargin)
+            _frameLights.BeginFrame(++_lightsFrame, ViewMargin.Enabled ? FrameLights.WideCapacity : LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
             Viewport r_viewport = batcher.GraphicsDevice.Viewport;
             Viewport camera_viewport = Camera.GetViewport();
             Matrix matrix = Camera.ViewTransformMatrix;
@@ -1541,7 +1548,7 @@ namespace ClassicUO.Game.Scenes
             batcher.GraphicsDevice.Viewport = r_viewport;
 #if CUO_DEVTOOLS
             LightFrameLog.OnWorldOffset(_offset.X, _offset.Y);
-            LightFrameLog.OnCompose(_composeMode, _lightTargetMode, _world.Light.Overall, _world.Light.Personal, _world.Light.RealOverall, _world.Light.RealPersonal, _world.Player.X, _world.Player.Y);
+            LightFrameLog.OnCompose(_composeMode, _lightTargetMode, _world.Light.Overall, _world.Light.Personal, _world.Light.RealOverall, _world.Light.RealPersonal, _world.Player.X, _world.Player.Y, _frameLights.Refused);
 #endif
 
             return base.Draw(batcher, renderTargets);
@@ -1685,6 +1692,8 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+            // view_margin: the light sources beside the walked view whose halo reaches into it (ViewMargin)
+            AddEdgeLights();
             int lightCount = _frameLights.CountFor(_lightsFrame);
 #if CUO_DEVTOOLS
             _lightTargetMode = UseAltLights ? 2 : 1;

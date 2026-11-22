@@ -84,6 +84,71 @@ namespace ClassicUO.Game.Map
         /// (MobileFrameCache keys a mobile's seat lookup on it).</summary>
         public uint ContentVersion;
 
+        /// <summary>
+        /// light_edge_margin (GameScene.AddEdgeLights): the chunk's light-emitting statics and multi components (tiledata Light),
+        /// in no order, kept by AddGameObject and RemoveFromTile, so the light pass reaches the sources just outside the
+        /// walked view without walking their tiles. CUO_LIGHT_EDGE_CHECK compares it with a walk of the tile lists.
+        /// </summary>
+        internal TileListObject[] LightSources = Array.Empty<TileListObject>();
+        internal int LightSourceCount;
+
+        /// <summary>
+        /// view_margin: how far the art of the chunk's map statics (Load; map statics never change) reaches past their tiles'
+        /// 44 x 44 anchor box, in world pixels, with the tile's anchor taken at Z 0: left and right of it, above it (art height
+        /// and 4 px per Z) and below it (4 px per negative Z). Read by the sprite margin (next step, handoff light-edges);
+        /// the light margin does not need it.
+        /// </summary>
+        internal int StaticOverLeft, StaticOverRight, StaticOverUp, StaticOverDown;
+
+        private void RecordStaticOverhang(ushort graphic, sbyte z)
+        {
+            if (!Client.Game.UO.FileManager.Arts.TrySize(graphic + 0x4000, out int w, out int h))
+            {
+                return;
+            }
+
+            int left = (w >> 1) - 22;
+            StaticOverLeft = Math.Max(StaticOverLeft, left);
+            StaticOverRight = Math.Max(StaticOverRight, w - left - 44);
+            StaticOverUp = Math.Max(StaticOverUp, h - 44 + (z << 2));
+            StaticOverDown = Math.Max(StaticOverDown, -(z << 2));
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static bool IsLightSource(GameObject obj) =>
+            (obj is Static || obj is Multi) && (uint)obj.Graphic < (uint)StaticTileData.Length && StaticTileData[obj.Graphic].IsLight;
+
+        private void NoteLightSource(TileListObject node)
+        {
+            if (LightSourceCount == LightSources.Length)
+            {
+                Array.Resize(ref LightSources, Math.Max(4, LightSourceCount * 2));
+            }
+
+            LightSources[LightSourceCount++] = node;
+        }
+
+        /// <summary>RemoveFromTile: <paramref name="node"/> leaves the chunk (a no-op when it is not a light source).</summary>
+        internal void ForgetLightSource(TileListObject node)
+        {
+            for (int i = LightSourceCount - 1; i >= 0; i--)
+            {
+                if (ReferenceEquals(LightSources[i], node))
+                {
+                    LightSources[i] = LightSources[--LightSourceCount];
+                    LightSources[LightSourceCount] = null;
+
+                    return;
+                }
+            }
+        }
+
+        private void ClearLightSources()
+        {
+            Array.Clear(LightSources, 0, LightSourceCount);
+            LightSourceCount = 0;
+        }
+
         /// <summary>The Map that loaded this chunk (Map.LoadChunk): told about content changes, which can invalidate its
         /// max-Z decision (Map.NoteContentChanged). Cleared by Destroy.</summary>
         internal Map OwnerMap;
@@ -244,6 +309,7 @@ namespace ClassicUO.Game.Map
             }
 
             bool gargoyle = GameObject.PlayerIsGargoyle(_world);
+            StaticOverLeft = StaticOverRight = StaticOverUp = StaticOverDown = 0;
 
             foreach (ref readonly var sb in block.Statics)
             {
@@ -254,6 +320,7 @@ namespace ClassicUO.Game.Map
                 staticObject.Y = (ushort)(by + sb.Y);
                 staticObject.Z = sb.Z;
                 staticObject.UpdateScreenPosition();
+                RecordStaticOverhang(staticObject.Graphic, sb.Z);
 
                 AddGameObject(staticObject, sb.X, sb.Y);
             }
@@ -392,6 +459,11 @@ namespace ClassicUO.Game.Map
                 (Dynamic ??= new DynamicTileIndex()).Add(obj, obj.TileCell);
 
                 return;
+            }
+
+            if (IsLightSource(node))
+            {
+                NoteLightSource(node);
             }
 
             int cell = obj.TileCell;
@@ -563,6 +635,7 @@ namespace ClassicUO.Game.Map
             }
 
             IsDestroyed = true;
+            ClearLightSources();
             Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
@@ -696,6 +769,7 @@ namespace ClassicUO.Game.Map
             }
 
             Mesh.SoftClear(null); // in-place reload: the chunk stays in use and rebuilds at once, so it keeps its arrays
+            ClearLightSources();
             Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);

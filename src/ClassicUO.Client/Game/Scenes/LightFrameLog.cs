@@ -22,7 +22,7 @@ namespace ClassicUO.Game.Scenes
         private static bool _lightsSeen;
         private static int _count, _offX, _offY, _worldX, _worldY, _lagFrames, _lagMax;
         private static uint _hash, _prevHash;
-        private static int _orangePrev, _px, _py;
+        private static int _orangePrev, _px, _py, _refused;
         private static bool _drawn, _alt, _use, _held;
         private static float _level;
         // the composite's light configuration and the one the light target was drawn for (GameScene: 0 none, 1 darkness,
@@ -87,8 +87,9 @@ namespace ClassicUO.Game.Scenes
         }
 
         /// <summary>The composite's light configuration this frame and the mode the light target holds (GameScene.Draw end).</summary>
-        public static void OnCompose(int compose, int targetMode, int overall, int personal, int realOverall, int realPersonal, int px, int py)
+        public static void OnCompose(int compose, int targetMode, int overall, int personal, int realOverall, int realPersonal, int px, int py, int refused)
         {
+            _refused = refused;
             _px = px;
             _py = py;
             _compose = compose;
@@ -178,7 +179,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             Log.Info(FormattableString.Invariant(
-                $"[light-frames] f {_frame} held {(_held ? 1 : 0)} drawn {(_drawn ? 1 : 0)} use {(_use ? 1 : 0)} alt {(_alt ? 1 : 0)} level {_level:0.000} lights {_count}{(_count >= Assets.LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT ? " CAP" : "")} hash {_hash:X8}{(listChanged ? " LIST" : "")} lights at {_offX},{_offY} world at {_worldX},{_worldY}{(lag != 0 ? " LAG " + lag : "")} ") + FormattableString.Invariant(
+                $"[light-frames] f {_frame} held {(_held ? 1 : 0)} drawn {(_drawn ? 1 : 0)} use {(_use ? 1 : 0)} alt {(_alt ? 1 : 0)} level {_level:0.000} lights {_count}{(_refused > 0 ? " CAP refused " + _refused : "")} hash {_hash:X8}{(listChanged ? " LIST" : "")} lights at {_offX},{_offY} world at {_worldX},{_worldY}{(lag != 0 ? " LAG " + lag : "")} ") + FormattableString.Invariant(
                 $"| light mean {lMean:0.00} diff {lDiff:0.000} big {lBig} maxd {lMaxD} | world mean {sMean:0.00} diff {sDiff:0.000} big {sBig} maxd {sMaxD} ") + FormattableString.Invariant(
                 $"| orange {sOrange}{(orangeJump > Math.Max(1, world.Width * world.Height / 100) ? " ORANGE" : "")} r {sRed:0.0} b {sBlue:0.0} | mode {_compose}/{_targetMode}{(mismatch ? " MODE" : "")} light {_overall}/{_personal} real {_realOverall}/{_realPersonal} at {_px},{_py}"));
 

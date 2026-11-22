@@ -210,6 +210,15 @@ namespace ClassicUO.Configuration
         // CUO_ANIM_ASYNC_TURN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; }
 
+        // light-edges (owner 2026-11-21: Deceit's wall torches lit up only once they entered the view; trees beside the view
+        // pop in whole): the view margin. Now: the light pass also takes the light sources up to the largest light's radius
+        // beyond the walked view (the chunks' recorded light statics and multi components, Chunk.LightSources, and the ground
+        // items there), so a halo reaching into the view is drawn before its source is. Next (handoff light-edges): the walk
+        // culls by sprite rects with the chunks' recorded static overhang (Chunk.StaticOver*). CUO_VIEW_MARGIN_CHECK=1
+        // compares the added lights with a walk of those chunks' tile lists in both states; CUO_VIEW_MARGIN=1|0 overrides the
+        // setting in developer builds. Default off.
+        [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
+
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
         // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the

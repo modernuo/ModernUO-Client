@@ -16,6 +16,19 @@ namespace ClassicUO.Assets
 
         public int Count => _lights.Length;
 
+        /// <summary>The largest width or height of the lights below <paramref name="below"/> (0 before Load).</summary>
+        public int MaxExtent(int below)
+        {
+            int max = 0;
+
+            for (int i = 0, n = Math.Min(below, _lights.Length); i < n; i++)
+            {
+                max = Math.Max(max, Math.Max((int)_lights[i].Width, _lights[i].Height));
+            }
+
+            return max;
+        }
+
         public override void Load()
         {
             (_lights, _data) = LightFile.Read(FileManager.Pack.PathOf(TableConst.LightsFile));
