@@ -26,9 +26,11 @@ namespace ClassicUO.UnitTests.Ecs
             public void Request(in SpriteInstance instance) => Requests++;
         }
 
+        // asset_prefetch_on_packet alone: anim_async_turn (default on) also enables the hold, so it is pinned off
         private static void WithHold(bool on, Action body)
         {
             LookPrefetch.OverrideForTests = on;
+            AnimAsyncTurn.OverrideForTests = false;
             LookPrefetch.TicksForTests = 1000;
 
             try
@@ -38,6 +40,7 @@ namespace ClassicUO.UnitTests.Ecs
             finally
             {
                 LookPrefetch.OverrideForTests = null;
+                AnimAsyncTurn.OverrideForTests = null;
                 LookPrefetch.TicksForTests = null;
             }
         }

@@ -106,35 +106,47 @@ namespace ClassicUO.UnitTests.Ecs
         public void Async_Turn_Notes_Only_With_The_Switch_And_Bounds_The_Queue(bool on)
         {
             AnimAsyncTurn.OverrideForTests = on;
-            AnimAsyncTurn.ResetForTests();
+            var queue = new AnimAsyncTurn(null);
 
             try
             {
                 for (uint s = 1; s <= AnimAsyncTurn.Capacity + 5; s++)
                 {
-                    AnimAsyncTurn.Note(s);
+                    queue.Note(s);
                 }
 
-                AnimAsyncTurn.Note(0);
+                queue.Note(0);
 
                 if (!on)
                 {
-                    Assert.Equal(0, AnimAsyncTurn.Count);
-                    Assert.False(AnimAsyncTurn.TryTake(out _));
+                    Assert.Equal(0, queue.Count);
+                    Assert.False(queue.TryTake(out _));
 
                     return;
                 }
 
-                Assert.Equal(AnimAsyncTurn.Capacity, AnimAsyncTurn.Count);
-                Assert.Equal(5L, AnimAsyncTurn.Dropped);
-                Assert.True(AnimAsyncTurn.TryTake(out uint first));
+                Assert.Equal(AnimAsyncTurn.Capacity, queue.Count);
+                Assert.Equal(5L, queue.Dropped);
+                Assert.True(queue.TryTake(out uint first));
                 Assert.Equal(6u, first); // the oldest went
             }
             finally
             {
-                AnimAsyncTurn.ResetForTests();
                 AnimAsyncTurn.OverrideForTests = null;
             }
+        }
+
+        [Fact]
+        public void Async_Turn_Is_On_By_Default_And_Round_Trips()
+        {
+            var ctx = ClassicUO.Configuration.SettingsJsonContext.RealDefault.Settings;
+            Assert.True(new ClassicUO.Configuration.Settings().AnimAsyncTurn);
+            Assert.True(System.Text.Json.JsonSerializer.Deserialize("{}", ctx).AnimAsyncTurn);
+
+            // a saved "off" stays off
+            string json = System.Text.Json.JsonSerializer.Serialize(new ClassicUO.Configuration.Settings { AnimAsyncTurn = false }, ctx);
+            Assert.Contains("\"anim_async_turn\": false", json);
+            Assert.False(System.Text.Json.JsonSerializer.Deserialize(json, ctx).AnimAsyncTurn);
         }
 
         [Fact]
