@@ -325,7 +325,7 @@ namespace ClassicUO.Renderer.Arts
 
         /// <summary>
         /// Test seam: static art <paramref name="graphic"/> as if it were in the atlas already, <paramref name="width"/> x
-        /// <paramref name="height"/> on <paramref name="texture"/> (a texture without a device). Size lookups then find it.
+        /// <paramref name="height"/> on <paramref name="texture"/> (a texture without a device). Size lookups and GetArt then find it without a decode.
         /// </summary>
         internal void SetResidentForTests(uint graphic, Texture2D texture, int width, int height)
         {

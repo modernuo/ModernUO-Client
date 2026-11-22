@@ -22,7 +22,7 @@ namespace ClassicUO.UnitTests.Network.Packets
         private const uint MOB = 0x0000_0200;
         private const uint GUMP_ID = 0x0123_4567;
 
-        private readonly GameSeam _seam = new(art: true);
+        private readonly GameSeam _seam = new();
 
         public void Dispose()
         {
