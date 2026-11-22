@@ -1480,7 +1480,7 @@ namespace ClassicUO.Game
             }
 
             LookPrefetch.Note(placement.Subject?.Serial ?? 0, LookPrefetch.Kind.Mobile);
-            AnimAsyncTurn.Note(placement.Subject?.Serial ?? 0);
+            _world.AsyncTurn.Note(placement.Subject?.Serial ?? 0);
 
             if (mobile == null || !Consume(placement))
             {
@@ -1720,7 +1720,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            AnimAsyncTurn.Note(mobile.Serial);
+            _world.AsyncTurn.Note(mobile.Serial);
 
             if (!Holds(mobile) && !IsDetachedPlayer(mobile))
             {
@@ -2835,7 +2835,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            AnimAsyncTurn.Note(mobile.Serial);
+            _world.AsyncTurn.Note(mobile.Serial);
 
             bool detached = !Holds(mobile);
 
@@ -3400,7 +3400,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            AnimAsyncTurn.Note(player.Serial);
+            _world.AsyncTurn.Note(player.Serial);
 
             if (player.World != _world || !ReferenceEquals(player, _world.Player))
             {
@@ -3435,7 +3435,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            AnimAsyncTurn.Note(player.Serial);
+            _world.AsyncTurn.Note(player.Serial);
 
             if (player.World != _world || !ReferenceEquals(player, _world.Player))
             {

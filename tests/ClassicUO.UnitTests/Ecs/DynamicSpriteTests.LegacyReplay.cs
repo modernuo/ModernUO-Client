@@ -134,45 +134,56 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.False(cache.LegacyValid);
         }
 
-        [Fact]
-        public void Legacy_Mobile_Replay_Follows_Selection_Alpha_And_Hues()
+        // hold: anim_async_turn (default on) enables the look hold, which records an uncacheable selection as the look to
+        // hold (MobileSpriteExtract, LegacyValid); its next frame has a new SelectGen, so it is never replayed
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Legacy_Mobile_Replay_Follows_Selection_Alpha_And_Hues(bool hold)
         {
-            (AnimationsLoader anims, _) = AnimFixture(5);
-            var atlas = new FakeAtlas(anims, System.Array.Empty<SpriteEntry>());
-            var mirror = new WorldMirror();
-            EcsEntity e = MobileCase(mirror, "equipped");
-            var extract = new MobileSpriteExtract(anims);
-            var cache = new MobileFrameCache { SelectValid = true, SelectGen = 1 };
-
-            void Frame(string step, bool replayed)
+            WithAsyncTurn(hold, () =>
             {
-                long hits = MobileFrameCache.LegacyHits;
-                List<LegacyDraw> want = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out Rectangle fi, out MobileSpriteExtract.LightRequest[] lights);
-                List<LegacyDraw> got = DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache);
-                AssertSameLegacy(want, fi, lights, got, extract, step);
-                Assert.True(replayed == (MobileFrameCache.LegacyHits != hits), step);
-            }
+                (AnimationsLoader anims, _) = AnimFixture(5);
+                var atlas = new FakeAtlas(anims, System.Array.Empty<SpriteEntry>());
+                var mirror = new WorldMirror();
+                EcsEntity e = MobileCase(mirror, "equipped");
+                var extract = new MobileSpriteExtract(anims);
+                var cache = new MobileFrameCache { SelectValid = true, SelectGen = 1 };
 
-            Frame("first", false);
-            Frame("same", true);
-            e.GetComponent<MobileRenderState>().Alpha = 120;
-            Frame("alpha", false);
-            Frame("alpha again", true);
-            e.GetComponent<MobileRenderState>().OverrideHue = 0x0035;
-            Frame("override hue", false);
-            e.GetComponent<Hue>().Value = 0x0021;
-            Frame("body hue", false);
-            e.GetComponent<AnimationState>().Frame = 2;
-            cache.SelectGen++;
-            Frame("new selection", false);
-            Frame("new selection again", true);
-            cache.SelectValid = false;
-            cache.SelectGen++;
-            Frame("uncacheable selection", false);
-            Assert.False(cache.LegacyValid);
-            e.GetComponent<AnimationState>().Flags &= ~AnimStateFlags.Visible;
-            Assert.Empty(DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache));
-            Assert.False(cache.LegacyValid);
+                void Frame(string step, bool replayed)
+                {
+                    long hits = MobileFrameCache.LegacyHits;
+                    List<LegacyDraw> want = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out Rectangle fi, out MobileSpriteExtract.LightRequest[] lights);
+                    List<LegacyDraw> got = DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache);
+                    AssertSameLegacy(want, fi, lights, got, extract, step);
+                    Assert.True(replayed == (MobileFrameCache.LegacyHits != hits), step);
+                }
+
+                Frame("first", false);
+                Frame("same", true);
+                e.GetComponent<MobileRenderState>().Alpha = 120;
+                Frame("alpha", false);
+                Frame("alpha again", true);
+                e.GetComponent<MobileRenderState>().OverrideHue = 0x0035;
+                Frame("override hue", false);
+                e.GetComponent<Hue>().Value = 0x0021;
+                Frame("body hue", false);
+                e.GetComponent<AnimationState>().Frame = 2;
+                cache.SelectGen++;
+                Frame("new selection", false);
+                Frame("new selection again", true);
+                cache.SelectValid = false;
+                cache.SelectGen++;
+                Frame("uncacheable selection", false);
+                Assert.Equal(hold, cache.LegacyValid);
+
+                // an uncacheable selection is selected again every frame (MobileAnimationSystem: a new SelectGen)
+                cache.SelectGen++;
+                Frame("uncacheable selection again", false);
+                e.GetComponent<AnimationState>().Flags &= ~AnimStateFlags.Visible;
+                Assert.Empty(DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache));
+                Assert.False(cache.LegacyValid);
+            });
         }
     }
 }
