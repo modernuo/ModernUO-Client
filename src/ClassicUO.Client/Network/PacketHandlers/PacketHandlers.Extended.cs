@@ -25,6 +25,93 @@ namespace ClassicUO.Network
 {
     sealed partial class PacketHandlers
     {
+        // 0xBF.10 after the name cliloc: the crafter, then (cliloc, charges) attribute pairs; null when there is nothing to
+        // show. An attribute the client has no string for is left out and not counted: the lookup's "missing" placeholder
+        // would land inside the bracketed list (the skip was dead since GetString stopped returning null).
+        internal static string EquipInfoText(ref NetReader p, ClilocLoader clilocs)
+        {
+            ushort crafterNameLen = 0;
+            uint next = p.ReadUInt32();
+
+            Span<char> span = stackalloc char[256];
+            ValueStringBuilder strBuffer = new ValueStringBuilder(span);
+
+            if (next == 0xFFFFFFFD)
+            {
+                crafterNameLen = p.ReadUInt16();
+
+                if (crafterNameLen > 0)
+                {
+                    strBuffer.Append(ResGeneral.CraftedBy);
+                    strBuffer.Append(p.ReadCp1252(crafterNameLen));
+                }
+            }
+
+            if (crafterNameLen != 0)
+            {
+                next = p.ReadUInt32();
+            }
+
+            if (next == 0xFFFFFFFC)
+            {
+                strBuffer.Append("[Unidentified");
+            }
+
+            bool readNext = next == 0xFFFFFFFD || next == 0xFFFFFFFC;
+            byte count = 0;
+
+            while (p.Position < p.Length - 4)
+            {
+                if (readNext)
+                {
+                    next = p.ReadUInt32();
+                }
+
+                readNext = true;
+                short charges = (short)p.ReadUInt16();
+
+                if (!clilocs.TryGetString((int)next, out string attr) || string.IsNullOrEmpty(attr))
+                {
+                    continue;
+                }
+
+                if (charges == -1)
+                {
+                    if (count > 0)
+                    {
+                        strBuffer.Append("/");
+                        strBuffer.Append(attr);
+                    }
+                    else
+                    {
+                        strBuffer.Append(" [");
+                        strBuffer.Append(attr);
+                    }
+                }
+                else
+                {
+                    strBuffer.Append("\n[");
+                    strBuffer.Append(attr);
+                    strBuffer.Append(" : ");
+                    strBuffer.Append(charges.ToString());
+                    strBuffer.Append("]");
+                    count += 20;
+                }
+
+                count++;
+            }
+
+            if (count < 20 && count > 0 || next == 0xFFFFFFFC && count == 0)
+            {
+                strBuffer.Append(']');
+            }
+
+            string text = strBuffer.Length != 0 ? strBuffer.ToString() : null;
+            strBuffer.Dispose();
+
+            return text;
+        }
+
         private static void ExtendedCommand(World world, ref NetReader p)
         {
             ushort cmd = p.ReadUInt16();
@@ -144,84 +231,13 @@ namespace ClassicUO.Network
                         );
                     }
 
-                    str = string.Empty;
-                    ushort crafterNameLen = 0;
-                    uint next = p.ReadUInt32();
+                    string info = EquipInfoText(ref p, Client.Game.UO.FileManager.Clilocs);
 
-                    Span<char> span = stackalloc char[256];
-                    ValueStringBuilder strBuffer = new ValueStringBuilder(span);
-                    if (next == 0xFFFFFFFD)
-                    {
-                        crafterNameLen = p.ReadUInt16();
-
-                        if (crafterNameLen > 0)
-                        {
-                            strBuffer.Append(ResGeneral.CraftedBy);
-                            strBuffer.Append(p.ReadCp1252(crafterNameLen));
-                        }
-                    }
-
-                    if (crafterNameLen != 0)
-                    {
-                        next = p.ReadUInt32();
-                    }
-
-                    if (next == 0xFFFFFFFC)
-                    {
-                        strBuffer.Append("[Unidentified");
-                    }
-
-                    byte count = 0;
-
-                    while (p.Position < p.Length - 4)
-                    {
-                        if (count != 0 || next == 0xFFFFFFFD || next == 0xFFFFFFFC)
-                        {
-                            next = p.ReadUInt32();
-                        }
-
-                        short charges = (short)p.ReadUInt16();
-                        string attr = Client.Game.UO.FileManager.Clilocs.GetString((int)next);
-
-                        if (attr != null)
-                        {
-                            if (charges == -1)
-                            {
-                                if (count > 0)
-                                {
-                                    strBuffer.Append("/");
-                                    strBuffer.Append(attr);
-                                }
-                                else
-                                {
-                                    strBuffer.Append(" [");
-                                    strBuffer.Append(attr);
-                                }
-                            }
-                            else
-                            {
-                                strBuffer.Append("\n[");
-                                strBuffer.Append(attr);
-                                strBuffer.Append(" : ");
-                                strBuffer.Append(charges.ToString());
-                                strBuffer.Append("]");
-                                count += 20;
-                            }
-                        }
-
-                        count++;
-                    }
-
-                    if (count < 20 && count > 0 || next == 0xFFFFFFFC && count == 0)
-                    {
-                        strBuffer.Append(']');
-                    }
-
-                    if (strBuffer.Length != 0)
+                    if (info != null)
                     {
                         world.MessageManager.HandleMessage(
                             item,
-                            strBuffer.ToString(),
+                            info,
                             item.Name,
                             0x3B2,
                             MessageType.Regular,
@@ -230,8 +246,6 @@ namespace ClassicUO.Network
                             true
                         );
                     }
-
-                    strBuffer.Dispose();
 
                     NetClient.Socket.Send_MegaClilocRequest_Old(item);
 
