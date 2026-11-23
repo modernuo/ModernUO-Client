@@ -8901,3 +8901,55 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
   1531/1532, 13, 77), but the margin has no top band (the walk's 44 px slack only), so such a mobile above the view top can pop
   in. Not changed here (owner decision: raise MobileSide to ~300 and add a ~200 px top band for mobiles only, which the
   dynamic index makes cheap under view_margin_walk).
+
+## 2026-11-23 vm-walk follow-up: cull verdict, equivalent viewport, and a void walk measurement (NOT QUIET)
+
+All timings are paired in-process ABBA runs on a machine that was not quiet (spread per arm 1-15 %, `sp` in the analysis files);
+absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/1119/1120..1123, all status ok.
+
+- **The walk measurements are void.** `view_margin_walk` is active only with `chunk_lights` (GameSceneMarginWalk.BeginMarginWalk:
+  `_vmSprites && ChunkStaticLights && WalkEnabled`). On this branch `chunk_lights` defaults off and no job script set it (the
+  quiet-1123 bake that makes it always on is not in this base). So in bench-001119 and bench-001120..123 the arms `onw`/`onwc`
+  ran the same code as `on`/`onc`: counters (tiles, objects, render_list, pick tests, draw calls) and phases are identical
+  within noise, and the "walk off/on" shots are identical trivially. What the jobs do show about the walk: the checker
+  (`CUO_VIEW_MARGIN_WALK_CHECK`, which also evaluates the decision with the switch off) reported 0 mismatches over 10.8k frames
+  (25-28 M margin objects checked, 2.4 M would be left out, 9.7 M margin tiles would be skipped), so the predicate is sound
+  against the drawn set. Its effect is unmeasured. Job scripts now set `chunk_lights=true` (job-eqv.sh, job-shots.sh); rerun both.
+- **Cull on Gpu (bench-001108, 1920x1080 vml, NOT QUIET).** No help, as expected: vm_margin_culled and vm_margin_mesh are 0
+  (the Gpu path puts no margin sprites in a list to cull), and vm -> vmc moves frame p50 by -0.3..+0.3 % (Britain, brwalk),
+  world_prepare/draw by 0..2 %. Also in bench-001120/1121 (`on` vs `onc`: counters identical, frame within 0.01 ms).
+  The Gpu cost of view_margin is the CPU walk: Britain world_prepare +23 % (0.053 -> 0.065 ms), draw +8 %, frame p50 unchanged.
+  Large scene (ls) frame +10 % (2.09 -> 2.30, spread 27 %, so inconclusive), cull no change.
+- **Cull on Legacy: visual verdict (bench-001111).** 6 spots x 4 alternating pairs, both renderers: `SHOTS SAME` (unmasked diff 0 px;
+  the moving-pixel masks cover 0..1945 px of animated sprites). `[view-margin-check] cull`: 12.4-14.0 M margin sprites left out,
+  0 reaching the view by their art box; `sprites` check missing 0 (statics/multis, items, mobiles) with cull on. One shot read
+  (brit_b1_gpu): in colour (green grass, red awning), so the character state does not void the comparison. Cull is visually exact.
+- **Equivalent viewport (bench-001120..123; ring L160 R160 U260 -> big arm = off at (W+320) x (H+260): 2240x1340 for 1080,
+  1600x980 for 720; `[bench] size` lines show both sizes were applied).** Frame / world_prepare / draw p50, ms:
+
+  | scene | off | on | onc | big | on vs big |
+  |---|---|---|---|---|---|
+  | Gpu 1080 Britain | 0.497 / 0.055 / 0.231 | 0.497 / 0.070 / 0.244 | 0.496 / 0.070 / 0.241 | 0.564 / 0.063 / 0.255 | on cheaper in frame (-0.067) |
+  | Gpu 1080 brwalk | 0.492 / 0.058 / 0.247 | 0.493 / 0.074 / 0.259 | 0.494 / 0.074 / 0.258 | 0.568 / 0.069 / 0.278 | same |
+  | Gpu 720 Britain | 0.395 / 0.043 / 0.194 | 0.397 / 0.060 / 0.210 | 0.405 / 0.061 / 0.211 | 0.481 / 0.055 / 0.226 | same |
+  | Gpu 720 brwalk | 0.408 / 0.044 / 0.207 | 0.410 / 0.065 / 0.230 | 0.400 / 0.064 / 0.228 | 0.472 / 0.056 / 0.254 | same |
+  | Legacy 1080 Britain | 0.570 / 0.130 / 0.352 | 0.693 / 0.281 / 0.562 | 0.605 / 0.257 / 0.480 | 0.675 / 0.158 / 0.419 | frame ~equal; on pays more walk/draw |
+  | Legacy 1080 brwalk | 0.559 / 0.116 / 0.342 | 0.701 / 0.277 / 0.580 | 0.611 / 0.254 / 0.482 | 0.680 / 0.153 / 0.439 | same |
+  | Legacy 720 Britain | 0.430 / 0.074 / 0.233 | 0.515 / 0.196 / 0.398 | 0.454 / 0.179 / 0.338 | 0.509 / 0.106 / 0.292 | frame ~equal |
+  | Legacy 720 brwalk | 0.427 / 0.065 / 0.234 | 0.540 / 0.185 / 0.408 | 0.446 / 0.164 / 0.337 | 0.504 / 0.089 / 0.287 | frame ~equal |
+
+  (`onw`/`onwc` rows equal `on`/`onc`, see the first bullet.) Counters (Legacy 1080 Britain): tiles off 2756 / on 3920 / big 3396;
+  objects 5766 / 7801 / 6938; render_list 2697 / 5046 (onc 2776) / 3553; draw calls 74 / 138 (onc 75) / 89; vm_margin_mesh 2345,
+  culled 2270, list 8. Legacy 720: render_list 1336 / 3030 (onc 1413) / 2132; draw calls 42 / 91 (44) / 57. Gpu 1080 Britain:
+  tiles 44 / 51 / 51, objects 133 / 171 / 162, render_list 47 / 54 / 61; Gpu has no margin list.
+  Reading: view_margin costs about what the equivalent bigger viewport costs in total frame time (Gpu: less; Legacy: equal within
+  the noise, +0.12/+0.14 ms at 1080 vs +0.105/+0.12 for big), but spends it differently: more world_prepare (the ring walk visits
+  every tile of the ring; big only the diamond) and more draw (list entries for meshed margin sprites). The cull recovers the
+  draw side on Legacy: frame -0.088/-0.090 ms at 1080 and -0.061/-0.094 ms at 720, leaving +0.035/+0.052 (1080) and +0.024/+0.019
+  (720) over off; it does not touch world_prepare (-0.02 ms). On Gpu there is nothing to recover: view_margin costs +0.015..0.021
+  ms world_prepare and +0.013..0.023 draw, and frame p50 is unchanged (GPU-bound frame).
+- **Recommendation.** See the ledger row in plans/perf-budget-tiers.md: Gpu Medium on its own; Legacy Medium only with cull
+  (worst measured +0.05 ms in Britain at 1080, but the large scene ls costs +0.95 ms with cull, +1.1 ms without, spread 17-37 %,
+  bench-001107), so Legacy in dense scenes needs the walk. The walk's value is unmeasured (first bullet).
+- **Left.** Rerun bench-001119-style shots and bench-001120..123 with `chunk_lights=true` set (scripts updated); add ls and lswalk
+  to the eqv spots (that is where the cost is); walk + cull + per-body reach (owner decision in the handoff); quiet pass.
