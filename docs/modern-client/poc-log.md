@@ -8846,3 +8846,24 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
 - **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
   allocation; not timed.
+
+## 2026-11-23 vm-legacy: why view_margin costs Legacy more than Gpu (bg/vm-legacy, base aa32c2440)
+
+- **Cause (counters from quiet-1123 bench-001082/083, exact, not timing).** view_margin grows the walk's anchor rectangle by
+  the largest art's reach (global) and each chunk's tile mask by max(chunk overhang, mobile 160/260 px). On Legacy every land
+  tile and static of those margin tiles takes the chunk-mesh path: SetVisible + hue + pick test, then BuildVisibleIndices and
+  a draw per chunk layer, though almost none of them can reach the view. Britain Legacy def -> vm: tiles 2756 -> 3920 (+42 %),
+  objects 5767 -> 7803, render_list (mesh sprites + list entries drawn) 2697 -> 5047 (+87 %), draw calls 74 -> 138 (+86 %);
+  world_draw +70 %, prep_walk +56 %. Gpu: the walk skips baked land and statics (the GPU draws its chunks whole), so it only
+  meets the margin's dynamics: objects 133 -> 172, render_list 48 -> 55, gpu_instances +0.2 %; its cost is the extra tiles,
+  pick tests (+72..125 %) and margin mobiles (ls: gpu_dynamic +12 %). Hypothesis confirmed: Legacy submits the margin sprites
+  that are off screen, Gpu does not.
+- **Fix: `view_margin_cull` (default off; CUO_VIEW_MARGIN_CULL=1|0).** Legacy, view_margin on: a chunk-mesh sprite whose anchor
+  is outside the walk's own rectangle and whose mesh quad misses it (44 px of slack kept) is not marked visible, hued or pick
+  tested; it is still stamped DrawnFrame (chunk_lights, occlusion and the sprite-margin checker read that) and its walk light is
+  still added. Unmeshed objects (trees, foliage, animated art, items, mobiles) are untouched. CUO_VIEW_MARGIN_CHECK tests every
+  left-out (or, switch off, would-be left-out) sprite against the object's own box (land corners / art size) and the visible
+  world without slack. New FrameStats counters: vm_margin_mesh, vm_margin_culled, vm_margin_list. Tests: ViewMarginCullTests 16.
+- **Measurement.** Jobs bench-001098 (shots: alternating cull off/on with view_margin on, 6 spots, both renderers, pixel compare
+  with moving pixels masked), bench-001099/100 (paired in-process ABBA def/vm/vmc, quiet-1123 spots, NOT QUIET). Results: see
+  the handoff/follow-up entry.
