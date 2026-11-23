@@ -747,6 +747,7 @@ namespace ClassicUO.Game.Scenes
             _walkObjects = 0;
             _walkPickTests = 0;
             FlushMarginCull();
+            FlushMarginWalk();
 #if CUO_DEVTOOLS
             WalkMaxZ.FrameEnd(_drawFrame);
 #endif
@@ -944,6 +945,13 @@ namespace ClassicUO.Game.Scenes
                 if (screenX < _minPixel.X || screenX > _maxPixel.X)
                 {
                     break;
+                }
+
+                // view_margin_walk: a margin object whose box misses the view is left out (whole-tile walks only: the Gpu item
+                // cache's single walks serve what it extracted)
+                if (!single && MarginWalkSkips(obj))
+                {
+                    continue;
                 }
 
                 int screenY = obj.RealScreenPosition.Y;
@@ -1567,6 +1575,7 @@ namespace ClassicUO.Game.Scenes
             _offset.X = winDrawOffsetX;
             _offset.Y = winDrawOffsetY;
             Camera.SetWorldOffset(_offset.X, _offset.Y);
+            BeginMarginWalk();
 
             _last_scaled_offset.X = winGameScaledOffsetX;
             _last_scaled_offset.Y = winGameScaledOffsetY;

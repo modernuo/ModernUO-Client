@@ -884,6 +884,11 @@ namespace ClassicUO.Game.Scenes
                     // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
                     ulong inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
                     inWalk = WalkChunkMask(chunk, chunkX, chunkY, inWalk);
+#if CUO_DEVTOOLS
+                    ulong fullWalk = inWalk;
+#endif
+                    // view_margin_walk: margin tiles only where an object can reach the view (GameSceneMarginWalk)
+                    inWalk = MarginWalkTiles(chunk, chunkX, chunkY, inWalk, out ulong ringWalk);
 
                     if (inHidden == 0)
                         continue;
@@ -990,13 +995,20 @@ namespace ClassicUO.Game.Scenes
                                 GPU_WALK_MAX_Z,
                                 chunk,
                                 !full,
-                                _gpuSkipEnabled,
+                                // view_margin_walk: a margin tile walked again after frames it was skipped has stale positions
+                                _gpuSkipEnabled || _vmWalk,
                                 false,
                                 (mergeCells & bit) != 0
                             );
                         }
                     }
 
+#if CUO_DEVTOOLS
+                    if (ViewMargin.WalkCheck && _vmRing)
+                    {
+                        CheckMarginWalk(chunk, fullWalk, ringWalk);
+                    }
+#endif
                     if (chunkStamps)
                     {
                         FrameStats.Enter(FrameStats.NoBucket);

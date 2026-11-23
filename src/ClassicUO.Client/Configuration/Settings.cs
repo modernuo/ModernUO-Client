@@ -241,6 +241,13 @@ namespace ClassicUO.Configuration
         // the object's own art box; CUO_VIEW_MARGIN_CULL=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin_cull")] public bool ViewMarginCull { get; set; }
 
+        // vm-walk: with view_margin and chunk_lights on, the walk visits a margin tile only when an object on it can reach the
+        // view (tall or wide statics and multi pieces, stretched land rising past the walk's slack, any dynamic: Chunk.ReachCells
+        // and the dynamic index), and processes only the margin objects whose box meets the view (mobiles, corpses and effects
+        // always). CUO_VIEW_MARGIN_WALK_CHECK=1 compares it with the full margin walk; CUO_VIEW_MARGIN_WALK=1|0 overrides the
+        // setting in developer builds. Default off.
+        [JsonPropertyName("view_margin_walk")] public bool ViewMarginWalk { get; set; }
+
         // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
         // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
         // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose

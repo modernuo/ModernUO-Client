@@ -102,6 +102,14 @@ namespace ClassicUO.Game.Map
         /// </summary>
         internal int StaticOverLeft, StaticOverRight, StaticOverUp;
 
+        /// <summary>
+        /// view_margin_walk: the tiles (bit x &lt;&lt; 3 | y) holding a static or multi piece whose art reaches past its tile
+        /// (ViewMargin.ArtReachesPastTile) or a stretched land tile rising past the walk's slack (LandReachesPastTile): the only
+        /// margin tiles without dynamics the walk visits. Set as objects join (land and statics at Load, multis later), cleared
+        /// only when the chunk loads again: a tile whose tall object left stays walked, which is harmless.
+        /// </summary>
+        internal ulong ReachCells;
+
         /// <summary>light_occlusion (GameScene.CollectOccluders): the lowest and highest Z of the chunk's statics, multi
         /// components and items, grow-only like the overhang (empty: low above high), so a light's occluder search skips the
         /// chunks whose sprites cannot reach it whatever their art size or elevation.</summary>
@@ -109,7 +117,7 @@ namespace ClassicUO.Game.Map
 
         private bool _loading;
 
-        private void RecordOverhang(ushort graphic, int z)
+        private void RecordOverhang(ushort graphic, int z, int cell = -1)
         {
             if (z < OccZLo)
             {
@@ -126,6 +134,11 @@ namespace ClassicUO.Game.Map
             if (arts == null || !arts.TrySize(graphic + 0x4000, out int w, out int h))
             {
                 return;
+            }
+
+            if (cell >= 0 && Scenes.ViewMargin.ArtReachesPastTile(w, h))
+            {
+                ReachCells |= 1UL << cell;
             }
 
             int left = (w >> 1) - 22, right = w - (w >> 1) - 22, up = h - 44;
@@ -311,6 +324,7 @@ namespace ClassicUO.Game.Map
             int by = Y << 3;
             MapObjectRecycler recycler = _world.MapRecycler;
             uint now = Time.Ticks;
+            ReachCells = 0;
 
             for (int y = 0; y < 8; ++y)
             {
@@ -504,7 +518,12 @@ namespace ClassicUO.Game.Map
 
             if (node is Static || node is Multi)
             {
-                RecordOverhang(node.Graphic, node.Z);
+                RecordOverhang(node.Graphic, node.Z, obj.TileCell);
+            }
+            else if (node is Land { IsStretched: true } land &&
+                     Scenes.ViewMargin.LandReachesPastTile(Scenes.ViewMargin.LandUp(land.Z, land.YOffsets.Top, land.YOffsets.Right, land.YOffsets.Bottom, land.YOffsets.Left)))
+            {
+                ReachCells |= 1UL << obj.TileCell;
             }
 
             int cell = obj.TileCell;
