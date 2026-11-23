@@ -111,6 +111,18 @@ namespace ClassicUO.Game.Scenes
             /// <summary>Overhead pieces: the screen row just below the art's lowest opaque row, relative to the depth tile's
             /// centre row at the mobile's z.</summary>
             public short Bottom;
+
+            /// <summary>Round 3: a stair piece under a mobile standing on the staircase (its top at or under the mobile's
+            /// standing top, or a step it could climb): the mobile's strips are raised just over it (<see cref="FloorAdd"/>).</summary>
+            public bool Floor;
+
+            /// <summary>Round 3: a piece with height behind the mobile (or beside it): only its shadow loses to it.</summary>
+            public bool ShadowOnly;
+
+            /// <summary>Round 3 item C: a piece on the mobile's own diagonal in front of the neighbouring tile its sprite hangs
+            /// over (x − 1, y on the left, x, y − 1 on the right); its columns are clipped to that overhang (beyond ±22 px), and
+            /// it caps every strip, the upper one too, down to <see cref="SideMinAdd"/>.</summary>
+            public bool Side;
         }
 
         [InlineArray(MaxWalls)]
@@ -159,7 +171,7 @@ namespace ClassicUO.Game.Scenes
                     ref readonly Wall a = ref Walls[i];
                     ref readonly Wall b = ref o.Walls[i];
 
-                    if (a.D != b.D || a.Lo != b.Lo || a.Hi != b.Hi || a.Overhead != b.Overhead || a.Bottom != b.Bottom)
+                    if (a.D != b.D || a.Lo != b.Lo || a.Hi != b.Hi || a.Overhead != b.Overhead || a.Bottom != b.Bottom || a.Floor != b.Floor || a.ShadowOnly != b.ShadowOnly || a.Side != b.Side)
                     {
                         return false;
                     }
@@ -188,7 +200,11 @@ namespace ClassicUO.Game.Scenes
         /// The scan for <paramref name="m"/> this frame (MobileAnimationSystem.SelectCached; part of the select key): empty
         /// unless the rule or the checker is on.
         /// </summary>
-        public static Scan KeyScan(Mobile m)
+        public static Scan KeyScan(Mobile m) => KeyScan(m, false);
+
+        /// <summary><see cref="KeyScan(Mobile)"/>; <paramref name="shadow"/>: the mobile draws a shadow, so the pieces behind it are
+        /// scanned for it too (<see cref="ScanBehind"/>).</summary>
+        public static Scan KeyScan(Mobile m, bool shadow)
         {
             bool rule = Rule;
             Scan s = default;
@@ -208,6 +224,11 @@ namespace ClassicUO.Game.Scenes
                 s.Du = (sbyte)((bx - by) - (m.X - m.Y));
                 s.Dv = (sbyte)((bx + by) - (m.X + m.Y));
                 ScanStep(map, m.X, m.Y, m.Z, offset, bx, by, ref s);
+
+                if (shadow)
+                {
+                    ScanBehind(map, m.X, m.Y, m.Z, ((m.X - m.Y) - (bx - by)) * 22, ((m.X + m.Y) - (bx + by)) * 22, ref s);
+                }
                 Rectangle fi = m.FrameInfo;
                 s.SpanLo = (short)-fi.X;
                 s.SpanHi = (short)(fi.Width - fi.X);
@@ -274,6 +295,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             ScanAt(map, x, y, mz, standTop, ((x - y) - depthCol) * 22, ((x + y) - (bx + by)) * 22, stepping, ref s);
+            ScanSides(map, x, y, mz, standTop, ((x - y) - depthCol) * 22, ((x + y) - (bx + by)) * 22, stepping, ref s);
             ScanOverhead(map, x, y, mz, ((x - y) - depthCol) * 22, ((x + y) - (bx + by)) * 22, ref s);
 
             if (nx != x || ny != y)
@@ -383,6 +405,46 @@ namespace ClassicUO.Game.Scenes
         /// that hold z <paramref name="mz"/>.</summary>
         internal static void ScanAt(Map.Map map, int bx, int by, int mz, ref Scan s) =>
             ScanAt(map, bx, by, mz, StandTop(map, bx, by, mz), 0, 0, false, ref s);
+
+        /// <summary>
+        /// Round 3 item C (owner, Felucca 1466 1670 0: a mount facing west, its chest and head over the table at x − 1, y + 1):
+        /// a sprite's columns beyond the anchor tile's half-width stand on the neighbouring tile on that side, so the pieces in
+        /// front of that tile on the mobile's own diagonal ((x − 1, y + 1) left, (x + 1, y − 1) right) cover those columns,
+        /// with the same object rule and exemptions as the tiles ahead. One tile each side.
+        /// </summary>
+        internal static void ScanSides(Map.Map map, int x, int y, int mz, int standTop, int shift, int rowShift, bool stepping, ref Scan s)
+        {
+            StaticTiles[] data = Chunk.StaticTileData;
+            SpriteEntry[] sprites = SpritesForTests ?? Client.Game?.UO?.FileManager?.Arts?.PackSpriteEntries;
+            int minBottom = stepping ? int.MinValue : MinBottom;
+
+            for (int side = -1; side <= 1; side += 2)
+            {
+                // left: (x - 1, y + 1), its diamond at columns [-66, -22); right: (x + 1, y - 1), [22, 66)
+                int first = s.Count;
+                AddPieces(map, data, sprites, x + side, y - side,
+                    side * 44, rowShift, minBottom, mz, standTop, 1, shift, side < 0 ? -66 : 22, side < 0 ? -22 : 66, LineSide, ref s);
+
+                for (int i = first; i < s.Count; i++)
+                {
+                    ref Wall w = ref s.Walls[i];
+                    w.Side = true;
+
+                    if (side < 0)
+                    {
+                        w.Hi = (short)Math.Min(w.Hi, -22 + shift);
+                    }
+                    else
+                    {
+                        w.Lo = (short)Math.Max(w.Lo, 22 + shift);
+                    }
+                }
+            }
+        }
+
+        /// <summary>The lowest add a side piece (<see cref="Wall.Side"/>) caps the upper strip to: just over its own tile's
+        /// floor and land (the pieces on the same diagonal are a whole diagonal under the upper strip's key).</summary>
+        public const float SideMinAdd = -0.52f;
 
         /// <summary>
         /// The height a mobile at z <paramref name="mz"/> on tile (<paramref name="x"/>, <paramref name="y"/>) stands up to, as
@@ -496,7 +558,7 @@ namespace ClassicUO.Game.Scenes
         /// three tiles' columns).</summary>
         public const int SegmentReach = 3;
 
-        private const int LineX = 1, LineY = 2, LineAny = 4;
+        private const int LineX = 1, LineY = 2, LineAny = 4, LineSide = 8;
 
         /// <summary>
         /// The pieces of tile (<paramref name="tx"/>, <paramref name="ty"/>) (north vertex at column <paramref name="c"/>) that
@@ -541,12 +603,21 @@ namespace ClassicUO.Game.Scenes
                 ref StaticTiles td = ref data[g];
 
                 // owner rule (round 2): a piece in front covers the mobile unless it is flat or the mobile stands above it
+                bool floor = false;
+
                 if (td.Height == 0 || o.Z + td.Height <= standTop || Climbable(in td, o.Z, mz, standTop, dist))
                 {
-                    continue;
+                    // round 3: standing on a staircase, the stair pieces it overlaps are under it, sideways too: its strips are
+                    // raised over them (the step south of a mobile on a stair facing east beat its upper strip by key)
+                    if ((line & (LineAny | LineSide)) == 0 || standTop <= mz || td.Height == 0 || !Stairlike(in td))
+                    {
+                        continue;
+                    }
+
+                    floor = true;
                 }
 
-                if (line != LineAny && !td.IsWall)
+                if ((line & (LineX | LineY)) != 0 && !td.IsWall)
                 {
                     continue;
                 }
@@ -583,10 +654,15 @@ namespace ClassicUO.Game.Scenes
 
                 int lo, hi;
 
-                if (line == LineAny)
+                if (line == LineSide)
                 {
-                    lo = td.IsWall ? lo0 : c - 22;
-                    hi = td.IsWall ? hi0 : c + 22;
+                    lo = lo0;
+                    hi = hi0;
+                }
+                else if (line == LineAny)
+                {
+                    lo = td.IsWall && !floor ? lo0 : c - 22;
+                    hi = td.IsWall && !floor ? hi0 : c + 22;
                 }
                 else if ((pieceLines & line) != 0)
                 {
@@ -608,7 +684,10 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 // only a piece that counts ahead starts a segment (a segment continues past pieces too high to matter)
-                lines |= pieceLines & (line == LineAny ? LineX | LineY : line);
+                if (!floor && line != LineSide)
+                {
+                    lines |= pieceLines & (line == LineAny ? LineX | LineY : line);
+                }
 
                 if (bottom < minBottom || Holds(in s, o, tx, ty))
                 {
@@ -616,7 +695,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 int d = 100 * (tx + ty) + 127 + o.PriorityZ;
-                int slot = Slot(ref s, d);
+                int slot = Slot(ref s, d, floor);
 
                 if (slot < 0)
                 {
@@ -626,6 +705,7 @@ namespace ClassicUO.Game.Scenes
                 ref Wall w = ref s.Walls[slot];
                 w = default;
                 w.D = d;
+                w.Floor = floor;
                 w.Lo = (short)(lo + shift);
                 w.Hi = (short)(hi + shift);
                 w.Graphic = g;
@@ -662,9 +742,10 @@ namespace ClassicUO.Game.Scenes
             return td.IsSurface && Pathfinder.WalkableTop(z, td.Height, false) <= maxZ;
         }
 
-        /// <summary>A free entry for a piece with key <paramref name="d"/>, or when the list is full the one with the highest key
-        /// if it is higher (the lowest keys cap the most); −1: dropped (<see cref="Scan.Dropped"/>).</summary>
-        private static int Slot(ref Scan s, int d)
+        /// <summary>A free entry for a piece with key <paramref name="d"/>, or when the list is full the entry least worth keeping
+        /// if the new one is worth more: pieces that cover the mobile before floor and shadow-only pieces (<paramref name="low"/>),
+        /// then lower keys (they cap the most); −1: dropped (<see cref="Scan.Dropped"/>).</summary>
+        private static int Slot(ref Scan s, int d, bool low = false)
         {
             if (s.Count < MaxWalls)
             {
@@ -673,17 +754,23 @@ namespace ClassicUO.Game.Scenes
 
             s.Dropped++;
             int max = -1;
+            long maxRank = long.MinValue;
 
             for (int i = 0; i < s.Count; i++)
             {
-                if (max < 0 || s.Walls[i].D > s.Walls[max].D)
+                long rank = Rank(s.Walls[i].D, s.Walls[i].Floor || s.Walls[i].ShadowOnly);
+
+                if (rank > maxRank)
                 {
+                    maxRank = rank;
                     max = i;
                 }
             }
 
-            return s.Walls[max].D > d ? max : -1;
+            return maxRank > Rank(d, low) ? max : -1;
         }
+
+        private static long Rank(int d, bool low) => d + (low ? 1L << 40 : 0);
 
         // a piece both tiles of a step see is kept once
         private static bool Holds(in Scan s, GameObject o, int tx, int ty)
@@ -718,20 +805,21 @@ namespace ClassicUO.Game.Scenes
             wall = -1;
             int minD = int.MaxValue;
 
-            if (upper && s.MinAdd >= 0)
-            {
-                return add;
-            }
+            bool ahead = !upper || s.MinAdd < 0;
+            bool side = false;
 
             for (int i = 0; i < s.Count; i++)
             {
                 ref readonly Wall w = ref s.Walls[i];
 
-                if (!w.Overhead && lo < w.Hi && hi > w.Lo && w.D < minD)
+                if (w.Overhead || w.Floor || w.ShadowOnly || lo >= w.Hi || hi <= w.Lo || w.D >= minD || !(ahead || w.Side))
                 {
-                    minD = w.D;
-                    wall = i;
+                    continue;
                 }
+
+                minD = w.D;
+                wall = i;
+                side = w.Side;
             }
 
             if (wall < 0)
@@ -740,7 +828,8 @@ namespace ClassicUO.Game.Scenes
             }
 
             // DepthOf's key is round((depth + 1 + add) * 100) − 50; D − 1 needs depth + 1 + add = (D + 49) / 100
-            float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), s.MinAdd);
+            float floorAdd = side && upper ? Math.Min(SideMinAdd, s.MinAdd) : s.MinAdd;
+            float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), floorAdd);
 
             return cap < add ? cap : add;
         }
@@ -792,6 +881,140 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
+        /// <summary>The most a strip is raised over the stairs under it: the lower strip's + 2 (a mobile one diagonal past them
+        /// still sorts over it by key).</summary>
+        public const float FloorMaxAdd = 2f;
+
+        /// <summary>
+        /// Round 3: the add that puts a strip over columns [<paramref name="lo"/>, <paramref name="hi"/>) one key above every
+        /// stair piece under the mobile it overlaps (<see cref="Wall.Floor"/>), at most <see cref="FloorMaxAdd"/>. False: none.
+        /// Pieces that cover the mobile (<see cref="CapAdd(float, in Scan, int, int, float, bool, out int)"/>) cap it after this.
+        /// </summary>
+        public static bool FloorAdd(in Scan s, int lo, int hi, float depth, out float add)
+        {
+            int maxD = int.MinValue;
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                ref readonly Wall w = ref s.Walls[i];
+
+                if (w.Floor && lo < w.Hi && hi > w.Lo && w.D > maxD)
+                {
+                    maxD = w.D;
+                }
+            }
+
+            if (maxD == int.MinValue)
+            {
+                add = 0f;
+
+                return false;
+            }
+
+            // DepthOf's key is round((depth + 1 + add) * 100) − 50; D + 1 needs depth + 1 + add = (D + 51) / 100
+            add = Math.Min((float)((maxD + 51) / 100.0 - (double)(depth + 1f)), FloorMaxAdd);
+
+            return true;
+        }
+
+        // round 3: the tiles a shadow (cast north, sheared right) reaches behind and beside the mobile: dx, dy in [-2, 1],
+        // dx + dy <= 0, not its own tile
+        private static readonly sbyte[] s_bx = { -2, -2, -2, -2, -1, -1, -1, -1, 0, 0, 1, 1 };
+        private static readonly sbyte[] s_by = { -2, -1, 0, 1, -2, -1, 0, 1, -2, -1, -2, -1 };
+
+        /// <summary>
+        /// Round 3 (owner, Felucca 1453 1660 10: a mounted mobile's shadow cast north over the face of the wall behind it): the
+        /// pieces with height standing on the mobile's floor (base under its top, top over its z) on the tiles its shadow
+        /// reaches behind it, with their whole art, for its shadow only (<see cref="Wall.ShadowOnly"/>). A shadow lies on the
+        /// floor, and a floor pixel sharing a screen pixel with such a piece is behind its face, in front of the mobile or not.
+        /// </summary>
+        internal static void ScanBehind(Map.Map map, int x, int y, int mz, int shift, int rowShift, ref Scan s)
+        {
+            StaticTiles[] data = Chunk.StaticTileData;
+            SpriteEntry[] sprites = SpritesForTests ?? Client.Game?.UO?.FileManager?.Arts?.PackSpriteEntries;
+
+            for (int t = 0; t < s_bx.Length; t++)
+            {
+                int dx = s_bx[t], dy = s_by[t];
+                int tx = x + dx, ty = y + dy;
+                Chunk chunk = map.GetChunk(tx, ty, false);
+
+                if (chunk == null)
+                {
+                    continue;
+                }
+
+                int c = (dx - dy) * 22, rowC = (dx + dy) * 22;
+
+                for (GameObject o = TileWalk.Begin(chunk, (tx & 7) << 3 | (ty & 7), out TileWalk walk); o != null; o = walk.Next())
+                {
+                    if (o is Item it)
+                    {
+                        if (it.IsDestroyed || !it.OnGround || it.IsCorpse || it.IsMulti)
+                        {
+                            continue;
+                        }
+                    }
+                    else if (o is not Static && o is not Multi)
+                    {
+                        continue;
+                    }
+
+                    ushort g = o.Graphic;
+
+                    if (g >= data.Length)
+                    {
+                        continue;
+                    }
+
+                    ref StaticTiles td = ref data[g];
+
+                    if (td.Height == 0 || o.Z + td.Height <= mz || o.Z >= mz + PersonHeight)
+                    {
+                        continue;
+                    }
+
+                    int lo = c - 22, hi = c + 22;
+                    int bottom = rowC - 4 * (o.Z - mz) + 22;
+                    int idx = PackConst.StaticSpriteBase + g;
+
+                    if (sprites != null && idx < sprites.Length && sprites[idx].Present && sprites[idx].OrigW != 0)
+                    {
+                        ref readonly SpriteEntry sp = ref sprites[idx];
+                        int left = c - (sp.OrigW >> 1) + sp.TrimX;
+                        lo = Math.Max(lo, left);
+                        hi = Math.Min(hi, left + sp.W);
+                        bottom += sp.TrimY + sp.H - sp.OrigH;
+                    }
+
+                    if (lo >= hi || bottom + rowShift < MinBottom || Holds(in s, o, tx, ty))
+                    {
+                        continue;
+                    }
+
+                    int d = 100 * (tx + ty) + 127 + o.PriorityZ;
+                    int slot = Slot(ref s, d, true);
+
+                    if (slot < 0)
+                    {
+                        continue;
+                    }
+
+                    ref Wall w = ref s.Walls[slot];
+                    w = default;
+                    w.D = d;
+                    w.ShadowOnly = true;
+                    w.Lo = (short)(lo + shift);
+                    w.Hi = (short)(hi + shift);
+                    w.Graphic = g;
+                    w.X = (ushort)tx;
+                    w.Y = (ushort)ty;
+                    w.Z = o.Z;
+                    w.Height = td.Height;
+                }
+            }
+        }
+
         /// <summary>
         /// The add (DepthOf kind 1) of a shadow layer over columns [<paramref name="lo"/>, <paramref name="hi"/>) relative to the
         /// depth tile's centre column: −1 (its base depth, as kind 0 draws it) or less, one key below the lowest piece of
@@ -810,7 +1033,8 @@ namespace ClassicUO.Game.Scenes
             {
                 ref readonly Wall w = ref s.Walls[i];
 
-                if (!w.Overhead && lo < w.Hi && hi > w.Lo && w.D < minD)
+                // round 3: a shadow loses to the pieces behind the mobile too (ShadowOnly), not to the stairs under it (Floor)
+                if (!w.Overhead && !w.Floor && lo < w.Hi && hi > w.Lo && w.D < minD)
                 {
                     minD = w.D;
                     wall = i;
