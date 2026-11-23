@@ -69,7 +69,7 @@ namespace ClassicUO.Game.Managers
 
         public unsafe void Process()
         {
-            if (_staticInfos.Length == 0 || _processTime >= Time.Ticks)
+            if (_staticInfos.Length == 0 || _processTime >= Time.Ticks || AnimFreeze.On)
             {
                 return;
             }

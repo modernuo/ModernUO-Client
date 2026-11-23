@@ -720,6 +720,7 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Inc(FrameCounter.PrepareRuns);
             _renderLists.Clear();
             _visibleChunks.Clear();
+            _occChunks.Clear();
 
             _foliageCount = 0;
             _drawFrame++;
@@ -848,6 +849,7 @@ namespace ClassicUO.Game.Scenes
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
             bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
             int nTiles = 0;
+            int nFillChunks = 0, nWalkBand = 0, nHiddenBand = 0;
             // clip-4: meshes built with the other depth_model setting are rebuilt (their vertices carry the shapes or not)
             bool meshGeo = DepthModel.On;
             // wet_surface_depth changes only the geo meshes' wet flats
@@ -865,7 +867,19 @@ namespace ClassicUO.Game.Scenes
 
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
                     // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
-                    ulong inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
+                    ulong inWalk, inHidden;
+                    bool zForce = false;
+
+                    if (_zband || _zbandCheck)
+                    {
+                        // walk_chunk_z: the S band from the chunk's recorded Z range (WalkChunkZ)
+                        inWalk = ZBandChunkMasks(chunk, chunkX, chunkY, gpuFill, in diamond, out inHidden, out zForce);
+                    }
+                    else
+                    {
+                        inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out inHidden);
+                    }
+
                     inWalk = WalkChunkMask(chunk, chunkX, chunkY, inWalk);
 #if CUO_DEVTOOLS
                     ulong fullWalk = inWalk;
@@ -876,11 +890,17 @@ namespace ClassicUO.Game.Scenes
                     if (inHidden == 0)
                         continue;
 
+                    nFillChunks++;
+                    nWalkBand += System.Numerics.BitOperations.PopCount(inWalk);
+                    nHiddenBand += System.Numerics.BitOperations.PopCount(inHidden);
+
                     // Build chunk mesh if dirty
                     if (chunk.Mesh.IsDirty || chunk.Mesh.BuiltGeo != meshGeo || (meshGeo && chunk.Mesh.BuiltWet != meshWet) ||
                         (chunk.Mesh.AtlasEpoch != atlasEpoch && _gpuWorld == null && chunk.Mesh.HoldsFreedPage(atlasEpoch)))
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
+                        // walk_chunk_z: the rebuild drops the range's growth from objects that left or moved
+                        chunk.RecomputeWalkZ();
                         // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
                         chunk.GpuMaskDirty = true;
                         chunk.GpuFreshSteps = GPU_FADE_STEPS;
@@ -977,7 +997,7 @@ namespace ClassicUO.Game.Scenes
                                 use_handles,
                                 GPU_WALK_MAX_Z,
                                 chunk,
-                                !full,
+                                !full || zForce,
                                 // view_margin_walk: a margin tile walked again after frames it was skipped has stale positions
                                 _gpuSkipEnabled || _vmWalk,
                                 false,
@@ -1037,6 +1057,8 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            ZBandFrameEnd();
+
             if (FrameStats.On)
             {
                 if (!chunkStamps)
@@ -1045,6 +1067,9 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 FrameStats.Add(FrameCounter.Tiles, nTiles);
+                FrameStats.Add(FrameCounter.FillChunks, nFillChunks);
+                FrameStats.Add(FrameCounter.WalkBandTiles, nWalkBand);
+                FrameStats.Add(FrameCounter.HiddenBandTiles, nHiddenBand);
             }
 
             if (FrameStats.Detail)
