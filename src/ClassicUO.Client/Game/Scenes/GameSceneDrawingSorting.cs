@@ -695,7 +695,7 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool CheckMouseSelectionTimed(GameObject obj)
         {
-            // pick_skip_off_world: the mouse is not over the world this frame (PickSkip)
+            // the mouse is not over the world this frame (PickSkip)
             if (PickSkip.Off)
             {
                 return false;
