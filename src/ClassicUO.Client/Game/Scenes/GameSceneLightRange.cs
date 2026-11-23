@@ -19,7 +19,7 @@ namespace ClassicUO.Game.Scenes
         // ranks when the budget binds), the budget kept the best ranks, the budget-faded lights are the lowest ranked
         private void LightRangeCheck(int count)
         {
-            if (!LightRange.Check || !_vmLights)
+            if (!LightRange.Check)
             {
                 return;
             }
@@ -111,7 +111,7 @@ namespace ClassicUO.Game.Scenes
             _lrSummaryAt = Time.Ticks + 5000;
             double frames = System.Math.Max(_lrFrames, 1);
             int setting = Settings.GlobalSettings?.LightRangeTiles ?? 0;
-            Log.Info($"[light-range-check] light_range {(_lightRange ? "on" : "off")} (chunk_lights {(_vmLights ? "on" : "off")}): range {_lvRange} tiles " +
+            Log.Info($"[light-range-check] light_range {(_lightRange ? "on" : "off")}: range {_lvRange} tiles " +
                      $"({(setting > 0 ? "set" : "auto")}), budget {LightRange.Budget(Settings.GlobalSettings?.LightBudget ?? 0)}: {_lrFrames} light passes, " +
                      $"lights kept {_lrKept / frames:F1} per pass (max {_lrMaxKept}), {_lrDropped / frames:F1} per pass past the range " +
                      $"({(_lightRange ? "dropped" : "would be dropped")}), {_lrRangeFaded / frames:F1} in the range fade; budget bound in {_lrBudgetFrames} passes " +

@@ -555,12 +555,6 @@ namespace ClassicUO.Game.Scenes
                     FrameStats.Enter(bucket);
                 }
 
-                // view_margin: static lights come from the chunks' emitter lists (AddChunkLights), not from the walk
-                if (ViewMargin.WalkLightsStatic(itemData.IsLight, ChunkStaticLights))
-                {
-                    AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
-                }
-
                 if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
                 {
                     if (SelectedObject.Object is GameObject prev)
@@ -712,14 +706,6 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Enter(bucket);
 
             return hit;
-        }
-
-        private void AddLightTimed(GameObject obj, int x, int y)
-        {
-            FrameStats.Inc(FrameCounter.Lights);
-            FramePhase bucket = FrameStats.Enter(FramePhase.WalkLight);
-            AddLight(obj, obj, x, y);
-            FrameStats.Enter(bucket);
         }
 
         // The walk's counters, added to FrameStats once per frame (FlushWalkCounters at the end of FillGameObjectList)
@@ -1086,11 +1072,6 @@ namespace ClassicUO.Game.Scenes
                         {
                             DetailEnter(bucket);
                         }
-                    }
-
-                    if (ViewMargin.WalkLightsStatic(meshItemData.IsLight, ChunkStaticLights))
-                    {
-                        AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                     }
 
                     TrySelectObject(obj, meshAllowSelection && !(meshCot && IsMouseInsideCotCircle()));
