@@ -175,7 +175,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             float warm = 0;
 
             // the same calls once first (type initialisers, first-call stubs)
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < 200; i++)
             {
                 s = default;
                 MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
@@ -434,6 +434,14 @@ namespace ClassicUO.UnitTests.Game.Scenes
             MobileWallOrder.ShadowAdd(in s, -30, 30, depth, out float add, out _).Should().BeTrue();
             Key(depth, add).Should().Be(s.Walls[0].D - 1);
             MobileWallOrder.CapAdd(2, in s, -30, 30, depth, out _).Should().Be(2, "the strips ignore it");
+
+            // a wall two diagonals behind: the shadow stays over the land and background floors one diagonal behind
+            map = Studio(false, false, false);
+            Add(map, South, MX - 1, MY - 1, Z);
+            s = default;
+            MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
+            MobileWallOrder.ShadowAdd(in s, -60, 30, depth, out add, out _).Should().BeTrue();
+            Key(depth, add).Should().Be(100 * (MX + MY - 1) + 127 + Z, "over the land and background floors (+ 126 + z), under the wall right behind (+ 128 + z)");
 
             // a flat behind stays under the shadow
             map = Studio(false, false, false);

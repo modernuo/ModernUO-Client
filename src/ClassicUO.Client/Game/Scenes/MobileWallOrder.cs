@@ -881,6 +881,11 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
+        /// <summary>Round 3: the lowest add a shadow takes, key 100 (x + y − 1) + 127 + z: just over the land and background
+        /// floors one diagonal behind the mobile (+ 126 + z and lower), which the shadow lies on; lower, it vanished under them
+        /// (bench-001075: a wall two diagonals behind took it there). The wall right behind (+ 128 + z) still beats it.</summary>
+        public const float ShadowMinAdd = -1.51f;
+
         /// <summary>The most a strip is raised over the stairs under it: the lower strip's + 2 (a mobile one diagonal past them
         /// still sorts over it by key).</summary>
         public const float FloorMaxAdd = 2f;
@@ -1046,7 +1051,7 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            float cap = (float)((minD + 49) / 100.0 - (double)(depth + 1f));
+            float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), ShadowMinAdd);
 
             if (cap >= add)
             {
