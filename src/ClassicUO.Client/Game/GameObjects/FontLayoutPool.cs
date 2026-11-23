@@ -3,38 +3,17 @@
 using System;
 using System.Collections.Generic;
 using ClassicUO.Assets;
-using ClassicUO.Configuration;
 using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game
 {
-    /// <summary>font_layout_pool (gump-system G5): RenderedText returns its layout to the font loader's node pool.</summary>
-    internal static class FontLayoutPoolSwitch
-    {
-#if CUO_DEVTOOLS
-        private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_FONT_LAYOUT_POOL") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _env = null;
-#endif
-
-        /// <summary>Tests: the switch on this thread (null: the setting).</summary>
-        [ThreadStatic] internal static bool? OverrideForTests;
-
-        public static bool Enabled => OverrideForTests ?? _env ?? Settings.GlobalSettings?.FontLayoutPool ?? false;
-    }
-
 #if CUO_DEVTOOLS
     /// <summary>
     /// CUO_FONT_LAYOUT_CHECK=1 (developer builds): every layout a RenderedText takes is copied into a private, never pooled
     /// snapshot; at every 16th draw and when the text replaces or drops the layout, the live node chain is compared with the
-    /// snapshot. With font_layout_pool on, a node that went back to the pool while someone still used it is rewritten by the
-    /// next layout, which shows up here as a mismatch (logged with the text and the first differing field). A summary with
-    /// the switch state, the check count and the pool size is logged every 2000 checks. One per client (UltimaOnline).
+    /// snapshot. A node that went back to the font loader's pool (font_layout_pool) while someone still used it is rewritten
+    /// by the next layout, which shows up here as a mismatch (logged with the text and the first differing field). A summary
+    /// with the check count and the pool size is logged every 2000 checks. One per client (UltimaOnline).
     /// </summary>
     internal sealed class FontLayoutCheck
     {
@@ -114,7 +93,7 @@ namespace ClassicUO.Game
             if (Checks % 2000 == 0)
             {
                 Log.Info(
-                    $"[font-layout-check] font_layout_pool={FontLayoutPoolSwitch.Enabled} checks={Checks} mismatches={Mismatches} "
+                    $"[font-layout-check] checks={Checks} mismatches={Mismatches} "
                         + $"pooled nodes={Client.Game?.UO?.FileManager?.Fonts?.PooledLayoutNodes}"
                 );
             }
