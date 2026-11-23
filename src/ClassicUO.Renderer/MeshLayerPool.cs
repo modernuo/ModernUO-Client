@@ -109,10 +109,8 @@ namespace ClassicUO.Renderer
         {
             public PositionNormalTextureColor4[] Vertices;
             public Texture2D[] Textures;
-            public bool[] Visible;
             public long[] HueKeys;
             public ulong[] VisBits;
-            public bool[] PrevVisible;
             public ulong[] PrevVisBits;
             public short[] IndexData;
             public DynamicVertexBuffer VertexBuffer;
@@ -127,10 +125,8 @@ namespace ClassicUO.Renderer
                 {
                     Vertices = new PositionNormalTextureColor4[size],
                     Textures = new Texture2D[size],
-                    Visible = new bool[size],
                     HueKeys = new long[size],
                     VisBits = new ulong[words],
-                    PrevVisible = new bool[size],
                     PrevVisBits = new ulong[words],
                     IndexData = new short[size * 6]
                 };
@@ -139,7 +135,7 @@ namespace ClassicUO.Renderer
             public long HeldBytes()
             {
                 long bytes = (long)Vertices.Length * PositionNormalTextureColor4.SIZE_IN_BYTES + (long)Textures.Length * IntPtr.Size
-                    + Visible.Length + PrevVisible.Length + IndexData.Length * sizeof(short) + HueKeys.Length * sizeof(long)
+                    + IndexData.Length * sizeof(short) + HueKeys.Length * sizeof(long)
                     + (VisBits.Length + PrevVisBits.Length) * sizeof(ulong);
 
                 if (VertexBuffer != null && !VertexBuffer.IsDisposed)
@@ -156,10 +152,8 @@ namespace ClassicUO.Renderer
                 VertexBuffer = null;
                 Vertices = null;
                 Textures = null;
-                Visible = null;
                 HueKeys = null;
                 VisBits = null;
-                PrevVisible = null;
                 PrevVisBits = null;
                 IndexData = null;
             }

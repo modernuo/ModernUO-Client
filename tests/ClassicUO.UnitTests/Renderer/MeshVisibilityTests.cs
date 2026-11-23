@@ -8,8 +8,8 @@ using Xunit;
 namespace ClassicUO.UnitTests.Renderer
 {
     /// <summary>
-    /// mesh_vis_bits: MeshLayer's packed visibility (ResetVisibility(true, ..)) builds the same visible indices and texture
-    /// runs as the bool path, frame after frame, across unchanged frames, rebuilds to fewer sprites and mode switches.
+    /// mesh_vis_bits (permanent since quiet-1123): MeshLayer's packed visibility builds the visible indices and texture runs
+    /// a plain walk of the visible sprites gives, frame after frame, across unchanged frames and rebuilds to fewer sprites.
     /// </summary>
     [Collection(nameof(MeshVisibilityCollection))]
     public sealed class MeshVisibilityTests
@@ -41,9 +41,9 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
-        private static void Frame(MeshLayer layer, bool packed, bool[] visible, int count)
+        private static void Frame(MeshLayer layer, bool[] visible, int count)
         {
-            layer.ResetVisibility(packed, false);
+            layer.ResetVisibility();
 
             for (int i = 0; i < count; i++)
             {
@@ -56,17 +56,42 @@ namespace ClassicUO.UnitTests.Renderer
             layer.BuildVisibleIndices();
         }
 
-        private static void ShouldMatch(MeshLayer packed, MeshLayer plain)
+        // the indices and texture runs of the visible sprites in sprite order
+        private static void ShouldMatch(MeshLayer layer, bool[] visible, int count)
         {
-            packed.VisibleSpriteCount.Should().Be(plain.VisibleSpriteCount);
-            packed.VisibleIndices.ToArray().Should().Equal(plain.VisibleIndices.ToArray());
-            packed.VisibleRunCount.Should().Be(plain.VisibleRunCount);
+            var indices = new System.Collections.Generic.List<short>();
+            var runs = new System.Collections.Generic.List<(Texture2D Texture, int Start, int Count)>();
+            int sprites = 0;
 
-            for (int r = 0; r < plain.VisibleRunCount; r++)
+            for (int i = 0; i < count; i++)
             {
-                packed.VisibleRuns[r].Texture.Should().BeSameAs(plain.VisibleRuns[r].Texture);
-                packed.VisibleRuns[r].Start.Should().Be(plain.VisibleRuns[r].Start);
-                packed.VisibleRuns[r].Count.Should().Be(plain.VisibleRuns[r].Count);
+                if (!visible[i])
+                {
+                    continue;
+                }
+
+                Texture2D tex = layer.Textures[i];
+
+                if (runs.Count == 0 || !ReferenceEquals(runs[^1].Texture, tex))
+                {
+                    runs.Add((tex, sprites, 0));
+                }
+
+                runs[^1] = (runs[^1].Texture, runs[^1].Start, runs[^1].Count + 1);
+                short b = (short)(i * 4);
+                indices.AddRange(new[] { b, (short)(b + 1), (short)(b + 2), (short)(b + 1), (short)(b + 3), (short)(b + 2) });
+                sprites++;
+            }
+
+            layer.VisibleSpriteCount.Should().Be(sprites);
+            layer.VisibleIndices.ToArray().Should().Equal(indices);
+            layer.VisibleRunCount.Should().Be(runs.Count);
+
+            for (int r = 0; r < runs.Count; r++)
+            {
+                layer.VisibleRuns[r].Texture.Should().BeSameAs(runs[r].Texture);
+                layer.VisibleRuns[r].Start.Should().Be(runs[r].Start);
+                layer.VisibleRuns[r].Count.Should().Be(runs[r].Count);
             }
         }
 
@@ -76,14 +101,12 @@ namespace ClassicUO.UnitTests.Renderer
         [InlineData(64)]
         [InlineData(65)]
         [InlineData(300)]
-        public void Packed_matches_the_bool_path_frame_after_frame(int count)
+        public void Packed_builds_the_visible_sprites_frame_after_frame(int count)
         {
             var rnd = new Random(count);
             var textures = Textures(7);
-            var packed = new MeshLayer();
-            var plain = new MeshLayer();
-            Fill(packed, count, textures);
-            Fill(plain, count, textures);
+            var layer = new MeshLayer();
+            Fill(layer, count, textures);
             var visible = new bool[count];
 
             for (int frame = 0; frame < 40; frame++)
@@ -97,9 +120,8 @@ namespace ClassicUO.UnitTests.Renderer
                     }
                 }
 
-                Frame(packed, true, visible, count);
-                Frame(plain, false, visible, count);
-                ShouldMatch(packed, plain);
+                Frame(layer, visible, count);
+                ShouldMatch(layer, visible, count);
             }
         }
 
@@ -107,83 +129,24 @@ namespace ClassicUO.UnitTests.Renderer
         public void A_rebuild_to_fewer_sprites_leaves_no_stale_bits()
         {
             var textures = Textures(3);
-            var packed = new MeshLayer();
-            var plain = new MeshLayer();
+            var layer = new MeshLayer();
             var all = new bool[200];
             Array.Fill(all, true);
 
-            Fill(packed, 200, textures);
-            Fill(plain, 200, textures);
-            Frame(packed, true, all, 200);
-            Frame(plain, false, all, 200);
+            Fill(layer, 200, textures);
+            Frame(layer, all, 200);
 
-            Fill(packed, 70, textures);
-            Fill(plain, 70, textures);
+            Fill(layer, 70, textures);
             var some = new bool[70];
             some[3] = some[69] = true;
-            Frame(packed, true, some, 70);
-            Frame(plain, false, some, 70);
+            Frame(layer, some, 70);
 
-            ShouldMatch(packed, plain);
-            packed.VisibleSpriteCount.Should().Be(2);
+            ShouldMatch(layer, some, 70);
+            layer.VisibleSpriteCount.Should().Be(2);
         }
-
-        [Fact]
-        public void Switching_modes_rebuilds_the_indices()
-        {
-            var textures = Textures(2);
-            var layer = new MeshLayer();
-            var reference = new MeshLayer();
-            Fill(layer, 100, textures);
-            Fill(reference, 100, textures);
-            var a = new bool[100];
-            var b = new bool[100];
-            a[5] = a[50] = true;
-            b[7] = b[99] = true;
-
-            Frame(layer, false, a, 100);
-            Frame(layer, true, b, 100);
-            Frame(reference, false, b, 100);
-            ShouldMatch(layer, reference);
-
-            Frame(layer, false, a, 100);
-            Frame(reference, false, a, 100);
-            ShouldMatch(layer, reference);
-        }
-
-#if CUO_DEVTOOLS
-        [Fact]
-        public void The_checker_compares_every_packed_layer()
-        {
-            var textures = Textures(4);
-            var layer = new MeshLayer();
-            Fill(layer, 130, textures);
-            var visible = new bool[130];
-            visible[0] = visible[64] = visible[129] = true;
-            long checks = MeshLayer.VisChecks, mismatches = MeshLayer.VisMismatches;
-
-            for (int frame = 0; frame < 3; frame++)
-            {
-                layer.ResetVisibility(true, true);
-
-                for (int i = 0; i < 130; i++)
-                {
-                    if (visible[i])
-                    {
-                        layer.SetVisible(i, 0xFF);
-                    }
-                }
-
-                layer.BuildVisibleIndices();
-            }
-
-            (MeshLayer.VisChecks - checks).Should().Be(3);
-            (MeshLayer.VisMismatches - mismatches).Should().Be(0);
-        }
-#endif
     }
 
-    /// <summary>MeshLayer's checker totals are static.</summary>
+    /// <summary>MeshLayer tests that run one at a time.</summary>
     [CollectionDefinition(nameof(MeshVisibilityCollection), DisableParallelization = true)]
     public sealed class MeshVisibilityCollection { }
 }
