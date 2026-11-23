@@ -910,6 +910,7 @@ namespace ClassicUO
                 FrameStats.Add(FrameCounter.NetBytes, NetClient.Socket.LastDrainBytes);
                 FrameStats.Add(FrameCounter.NetSlices, NetClient.Socket.LastDrainSlices);
                 FrameStats.Add(FrameCounter.NetPackets, packetsCount);
+                FrameStats.NoteDrainCap(NetClient.Socket.LastDrainCap, NetClient.Socket.LastDrainRemaining);
             }
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packetsCount;
