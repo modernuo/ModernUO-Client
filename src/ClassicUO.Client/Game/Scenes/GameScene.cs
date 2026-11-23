@@ -865,6 +865,7 @@ namespace ClassicUO.Game.Scenes
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
             bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
             int nTiles = 0;
+            int nFillChunks = 0, nWalkBand = 0, nHiddenBand = 0;
             // clip-4: meshes built with the other depth_model setting are rebuilt (their vertices carry the shapes or not)
             bool meshGeo = DepthModel.On;
             // wet_surface_depth changes only the geo meshes' wet flats
@@ -887,6 +888,10 @@ namespace ClassicUO.Game.Scenes
 
                     if (inHidden == 0)
                         continue;
+
+                    nFillChunks++;
+                    nWalkBand += System.Numerics.BitOperations.PopCount(inWalk);
+                    nHiddenBand += System.Numerics.BitOperations.PopCount(inHidden);
 
                     // Build chunk mesh if dirty
                     if (chunk.Mesh.IsDirty || chunk.Mesh.BuiltGeo != meshGeo || (meshGeo && chunk.Mesh.BuiltWet != meshWet) ||
@@ -1050,6 +1055,9 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 FrameStats.Add(FrameCounter.Tiles, nTiles);
+                FrameStats.Add(FrameCounter.FillChunks, nFillChunks);
+                FrameStats.Add(FrameCounter.WalkBandTiles, nWalkBand);
+                FrameStats.Add(FrameCounter.HiddenBandTiles, nHiddenBand);
             }
 
             if (FrameStats.Detail)

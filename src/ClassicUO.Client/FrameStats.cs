@@ -216,6 +216,12 @@ namespace ClassicUO
         UiKeyboardVisits,
         UiHitVisits,
         UiDrawVisits,
+        // zband (walk_chunk_z): chunks given chunk-level work by the fill, tiles in the walk's and the hidden pass's bands,
+        // and walked objects culled by their anchor's y
+        FillChunks,
+        WalkBandTiles,
+        HiddenBandTiles,
+        CullY,
         Count
     }
 
@@ -282,7 +288,8 @@ namespace ClassicUO
             "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs",
             "text_nodes", "text_live", "text_expired", "text_nocontent", "text_drawn", "text_fwd_nodes",
             "text_exp_mobile", "text_exp_item", "text_exp_other",
-            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits" };
+            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits",
+            "fill_chunks", "walk_band_tiles", "hidden_band_tiles", "cull_y" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
