@@ -619,6 +619,11 @@ namespace ClassicUO.Game
                 t.AnimDue = Time.Ticks;
                 t.IdleDue = Mobile.NextIdleDue();
             }
+            else if (!IdleOnSpawn.Enabled && !e.IsNull && e.HasComponent<AnimationTimer>())
+            {
+                // idle_on_spawn off: the first idle at the steady-state residual of the idle delay, not on the first update
+                e.GetComponent<AnimationTimer>().IdleDue = Mobile.FirstIdleDue();
+            }
 
             WriteClock(mobile, e);
         }

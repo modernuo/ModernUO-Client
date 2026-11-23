@@ -624,6 +624,7 @@ namespace ClassicUO.Game.GameObjects
             _textExpiredVersion = 0;
             // views (View.cs)
             AlphaHue = 0;
+            AlphaSnap = false;
             AllowedToDraw = true;
             InChunkMesh = false;
             MeshSpriteIndex = -1;

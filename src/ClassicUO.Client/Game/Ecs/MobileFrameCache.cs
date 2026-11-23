@@ -114,6 +114,9 @@ namespace ClassicUO.Game
         /// test, so it agrees with the draw (p4/p5: recomputing the look counted covered layers and other groups).</summary>
         public uint CheckDrawSeq;
         public bool CheckDrawComplete;
+
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: that draw replayed the previous look (a look hold).</summary>
+        public bool CheckDrawHeld;
 #endif
 
         /// <summary>An instance relative to the draw origin; depth = Kind == 0 ? baseDepth : (baseDepth + 1f) + Add, as

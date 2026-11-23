@@ -928,6 +928,7 @@ namespace ClassicUO.Game
             }
 
             int n = _count - recStart;
+
             bool hold = LookPrefetch.HoldEnabled;
 
             if ((hold || LookPrefetch.Check) && PageResidency != null)
@@ -946,7 +947,7 @@ namespace ClassicUO.Game
                         Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, data.Get<Position>().X, baseX, baseY, data.Get<Position>().Z);
                         LookPrefetch.FrameHeld++;
 #if CUO_DEVTOOLS
-                        LookPrefetch.NoteDrawn(cache, false);
+                        LookPrefetch.NoteDrawn(cache, false, held: true);
 #endif
 
                         return;
@@ -1317,6 +1318,7 @@ namespace ClassicUO.Game
             MobileFrameCache.LegacyMisses++;
             FrameStats.Inc(FrameCounter.MobLegacyMisses);
             Select(e, data, posX, posY, depth);
+
             bool hold = LookPrefetch.HoldEnabled;
 
             if (_atlasMiss && (hold || LookPrefetch.Check))
@@ -1332,7 +1334,7 @@ namespace ClassicUO.Game
                     ReplayLegacy(batcher, cache, baseX, baseY, depth);
                     LookPrefetch.FrameHeld++;
 #if CUO_DEVTOOLS
-                    LookPrefetch.NoteDrawn(cache, false);
+                    LookPrefetch.NoteDrawn(cache, false, held: true);
 #endif
 
                     return;
