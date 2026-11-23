@@ -19,10 +19,6 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>W5: the Gpu world's reused selection and sprite instances (MobileFrameCache).</summary>
         internal MobileFrameCache FrameCache;
 
-        /// <summary>mount_swap: the horse of a matched dismount, not drawn until the rider's on-foot look and its own are
-        /// drawable (MountSwap.Frame sets and clears it).</summary>
-        internal bool PairHidden;
-
         /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read.</summary>
         internal WornCache EquipCache;
 

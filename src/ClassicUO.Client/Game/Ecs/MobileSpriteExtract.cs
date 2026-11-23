@@ -875,19 +875,6 @@ namespace ClassicUO.Game
 
             int n = _count - recStart;
 
-            if (cache.PairHold && cache.EmitValid && cache.Count != 0 && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo)
-            {
-                // mount_swap: the rider of a matched dismount keeps its mounted look until the horse can be drawn (MountSwap)
-                _count = recStart;
-                _lightCount = recLights;
-                Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, data.Get<Position>().X, baseX, baseY, data.Get<Position>().Z);
-#if CUO_DEVTOOLS
-                LookPrefetch.NoteDrawn(cache, false, held: true);
-#endif
-
-                return;
-            }
-
             bool hold = LookPrefetch.HoldEnabled;
 
             if ((hold || LookPrefetch.Check) && PageResidency != null)
@@ -1276,19 +1263,6 @@ namespace ClassicUO.Game
 
             MobileFrameCache.LegacyMisses++;
             Select(e, data, posX, posY, depth);
-
-            if (cache.PairHold && cache.LegacyValid && cache.LegacyCount != 0 && ReferenceEquals(cache.LegacySource, src) &&
-                cache.LegacyAtlasEpoch == ClassicUO.Renderer.Animations.Animations.AtlasEpoch)
-            {
-                // mount_swap: the rider of a matched dismount keeps its mounted look until the horse can be drawn (MountSwap)
-                _selCount = 0;
-                ReplayLegacy(batcher, cache, baseX, baseY, depth);
-#if CUO_DEVTOOLS
-                LookPrefetch.NoteDrawn(cache, false, held: true);
-#endif
-
-                return;
-            }
 
             bool hold = LookPrefetch.HoldEnabled;
 

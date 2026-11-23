@@ -58,7 +58,6 @@ namespace ClassicUO.Game
             ChunkPool = new Map.ChunkPool(this);
             Writer = new WorldWriter(this);
             AsyncTurn = new AnimAsyncTurn(this);
-            MountSwap = new MountSwap(this);
             IdleCadence = new IdleCadenceCache();
         }
 
@@ -72,9 +71,6 @@ namespace ClassicUO.Game
 
         /// <summary>anim_async_turn: the directions to request for mobiles that moved, turned or changed war mode.</summary>
         internal AnimAsyncTurn AsyncTurn { get; }
-
-        /// <summary>mount_swap: the matched dismount being held.</summary>
-        internal MountSwap MountSwap { get; }
 
         /// <summary>idle_on_spawn off: the idle due times of mobiles that left (IdleCadenceCache).</summary>
         internal IdleCadenceCache IdleCadence { get; }

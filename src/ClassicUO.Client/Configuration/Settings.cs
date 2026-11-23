@@ -252,13 +252,6 @@ namespace ClassicUO.Configuration
         // unchanged. CUO_IDLE_ON_SPAWN=1|0 overrides it in developer builds. Default on; off is the new path.
         [JsonPropertyName("idle_on_spawn")] public bool IdleOnSpawn { get; set; } = true;
 
-        // mount-fix (owner 2026-11-23, approved): a matched dismount (the rider's Mount-layer item leaves and one mobile with
-        // the mount's body is created beside the rider within 25 ms) keeps drawing the rider's mounted look and hides the
-        // horse until both new looks are drawable (at most 25 ms), then both switch in one frame (MountSwap).
-        // CUO_MOUNT_SWAP_CHECK=1 counts frames that drew a matched pair inconsistently; CUO_MOUNT_SWAP=1|0 overrides it in
-        // developer builds. Default off.
-        [JsonPropertyName("mount_swap")] public bool MountSwap { get; set; }
-
         // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
         // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
         // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the

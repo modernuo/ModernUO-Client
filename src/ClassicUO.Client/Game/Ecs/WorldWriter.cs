@@ -489,7 +489,7 @@ namespace ClassicUO.Game
         /// placement's own Sync is folded. Consumes the placement.
         /// </summary>
         // asset_prefetch_on_packet: a worn item leaving its wearer changes the wearer's look (a dismount: the rider's on-foot
-        // actions; a weapon: the war stance), so the wearer is noted; a Mount-layer item is a dismount for mount_swap
+        // actions; a weapon: the war stance), so the wearer is noted
         private void NoteWornLeaving(Item item)
         {
             if (item.Layer == Layer.Invalid || item.Container == 0 || _world.Get(item.Container) is not Mobile wearer)
@@ -498,11 +498,6 @@ namespace ClassicUO.Game
             }
 
             LookPrefetch.Note(wearer.Serial, LookPrefetch.Kind.Mobile);
-
-            if (item.Layer == Layer.Mount)
-            {
-                _world.MountSwap.Dismounted(wearer, item);
-            }
         }
 
         public void PlaceWorldItem(in Placement placement)
@@ -1373,7 +1368,6 @@ namespace ClassicUO.Game
 
                 created = true;
                 MobileFadeIn.Created(mobile);
-                _world.MountSwap.Created(mobile);
             }
             else if (obj is Mobile m && obj.Serial == serial && Holds(m))
             {
@@ -3673,7 +3667,6 @@ namespace ClassicUO.Game
                 return;
             }
 
-            _world.MountSwap.Clear();
             _world.IdleCadence.Clear();
 
             _placements.Clear();
@@ -3797,7 +3790,6 @@ namespace ClassicUO.Game
                 return;
             }
 
-            _world.MountSwap.Clear();
             _world.IdleCadence.Clear();
 
             using (Open(null, null))
@@ -3827,7 +3819,6 @@ namespace ClassicUO.Game
                 return;
             }
 
-            _world.MountSwap.Clear();
             _world.IdleCadence.Clear();
 
             _placements.Clear();

@@ -1259,11 +1259,6 @@ namespace ClassicUO.Game.Scenes
                             {
                                 continue;
                             }
-                            if (mobile.PairHidden)
-                            {
-                                // mount_swap: the horse waits for the rider's switch (MountSwap)
-                                continue;
-                            }
 #if CUO_DEVTOOLS
                             if (MobileFadeIn.Check)
                             {
