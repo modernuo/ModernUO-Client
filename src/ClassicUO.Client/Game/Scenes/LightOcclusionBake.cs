@@ -54,6 +54,37 @@ namespace ClassicUO.Game.Scenes
         /// for the sub-pixel phase and one of margin on each side.</summary>
         public static int SlotSize(int size, float scale) => (int)MathF.Ceiling(size * scale) + 3;
 
+        /// <summary>A bake's w x h slot. The caller makes the atlas first: <paramref name="atlasNew"/> (it holds no bake yet)
+        /// starts the shelf over and asks for the atlas to be cleared before the bake, before the slot is taken, so no slot is
+        /// handed out twice. A full shelf starts over once per pass (<paramref name="reset"/>; every slot dropped, the atlas
+        /// cleared, counted in <paramref name="resets"/>).</summary>
+        public static bool AllocSlot(LightBakeShelf shelf, bool atlasNew, int w, int h, ref bool reset, ref bool clear, ref long resets,
+            out int x, out int y)
+        {
+            if (atlasNew)
+            {
+                shelf.Reset();
+                clear = true;
+            }
+
+            if (shelf.TryAlloc(w, h, out x, out y))
+            {
+                return true;
+            }
+
+            if (reset)
+            {
+                return false;
+            }
+
+            reset = true;
+            shelf.Reset();
+            clear = true;
+            resets++;
+
+            return shelf.TryAlloc(w, h, out x, out y);
+        }
+
         public static ulong Mix(ulong h, ulong v) => (h ^ v) * 0x100000001B3UL + (h >> 29);
 
         /// <summary>The bake key's light term: the light (id, colour, hue flag, occluder count), its hue, the scale, the phase
