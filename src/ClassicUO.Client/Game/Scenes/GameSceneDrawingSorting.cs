@@ -547,12 +547,13 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 obj.DrawnFrame = _drawFrame;
+                bool culled = false;
 
                 if (_gpuWorld != null)
                 {
                     GpuOnDrawn(obj);
                 }
-                else
+                else if (!(culled = MarginCulled(obj, mesh.Statics)))
                 {
                     FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
                     mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
@@ -560,7 +561,7 @@ namespace ClassicUO.Game.Scenes
                     FrameStats.Enter(bucket);
                 }
 
-                if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
+                if (!culled && allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
                 {
                     if (SelectedObject.Object is GameObject prev)
                     {
@@ -728,6 +729,8 @@ namespace ClassicUO.Game.Scenes
 
             _walkObjects = 0;
             _walkPickTests = 0;
+            FlushMarginCull();
+            FlushMarginWalk();
 #if CUO_DEVTOOLS
             WalkMaxZ.FrameEnd(_drawFrame);
 #endif
@@ -811,6 +814,11 @@ namespace ClassicUO.Game.Scenes
             if (obj.AlphaHue == 0)
             {
                 return;
+            }
+
+            if (_vmCount)
+            {
+                CountMarginListed(obj);
             }
 
             if (
@@ -922,6 +930,13 @@ namespace ClassicUO.Game.Scenes
                     break;
                 }
 
+                // view_margin_walk: a margin object whose box misses the view is left out (whole-tile walks only: the Gpu item
+                // cache's single walks serve what it extracted)
+                if (!single && MarginWalkSkips(obj))
+                {
+                    continue;
+                }
+
                 int screenY = obj.RealScreenPosition.Y;
                 int maxObjectZ = obj.PriorityZ;
 
@@ -968,6 +983,10 @@ namespace ClassicUO.Game.Scenes
                             if (_gpuWorld != null)
                             {
                                 GpuOnDrawn(obj);
+                            }
+                            else if (MarginCulled(obj, mesh.Land))
+                            {
+                                continue;
                             }
                             else
                             {
@@ -1062,12 +1081,13 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     obj.DrawnFrame = _drawFrame;
+                    bool meshCulled = false;
 
                     if (_gpuWorld != null)
                     {
                         GpuOnDrawn(obj);
                     }
-                    else
+                    else if (!(meshCulled = MarginCulled(obj, mesh.Statics)))
                     {
                         FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
                         mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
@@ -1077,6 +1097,11 @@ namespace ClassicUO.Game.Scenes
                         {
                             DetailEnter(bucket);
                         }
+                    }
+
+                    if (meshCulled)
+                    {
+                        continue;
                     }
 
                     TrySelectObject(obj, meshAllowSelection && !(meshCot && IsMouseInsideCotCircle()));
@@ -1520,6 +1545,7 @@ namespace ClassicUO.Game.Scenes
             _maxPixel.Y = maxPixelsY;
             _viewMinPixel = _minPixel;
             _viewMaxPixel = _maxPixel;
+            BeginMarginCull();
 
             if (_vmSprites)
             {
@@ -1533,6 +1559,7 @@ namespace ClassicUO.Game.Scenes
             _offset.X = winDrawOffsetX;
             _offset.Y = winDrawOffsetY;
             Camera.SetWorldOffset(_offset.X, _offset.Y);
+            BeginMarginWalk();
 
             _last_scaled_offset.X = winGameScaledOffsetX;
             _last_scaled_offset.Y = winGameScaledOffsetY;
