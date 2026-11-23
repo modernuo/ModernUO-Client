@@ -21,11 +21,13 @@ namespace ClassicUO.Game.Scenes
     /// <item>A wall here is a static, multi piece or ground item with tiledata Wall whose [z, z + height) holds the mobile's z
     /// (the mobile is inside it, not standing on its top), on one of the tiles one or two diagonals ahead of the mobile's depth
     /// tile: (1,0), (0,1), (1,1), (2,0), (0,2). Further walls beat the + 2i strips already.</item>
-    /// <item>Only the half of the wall's art that is in front of the mobile counts (walls stand on their tile's back edges: the
-    /// north-west edge X = x is the left half from the north vertex, the north-east edge Y = y the right half). For (1,0) the
-    /// north-west half is in front, the north-east half (a wall line running past the mobile's side) is behind it; (0,1) the
-    /// reverse; (1,1) both; (2,0) and (0,2) like (1,0) and (0,1). That half, less 3 px at the vertex column and cut to the
-    /// art's opaque columns (the pack sprite's trim), is the wall's column range relative to the depth tile's centre column.</item>
+    /// <item>Only the half of the wall's art that is in front of the mobile counts. Wall art is anchored at its tile's south
+    /// vertex: a piece of a wall line along x (0x0034) is the left half, its face on the tile's south-west edge (Y = y + 1); a
+    /// piece of a line along y (0x0035) is the right half, on the south-east edge (X = x + 1). On (1,0) the left half lies on
+    /// the line Y = y + 1 that runs past the mobile's own tile (the mobile stands in that wall line, e.g. in a doorway): not in
+    /// front; its right half is. (0,1) the mirror; (1,1) both halves; (2,0) and (0,2) like (1,0) and (0,1). That half, less
+    /// 6 px at the vertex column and cut to the art's opaque columns (the pack sprite's trim), is the wall's column range
+    /// relative to the depth tile's centre column.</item>
     /// <item>A strip whose frame columns overlap a wall's range takes the depth key one below the lowest such wall's
     /// (D − 1, D = 100 (x + y) + 127 + PriorityZ), never less than the upper strip's + 1, and never more than before.</item>
     /// </list>
@@ -82,8 +84,8 @@ namespace ClassicUO.Game.Scenes
         public const int MaxWalls = 6;
 
         /// <summary>Pixels of each half next to the north vertex column that do not count (a wall's art is a few pixels thick
-        /// across its vertex column).</summary>
-        public const int VertexMargin = 3;
+        /// across its vertex column: the pack's brick walls reach 4-5 px into the other half).</summary>
+        public const int VertexMargin = 6;
 
         public struct Wall
         {
@@ -147,8 +149,8 @@ namespace ClassicUO.Game.Scenes
         // the tiles ahead of the depth tile and the in-front half of each (columns relative to the depth tile's centre column)
         private static readonly sbyte[] s_dx = { 1, 0, 1, 2, 0 };
         private static readonly sbyte[] s_dy = { 0, 1, 1, 0, 2 };
-        private static readonly short[] s_lo = { 0, -22 + VertexMargin, -22, 22, -44 + VertexMargin };
-        private static readonly short[] s_hi = { 22 - VertexMargin, 0, 22, 44 - VertexMargin, -22 };
+        private static readonly short[] s_lo = { 22 + VertexMargin, -44, -22, 44 + VertexMargin, -66 };
+        private static readonly short[] s_hi = { 44, -22 - VertexMargin, 22, 66, -44 - VertexMargin };
 
         /// <summary>
         /// The scan for <paramref name="m"/> this frame (MobileAnimationSystem.SelectCached; part of the select key): empty

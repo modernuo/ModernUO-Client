@@ -22,15 +22,16 @@ namespace ClassicUO.UnitTests.Game.Scenes
 {
     /// <summary>
     /// mobile_wall_order: the art studio's south-east corner (Felucca 1453 1668 z 10, clip-1 design note section 2): the player
-    /// stands inside, the south wall 0x0034 on 1453 1669 (its north-east edge), the east wall 0x0035 on 1454 1668 (its
-    /// north-west edge) and the corner 0x0033 on 1454 1669, all z 10 height 20. The feet strip (depth + 3, key 312488) beat all
-    /// three (312338, 312338, 312438); with the rule it takes 312337.
+    /// stands inside, the south wall 0x0034 on 1453 1669 (a line along x: left-half art), the east wall 0x0035 on 1454 1668 (a
+    /// line along y: right-half art) and the corner 0x0033 on 1454 1669, all z 10 height 20. The feet strip (depth + 3, key
+    /// 312488) beat all three (312338, 312338, 312438); with the rule a strip over the corner only takes 312437, a wider one
+    /// over the south or east wall too 312337. Sprite trims as in the pack (classic-1.6).
     /// </summary>
     [Collection(nameof(DepthModelSwitchCollection))]
     public sealed class MobileWallOrderTests : IDisposable
     {
         private const int MX = 1453, MY = 1668, Z = 10;
-        private const ushort South = 0x0034, East = 0x0035, Corner = 0x0033, Floor = 0x0500, NeWall = 0x0036;
+        private const ushort South = 0x0034, East = 0x0035, Corner = 0x0033, Floor = 0x0500;
 
         private readonly StaticTiles[] _savedStaticData;
 
@@ -38,7 +39,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             var data = new StaticTiles[0x10000];
 
-            foreach (ushort g in new[] { South, East, Corner, NeWall })
+            foreach (ushort g in new[] { South, East, Corner })
             {
                 data[g].Flags = TileFlag.Wall | TileFlag.Impassable;
                 data[g].Height = 20;
@@ -48,12 +49,10 @@ namespace ClassicUO.UnitTests.Game.Scenes
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
 
-            // the walls' art: 44 x 90, the south wall (north-east edge) on the right half, the east wall (north-west edge) on the
-            // left half, the corner on both
+            // the walls' art (pack trims): the south wall's on the left half, the east wall's on the right half, the corner on both
             var sprites = new SpriteEntry[PackConst.StaticSpriteBase + 0x1000];
-            sprites[PackConst.StaticSpriteBase + South] = Art(22, 22);
-            sprites[PackConst.StaticSpriteBase + NeWall] = Art(22, 22);
-            sprites[PackConst.StaticSpriteBase + East] = Art(0, 23);
+            sprites[PackConst.StaticSpriteBase + South] = Art(0, 27);
+            sprites[PackConst.StaticSpriteBase + East] = Art(18, 26);
             sprites[PackConst.StaticSpriteBase + Corner] = Art(0, 44);
             MobileWallOrder.SpritesForTests = sprites;
         }
@@ -126,8 +125,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             MobileWallOrder.Scan s = ScanAt(Studio(), MX, MY, Z);
             s.Count.Should().Be(3);
             var walls = Enumerable.Range(0, s.Count).Select(i => s.Walls[i]).ToArray();
-            walls.Should().ContainSingle(w => w.Graphic == East && w.D == 312338 && w.Lo == 0 && w.Hi == 22 - MobileWallOrder.VertexMargin);
-            walls.Should().ContainSingle(w => w.Graphic == South && w.D == 312338 && w.Lo == -22 + MobileWallOrder.VertexMargin && w.Hi == 0);
+            walls.Should().ContainSingle(w => w.Graphic == East && w.D == 312338 && w.Lo == 22 + MobileWallOrder.VertexMargin && w.Hi == 44);
+            walls.Should().ContainSingle(w => w.Graphic == South && w.D == 312338 && w.Lo == -44 && w.Hi == -22 - MobileWallOrder.VertexMargin);
             walls.Should().ContainSingle(w => w.Graphic == Corner && w.D == 312438 && w.Lo == -22 && w.Hi == 22);
         }
 
@@ -139,13 +138,19 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Key(depth, 0).Should().Be(312288, "strip 0 (design note)");
             Key(depth, 2).Should().Be(312488, "strip 1 before the rule");
 
+            // feet (22 px wide) overlap only the corner's art
             float add = MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out int wall);
-            Key(depth, add).Should().Be(312337);
-            s.Walls[wall].D.Should().Be(312338);
+            Key(depth, add).Should().Be(312437);
+            s.Walls[wall].Graphic.Should().Be(Corner);
             Key(depth, add).Should().BeGreaterThan(Key(depth, 0), "never behind the upper strip");
 
+            // a mount's hooves (66 px wide) reach the south and east walls' art too
+            add = MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out wall);
+            Key(depth, add).Should().Be(312337);
+            s.Walls[wall].D.Should().Be(312338);
+
             // a third strip (+ 4) is capped the same way
-            Key(depth, MobileWallOrder.CapAdd(4, in s, -11, 11, depth, out _)).Should().Be(312337);
+            Key(depth, MobileWallOrder.CapAdd(4, in s, -33, 33, depth, out _)).Should().Be(312337);
         }
 
         [Fact]
@@ -210,20 +215,25 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void WallLinePastTheMobilesSideIsBehindIt()
+        public void WallLineThroughTheMobilesTileIsNotInFront()
         {
-            // a mounted mobile beside a wall line along its north-east side: the piece on (1, 0) stands on that tile's north-east
-            // edge (Y = y), behind the mobile; its art is the right half, outside the in-front (north-west) half
+            // the mobile in a doorway of a wall line along x (pieces 0x0034, left-half art, faces on Y = y + 1): the pieces on
+            // (1, 0) and (2, 0) continue the line past its own tile's front edge (Felucca 1448 1653, bench-001056 door_on)
             var map = Studio(false, false, false);
-            Add(map, NeWall, MX + 1, MY, Z);
-            Add(map, NeWall, MX + 2, MY, Z);
+            Add(map, South, MX + 1, MY, Z);
+            Add(map, South, MX + 2, MY, Z);
             ScanAt(map, MX, MY, Z).Count.Should().Be(0);
 
-            // the mirror case: a north-west edge wall on (0, 1) (the wall line along the mobile's south-west side)
+            // the mirror: a wall line along y (0x0035, right-half art) through the mobile's tile, pieces on (0, 1) and (0, 2)
             map = Studio(false, false, false);
             Add(map, East, MX, MY + 1, Z);
             Add(map, East, MX, MY + 2, Z);
             ScanAt(map, MX, MY, Z).Count.Should().Be(0);
+
+            // the same pieces one row further are in front: the south wall line one tile south of the mobile
+            map = Studio(false, false, false);
+            Add(map, South, MX + 1, MY + 1, Z);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(1);
         }
 
         [Theory]
