@@ -40,6 +40,7 @@ namespace ClassicUO.Game.Scenes
             if (chunk != null)
             {
                 chunk.GpuItemRenderGen++;
+                chunk.OccluderVersion++;
             }
         }
 
