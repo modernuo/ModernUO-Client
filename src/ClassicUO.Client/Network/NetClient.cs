@@ -518,6 +518,13 @@ namespace ClassicUO.Network
         /// <summary>Bytes the socket had ready (the kernel receive queue) when the drain started (FrameStats runs only).</summary>
         public int LastDrainAvailable { get; private set; }
 
+        /// <summary>Which cap ended the last <see cref="Drain"/> with bytes still queued on the socket: 0 none, 1 bytes, 2 packets,
+        /// 3 time (FrameStats runs only).</summary>
+        public int LastDrainCap { get; private set; }
+
+        /// <summary>The socket's available bytes after the last <see cref="Drain"/> when a cap ended it (0 otherwise; FrameStats runs only).</summary>
+        public int LastDrainRemaining { get; private set; }
+
         /// <summary>Raw bytes read by the last <see cref="Drain"/>.</summary>
         public int LastDrainBytes { get; private set; }
 
@@ -549,8 +556,11 @@ namespace ClassicUO.Network
             LastDrainAvailable = 0;
             LastDrainBytes = 0;
             LastDrainSlices = 0;
+            LastDrainCap = 0;
+            LastDrainRemaining = 0;
 
             var packets = 0;
+            var capTime = false;
             var start = maxMs > 0 ? Stopwatch.GetTimestamp() : 0;
             var sinkCalled = false;
 
@@ -570,6 +580,8 @@ namespace ClassicUO.Network
 #if CUO_DEVTOOLS
                     diagTimeCap = true;
 #endif
+                    capTime = true;
+
                     break;
                 }
 
@@ -616,6 +628,23 @@ namespace ClassicUO.Network
                 }
 
                 Terminate(closing.Error, closing);
+            }
+
+            if (_socket != null && !emptied && (TrackAvailable || FrameStats.On))
+            {
+                // a drain that stopped at a cap with data still queued: how often a busy scene chunks packet processing (FrameStats net_cap_*)
+                int cap = capTime ? 3 : LastDrainBytes >= maxBytes ? 1 : packets >= maxPackets ? 2 : 0;
+
+                if (cap != 0)
+                {
+                    int waiting = _socket.Available;
+
+                    if (waiting > 0)
+                    {
+                        LastDrainCap = cap;
+                        LastDrainRemaining = waiting;
+                    }
+                }
             }
 
             if (!sinkCalled)
