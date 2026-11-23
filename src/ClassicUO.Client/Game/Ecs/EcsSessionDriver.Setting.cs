@@ -23,6 +23,19 @@ namespace ClassicUO.Game
                 return false;
             }
 
+            if (args[0] == "anim_freeze")
+            {
+                // not a settings.json key: the developer-only animation freeze (AnimFreeze)
+                if (args.Length > 1)
+                {
+                    AnimFreeze.On = args[1] is "1" or "on" or "true";
+                }
+
+                Log.Info($"[ECS] driver: setting anim_freeze = {(AnimFreeze.On ? "on" : "off")}");
+
+                return true;
+            }
+
             Settings settings = Settings.GlobalSettings;
             JsonPropertyInfo prop = null;
 

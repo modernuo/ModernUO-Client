@@ -420,6 +420,12 @@ namespace ClassicUO.Game
                 return true;
             }
 
+            if (AnimFreeze.On)
+            {
+                // anim_freeze: the idle or action frame holds (stepping above still runs)
+                return true;
+            }
+
             AnimationTimer t = row.Get<AnimationTimer>();
             MobileInputs inp = row.Get<MobileInputs>();
             EquipmentSlots eq = row.Get<EquipmentSlots>();
