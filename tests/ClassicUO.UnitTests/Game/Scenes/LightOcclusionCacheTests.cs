@@ -236,6 +236,46 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Equal((0, 0), (x, y));
         }
 
+        // the Moonglow bank mismatch: the first bake took a slot, then the atlas was made and its shelf started over, so the
+        // second bake got the same slot and the two lights' glows were added into one another
+        [Fact]
+        public void AllocSlot_NewAtlasFirst_BakesGetDisjointSlotsInOneGeneration()
+        {
+            var shelf = new LightBakeShelf(LightOcclusionBake.AtlasSize, LightOcclusionBake.AtlasSize);
+            bool reset = false, clear = false;
+            long resets = 0;
+
+            Assert.True(LightOcclusionBake.AllocSlot(shelf, true, 103, 103, ref reset, ref clear, ref resets, out int x1, out int y1));
+            int gen = shelf.Generation;
+            Assert.True(clear);
+            Assert.True(LightOcclusionBake.AllocSlot(shelf, false, 90, 120, ref reset, ref clear, ref resets, out int x2, out int y2));
+
+            Assert.Equal(gen, shelf.Generation);
+            Assert.False(new Rectangle(x1, y1, 103, 103).Intersects(new Rectangle(x2, y2, 90, 120)));
+            Assert.False(reset);
+            Assert.Equal(0, resets);
+        }
+
+        [Fact]
+        public void AllocSlot_FullShelf_StartsOverOncePerPass()
+        {
+            var shelf = new LightBakeShelf(100, 100);
+            bool reset = false, clear = false;
+            long resets = 0;
+
+            Assert.True(LightOcclusionBake.AllocSlot(shelf, false, 100, 60, ref reset, ref clear, ref resets, out _, out _));
+            int gen = shelf.Generation;
+            Assert.True(LightOcclusionBake.AllocSlot(shelf, false, 100, 60, ref reset, ref clear, ref resets, out int x, out int y));
+            Assert.Equal((0, 0), (x, y));
+            Assert.Equal(gen + 1, shelf.Generation);
+            Assert.True(reset && clear);
+            Assert.Equal(1, resets);
+
+            Assert.False(LightOcclusionBake.AllocSlot(shelf, false, 100, 60, ref reset, ref clear, ref resets, out _, out _));
+            Assert.Equal(gen + 1, shelf.Generation);
+            Assert.Equal(1, resets);
+        }
+
         [Fact]
         public void Mix_DependsOnEveryValue()
         {
