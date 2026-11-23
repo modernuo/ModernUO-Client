@@ -210,9 +210,8 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyGen, _gpuItemKeyGeo;
-        // pa-gpusig (GpuItemGen): the switch this pass, the prepare pass count, the player's range key this pass
-        private bool _gpuItemGenOn;
+        private bool _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyGeo;
+        // pa-gpusig (GpuItemGen): the prepare pass count, the player's range key this pass
         private uint _gpuItemPrepPass;
         private ulong _gpuItemRangeKey;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
@@ -253,24 +252,15 @@ namespace ClassicUO.Game.Scenes
             var profile = ProfileManager.CurrentProfile;
             bool gray = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             bool range = profile.NoColorObjectsOutOfRange;
-            bool gen = GpuItemGen.Enabled;
             var world = _gpuWorld.World;
             // clip-2: cached item instances carry the depth model's shape bits only when depth_model is on
             bool geo = DepthModel.On;
 
-#if CUO_DEVTOOLS
-            if (GpuItemGen.Check)
-            {
-                GpuItemGen.Report(gen);
-            }
-#endif
-
-            if (gray != _gpuItemKeyGray || range != _gpuItemKeyRange || gen != _gpuItemKeyGen || geo != _gpuItemKeyGeo ||
+            if (gray != _gpuItemKeyGray || range != _gpuItemKeyRange || geo != _gpuItemKeyGeo ||
                 !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
             {
                 _gpuItemKeyGeo = geo;
                 _gpuItemGeneration++;
-                _gpuItemKeyGen = gen;
                 _gpuItemKeyGray = gray;
                 _gpuItemKeyRange = range;
                 Chunk.GpuEffectsIgnored = true;
@@ -284,7 +274,6 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gpuItemCacheOn = true;
-            _gpuItemGenOn = gen;
             _gpuItemRangeKey = range ? GpuItemGen.RangeKey(_world) : 0;
             _gpuSelContainer = SelectedObject.SelectedContainer;
 
@@ -552,15 +541,9 @@ namespace ClassicUO.Game.Scenes
             {
                 BuildGpuItemCache(chunk, cache);
             }
-            else if (_gpuItemGenOn && cache.RenderGen != chunk.GpuItemRenderGen)
+            else if (cache.RenderGen != chunk.GpuItemRenderGen)
             {
                 // pa-gpusig: an item changed in place since the build (GpuItemGen.Touch)
-#if CUO_DEVTOOLS
-                if (GpuItemGen.Check)
-                {
-                    GpuItemGen.CountGenRebuild(GpuItemAnySignatureChanged(chunk, cache));
-                }
-#endif
                 BuildGpuItemCache(chunk, cache);
             }
             else if (cache.PrepPass + 1 != _gpuItemPrepPass)
@@ -633,15 +616,9 @@ namespace ClassicUO.Game.Scenes
         // is served this pass (not a check pass's expectation), so a passed poll is remembered.
         private bool GpuItemTileValid(Chunk chunk, GpuItemCache cache, int b, int s, int e, bool serving)
         {
-            switch (GpuItemGen.Decide(_gpuItemGenOn, chunk, cache, b, _gpuItemKeyRange, _gpuItemRangeKey))
+            switch (GpuItemGen.Decide(chunk, cache, b, _gpuItemKeyRange, _gpuItemRangeKey))
             {
                 case GpuItemGen.TileCheck.Trust:
-#if CUO_DEVTOOLS
-                    if (GpuItemGen.Check)
-                    {
-                        GpuItemGenJudge(chunk, cache, s, e);
-                    }
-#endif
                     return true;
 
                 case GpuItemGen.TileCheck.Fallback:
@@ -651,29 +628,13 @@ namespace ClassicUO.Game.Scenes
 
             if (!GpuItemTileValidSig(chunk, cache, s, e))
             {
-#if CUO_DEVTOOLS
-                if (_gpuItemGenOn && GpuItemGen.Check)
-                {
-                    GpuItemGen.CountFallback();
-                }
-#endif
                 return false;
             }
 
-            if (_gpuItemGenOn)
+            // pa-gpusig: a polled tile (the walk had it since its last check) that passed is trusted again
+            if (serving)
             {
-                // pa-gpusig: a polled tile (the walk had it since its last check) that passed is trusted again
-                if (serving)
-                {
-                    cache.PollTiles &= ~(1UL << b);
-                }
-
-#if CUO_DEVTOOLS
-                if (GpuItemGen.Check)
-                {
-                    GpuItemGen.CountPolled();
-                }
-#endif
+                cache.PollTiles &= ~(1UL << b);
             }
 
             return true;
@@ -689,55 +650,10 @@ namespace ClassicUO.Game.Scenes
                 _gpuItemFallbackTotal++;
             }
 
-#if CUO_DEVTOOLS
-            if (GpuItemGen.Check)
-            {
-                GpuItemGen.CountFallback();
-            }
-#endif
             return false;
         }
 
-#if CUO_DEVTOOLS
-        // CUO_GPU_SIG_CHECK: the old decision next to a trusted tile: every entry whose signature changed
-        // (or that left the chunk) is a mismatch
-        private void GpuItemGenJudge(Chunk chunk, GpuItemCache cache, int s, int e)
-        {
-            GpuItemGen.CountTrusted(e - s);
-
-            for (int i = s; i < e; i++)
-            {
-                ref GpuItemCache.Entry en = ref cache.Entries[i];
-                Item item = en.Item;
-                GpuItemSignature(item, out ulong a, out ulong b);
-                bool otherChunk = !ReferenceEquals(item.TileChunk, chunk);
-
-                if (a != en.Sig0 || b != en.Sig1 || otherChunk)
-                {
-                    GpuItemGen.Mismatch(item, chunk, en.Tile, en.Sig0, en.Sig1, a, b, otherChunk);
-                }
-            }
-        }
-
-        // CUO_GPU_SIG_CHECK: a generation rebuild that the signatures would not have asked for
-        private bool GpuItemAnySignatureChanged(Chunk chunk, GpuItemCache cache)
-        {
-            for (int i = 0; i < cache.Count; i++)
-            {
-                ref GpuItemCache.Entry en = ref cache.Entries[i];
-                GpuItemSignature(en.Item, out ulong a, out ulong b);
-
-                if (a != en.Sig0 || b != en.Sig1 || !ReferenceEquals(en.Item.TileChunk, chunk))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-#endif
-
-        // The served entries' signatures still match (the switch off, or a polled tile).
+        // The served entries' signatures still match (a polled tile, or a chunk marked since the prepare).
         private bool GpuItemTileValidSig(Chunk chunk, GpuItemCache cache, int s, int e)
         {
             for (int i = s; i < e; i++)

@@ -134,12 +134,6 @@ namespace ClassicUO.Configuration
         [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
 
 
-        // pa-gpusig, the Gpu prepare's ground-item cache: a served tile's cached items are trusted while their chunk's render generation
-        // (GpuItemGen.Touch: the WorldWriter commits, text, boat offsets, object handles) is unchanged and the tile was served in
-        // every pass since it was checked; otherwise their signatures are compared as before. Off = every served item's
-        // signature is rebuilt and compared every frame. CUO_GPU_SIG_CHECK=1 compares both decisions at every use.
-        [JsonPropertyName("gpu_prepare_item_cache_gen")] public bool GpuPrepareItemCacheGen { get; set; }
-
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_gump_dirty")] public bool UiGumpDirty { get; set; }
