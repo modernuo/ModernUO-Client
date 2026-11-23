@@ -8888,3 +8888,66 @@ Costs (estimated, not timed; machine not quiet): the mount standing group is one
 Gpu, about 1-2 MiB of anim pages while riding, LRU-managed); mount_swap holds the rider's on-foot look up to 25 ms on a matched
 dismount (by design) and costs one branch per frame otherwise; no new per-frame allocation (fixed 4-entry rings). Checkers allocate
 only when on.
+
+## 2026-11-23 mount-fix follow-up: scenario job results (bench-001131/1132/1133, binary 5232cad93)
+
+Analysis only (no code, no jobs). Jobs ran on 5232cad93 (mobile_fade_in, fade_time_based, idle_on_spawn, mount_swap, detector),
+before the idle cadence cache and item_fade_in (620028c7a). Scenes, scripts and per-arm text: cuo-poc-state/measure/mount-fix/
+(evidence/bench-001132, evidence/bench-001133, mc_analyze2.py) and measure/mount-flash/evidence/bench-001131 (strips, in colour:
+checked gpu_noturn_dis2.png and gpu_noturn_nofade_dis1.png, a tan horse and a grey-robed rider on a brown floor). The bench
+character was alive (colour frames). Pinned p-cores by the runner; frame counts, not timings, are the result.
+
+**1. Dismount flash, mobile_fade_in off: gone on Gpu and Legacy, with and without mount_swap.**
+- bench-001132 (10 cycles per arm, dismount cycles with a flash / flash frames): base (fade on, prefetch off, Gpu uncapped) 10 of 11
+  cycles / 178 frames (all "horse alpha 0", the fade-in; 6 more frames on the cold first mount: rider mounted look incomplete,
+  pages). g_unc_off and g_unc_on (Gpu uncapped, fade off, prefetch on, swap off/on): 0 / 0. l_unc_off and l_unc_on (Legacy
+  uncapped): 0 / 0.
+- 144 fps + vsync (g_144_off / g_144_on): mc_analyze.py counts 3 flash frames in 10 / 7 of 11 cycles. That is a harness artifact: at
+  144 fps vsync three Updates run per draw, so three probes carry the same draw seq (3029 3029 3029, then 3030). The draw
+  after the packet already shows both complete and the horse at alpha 255. Counting only probes with a new draw seq
+  (mc_analyze2.py): 0 flash cycles in both 144 arms.
+- bench-001131 (mf-bursts-v3, 40-frame bursts, about 7 ms per frame, anim_async_turn off), dismount flash frames per cycle dis1/dis2/dis3:
+  gpu_noturn (fade on) 30 / 34 / 34 frames (209 / 240 / 238 ms to settle); legacy_noturn 21 / 33 / 35 (147 / 239 / 244 ms); gpu (hold on)
+  35 / 35 / 35 (243 ms); gpu_noturn_nofade 1 / 0 / 0 (the 1 is the cold first dismount: the rider on foot drawn one frame, 7 ms,
+  before the horse, animMiss 0). Ethereal mount (emnt): fade on 48 frames (334 ms) gpu_noturn, 70 (494 ms) gpu, 0 with fading off;
+  ethereal dismount (edis): 0 in all arms. The animPending/animMiss columns are 0 on every flash frame, so the flash is the fade,
+  not asset residency. Cycles 2+ never miss pages (pages stay resident).
+- Verdict: the dismount flash is the new-mobile fade-in alone. mobile_fade_in off removes it everywhere measured (Gpu, Legacy,
+  vsync 144 and uncapped). mount_swap adds nothing in this scene (see 3).
+
+**2. Mount side: no split seen.** 0 split frames in 70 mount cycles (7 arms x 10), and in bench-001131 mnt2/mnt3 of every arm
+(0 X frames); mnt1 (cold) has 1-2 X frames with animMiss 4-6 on Gpu (first-sight rider pages; with prefetch on in bench-001132 the
+first mount is clean). In every cycle the horse's 0x1D and the mount's 0x2E (equip) arrive in the same client drain (net trace: 1 drain
+between "use" and the first mounted probe, 70 of 70; the dismount arrives as two drains, 62 B / 2 packets and 30 B / 1 packet, both
+before the next draw). So the server's two-send split exists in the source but did not reach a draw once: it needs a client frame
+between the two sends, and the client drains everything already on the socket. Expect it only with network latency between the two
+flushes, or a loaded server; rate in this scene 0 per cycle. The ModernUO change stays optional.
+
+**3. mount_swap checker: no data, the matcher never matched.** No `[mount-swap-check]` line in any log (checker on in every arm,
+also in the swap-off arms, which still run the matcher), `pair_hidden True` and `pair_hold True` never appear in any probe. So no
+pair was ever matched and swap on equals swap off here. Likely cause (from the logs, not yet confirmed by a run): the driver prints
+the mount item's anim body as 848 (item 0x3EA1: Item.GetGraphicForAnimation takes ItemData.AnimID when set) while the dismounted
+horse mobile's body is 0x00E4 (228, the MountTable's body for 0x3EA1); MountSwap.Match compares the horse against the item's anim
+body, `c.Graphic != _riderBody && c.GetGraphicForAnimation() != _riderBody`, which cannot hold. Fix idea: record the MountTable body
+(Uo.Pack.MountTable.MountBody(item graphic, 0)) as well and accept either; add a unit test with 0x3EA1 and AnimID 848. Because the
+fade was the whole dismount flash, the miss changes nothing in the results above, but mount_swap must not be flipped on as proven
+until the matcher matches. To verify in the batch: a counter for candidates rejected on body, then a run with swap on and the
+checker (pairs > 0, inconsistent 0).
+
+**4. UNCOVERED prefetch cases (bench-001133 coverage, bench-001132 arms).** Detector totals (noted / first_sight / UNCOVERED frames):
+cov Gpu 4 / 0 / 0; cov Legacy 0 / 0 / 2; g_unc_on 3 / 0 / 0; g_144_on 3 / 0 / 0; l_unc_on 4 / 0 / 3; base (prefetch off) 12 / 0 / 2.
+Scenarios with no UNCOVERED on either renderer: ethereal mount and dismount, war on/off, halberd and cloak equip/unequip (equipped and picked up:
+halberd and cloak; `pick worn` took the robe first, then the halberd), bodyvalue 0x190 / 0xD9, death and res, teleport and back, [add Dragon, [add Ettin (the Ettin
+shows first-sight waits, 2 frames, covered by the hold). The uncovered ones are all the same kind:
+- a human body (0x190) standing (group 4) drawn in a direction whose stand pages are not loaded, last WorldWriter op
+  AdvanceAnimationFromEcs, i.e. a direction change with anim_async_turn off (the known remaining gap; AnimAsyncTurn covers it when
+  on): the player (dir 0, 1, 6) and a shop NPC 0x0003AF15 with shop layers (dir 5, 7), Legacy only, 2-3 frames per run;
+- the same for a horse body 0xE4 group 3 dir 0 on the base Gpu arm (prefetch off), none with prefetch on.
+No WorldWriter operation gap was found, so no new LookPrefetch.Note was added.
+
+Open: Legacy draws these as nothing for a frame or two only on a turn into an unloaded direction; the fix belongs to the
+direction-change path (note the new direction at the AdvanceAnimationFromEcs turn when anim_async_turn is off), not to a packet
+operation. Parked, owner decision whether it is worth a code change (it is anim_async_turn off only).
+
+Defaults the results support: mobile_fade_in off (confirmed); fade_time_based, idle_on_spawn and mount_swap not decided by these jobs
+(fade_time_based and idle_on_spawn were not exercised; mount_swap unproven, see 3).
