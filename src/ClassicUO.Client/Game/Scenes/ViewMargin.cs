@@ -47,12 +47,23 @@ namespace ClassicUO.Game.Scenes
         };
 
         public static readonly bool WalkCheck = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_WALK_CHECK") == "1";
+
+        private static readonly bool? _bodyEnv = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_BODY") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+
+        public static readonly bool BodyCheck = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_BODY_CHECK") == "1";
 #else
         private static readonly bool? _env = null;
         private static readonly bool? _cullEnv = null;
         private static readonly bool? _walkEnv = null;
+        private static readonly bool? _bodyEnv = null;
         public const bool Check = false;
         public const bool WalkCheck = false;
+        public const bool BodyCheck = false;
 #endif
 
         /// <summary>Tests: the switch (null: the setting).</summary>
@@ -63,6 +74,14 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>Tests: view_margin_walk (null: the setting).</summary>
         [ThreadStatic] internal static bool? WalkOverrideForTests;
+
+        /// <summary>Tests: view_margin_body (null: the setting).</summary>
+        [ThreadStatic] internal static bool? BodyOverrideForTests;
+
+        /// <summary>view_margin_body (with view_margin on): each mobile is tested against the view grown by its own body's
+        /// reach (<see cref="BodyReach"/>) instead of the fixed <see cref="MobileSide"/>/<see cref="MobileUp"/>, with a top
+        /// band for frames reaching below their anchor; the walk visits the dynamic tiles out to the caps.</summary>
+        public static bool BodyEnabled => BodyOverrideForTests ?? _bodyEnv ?? (Settings.GlobalSettings?.ViewMarginBody ?? false);
 
         /// <summary>view_margin_walk (with view_margin on): the margin's tiles are walked only where an object
         /// can reach the view from them (<see cref="RingTiles"/>), and of a margin tile's objects only those whose box meets
@@ -238,6 +257,21 @@ namespace ClassicUO.Game.Scenes
             minY = vMinY;
             maxY = vMaxY + Math.Max(overUp, MobileUp);
         }
+
+        /// <summary>view_margin_body: the walk's culling rectangle for the dynamic tiles of every chunk: the view grown by the
+        /// caps on a mobile's reach (<see cref="BodyReach"/>), the top band included.</summary>
+        public static void BodyRect(float vMinX, float vMinY, float vMaxX, float vMaxY, out float minX, out float minY, out float maxX, out float maxY)
+        {
+            minX = vMinX - BodyReach.CapSide;
+            maxX = vMaxX + BodyReach.CapSide;
+            minY = vMinY - BodyReach.CapTop;
+            maxY = vMaxY + BodyReach.CapUp;
+        }
+
+        /// <summary>view_margin_body: the chunk's walked tiles: the static rectangle's (<see cref="ChunkRect"/>) and the
+        /// dynamic tiles of the caps' rectangle (<see cref="BodyRect"/>), within the fill's own.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong BodyTiles(ulong inWalk, ulong staticMask, ulong bodyMask, ulong dynamic) => inWalk & (staticMask | bodyMask & dynamic);
 
         /// <summary>The light margin for lights whose largest texture side is <paramref name="maxExtent"/> px: the halo's
         /// radius (the light is drawn centred on anchor + 22, and the walked rectangle already has 44 px of slack).</summary>

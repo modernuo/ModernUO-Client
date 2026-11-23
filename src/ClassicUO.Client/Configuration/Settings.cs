@@ -279,6 +279,13 @@ namespace ClassicUO.Configuration
         // setting in developer builds. Default off.
         [JsonPropertyName("view_margin_walk")] public bool ViewMarginWalk { get; set; }
 
+        // vm-body (with view_margin): each mobile is tested against the view grown by its own body's reach (its frames,
+        // shadow, mount and equipment from the pack's animation index, capped at 320 beside, 300 above and 200 below) instead
+        // of the fixed 160/260 px, so humans keep a small margin, large bodies are drawn from further out, and frames reaching
+        // below their anchor get a top band. CUO_VIEW_MARGIN_BODY_CHECK=1 flags a mobile it leaves out that the fixed margin or
+        // its current frame would have drawn; CUO_VIEW_MARGIN_BODY=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("view_margin_body")] public bool ViewMarginBody { get; set; }
+
         // light-edges: a surface glow's halo (a lit window's beam: light_alpha_fade's class, lightclass.bin, else the
         // emitter's tiledata Wall/Window flags) is not drawn where another static, multi piece or ground item in front of its
         // source covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a
