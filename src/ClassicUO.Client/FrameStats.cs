@@ -224,6 +224,9 @@ namespace ClassicUO
         LightDrawCalls,
         LightSearchUs,
         LightMaskUs,
+        // light_occlusion_cache: searches served from cached occluder candidates, and searches that rebuilt an entry
+        LoCacheHits,
+        LoCacheMisses,
         Count
     }
 
@@ -291,7 +294,8 @@ namespace ClassicUO
             "text_nodes", "text_live", "text_expired", "text_nocontent", "text_drawn", "text_fwd_nodes",
             "text_exp_mobile", "text_exp_item", "text_exp_other",
             "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits",
-            "lights_masked", "light_occluders", "light_flushes", "light_draw_calls", "light_search_us", "light_mask_us" };
+            "lights_masked", "light_occluders", "light_flushes", "light_draw_calls", "light_search_us", "light_mask_us",
+            "lo_cache_hits", "lo_cache_misses" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

@@ -70,6 +70,7 @@ namespace ClassicUO.Game.Scenes
             if (chunk != null)
             {
                 chunk.GpuItemRenderGen++;
+                chunk.OccluderVersion++;
 #if CUO_DEVTOOLS
                 _invalidations++;
 #endif

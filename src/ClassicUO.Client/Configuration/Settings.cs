@@ -254,6 +254,14 @@ namespace ClassicUO.Configuration
         // overrides the setting in developer builds. Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
 
+        // light_occlusion_cache (with light_occlusion): each surface glow keeps the objects its occluder search found able to
+        // hide it (in front, not above, an occluder by tiledata), relative to its source, and later frames test only those
+        // with the full occluder test, until a chunk the search reached changes (Chunk.OccluderVersion), the light's source or
+        // target changes, or the drawn chunks change (LightOcclusionCache). Same occluders as the full search.
+        // CUO_LIGHT_OCCLUSION_CACHE_CHECK=1 runs the full search next to every cached one and logs each difference;
+        // CUO_LIGHT_OCCLUSION_CACHE=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("light_occlusion_cache")] public bool LightOcclusionCache { get; set; }
+
         // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
         // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
         // fade), so hidden walls leave no floating glows; radial glows (lamps, torches) keep full light. With light_occlusion
