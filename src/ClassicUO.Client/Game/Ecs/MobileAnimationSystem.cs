@@ -169,6 +169,8 @@ namespace ClassicUO.Game
             bool cacheable = (s.Flags & AnimStateFlags.HasSteps) == 0;
             // wet_surface_depth: part of the key, so the recorded strips' depths follow a flip of the rule
             cache.Submerged = Scenes.WetSurfaceDepth.KeySubmerged(m, cache);
+            // mobile_wall_order: likewise for the strips capped by a wall ahead
+            cache.Wall = Scenes.MobileWallOrder.KeyScan(m);
 
             if (cacheable)
             {
@@ -185,6 +187,7 @@ namespace ClassicUO.Game
                 key.Y = m.Y;
                 key.Z = m.Z;
                 key.Submerged = cache.Submerged;
+                key.Wall = cache.Wall;
                 key.Season = (byte)world.Season;
                 key.Tile = m.TileChunk;
                 key.TileVersion = m.TileChunk?.ContentVersion ?? 0;
