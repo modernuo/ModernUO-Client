@@ -1195,6 +1195,11 @@ namespace ClassicUO
             {
                 LookPrefetchCheck.Draw(UO.World);
             }
+
+            if (MobileFadeIn.Check && UO.World is { InGame: true })
+            {
+                MobileFadeCheck.Frame();
+            }
 #endif
             LookPrefetch.BeginDraw();
             VisualDue.BeginDraw();

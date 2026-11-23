@@ -229,6 +229,13 @@ namespace ClassicUO.Configuration
         // world draws a mobile part whose direction page is not resident as nothing for a frame (the first-turn flash, bg/turn-flash).
         [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; } = true;
 
+        // mount-fix (owner 2026-11-23: the horse left by a dismount fades in from invisible, a flash every cycle): on, a mobile
+        // the server creates starts at alpha 0 and fades in (the upstream behaviour); off, it is drawn at its target alpha
+        // from its first frame (full, or 0 above the max Z). Roof, max-Z, translucency and chunk-stream fades are unchanged;
+        // items keep their fade. CUO_MOBILE_FADE_CHECK=1 counts mobiles first drawn below their target and the time until
+        // they reach it; CUO_MOBILE_FADE_IN=1|0 overrides the setting in developer builds. Default on; off is the new path.
+        [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; } = true;
+
         // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
         // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
         // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the

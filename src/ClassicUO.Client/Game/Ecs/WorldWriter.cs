@@ -1344,6 +1344,7 @@ namespace ClassicUO.Game
                 }
 
                 created = true;
+                MobileFadeIn.Created(mobile);
             }
             else if (obj is Mobile m && obj.Serial == serial && Holds(m))
             {

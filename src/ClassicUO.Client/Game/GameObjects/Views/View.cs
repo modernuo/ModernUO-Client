@@ -22,6 +22,8 @@ namespace ClassicUO.Game.GameObjects
     internal abstract partial class GameObject
     {
         public byte AlphaHue;
+        // mobile_fade_in off: the next walk sets AlphaHue to its target at once (MobileFadeIn.Created)
+        public bool AlphaSnap;
         public bool AllowedToDraw = true;
         public bool InChunkMesh;
         public int MeshSpriteIndex = -1;

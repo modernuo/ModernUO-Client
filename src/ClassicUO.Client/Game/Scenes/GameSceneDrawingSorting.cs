@@ -244,14 +244,18 @@ namespace ClassicUO.Game.Scenes
         )
         {
             allowSelection = true;
+            // mobile_fade_in off: a created mobile's first walk puts it at its target alpha at once (MobileFadeIn)
+            bool snap = obj.AlphaSnap;
+            bool step = _alphaChanged || snap;
+            obj.AlphaSnap = false;
 
             if (obj.Z >= _maxZ)
             {
                 bool changed;
 
-                if (_alphaChanged)
+                if (step)
                 {
-                    changed = CalculateAlpha(ref obj.AlphaHue, 0);
+                    changed = CalculateAlpha(ref obj.AlphaHue, 0, snap);
                 }
                 else
                 {
@@ -265,9 +269,9 @@ namespace ClassicUO.Game.Scenes
             }
             else if (_noDrawRoofs && itemData.IsRoof)
             {
-                if (_alphaChanged)
+                if (step)
                 {
-                    if (!CalculateAlpha(ref obj.AlphaHue, 0))
+                    if (!CalculateAlpha(ref obj.AlphaHue, 0, snap))
                     {
                         return false;
                     }
@@ -277,14 +281,14 @@ namespace ClassicUO.Game.Scenes
             }
             else if (itemData.IsTranslucent)
             {
-                if (_alphaChanged)
+                if (step)
                 {
-                    CalculateAlpha(ref obj.AlphaHue, 178);
+                    CalculateAlpha(ref obj.AlphaHue, 178, snap);
                 }
             }
-            else if (_alphaChanged && obj.AlphaHue != 0xFF && !itemData.IsFoliage)
+            else if (step && obj.AlphaHue != 0xFF && !itemData.IsFoliage)
             {
-                CalculateAlpha(ref obj.AlphaHue, 0xFF);
+                CalculateAlpha(ref obj.AlphaHue, 0xFF, snap);
             }
 
             return true;
@@ -319,10 +323,11 @@ namespace ClassicUO.Game.Scenes
             return (int)Math.Min(11, steps);
         }
 
-        private static bool CalculateAlpha(ref byte alphaHue, int maxAlpha)
+        internal static bool CalculateAlpha(ref byte alphaHue, int maxAlpha, bool snap = false)
         {
             if (
-                _snapAlphas
+                snap
+                || _snapAlphas
                 || ProfileManager.CurrentProfile != null
                 && !ProfileManager.CurrentProfile.UseObjectsFading
             )
@@ -1254,6 +1259,12 @@ namespace ClassicUO.Game.Scenes
                             {
                                 continue;
                             }
+#if CUO_DEVTOOLS
+                            if (MobileFadeIn.Check)
+                            {
+                                MobileFadeCheck.Drawn(mobile, mobile.Z >= _maxZ ? (byte)0 : (byte)0xFF);
+                            }
+#endif
 
                             if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
                             {
