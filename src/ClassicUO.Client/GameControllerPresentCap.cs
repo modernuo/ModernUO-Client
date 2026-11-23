@@ -325,6 +325,7 @@ namespace ClassicUO
                 {
                     FrameStats.Add(FrameCounter.NetBytes, bytes);
                     FrameStats.Add(FrameCounter.NetPackets, packets);
+                    FrameStats.NoteDrainCap(NetClient.Socket.LastDrainCap, NetClient.Socket.LastDrainRemaining);
                 }
             }
 

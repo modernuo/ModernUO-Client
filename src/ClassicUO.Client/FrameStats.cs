@@ -245,9 +245,14 @@ namespace ClassicUO
         MobSelectMisses,
         MobEmitMisses,
         MobLegacyMisses,
-        // bytes the session timeline's own log lines allocated this frame (its slow-frame line runs once per frame over 8 ms);
-        // left out of alloc_bytes and alloc_per_frame
+        // bytes the session timeline's own work allocated this frame (formatting a window's slow-frame dump); left out of alloc_bytes and alloc_per_frame
         StatsSelfAlloc,
+        // drains this frame that stopped at a cap with data still queued on the socket: by the byte cap, the packet cap, the time
+        // cap, and the bytes waiting after it (how often a busy scene chunks packet processing)
+        NetCapBytes,
+        NetCapPackets,
+        NetCapTime,
+        NetCapWaiting,
         Count
     }
 
@@ -318,7 +323,8 @@ namespace ClassicUO
             "lights_masked", "light_occluders", "light_flushes", "light_draw_calls", "light_search_us", "light_mask_us",
             "lo_cache_hits", "lo_cache_misses", "lo_bakes", "lo_bake_draws", "lo_rebakes", "lo_rebakes_s",
             "mwo_scans", "mwo_tiles", "mwo_objects", "mwo_cache_hits", "mwo_empty",
-            "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc" };
+            "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc",
+            "net_cap_bytes", "net_cap_packets", "net_cap_time", "net_cap_waiting" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -340,6 +346,7 @@ namespace ClassicUO
         private static TimeSpan _pauseStart;
         private static bool _recording;
         private static string _tag = "";
+        private static int _tagId;
         private static int _windowIndex;
 
         private static T[][] CreateArrays<T>(int n)
@@ -434,6 +441,17 @@ namespace ClassicUO
             }
         }
 
+        /// <summary>A network drain's cap result (<see cref="Network.NetClient.LastDrainCap"/>: 0 none, 1 bytes, 2 packets, 3 time) and
+        /// the socket bytes still waiting after it.</summary>
+        public static void NoteDrainCap(int cap, int waiting)
+        {
+            if (On && cap != 0)
+            {
+                _cur[(int)FrameCounter.NetCapBytes + cap - 1]++;
+                _cur[(int)FrameCounter.NetCapWaiting] = waiting;
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Inc(FrameCounter counter)
         {
@@ -499,6 +517,7 @@ namespace ClassicUO
         public static void StartWindow(string tag)
         {
             _tag = tag ?? "";
+            _tagId = SlowFrameStats.TagId(_tag);
             _recording = true;
             _windowStart = 0;
             // [gc] lines cover collections from here on, not ones from before the window
@@ -716,6 +735,7 @@ namespace ClassicUO
                 if (_sessionStart != 0)
                 {
                     // logout or disconnect: the next login starts a new timeline, and its first frames are login frames again
+                    FlushSlowFrames("session");
                     Log.Info("[gcs] session ended");
                     _sessionStart = 0;
                     WorldShown = false;
@@ -789,7 +809,7 @@ namespace ClassicUO
 
             if (frameMs > 8 && afterReport)
             {
-                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s slow frame {1:0.00} ms, after a window report (not counted)", t, frameMs));
+                SlowFrameStats.NoteAfterReport();
             }
             else if (frameMs > 8)
             {
@@ -803,7 +823,9 @@ namespace ClassicUO
                     _sessionSlowPlayMax = Math.Max(_sessionSlowPlayMax, frameMs);
                 }
 
-                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s slow frame {1:0.00} ms, {2}, tag {3}", t, frameMs, kind, _recording ? _tag : "-"));
+                // in memory, formatted by FlushSlowFrames (window report, summary, session end, exit): a log line here ran a
+                // string.Format and a locked console write on the game thread for every slow frame
+                SlowFrameStats.Record(t, frameMs, !held ? SlowFrameKind.Play : WorldShown ? SlowFrameKind.Held : SlowFrameKind.Login, _recording ? _tagId : 0);
             }
 
             if (t >= _sessionNextSummary && _sessionNextSummary <= 60)
@@ -811,6 +833,7 @@ namespace ClassicUO
                 Log.Info(string.Format(inv, "[gcs] summary +{0}s: collections {1} (gen1+ {2}, gen2 {3}), pause {4:0.0} ms; in play frames {5} ({6:0.0} ms); frames over 8 ms: play {7} (max {8:0.0} ms), held or login {9}",
                     _sessionNextSummary, _sessionGcs, _sessionGc1, _sessionGc2, _sessionPause, _sessionGcsPlay, _sessionPausePlay, _sessionSlowPlay, _sessionSlowPlayMax, _sessionSlowHeld));
                 _sessionNextSummary += 20;
+                FlushSlowFrames("session");
             }
 
             if (t >= _sessionNextPools)
@@ -968,8 +991,28 @@ namespace ClassicUO
             Array.Clear(_cur, (int)FrameCounter.Tiles, COUNTERS - (int)FrameCounter.Tiles);
         }
 
+        // The slow frames since the last flush as text; runs in the window report, a summary, a session end and at process exit
+        private static void FlushSlowFrames(string scope)
+        {
+            var sb = new StringBuilder(1024);
+
+            if (SlowFrameStats.Flush(sb, scope))
+            {
+                Log.Info(sb.ToString());
+            }
+        }
+
+        private static bool _exitHooked;
+
         private static void Report(long now)
         {
+            if (!_exitHooked)
+            {
+                _exitHooked = true;
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => FlushSlowFrames("exit");
+            }
+
+            FlushSlowFrames("window");
             _sessionAfterReport = true;
             double seconds = (now - _windowStart) / (double)Stopwatch.Frequency;
             long allocTotal = GC.GetTotalAllocatedBytes() - _allocTotalStart - _allocSelfWindow;
