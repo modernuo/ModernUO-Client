@@ -154,6 +154,27 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void ScanAndCapDoNotAllocate()
+        {
+            var map = Studio();
+            float depth = MobileDepth(MX, MY, Z);
+            MobileWallOrder.Scan s = ScanAt(map, MX, MY, Z);
+            MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out _);
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            float sum = 0;
+
+            for (int i = 0; i < 1000; i++)
+            {
+                s = default;
+                MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
+                sum += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
+            }
+
+            (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+            sum.Should().BeGreaterThan(0);
+        }
+
+        [Fact]
         public void KeyMathHoldsAcrossTheMap()
         {
             // the float round trip gives D - 1 exactly for large tile sums (Felucca's far corner, z extremes)
