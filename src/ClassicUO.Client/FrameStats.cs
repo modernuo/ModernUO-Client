@@ -253,6 +253,15 @@ namespace ClassicUO
         NetCapPackets,
         NetCapTime,
         NetCapWaiting,
+        // vm-legacy (view_margin, Legacy walk): chunk-mesh sprites with their anchor in the margin, those of them whose quad
+        // misses the view (left out under view_margin_cull), and render-list entries with their anchor in the margin
+        VmMarginMesh,
+        VmMarginCulled,
+        VmMarginList,
+        // vm-walk (view_margin_walk, both renderers): margin tiles of the walk's mask left out (or that would be, switch off),
+        // margin objects of walked tiles left out by their box
+        VmRingTilesSkipped,
+        VmRingObjectsSkipped,
         Count
     }
 
@@ -324,7 +333,8 @@ namespace ClassicUO
             "lo_cache_hits", "lo_cache_misses", "lo_bakes", "lo_bake_draws", "lo_rebakes", "lo_rebakes_s",
             "mwo_scans", "mwo_tiles", "mwo_objects", "mwo_cache_hits", "mwo_empty",
             "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc",
-            "net_cap_bytes", "net_cap_packets", "net_cap_time", "net_cap_waiting" };
+            "net_cap_bytes", "net_cap_packets", "net_cap_time", "net_cap_waiting",
+            "vm_margin_mesh", "vm_margin_culled", "vm_margin_list", "vm_ring_tiles_skipped", "vm_ring_objects_skipped" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

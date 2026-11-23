@@ -156,6 +156,17 @@ namespace ClassicUO.Renderer
             }
         }
 
+        /// <summary>Sprite <paramref name="index"/>'s quad bounds in the layer's (world-offset) coordinates.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void QuadBounds(int index, out float minX, out float minY, out float maxX, out float maxY)
+        {
+            ref var v = ref Vertices[index];
+            minX = Math.Min(Math.Min(v.Position0.X, v.Position1.X), Math.Min(v.Position2.X, v.Position3.X));
+            maxX = Math.Max(Math.Max(v.Position0.X, v.Position1.X), Math.Max(v.Position2.X, v.Position3.X));
+            minY = Math.Min(Math.Min(v.Position0.Y, v.Position1.Y), Math.Min(v.Position2.Y, v.Position3.Y));
+            maxY = Math.Max(Math.Max(v.Position0.Y, v.Position1.Y), Math.Max(v.Position2.Y, v.Position3.Y));
+        }
+
         /// <summary>
         /// Marks a sprite as visible this frame and updates its vertex alpha.
         /// AlphaHue=0 means "not yet processed" → treat as fully opaque.

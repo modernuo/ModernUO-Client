@@ -266,6 +266,19 @@ namespace ClassicUO.Configuration
         // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
+        // vm-legacy: with view_margin on, the Legacy walk leaves out the chunk-mesh sprites (land, statics, multi pieces) of
+        // the margin whose quad misses the view: they would be submitted and drawn off screen (the margin's tiles are walked
+        // for the few tall sprites that reach the view). CUO_VIEW_MARGIN_CHECK=1 also tests every sprite it leaves out against
+        // the object's own art box; CUO_VIEW_MARGIN_CULL=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("view_margin_cull")] public bool ViewMarginCull { get; set; }
+
+        // vm-walk: with view_margin on, the walk visits a margin tile only when an object on it can reach the
+        // view (tall or wide statics and multi pieces, stretched land rising past the walk's slack, any dynamic: Chunk.ReachCells
+        // and the dynamic index), and processes only the margin objects whose box meets the view (mobiles, corpses and effects
+        // always). CUO_VIEW_MARGIN_WALK_CHECK=1 compares it with the full margin walk; CUO_VIEW_MARGIN_WALK=1|0 overrides the
+        // setting in developer builds. Default off.
+        [JsonPropertyName("view_margin_walk")] public bool ViewMarginWalk { get; set; }
+
         // light-edges: a surface glow's halo (a lit window's beam: light_alpha_fade's class, lightclass.bin, else the
         // emitter's tiledata Wall/Window flags) is not drawn where another static, multi piece or ground item in front of its
         // source covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a
