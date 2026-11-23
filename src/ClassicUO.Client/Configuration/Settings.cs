@@ -242,22 +242,17 @@ namespace ClassicUO.Configuration
         // chunks; CUO_CHUNK_LIGHTS=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("chunk_lights")] public bool ChunkLights { get; set; }
 
-        // light-edges: a light's halo is not drawn where another static, multi piece or ground item in front of its source
-        // covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a far
-        // wall no longer glow through the near wall. Its own emitter, objects on its own tile, translucent tiles, floors and
-        // mobiles do not hide it. Per light, the occluders' drawn sprites go into the light target's stencil
-        // (GameSceneLightOcclusion, LightOcclusion). Both renderers. CUO_LIGHT_OCCLUSION_CHECK=1 compares the occluders found
-        // with a scan of every tile of the drawn chunks; CUO_LIGHT_OCCLUSION=1|0 overrides the setting in developer builds.
-        // Default off.
+        // light-edges: a surface glow's halo (a lit window's beam: light_alpha_fade's class, lightclass.bin, else the
+        // emitter's tiledata Wall/Window flags) is not drawn where another static, multi piece or ground item in front of its
+        // source covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a
+        // far wall no longer glow through the near wall. Its own emitter, objects on its own tile, translucent tiles, floors
+        // and mobiles do not hide it. Radial lights (lamps, candles, torches, fire fields, mobiles' lights) are never masked:
+        // the light map multiplies the frame, so they light the objects in front of them (round 7, Luna 1005 513 -30; folded
+        // in 2026-11-22). Per masked light, the occluders' drawn sprites go into the light target's stencil
+        // (GameSceneLightOcclusion, LightOcclusion.Masks). Both renderers. CUO_LIGHT_OCCLUSION_CHECK=1 compares the occluders
+        // found with a scan of every tile of the drawn chunks and logs any radial light drawn masked; CUO_LIGHT_OCCLUSION=1|0
+        // overrides the setting in developer builds. Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
-
-        // light-edges round 7 (owner, Luna 1005 513 -30: a wall in front of a candelabra stayed dark inside its halo): the
-        // light map multiplies the frame, so a mask only takes light off the occluder's own pixels. With light_occlusion on,
-        // only surface glows (light_alpha_fade's class: lightclass.bin, else the emitter's tiledata Wall/Window flags) get
-        // occluders and masks; radial lights (lamps, candles, torches) light the objects in front of them and get no stencil
-        // work (LightOcclusion.Masks). CUO_LIGHT_OCCLUSION_CHECK=1 counts the radial lights left unmasked and logs any drawn
-        // masked; CUO_LIGHT_OCCLUSION_SURFACE_ONLY=1|0 overrides the setting in developer builds. Default off.
-        [JsonPropertyName("light_occlusion_surface_only")] public bool LightOcclusionSurfaceOnly { get; set; }
 
         // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
         // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof

@@ -54,7 +54,9 @@ namespace ClassicUO.UnitTests.Ecs
             "event_loop_idle_redraw_ms",
             // baked in after quiet-1118 (world text)
             "text_prune_expired",
-            "text_tail_cache"
+            "text_tail_cache",
+            // folded into light_occlusion (2026-11-22)
+            "light_occlusion_surface_only"
         };
 
         [Fact]
@@ -78,6 +80,32 @@ namespace ClassicUO.UnitTests.Ecs
 
                 settings.Should().NotBeNull();
                 settings.Username.Should().Be("tester");
+                settings.FPS.Should().Be(144);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void A_Settings_File_With_Light_Occlusion_Surface_Only_Keeps_Light_Occlusion(bool lightOcclusion)
+        {
+            // light_occlusion_surface_only was folded into light_occlusion: an old file naming both loads, light_occlusion
+            // keeps its value
+            string path = Path.Combine(Path.GetTempPath(), $"cuo-removed-keys-{System.Guid.NewGuid():N}.json");
+
+            try
+            {
+                File.WriteAllText(path, "{\n  \"light_occlusion\": " + (lightOcclusion ? "true" : "false") +
+                                        ",\n  \"light_occlusion_surface_only\": true,\n  \"fps\": 144\n}\n");
+
+                Settings settings = ConfigurationResolver.Load(path, SettingsJsonContext.RealDefault.Settings);
+
+                settings.Should().NotBeNull();
+                settings.LightOcclusion.Should().Be(lightOcclusion);
                 settings.FPS.Should().Be(144);
             }
             finally
