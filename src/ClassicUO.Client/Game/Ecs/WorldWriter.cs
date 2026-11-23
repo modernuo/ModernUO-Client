@@ -1451,6 +1451,13 @@ namespace ClassicUO.Game
 
                 if (created)
                 {
+                    // idle_on_spawn off: the cadence of the same serial and body that left range lately
+                    if (!IdleOnSpawn.Enabled && !e.IsNull && !player && e.HasComponent<ClassicUO.Ecs.AnimationTimer>()
+                        && _world.IdleCadence.TryRestore(serial, v.Graphic, Time.Ticks, out long idleDue))
+                    {
+                        e.GetComponent<ClassicUO.Ecs.AnimationTimer>().IdleDue = idleDue;
+                    }
+
                     if (body)
                     {
                         _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
@@ -1949,7 +1956,17 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                SaveIdleCadence(mobile);
                 _world.RemoveMobile(serial, true);
+            }
+        }
+
+        // idle_on_spawn off: a mobile that is removed or leaves range keeps its idle cadence (IdleCadenceCache); never written while in view
+        private void SaveIdleCadence(Mobile mobile)
+        {
+            if (!IdleOnSpawn.Enabled && !ReferenceEquals(mobile, _world.Player))
+            {
+                _world.IdleCadence.Save(mobile.Serial, mobile.Graphic, mobile.Timer.IdleDue, Time.Ticks);
             }
         }
 
@@ -1994,6 +2011,7 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                SaveIdleCadence(mobile);
                 _world.RemoveMobile(mobile.Serial);
             }
         }
@@ -3656,6 +3674,7 @@ namespace ClassicUO.Game
             }
 
             _world.MountSwap.Clear();
+            _world.IdleCadence.Clear();
 
             _placements.Clear();
 
@@ -3779,6 +3798,7 @@ namespace ClassicUO.Game
             }
 
             _world.MountSwap.Clear();
+            _world.IdleCadence.Clear();
 
             using (Open(null, null))
             {
@@ -3808,6 +3828,7 @@ namespace ClassicUO.Game
             }
 
             _world.MountSwap.Clear();
+            _world.IdleCadence.Clear();
 
             _placements.Clear();
 

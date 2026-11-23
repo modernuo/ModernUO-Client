@@ -59,6 +59,7 @@ namespace ClassicUO.Game
             Writer = new WorldWriter(this);
             AsyncTurn = new AnimAsyncTurn(this);
             MountSwap = new MountSwap(this);
+            IdleCadence = new IdleCadenceCache();
         }
 
         public WorldEcs Ecs { get; }
@@ -74,6 +75,9 @@ namespace ClassicUO.Game
 
         /// <summary>mount_swap: the matched dismount being held.</summary>
         internal MountSwap MountSwap { get; }
+
+        /// <summary>idle_on_spawn off: the idle due times of mobiles that left (IdleCadenceCache).</summary>
+        internal IdleCadenceCache IdleCadence { get; }
 
         public Point RangeSize;
 
@@ -1091,6 +1095,8 @@ namespace ClassicUO.Game
                     item = Item.Create(this, serial);
                 }
 
+                // item_fade_in off: the new item is drawn at its target alpha from its first frame (GameScene.ProcessAlpha)
+                item.AlphaSnap = !ItemFadeIn.Enabled;
                 Items.Add(item);
             }
 

@@ -233,8 +233,11 @@ namespace ClassicUO.Game
         }
 
         /// <summary>Draw start.</summary>
+        private static World _lastWorld;
+
         public static void Draw(World world)
         {
+            _lastWorld = world;
             long now = Stopwatch.GetTimestamp();
 
             if (_start == 0)
@@ -466,6 +469,11 @@ namespace ClassicUO.Game
             sb.Append($"; incomplete_draws noted {_uncNoted} first_sight {_uncFirstSight} UNCOVERED {_uncUncovered} ({_uncFrames} frames)");
             _uncNoted = _uncFirstSight = _uncUncovered = _uncFrames = 0;
             sb.Append($"; first_sight_wait {_waitDraws} ({_waitFrames} frames); hold_ms {LookPrefetch.HoldMs.Summary()}; first_sight_ms {LookPrefetch.FirstSightMs.Summary()}; cap_frame_gap_ms {LookPrefetch.CapFrameGapMs.Summary()}");
+            if (_lastWorld != null && !IdleOnSpawn.Enabled)
+            {
+                sb.Append("; ").Append(_lastWorld.IdleCadence.TakeSummary());
+            }
+
             var gpu = Client.Game.GetGpuWorld()?.World;
 
             if (gpu != null && gpu.AnimPrefetchLooks != 0)

@@ -236,6 +236,11 @@ namespace ClassicUO.Configuration
         // they reach it; CUO_MOBILE_FADE_IN=1|0 overrides the setting in developer builds. Default on; off is the new path.
         [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; } = true;
 
+        // mount-fix (owner 2026-11-23, low priority): mobile_fade_in for items. On (default, today): an item the server places in
+        // the world starts at alpha 0 and fades in; off, it is drawn at its target alpha from its first frame. Roof, max-Z and
+        // chunk-stream fades are unchanged. CUO_ITEM_FADE_IN=1|0 overrides the setting in developer builds.
+        [JsonPropertyName("item_fade_in")] public bool ItemFadeIn { get; set; } = true;
+
         // mount-fix: object fades (roof, max Z, new objects) catch up the 20 ms steps a long frame missed in every pacing
         // mode, so a fade takes the same ~220 ms at any frame rate; before, only display-paced drawing caught up and an
         // unpaced 12 fps frame took one step (~917 ms). CUO_FADE_TIME_BASED=1|0 overrides it in developer builds. Default off.

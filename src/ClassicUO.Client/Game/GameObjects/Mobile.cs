@@ -523,11 +523,14 @@ namespace ClassicUO.Game.GameObjects
         }
 
         /// <summary>T1 (funnel part 8): the next idle due time, 30 to 60 s from now (one random draw).</summary>
-        internal static long NextIdleDue()
+        internal static long NextIdleDue() => Time.Ticks + IdleStepMs();
+
+        /// <summary>One idle renewal step: 30 to 60 s (one random draw).</summary>
+        internal static int IdleStepMs()
         {
             const int TIME = 30000;
 
-            return Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
+            return TIME + RandomHelper.GetValue(0, TIME);
         }
 
         /// <summary>idle_on_spawn off: a new mobile's first idle due time, the residual time of the 30-60 s idle renewal at
