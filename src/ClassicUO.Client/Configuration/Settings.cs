@@ -31,7 +31,19 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("settings_version")] public int SettingsVersion { get; set; } = CurrentSettingsVersion;
 
         // New objects carry the current version; files without a version predate all migrations.
-        void IJsonOnDeserializing.OnDeserializing() => SettingsVersion = 0;
+        void IJsonOnDeserializing.OnDeserializing()
+        {
+            SettingsVersion = 0;
+
+            // A saved file keeps what it says: a tier key it lacks reads off, as before the Medium default for new installs.
+            foreach (GraphicsTiers.Row row in GraphicsTiers.Rows)
+            {
+                row.Set(this, false);
+            }
+        }
+
+        // New installs start on the Medium graphics preset (owner 2026-11-23); the preset is not saved, it is read back from the rows.
+        public Settings() => GraphicsTiers.Apply(this, QualityTier.Medium);
 
         internal bool Migrate()
         {
