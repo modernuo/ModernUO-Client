@@ -58,6 +58,7 @@ namespace ClassicUO.Game
             ChunkPool = new Map.ChunkPool(this);
             Writer = new WorldWriter(this);
             AsyncTurn = new AnimAsyncTurn(this);
+            IdleCadence = new IdleCadenceCache();
         }
 
         public WorldEcs Ecs { get; }
@@ -70,6 +71,9 @@ namespace ClassicUO.Game
 
         /// <summary>anim_async_turn: the directions to request for mobiles that moved, turned or changed war mode.</summary>
         internal AnimAsyncTurn AsyncTurn { get; }
+
+        /// <summary>idle_on_spawn off: the idle due times of mobiles that left (IdleCadenceCache).</summary>
+        internal IdleCadenceCache IdleCadence { get; }
 
         public Point RangeSize;
 
@@ -1090,6 +1094,8 @@ namespace ClassicUO.Game
                     item = Item.Create(this, serial);
                 }
 
+                // item_fade_in off: the new item is drawn at its target alpha from its first frame (GameScene.ProcessAlpha)
+                item.AlphaSnap = !ItemFadeIn.Enabled;
                 Items.Add(item);
             }
 

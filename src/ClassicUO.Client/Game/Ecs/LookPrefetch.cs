@@ -267,12 +267,13 @@ namespace ClassicUO.Game
         public static uint DrawSeq;
 
         /// <summary>CUO_LOOK_PREFETCH_CHECK: a mobile draw's verdict on its look (the checker's completeness test).</summary>
-        internal static void NoteDrawn(MobileFrameCache cache, bool complete)
+        internal static void NoteDrawn(MobileFrameCache cache, bool complete, bool held = false)
         {
             if (Check)
             {
                 cache.CheckDrawSeq = DrawSeq;
                 cache.CheckDrawComplete = complete;
+                cache.CheckDrawHeld = held;
             }
         }
 #endif
@@ -430,7 +431,18 @@ namespace ClassicUO.Game
 
                 if (mountGraphic != 0xFFFF)
                 {
-                    Request(animations, gpu, mountGraphic, Mobile.GetGroupForAnimation(mobile, mountGraphic), dir, uoDir, false);
+                    byte mountGroup = Mobile.GetGroupForAnimation(mobile, mountGraphic);
+                    Request(animations, gpu, mountGraphic, mountGroup, dir, uoDir, false);
+
+                    // mount-fix (owner 2026-11-23): the horse a dismount leaves stands as a mobile of the mount's body, in
+                    // its own standing group (not the ridden one); requested while riding so it is loaded at the dismount
+                    AnimGroupInput standing = default;
+                    byte standGroup = AnimationGroupRules.Select(in standing, mountGraphic, true, animations);
+
+                    if (standGroup != mountGroup)
+                    {
+                        Request(animations, gpu, mountGraphic, standGroup, dir, uoDir, false);
+                    }
                 }
             }
 

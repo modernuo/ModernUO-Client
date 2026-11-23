@@ -291,6 +291,11 @@ namespace ClassicUO.Game
             {
 #if CUO_DEVTOOLS
                 ClassicUO.Network.Harness.NetTrace.Dispatching?.Op(operation, serial);
+
+                if (LookPrefetch.Check)
+                {
+                    LookPrefetchCheck.Op(operation, serial);
+                }
 #endif
                 return true;
             }
@@ -483,6 +488,18 @@ namespace ClassicUO.Game
         /// handler placed it: after its callbacks). The ECS already holds the item's values (the placement changes none), so the
         /// placement's own Sync is folded. Consumes the placement.
         /// </summary>
+        // asset_prefetch_on_packet: a worn item leaving its wearer changes the wearer's look (a dismount: the rider's on-foot
+        // actions; a weapon: the war stance), so the wearer is noted
+        private void NoteWornLeaving(Item item)
+        {
+            if (item.Layer == Layer.Invalid || item.Container == 0 || _world.Get(item.Container) is not Mobile wearer)
+            {
+                return;
+            }
+
+            LookPrefetch.Note(wearer.Serial, LookPrefetch.Kind.Mobile);
+        }
+
         public void PlaceWorldItem(in Placement placement)
         {
             Item item = placement.Item;
@@ -558,6 +575,7 @@ namespace ClassicUO.Game
 
             parent = _world.Get(item.Container);
             uint serial = item.Serial;
+            NoteWornLeaving(item);
             CancelSubtreePlacements(item);
 
             using (Open(item, null))
@@ -610,6 +628,11 @@ namespace ClassicUO.Game
 
             // T9 slice 3: live lookups (both uses below reject a destroyed object)
             Item item = _world.GetItem(serial);
+
+            if (item != null && !item.IsDestroyed && item.Container != containerSerial)
+            {
+                NoteWornLeaving(item);
+            }
             Mobile asItem = SerialHelper.IsMobile(serial) ? _world.GetMobile(serial) : null;
             bool removeMobile = asItem != null && !asItem.IsDestroyed;
 
@@ -1344,6 +1367,7 @@ namespace ClassicUO.Game
                 }
 
                 created = true;
+                MobileFadeIn.Created(mobile);
             }
             else if (obj is Mobile m && obj.Serial == serial && Holds(m))
             {
@@ -1421,6 +1445,13 @@ namespace ClassicUO.Game
 
                 if (created)
                 {
+                    // idle_on_spawn off: the cadence of the same serial and body that left range lately
+                    if (!IdleOnSpawn.Enabled && !e.IsNull && !player && e.HasComponent<ClassicUO.Ecs.AnimationTimer>()
+                        && _world.IdleCadence.TryRestore(serial, v.Graphic, Time.Ticks, out long idleDue))
+                    {
+                        e.GetComponent<ClassicUO.Ecs.AnimationTimer>().IdleDue = idleDue;
+                    }
+
                     if (body)
                     {
                         _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
@@ -1919,7 +1950,17 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                SaveIdleCadence(mobile);
                 _world.RemoveMobile(serial, true);
+            }
+        }
+
+        // idle_on_spawn off: a mobile that is removed or leaves range keeps its idle cadence (IdleCadenceCache); never written while in view
+        private void SaveIdleCadence(Mobile mobile)
+        {
+            if (!IdleOnSpawn.Enabled && !ReferenceEquals(mobile, _world.Player))
+            {
+                _world.IdleCadence.Save(mobile.Serial, mobile.Graphic, mobile.Timer.IdleDue, Time.Ticks);
             }
         }
 
@@ -1964,6 +2005,7 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                SaveIdleCadence(mobile);
                 _world.RemoveMobile(mobile.Serial);
             }
         }
@@ -2836,6 +2878,8 @@ namespace ClassicUO.Game
             }
 
             _world.AsyncTurn.Note(mobile.Serial);
+            // asset_prefetch_on_packet: the war stance is another action group (with anim_async_turn off nothing else notes it)
+            LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
 
             bool detached = !Holds(mobile);
 
@@ -3623,6 +3667,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            _world.IdleCadence.Clear();
+
             _placements.Clear();
 
             using (Open(null, null))
@@ -3713,6 +3759,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+            NoteWornLeaving(item);
             CancelSubtreePlacements(item);
 
             using (Open(item, null))
@@ -3743,6 +3790,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            _world.IdleCadence.Clear();
+
             using (Open(null, null))
             {
                 _clearingWorld = true;
@@ -3769,6 +3818,8 @@ namespace ClassicUO.Game
             {
                 return;
             }
+
+            _world.IdleCadence.Clear();
 
             _placements.Clear();
 

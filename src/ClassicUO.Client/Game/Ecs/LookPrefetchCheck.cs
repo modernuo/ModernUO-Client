@@ -2,6 +2,7 @@
 
 #if CUO_DEVTOOLS
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Utility.Logging;
@@ -47,6 +48,129 @@ namespace ClassicUO.Game
         private static long _incompleteFrames, _never, _undrawn, _gone, _offscreen, _overflow, _start, _waitDraws, _waitFrames;
         private static long _heldDraws, _heldFrames, _partialDraws, _partialFrames, _firstSightDraws, _firstSightFrames, _blankDraws, _blankFrames;
         private static bool _switch;
+
+        // mount-fix uncovered detector: every mobile draw of the frame before that drew a layer as nothing or partial (a page or
+        // decode missing; first-sight waits included; holds are not), whether or not a note preceded it, by cause: the look
+        // of a note still loading (noted), a mobile never drawn complete (first_sight), or neither (UNCOVERED: no WorldWriter
+        // operation noted the change; logged with its look and the last WorldWriter operation on it and its equipment)
+        private static readonly Dictionary<uint, (string Op, long At)> _lastOp = new Dictionary<uint, (string, long)>(4096);
+        private static readonly HashSet<uint> _everComplete = new HashSet<uint>(1024);
+        private static long _uncNoted, _uncFirstSight, _uncUncovered, _uncLogged, _uncFrames;
+
+        /// <summary>WorldWriter.Admitted: <paramref name="op"/> on <paramref name="serial"/> (the detector's last operation).</summary>
+        public static void Op(string op, uint serial)
+        {
+            if (serial == 0)
+            {
+                return;
+            }
+
+            if (_lastOp.Count >= 16384)
+            {
+                _lastOp.Clear();
+            }
+
+            _lastOp[serial] = (op, Stopwatch.GetTimestamp());
+        }
+
+        private static bool IsTracked(uint serial)
+        {
+            for (int i = 0; i < _count; i++)
+            {
+                if (_serial[i] == serial)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string LastOp(uint serial, long now)
+        {
+            return _lastOp.TryGetValue(serial, out var o) ? FormattableString.Invariant($"{o.Op} {(now - o.At) * 1000.0 / Stopwatch.Frequency:F0}ms ago") : "none";
+        }
+
+        // the frame before's mobile draws (MobileFrameCache.Check*, stamped with LookPrefetch.DrawSeq)
+        private static void Uncovered(World world, long now)
+        {
+            uint seq = LookPrefetch.DrawSeq;
+            bool any = false;
+
+            foreach (Mobile m in world.Mobiles.Values)
+            {
+                MobileFrameCache c = m.FrameCache;
+
+                if (c == null || c.CheckDrawSeq != seq || c.CheckDrawHeld)
+                {
+                    continue;
+                }
+
+                if (c.CheckDrawComplete)
+                {
+                    _everComplete.Add(m.Serial);
+
+                    continue;
+                }
+
+                any = true;
+                bool noted = IsTracked(m.Serial);
+
+                if (!noted)
+                {
+                    foreach (Item it in world.State.Children(m))
+                    {
+                        if (it.Layer != Data.Layer.Invalid && IsTracked(it.Serial))
+                        {
+                            noted = true;
+
+                            break;
+                        }
+                    }
+                }
+
+                if (noted)
+                {
+                    _uncNoted++;
+                }
+                else if (!_everComplete.Contains(m.Serial))
+                {
+                    _uncFirstSight++;
+                }
+                else
+                {
+                    _uncUncovered++;
+
+                    if (++_uncLogged <= 60)
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        ushort g = m.GetGraphicForAnimation();
+                        sb.Append(FormattableString.Invariant(
+                            $"[look-prefetch-check] UNCOVERED 0x{m.Serial:X8} body 0x{g:X4} group {Mobile.GetGroupForAnimation(m, g, true)} dir {(byte)m.GetDirectionForAnimation() & 7} mounted {m.IsMounted} war {m.InWarMode} player {ReferenceEquals(m, world.Player)}; last op {LastOp(m.Serial, now)}"));
+
+                        foreach (Item it in world.State.Children(m))
+                        {
+                            if (it.Layer != Data.Layer.Invalid && _lastOp.ContainsKey(it.Serial))
+                            {
+                                sb.Append(FormattableString.Invariant($"; {it.Layer} 0x{it.Serial:X8}: {LastOp(it.Serial, now)}"));
+                            }
+                        }
+
+                        Log.Info(sb.ToString());
+                    }
+                }
+            }
+
+            if (any)
+            {
+                _uncFrames++;
+            }
+
+            if (_everComplete.Count > 8192)
+            {
+                _everComplete.Clear();
+            }
+        }
 
         /// <summary>DevBench plan: one summary per plan step (<see cref="Step"/>) instead of every 5 s, so arms compare per scene.</summary>
         public static bool StepWindows;
@@ -109,8 +233,11 @@ namespace ClassicUO.Game
         }
 
         /// <summary>Draw start.</summary>
+        private static World _lastWorld;
+
         public static void Draw(World world)
         {
+            _lastWorld = world;
             long now = Stopwatch.GetTimestamp();
 
             if (_start == 0)
@@ -124,6 +251,11 @@ namespace ClassicUO.Game
             Count(LookPrefetch.FrameFirstSight, ref _firstSightDraws, ref _firstSightFrames);
             Count(LookPrefetch.FrameBlank, ref _blankDraws, ref _blankFrames);
             Count(LookPrefetch.FrameFirstSightWait, ref _waitDraws, ref _waitFrames);
+
+            if (world != null)
+            {
+                Uncovered(world, now);
+            }
             var scene = Client.Game.GetScene<Scenes.GameScene>();
 
             bool incomplete = false;
@@ -334,7 +466,14 @@ namespace ClassicUO.Game
             LookPrefetch.Items.HighWater = LookPrefetch.Items.Count;
             LookPrefetch.DrainMaxTicks = 0;
             sb.Append($"; mobile draws held {_heldDraws} ({_heldFrames} frames) partial {_partialDraws} ({_partialFrames} frames) first_sight {_firstSightDraws} ({_firstSightFrames} frames) blank {_blankDraws} ({_blankFrames} frames) hold_timeouts {LookPrefetch.HoldTimeouts}");
+            sb.Append($"; incomplete_draws noted {_uncNoted} first_sight {_uncFirstSight} UNCOVERED {_uncUncovered} ({_uncFrames} frames)");
+            _uncNoted = _uncFirstSight = _uncUncovered = _uncFrames = 0;
             sb.Append($"; first_sight_wait {_waitDraws} ({_waitFrames} frames); hold_ms {LookPrefetch.HoldMs.Summary()}; first_sight_ms {LookPrefetch.FirstSightMs.Summary()}; cap_frame_gap_ms {LookPrefetch.CapFrameGapMs.Summary()}");
+            if (_lastWorld != null && !IdleOnSpawn.Enabled)
+            {
+                sb.Append("; ").Append(_lastWorld.IdleCadence.TakeSummary());
+            }
+
             var gpu = Client.Game.GetGpuWorld()?.World;
 
             if (gpu != null && gpu.AnimPrefetchLooks != 0)

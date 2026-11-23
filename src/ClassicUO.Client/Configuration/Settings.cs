@@ -235,6 +235,31 @@ namespace ClassicUO.Configuration
         // world draws a mobile part whose direction page is not resident as nothing for a frame (the first-turn flash, bg/turn-flash).
         [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; } = true;
 
+        // mount-fix (owner 2026-11-23: the horse left by a dismount fades in from invisible, a flash every cycle): on, a mobile
+        // the server creates starts at alpha 0 and fades in (the upstream behaviour); off, it is drawn at its target alpha
+        // from its first frame (full, or 0 above the max Z). Roof, max-Z, translucency and chunk-stream fades are unchanged;
+        // items follow item_fade_in. CUO_MOBILE_FADE_CHECK=1 counts mobiles first drawn below their target and the time until
+        // they reach it; CUO_MOBILE_FADE_IN=1|0 overrides the setting in developer builds. Default off (owner 2026-11-23: the
+        // dismount flash); on is kept as an option, its fade timed by fade_time_based.
+        [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; }
+
+        // mount-fix (owner 2026-11-23, low priority): mobile_fade_in for items. On (default, today): an item the server places in
+        // the world starts at alpha 0 and fades in; off, it is drawn at its target alpha from its first frame. Roof, max-Z and
+        // chunk-stream fades are unchanged. CUO_ITEM_FADE_IN=1|0 overrides the setting in developer builds.
+        [JsonPropertyName("item_fade_in")] public bool ItemFadeIn { get; set; } = true;
+
+        // mount-fix: object fades (roof, max Z, new objects) catch up the 20 ms steps a long frame missed in every pacing
+        // mode, so a fade takes the same ~220 ms at any frame rate; before, only display-paced drawing caught up and an
+        // unpaced 12 fps frame took one step (~917 ms). CUO_FADE_TIME_BASED=1|0 overrides it in developer builds. Default on
+        // (owner 2026-11-23): mobile_fade_in stays an option, so its timing has to be right.
+        [JsonPropertyName("fade_time_based")] public bool FadeTimeBased { get; set; } = true;
+
+        // mount-fix (owner 2026-11-23: a mobile entering the scene fidgets at once, a crowd in sync): on, a new mobile's
+        // record starts with its idle due (IdleDue 0), so its first client-side idle plays on its first update (the upstream
+        // behaviour); off, its first idle is drawn at the steady-state residual of the idle delay (0-60 s, mean 23.3 s, Mobile.FirstIdleDue). Later idles are
+        // unchanged. CUO_IDLE_ON_SPAWN=1|0 overrides it in developer builds. Default on; off is the new path.
+        [JsonPropertyName("idle_on_spawn")] public bool IdleOnSpawn { get; set; } = true;
+
         // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
         // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
         // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the
