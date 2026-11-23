@@ -19,6 +19,7 @@ namespace ClassicUO.Game.Map
         public Chunk(World world)
         {
             _world = world;
+            ResetCaps();
         }
 
         /// <summary>The World this chunk was built for; only that World's <see cref="ChunkPool"/> keeps or hands it out.</summary>
@@ -83,6 +84,134 @@ namespace ClassicUO.Game.Map
         /// <summary>W5: bumped whenever any object joins or leaves one of the chunk's tile lists, or the chunk is reused
         /// (MobileFrameCache keys a mobile's seat lookup on it).</summary>
         public uint ContentVersion;
+
+        // mobile_wall_order (Scenes.MobileWallOrder): per tile, what a mobile's wall scan could find there, so a mobile with
+        // nothing around it skips the scan and an idle one keeps its last result. Pieces are statics, multi pieces and
+        // non-multi items. CapTop: the highest top (z + tiledata height) of the pieces with height; CapZ: the highest z of
+        // any piece; CapFlatZ: the highest z of the items without height (they count only as pieces overhead). CapVersion
+        // changes whenever a piece with height, a static or a multi piece joins or leaves the chunk (and on load, reuse,
+        // teardown and season change); CapFlatVersion when an item without height does (a dropped coin), so it alone does
+        // not throw away the scans of the mobiles around. Versions are unique across chunks (s_capSeq), so a pooled chunk
+        // reused elsewhere never matches an old value.
+        internal readonly short[] CapTop = new short[64];
+        internal readonly sbyte[] CapZ = new sbyte[64];
+        internal readonly sbyte[] CapFlatZ = new sbyte[64];
+        internal uint CapVersion, CapFlatVersion;
+        private static uint s_capSeq;
+
+        internal const short CapNone = short.MinValue;
+
+        /// <summary>Forgets the cap summary (no pieces) under new versions: load, reuse, teardown.</summary>
+        internal void ResetCaps()
+        {
+            Array.Fill(CapTop, CapNone);
+            Array.Fill(CapZ, sbyte.MinValue);
+            Array.Fill(CapFlatZ, sbyte.MinValue);
+            CapVersion = ++s_capSeq;
+            CapFlatVersion = ++s_capSeq;
+        }
+
+        // the scans' pieces (MobileWallOrder: Static, Multi, Item that is not a multi); mobiles, land and effects are not
+        private static bool CapPiece(GameObject obj) => obj is Static || obj is Multi || obj is Item { IsMulti: false };
+
+        private static int CapHeight(ushort graphic) => graphic < StaticTileData.Length ? StaticTileData[graphic].Height : 0;
+
+        /// <summary>A piece joined tile <paramref name="cell"/> (x * 8 + y): the summary only grows.</summary>
+        internal void CapAdded(GameObject obj, int cell)
+        {
+            if (!CapPiece(obj))
+            {
+                return;
+            }
+
+            int h = CapHeight(obj.Graphic);
+            sbyte z = obj.Z;
+
+            if (z > CapZ[cell])
+            {
+                CapZ[cell] = z;
+            }
+
+            if (h > 0)
+            {
+                CapTop[cell] = (short)Math.Max(CapTop[cell], z + h);
+            }
+            else if (obj is Item)
+            {
+                if (z > CapFlatZ[cell])
+                {
+                    CapFlatZ[cell] = z;
+                }
+
+                CapFlatVersion = ++s_capSeq;
+
+                return;
+            }
+
+            CapVersion = ++s_capSeq;
+        }
+
+        /// <summary>A piece left tile <paramref name="cell"/>: the tile's summary is taken again from what is left on it.</summary>
+        internal void CapRemoved(GameObject obj, int cell)
+        {
+            if (!CapPiece(obj))
+            {
+                return;
+            }
+
+            CapRebuildTile(cell);
+
+            if (CapHeight(obj.Graphic) == 0 && obj is Item)
+            {
+                CapFlatVersion = ++s_capSeq;
+            }
+            else
+            {
+                CapVersion = ++s_capSeq;
+            }
+        }
+
+        private void CapRebuildTile(int cell)
+        {
+            short top = CapNone;
+            sbyte maxZ = sbyte.MinValue, flatZ = sbyte.MinValue;
+
+            for (GameObject o = TileWalk.Begin(this, cell, out TileWalk walk); o != null; o = walk.Next())
+            {
+                if (!CapPiece(o))
+                {
+                    continue;
+                }
+
+                int h = CapHeight(o.Graphic);
+                maxZ = Math.Max(maxZ, o.Z);
+
+                if (h > 0)
+                {
+                    top = (short)Math.Max(top, o.Z + h);
+                }
+                else if (o is Item)
+                {
+                    flatZ = Math.Max(flatZ, o.Z);
+                }
+            }
+
+            CapTop[cell] = top;
+            CapZ[cell] = maxZ;
+            CapFlatZ[cell] = flatZ;
+        }
+
+        /// <summary>Every tile's summary again under new versions (World.ChangeSeason swaps statics' graphics in place).</summary>
+        internal void RebuildCaps()
+        {
+            for (int cell = 0; cell < 64; cell++)
+            {
+                CapRebuildTile(cell);
+            }
+
+            CapVersion = ++s_capSeq;
+            CapFlatVersion = ++s_capSeq;
+        }
 
         /// <summary>
         /// view_margin (GameScene.AddChunkLights): the chunk's light-emitting statics and multi components (LightEmitters:
@@ -282,6 +411,7 @@ namespace ClassicUO.Game.Map
             c.GpuItemsDirty = true;
             c.GpuSeenFrame = uint.MaxValue - 1;
             c.ContentVersion++;
+            c.ResetCaps();
 
             return c;
         }
@@ -375,6 +505,7 @@ namespace ClassicUO.Game.Map
             OnTileContentChanged(obj);
             obj.TileChunk = this;
             obj.TileCell = (byte)((x << 3) | y);
+            CapAdded(obj, obj.TileCell);
 
             short priorityZ = obj.Z;
             sbyte state = -1;
@@ -678,6 +809,7 @@ namespace ClassicUO.Game.Map
             IsDestroyed = true;
             ClearLightSources();
             Dynamic?.Clear();
+            ResetCaps();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
 
@@ -812,6 +944,7 @@ namespace ClassicUO.Game.Map
             Mesh.SoftClear(null); // in-place reload: the chunk stays in use and rebuilds at once, so it keeps its arrays
             ClearLightSources();
             Dynamic?.Clear();
+            ResetCaps();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
         }
