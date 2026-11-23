@@ -58,9 +58,9 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
-        private static void Frame(MeshLayer layer, bool packed, bool[] visible)
+        private static void Frame(MeshLayer layer, bool[] visible)
         {
-            layer.ResetVisibility(packed, false);
+            layer.ResetVisibility();
 
             for (int i = 0; i < layer.Count; i++)
             {
@@ -96,10 +96,8 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Pooled_layers_build_and_draw_what_layers_grown_in_place_do(bool packed)
+        [Fact]
+        public void Pooled_layers_build_and_draw_what_layers_grown_in_place_do()
         {
             var rnd = new Random(1234);
             var pool = new MeshLayerPool();
@@ -139,8 +137,8 @@ namespace ClassicUO.UnitTests.Renderer
                         visible[i] = rnd.Next(4) != 0;
                     }
 
-                    Frame(pooled[k], packed, visible);
-                    Frame(plain[k], packed, visible);
+                    Frame(pooled[k], visible);
+                    Frame(plain[k], visible);
                     ShouldMatch(pooled[k], plain[k]);
                 }
             }
