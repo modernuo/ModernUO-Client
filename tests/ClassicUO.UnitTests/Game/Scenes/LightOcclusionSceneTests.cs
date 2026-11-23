@@ -657,7 +657,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             return list;
         }
 
-        // light_occlusion_surface_only: src's light is a surface glow (LightAlphaFade.IsSurface: its shape's class in table,
+        // light_occlusion masks only surface glows: src's light is one (LightAlphaFade.IsSurface: its shape's class in table,
         // the pack's lightclass.bin, else the emitter's tiledata Wall/Window flags; GameScene.SurfaceGlow)
         private static bool Surface(PackArt pack, Obj src, byte[] table)
         {
@@ -667,24 +667,25 @@ namespace ClassicUO.UnitTests.Game.Scenes
             return LightAlphaFade.IsSurface(cls, d.IsWall || d.IsWindow);
         }
 
-        // what the light pass masks src's glow with (GameScene.CollectLightOccluders): its occluders when LightOcclusion.Masks
-        // lets the light have any
-        private static List<Obj> Masked(PackArt pack, Obj src, IEnumerable<Obj> scene, bool surfaceOnly, byte[] table) =>
-            LightOcclusion.Masks(surfaceOnly, Surface(pack, src, table)) ? Occluders(pack, src, scene) : new List<Obj>();
+        // what the light pass masks src's glow with (GameScene.CollectLightOccluders): with light_occlusion on, its occluders
+        // when LightOcclusion.Masks lets the light have any; off, none
+        private static List<Obj> Masked(PackArt pack, Obj src, IEnumerable<Obj> scene, bool on, byte[] table) =>
+            on && LightOcclusion.Masks(Surface(pack, src, table)) ? Occluders(pack, src, scene, on) : new List<Obj>();
 
-        public static TheoryData<bool, bool> SurfaceOnlyArms => new TheoryData<bool, bool>
+        // (light_occlusion, lightclass.bin seed table or none)
+        public static TheoryData<bool, bool> LightOcclusionArms => new TheoryData<bool, bool>
         {
             { false, false }, { false, true }, { true, false }, { true, true }
         };
 
         [TileDataPackTheory]
-        [MemberData(nameof(SurfaceOnlyArms))]
-        public void Luna_candelabra_lights_the_wall_in_front_of_it_with_surface_only(bool surfaceOnly, bool withTable)
+        [MemberData(nameof(LightOcclusionArms))]
+        public void Luna_candelabra_lights_the_wall_in_front_of_it(bool on, bool withTable)
         {
             // round 7 (owner 2026-11-22, Luna Malas 1005 513 -30): the candelabra 0x0B26 at 1003 511 -30 stands against the
             // sandstone wall line x 1004; the wall pieces in front cover its light point, so with light_occlusion their own
             // pixels were masked dark inside its halo. The light map multiplies the frame: a radial light lights what stands
-            // in front of it. Surface only: no occluders for it; off: masked as before
+            // in front of it: it is radial, so no occluders for it in either state
             PackArt pack = PackArt.Get();
             byte[] table = withTable ? LightClassFile.Seed() : Array.Empty<byte>();
             var scene = MapStatics(3, 998, 506, 1010, 518);
@@ -695,47 +696,53 @@ namespace ClassicUO.UnitTests.Game.Scenes
             _output.WriteLine($"candelabra {candelabra}: occluders {all.Count}: {string.Join(", ", all)}");
             Assert.Contains(all, o => o.X == 1004 && pack.Statics[o.Graphic].IsWall);
 
-            var masked = Masked(pack, candelabra, scene, surfaceOnly, table);
-
-            if (surfaceOnly)
-            {
-                Assert.Empty(masked);
-            }
-            else
-            {
-                Assert.Equal(all, masked);
-            }
+            Assert.Empty(Masked(pack, candelabra, scene, on, table));
         }
 
         [TileDataPackTheory]
-        [MemberData(nameof(SurfaceOnlyArms))]
-        public void Bank_window_behind_a_nearer_window_stays_hidden_with_surface_only(bool surfaceOnly, bool withTable)
+        [MemberData(nameof(LightOcclusionArms))]
+        public void Bank_window_behind_a_nearer_window_stays_hidden(bool on, bool withTable)
         {
             // round 7 acceptance (Moonglow bank 4462 1169 0, light 05): the ground floor window behind the upper wall line's
-            // window, and the zig-zag's windows, keep their occluders in both states: a surface glow must not light the
-            // nearer walls
+            // window, and the zig-zag's windows, keep their occluders with light_occlusion on: a surface glow must not light
+            // the nearer walls. Off: nothing is masked
             PackArt pack = PackArt.Get();
             byte[] table = withTable ? LightClassFile.Seed() : Array.Empty<byte>();
             var zigzag = Parse(ZigZag).ToList();
+            var cases = new[]
+            {
+                (Src: new Obj(4465, 1167, 0, 0x0163), Occ: new Obj(4467, 1169, 20, 0x0162)),
+                (Src: new Obj(4462, 1167, 20, 0x0162), Occ: new Obj(4463, 1167, 20, 0x0163)),
+                (Src: new Obj(4467, 1175, 20, 0x0162), Occ: new Obj(4468, 1175, 20, 0x0163))
+            };
 
-            Assert.Contains(new Obj(4467, 1169, 20, 0x0162), Masked(pack, new Obj(4465, 1167, 0, 0x0163), zigzag, surfaceOnly, table));
-            Assert.Contains(new Obj(4463, 1167, 20, 0x0163), Masked(pack, new Obj(4462, 1167, 20, 0x0162), zigzag, surfaceOnly, table));
-            Assert.Contains(new Obj(4468, 1175, 20, 0x0163), Masked(pack, new Obj(4467, 1175, 20, 0x0162), zigzag, surfaceOnly, table));
+            foreach (var (src, occ) in cases)
+            {
+                var masked = Masked(pack, src, zigzag, on, table);
+
+                if (on)
+                {
+                    Assert.Contains(occ, masked);
+                }
+                else
+                {
+                    Assert.Empty(masked);
+                }
+            }
 
             foreach (Obj window in zigzag.Where(o => pack.Statics[o.Graphic].IsLight && pack.Statics[o.Graphic].IsWindow))
             {
                 Assert.True(Surface(pack, window, table), $"{window}");
-                Assert.Equal(Occluders(pack, window, zigzag), Masked(pack, window, zigzag, surfaceOnly, table));
+                Assert.Equal(on ? Occluders(pack, window, zigzag) : new List<Obj>(), Masked(pack, window, zigzag, on, table));
             }
         }
 
         [TileDataPackTheory]
-        [MemberData(nameof(SurfaceOnlyArms))]
-        public void Lamps_eave_lamp_and_Deceit_torches_are_radial_and_unmasked_with_surface_only(bool surfaceOnly, bool withTable)
+        [MemberData(nameof(LightOcclusionArms))]
+        public void Lamps_eave_lamp_and_Deceit_torches_are_radial_and_unmasked(bool on, bool withTable)
         {
             // round 7 acceptance: the Moonglow street lamps (4444 1171), the lamp post under the eave (4470 1091) and Deceit's
-            // wall torches (5188 638) are radial: with the switch on they get no occluders; off they keep today's (none at
-            // the lamps since rounds 4 and 6a)
+            // wall torches (5188 638) are radial: no occluders in either light_occlusion state
             PackArt pack = PackArt.Get();
             byte[] table = withTable ? LightClassFile.Seed() : Array.Empty<byte>();
             var lamps = Parse(Lamps).ToList();
@@ -750,29 +757,21 @@ namespace ClassicUO.UnitTests.Game.Scenes
             foreach (var (src, scene) in sources)
             {
                 Assert.False(Surface(pack, src, table), $"{src}");
-                var masked = Masked(pack, src, scene, surfaceOnly, table);
+                var masked = Masked(pack, src, scene, on, table);
                 _output.WriteLine($"{src}: occluders {Occluders(pack, src, scene).Count}, masked {masked.Count}");
-
-                if (surfaceOnly)
-                {
-                    Assert.Empty(masked);
-                }
-                else
-                {
-                    Assert.Equal(Occluders(pack, src, scene), masked);
-                }
+                Assert.Empty(masked);
             }
         }
 
         [TileDataPackTheory]
-        [MemberData(nameof(SurfaceOnlyArms))]
-        public void Malas_fire_fields_are_not_masked_by_the_fire_fields_in_front_with_surface_only(bool surfaceOnly, bool withTable)
+        [MemberData(nameof(LightOcclusionArms))]
+        public void Malas_fire_fields_are_not_masked_by_the_fire_fields_in_front(bool on, bool withTable)
         {
             // round 7 (owner 2026-11-22, Malas 1030 520 -53, light_occlusion on): dark patches flickered inside the fire fields'
             // glow. Each fire field 0x3996 (map static, z -70, height 12, light 2, Animation | LightSource | Damaging: an occluder
             // by tiledata) is its own radial light; the fire fields on the next rows in front cover its light point with their
             // flame art, so their pixels were masked out of its glow, and the animated frame (GameObject.StaticArt) changes the
-            // covered pixels every frame. Surface only: fire fields are radial, no masks
+            // covered pixels every frame. Fire fields are radial: no masks in either light_occlusion state
             PackArt pack = PackArt.Get();
             byte[] table = withTable ? LightClassFile.Seed() : Array.Empty<byte>();
             var scene = MapStatics(3, 1024, 510, 1040, 530);
@@ -790,22 +789,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
 
             Assert.True(frames.Distinct().Count() > 1, "fire field not animated");
-            int coveringPairs = 0, pairs = 0;
+            int coveringPairs = 0, rawCoveringPairs = 0, pairs = 0;
 
             foreach (Obj field in fields)
             {
                 Assert.False(Surface(pack, field, table), $"{field}");
-                // surface only: no occluders whatever the frames; off: the occluders of the base frame, as before
-                var masked = Masked(pack, field, scene, surfaceOnly, table);
-
-                if (surfaceOnly)
-                {
-                    Assert.Empty(masked);
-                }
-                else
-                {
-                    Assert.Equal(Occluders(pack, field, scene), masked);
-                }
+                Assert.Empty(Masked(pack, field, scene, on, table));
 
                 foreach (Obj front in fields.Where(o => o.X - field.X + o.Y - field.Y > 0 && Math.Abs(o.X - field.X) <= 2 && Math.Abs(o.Y - field.Y) <= 2))
                 {
@@ -815,9 +804,14 @@ namespace ClassicUO.UnitTests.Game.Scenes
                         {
                             pairs++;
 
-                            if (LightOcclusion.Masks(surfaceOnly, Surface(pack, field, table)) && FrameHides(pack, field, fs, front, fo))
+                            if (FrameHides(pack, field, fs, front, fo))
                             {
-                                coveringPairs++;
+                                rawCoveringPairs++;
+
+                                if (on && LightOcclusion.Masks(Surface(pack, field, table)))
+                                {
+                                    coveringPairs++;
+                                }
                             }
                         }
                     }
@@ -825,17 +819,12 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
 
             _output.WriteLine($"fire fields {fields.Count}, frames {string.Join(",", frames.Select(f => f.ToString("X4")))}: " +
-                              $"{coveringPairs} of {pairs} (source frame, front field frame) pairs mask the glow");
+                              $"{rawCoveringPairs} of {pairs} (source frame, front field frame) pairs cover the light point, {coveringPairs} mask the glow");
 
-            if (surfaceOnly)
-            {
-                Assert.Equal(0, coveringPairs);
-            }
-            else
-            {
-                // some frame pairs cover the light point, others do not: the mask flickers with the animation
-                Assert.InRange(coveringPairs, 1, pairs - 1);
-            }
+            // some frame pairs cover the light point, others do not: a mask would flicker with the animation (round 7); radial
+            // lights get none
+            Assert.InRange(rawCoveringPairs, 1, pairs - 1);
+            Assert.Equal(0, coveringPairs);
         }
 
         // the front fire field drawn at frame fo hides the glow of src drawn at frame fs (LightOcclusion.Hides with the cover
