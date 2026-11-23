@@ -32,6 +32,8 @@ namespace ClassicUO.Game.UI.Gumps
 
         private static Texture2D _logoTexture2D;
         private Combobox _worldRenderer;
+        private Combobox _graphicsQuality;
+        private int _graphicsQualityShown;
         private Combobox _auraType;
         private Combobox _autoOpenCorpseOptions;
         private InputField _autoOpenCorpseRange;
@@ -1633,6 +1635,23 @@ namespace ClassicUO.Game.UI.Gumps
             );
 
             startY += _worldRenderer.Height + 2;
+
+            Label qualityLabel = AddLabel(rightArea, "Graphics quality (a preset sets the features of its tier)", startX, startY);
+            startY += qualityLabel.Height + 2;
+
+            _graphicsQualityShown = GraphicsQualityIndex(Settings.GlobalSettings);
+
+            _graphicsQuality = AddCombobox
+            (
+                rightArea,
+                new[] { "Low", "Medium", "High", "Custom" },
+                _graphicsQualityShown,
+                startX,
+                startY,
+                200
+            );
+
+            startY += _graphicsQuality.Height + 2;
 
             startX = 5;
             startY += 20;
@@ -3846,6 +3865,9 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
+        /// <summary>The Graphics quality combobox index for the settings: the preset they equal, else 3 (Custom).</summary>
+        private static int GraphicsQualityIndex(Settings settings) => GraphicsTiers.Detect(settings) is { } tier ? (int)tier : 3;
+
         private void Apply()
         {
             WorldViewportGump vp = UIManager.GetGump<WorldViewportGump>();
@@ -3866,6 +3888,19 @@ namespace ClassicUO.Game.UI.Gumps
             if (_presentModeLabel != null)
             {
                 _presentModeLabel.Text = PresentModeText();
+            }
+
+            // Custom (index 3) leaves the tier settings as they are; picking a preset again overwrites them
+            if (_graphicsQuality != null && _graphicsQuality.SelectedIndex != _graphicsQualityShown)
+            {
+                if (_graphicsQuality.SelectedIndex <= (int)QualityTier.High)
+                {
+                    GraphicsTiers.Apply(Settings.GlobalSettings, (QualityTier)_graphicsQuality.SelectedIndex);
+                    Settings.GlobalSettings.Save();
+                }
+
+                _graphicsQualityShown = GraphicsQualityIndex(Settings.GlobalSettings);
+                _graphicsQuality.SelectedIndex = _graphicsQualityShown;
             }
 
             string renderer = RendererSelection.SettingValue((WorldRendererMode)_worldRenderer.SelectedIndex);

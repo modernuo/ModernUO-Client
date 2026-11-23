@@ -24,6 +24,23 @@ namespace ClassicUO.Game
             }
 
             Settings settings = Settings.GlobalSettings;
+
+            // quality <low|medium|high>: the Graphics quality preset (GraphicsTiers), so a quiet pass runs tier presets as arms
+            if (args[0] == "quality")
+            {
+                if (settings != null && args.Length > 1 && GraphicsTiers.TryParse(args[1], out QualityTier tier))
+                {
+                    GraphicsTiers.Apply(settings, tier);
+                    Log.Info($"[ECS] driver: quality {GraphicsTiers.Name(tier)}");
+                }
+                else
+                {
+                    Log.Warn("[ECS] driver: quality <low|medium|high>");
+                }
+
+                return true;
+            }
+
             JsonPropertyInfo prop = null;
 
             foreach (JsonPropertyInfo p in SettingsJsonContext.RealDefault.Settings.Properties)
