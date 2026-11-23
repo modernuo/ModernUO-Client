@@ -216,6 +216,9 @@ namespace ClassicUO.Game.Scenes
 
             s.Active = rule;
             Map.Map map = m.World?.Map;
+#if CUO_DEVTOOLS
+            FrameScans++;
+#endif
 
             if (map != null)
             {
@@ -339,8 +342,10 @@ namespace ClassicUO.Game.Scenes
 
                 int c = 2 * k * 22;
 
+                CountTile();
                 for (GameObject o = TileWalk.Begin(chunk, (tx & 7) << 3 | (ty & 7), out TileWalk walk); o != null; o = walk.Next())
                 {
+                    CountObject();
                     if (o is Item it)
                     {
                         if (it.IsDestroyed || !it.OnGround || it.IsCorpse || it.IsMulti)
@@ -464,8 +469,10 @@ namespace ClassicUO.Game.Scenes
 
             StaticTiles[] data = Chunk.StaticTileData;
 
+            CountTile();
             for (GameObject o = TileWalk.Begin(chunk, (x & 7) << 3 | (y & 7), out TileWalk walk); o != null; o = walk.Next())
             {
+                CountObject();
                 if ((o is Static || o is Multi || o is Item { IsMulti: false }) && o.Graphic < data.Length)
                 {
                     ref StaticTiles td = ref data[o.Graphic];
@@ -579,8 +586,10 @@ namespace ClassicUO.Game.Scenes
 
             int lines = 0;
 
+            CountTile();
             for (GameObject o = TileWalk.Begin(chunk, (tx & 7) << 3 | (ty & 7), out TileWalk walk); o != null; o = walk.Next())
             {
+                CountObject();
                 if (o is Item it)
                 {
                     if (it.IsDestroyed || !it.OnGround || it.IsCorpse || it.IsMulti)
@@ -959,8 +968,10 @@ namespace ClassicUO.Game.Scenes
 
                 int c = (dx - dy) * 22, rowC = (dx + dy) * 22;
 
+                CountTile();
                 for (GameObject o = TileWalk.Begin(chunk, (tx & 7) << 3 | (ty & 7), out TileWalk walk); o != null; o = walk.Next())
                 {
+                    CountObject();
                     if (o is Item it)
                     {
                         if (it.IsDestroyed || !it.OnGround || it.IsCorpse || it.IsMulti)
@@ -1069,6 +1080,27 @@ namespace ClassicUO.Game.Scenes
             add = cap;
 
             return true;
+        }
+
+        /// <summary>FrameStats counters (mwo_*): scans, tiles and objects walked this frame; read and cleared by
+        /// <see cref="FlushFrameCounters"/>.</summary>
+        internal static int FrameScans, FrameTiles, FrameObjects, FrameCacheHits, FrameEmpty;
+
+        [System.Diagnostics.Conditional("CUO_DEVTOOLS")]
+        private static void CountTile() => FrameTiles++;
+
+        [System.Diagnostics.Conditional("CUO_DEVTOOLS")]
+        private static void CountObject() => FrameObjects++;
+
+        /// <summary>Adds this frame's scan counters to FrameStats and clears them.</summary>
+        internal static void FlushFrameCounters()
+        {
+            FrameStats.Add(FrameCounter.MwoScans, FrameScans);
+            FrameStats.Add(FrameCounter.MwoTiles, FrameTiles);
+            FrameStats.Add(FrameCounter.MwoObjects, FrameObjects);
+            FrameStats.Add(FrameCounter.MwoCacheHits, FrameCacheHits);
+            FrameStats.Add(FrameCounter.MwoEmpty, FrameEmpty);
+            FrameScans = FrameTiles = FrameObjects = FrameCacheHits = FrameEmpty = 0;
         }
 
 #if CUO_DEVTOOLS

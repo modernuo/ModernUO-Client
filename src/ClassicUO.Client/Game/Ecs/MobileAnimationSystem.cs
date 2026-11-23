@@ -195,6 +195,7 @@ namespace ClassicUO.Game
                 if (cache.SelectValid && key.Equals(cache.Key))
                 {
                     MobileFrameCache.SelectHits++;
+                    FrameStats.Inc(FrameCounter.MobSelectHits);
 
 #if CUO_DEVTOOLS
                     if (CacheCheck)
@@ -210,6 +211,7 @@ namespace ClassicUO.Game
             }
 
             MobileFrameCache.SelectMisses++;
+            FrameStats.Inc(FrameCounter.MobSelectMisses);
             uint rolls = AnimationGroupRules.RandomRolls;
             Select(m, ref s, ref eq);
 

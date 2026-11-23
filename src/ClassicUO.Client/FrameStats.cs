@@ -216,6 +216,21 @@ namespace ClassicUO
         UiKeyboardVisits,
         UiHitVisits,
         UiDrawVisits,
+        // mobile_wall_order (CUO_DEVTOOLS only): full scans, tiles and objects they walked, scans served from a mobile's scan
+        // cache, scans that found no cap-relevant tile around the mobile (the shared empty scan)
+        MwoScans,
+        MwoTiles,
+        MwoObjects,
+        MwoCacheHits,
+        MwoEmpty,
+        // MobileFrameCache: selections reused and run, Gpu instance recordings and Legacy recordings made this frame
+        MobSelectHits,
+        MobSelectMisses,
+        MobEmitMisses,
+        MobLegacyMisses,
+        // bytes the session timeline's own log lines allocated this frame (its slow-frame line runs once per frame over 8 ms);
+        // left out of alloc_bytes and alloc_per_frame
+        StatsSelfAlloc,
         Count
     }
 
@@ -282,7 +297,9 @@ namespace ClassicUO
             "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs",
             "text_nodes", "text_live", "text_expired", "text_nocontent", "text_drawn", "text_fwd_nodes",
             "text_exp_mobile", "text_exp_item", "text_exp_other",
-            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits" };
+            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits",
+            "mwo_scans", "mwo_tiles", "mwo_objects", "mwo_cache_hits", "mwo_empty",
+            "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -298,7 +315,7 @@ namespace ClassicUO
         private static readonly int[] _sortScratchI = DevBench.FrameStats && !Diagnostics.On ? new int[CAPACITY] : null;
 
         private static int _count;
-        private static long _lastEnd, _windowStart, _endDrawStart, _allocThread, _allocTotalStart;
+        private static long _lastEnd, _windowStart, _endDrawStart, _allocThread, _allocTotalStart, _allocSelfWindow;
         private static long _pumpFrom;
         private static int _gc0, _gc1, _gc2;
         private static TimeSpan _pauseStart;
@@ -506,7 +523,11 @@ namespace ClassicUO
                 return;
             }
 #endif
+            // the timeline's slow-frame line allocates once per frame over 8 ms: instrumentation, not the game's
+            long selfFrom = GC.GetAllocatedBytesForCurrentThread();
             SessionTick(now);
+            long self = GC.GetAllocatedBytesForCurrentThread() - selfFrom;
+            _allocSelfWindow += self;
 
             if (!_recording)
             {
@@ -525,6 +546,7 @@ namespace ClassicUO
                 _count = 0;
                 _allocThread = GC.GetAllocatedBytesForCurrentThread();
                 _allocTotalStart = GC.GetTotalAllocatedBytes();
+                _allocSelfWindow = 0;
                 _gc0 = GC.CollectionCount(0);
                 _gcSeen = _gc0; // the [gc] lines and the window's gc counts start at the same frame
                 _gc1 = GC.CollectionCount(1);
@@ -555,7 +577,8 @@ namespace ClassicUO
                 if (On) CompletePhases();
 
                 long alloc = GC.GetAllocatedBytesForCurrentThread();
-                _cur[(int)FrameCounter.AllocBytes] = (int)Math.Min(int.MaxValue, alloc - _allocThread);
+                _cur[(int)FrameCounter.AllocBytes] = (int)Math.Min(int.MaxValue, alloc - _allocThread - self);
+                _cur[(int)FrameCounter.StatsSelfAlloc] = (int)Math.Min(int.MaxValue, self);
                 _allocThread = alloc;
 
                 if (GC.CollectionCount(0) != _gcSeen)
@@ -613,6 +636,9 @@ namespace ClassicUO
             _cur[(int)FrameCounter.FnaUploadBytes] = UltimaBatcher2D.FrameUploadBytes;
             _cur[(int)FrameCounter.Gumps] = UIManager.Gumps.Count;
             SampleMapLoading();
+#if CUO_DEVTOOLS
+            Game.Scenes.MobileWallOrder.FlushFrameCounters();
+#endif
         }
 
         private static int _lastSync, _lastPrefetch;
@@ -927,7 +953,7 @@ namespace ClassicUO
         {
             _sessionAfterReport = true;
             double seconds = (now - _windowStart) / (double)Stopwatch.Frequency;
-            long allocTotal = GC.GetTotalAllocatedBytes() - _allocTotalStart;
+            long allocTotal = GC.GetTotalAllocatedBytes() - _allocTotalStart - _allocSelfWindow;
             int gc0 = GC.CollectionCount(0) - _gc0, gc1 = GC.CollectionCount(1) - _gc1, gc2 = GC.CollectionCount(2) - _gc2;
             double pauseMs = (GC.GetTotalPauseDuration() - _pauseStart).TotalMilliseconds;
             int n = _count;

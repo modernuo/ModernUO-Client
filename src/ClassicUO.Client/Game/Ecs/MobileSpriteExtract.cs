@@ -859,6 +859,7 @@ namespace ClassicUO.Game
 
             MaterializeView();
             MobileFrameCache.EmitMisses++;
+            FrameStats.Inc(FrameCounter.MobEmitMisses);
             int recStart = _count;
             int recLights = _lightCount;
             _record = cache;
@@ -1261,6 +1262,7 @@ namespace ClassicUO.Game
             }
 
             MobileFrameCache.LegacyMisses++;
+            FrameStats.Inc(FrameCounter.MobLegacyMisses);
             Select(e, data, posX, posY, depth);
             bool hold = LookPrefetch.HoldEnabled;
 
