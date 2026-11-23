@@ -34,6 +34,7 @@ namespace ClassicUO
     //   outrange:on|off sets NoColorObjectsOutOfRange; range:N sets the client view range locally (as the server's 0xC8)
     //   plan entry ecsdump:<hex serial>|player|nearest logs that serial's ECS entity (components, equipment slots, inputs, animation state) next to the legacy object's values ([ecsdump], E3)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
+    //   plan entries set:<settings.json key>=<value> write a live switch for the session (never saved; EcsSessionDriver.ExecuteSetting)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
     //   plan mode gumpopen (name:gumpopen) opens large windows one by one, cold, and logs their gump decode cost ([bench-gumpopen]), then
@@ -2079,6 +2080,15 @@ namespace ClassicUO
                         Configuration.Settings.GlobalSettings.PresentAtDisplayRate = _plan[_planIndex] == "presentcap:on";
                         Log.Info($"[bench] present_at_display_rate {Configuration.Settings.GlobalSettings.PresentAtDisplayRate}");
                         _planIndex++;
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("set:"))
+                    {
+                        ClassicUO.Game.EcsSessionDriver.ExecuteSetting("setting", _plan[_planIndex].Substring(4).Split('=', 2));
+                        _planIndex++;
+                        _stepAt = now + sec;
+
                         break;
                     }
 
