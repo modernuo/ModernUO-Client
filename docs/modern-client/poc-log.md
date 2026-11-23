@@ -8869,7 +8869,7 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 | Britain 4K | 2.80 -> -6.7 % (all-, about -0.19 ms) | 1.035 -> +0.5 % (+0.005 ms, ALL+ but inside 0.1 ms) |
 | ls 4K | 7.15 -> -1.6 % (all-) | 2.61 -> +0.9 % (mixed) |
 
-  CPU phases (world_prepare p50, off -> on): Legacy Britain 0.123 -> 0.098 (-20 %), brwalk 0.112 -> 0.085 (-24 %), ls 1.51 -> 1.24
+  CPU phases (world_prepare p50, off -> on): Legacy Britain 0.123 -> 0.098 (-20 %), brwalk 0.112 -> 0.085 (-24 %; counters table 0.109 -> 0.083), ls 1.51 -> 1.24
   (-16 %), lswalk 1.60 -> 1.54 (-9 %, mixed), Britain 4K 1.03 -> 0.87 (-16.5 %), ls 4K 2.20 -> 2.08 (-5.6 %). Gpu: Britain 0.053 -> 0.051
   (-5 %), brwalk -7.7 %, Britain 4K 0.257 -> 0.244 (-5 %), lswalk -4.6 %, ls/ls4k mixed. Legacy draw p50 also falls with it (Britain
   -7 %, brwalk -9 %, ls -5.5 %, Britain 4K -7 %), because fewer objects reach the render list's sort and cull.
