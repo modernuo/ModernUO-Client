@@ -8866,3 +8866,19 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Measurements**: pending (main bench runner failed all jobs 16:27-16:48 with exit 66; the first bench2 run hit a server
   that refused connections). Jobs: lo-parity-b, lo-prof2-gpu/legacy; see cuo-poc-state/handoffs/lo-cache.md. Quiet row:
   quiet-next #21.
+
+## 2026-11-23 lo-frac: light_occlusion_bake_world_phase (bg/lo-frac, from bg/lo-cache c4fe651ce)
+
+- **Cause** of the re-bakes while walking at a fractional zoom: the bake key held the float bits of the frame's sub-pixel phase.
+  The camera snaps the world origin to whole target pixels, so the true phase of a light depends only on its world pixel and the
+  scale; but at a scale not exact in float (zoom 2.5 = 0.4) M41's low bits change with every draw offset, so every baked glow's
+  key changed each walking frame. Unit test on a real Camera shows it (zoom 2.5 and 1.3 change, zoom 1 does not).
+- **Fix** `light_occlusion_bake_world_phase` (default off, CUO_LIGHT_OCC_BAKE_WORLD_PHASE): the key's phase is the world phase
+  (offset + position) x scale rounded to 1/256 px in double; the slot goes to the pixel matching it; the bake is still drawn at
+  the light's own phase, so output = frame-phase bake up to float rounding (~1e-4 px). Chosen over phase-0 baking (a permanent
+  shift up to 1/2 px for nothing: a light's phase never changes on this camera) and over coarse buckets (noise still flips keys
+  near bucket edges).
+- **Counters**: FrameStats lo_rebakes, lo_rebakes_s; CUO_LIGHT_OCC_BAKE_CHECK summary adds frame-phase-only key changes and
+  off-grid placements. Memory: 16 B per occluder cache entry (two check fields); no per-frame allocation.
+- **Gates**: Release builds CuoDevTools=true/false clean; unit tests 8783 passed, 6 skipped (dev). Client runs: none (owner,
+  batch wave 1123): see cuo-poc-state/measure/batch-1123/README.md section lo-frac and its lo-frac-parity.sh / lo-frac-walk.sh.
