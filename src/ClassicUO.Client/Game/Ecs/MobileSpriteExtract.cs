@@ -539,11 +539,12 @@ namespace ClassicUO.Game
                     if (Scenes.MobileWallOrder.Check && _wall.Count != 0 && !_submerged)
                     {
                         StripColumns(x, w, out int clo, out int chi);
-                        float capped = Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, clo, chi, depth, i == 0, out int wall);
+                        Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, clo, chi, depth, i == 0, out int wall);
+                        float moved = WallRule(i, x, w, depth, i * 2);
 
-                        if (capped < i * 2)
+                        if (moved != i * 2)
                         {
-                            Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, i, strips[i].H, clo, chi, depth, i * 2, capped);
+                            Scenes.MobileWallOrder.NoteMoved(in _wall, Math.Max(wall, 0), _objX, _objY, _objZ, id, i, strips[i].H, clo, chi, depth, i * 2, moved);
                         }
                     }
 #endif
@@ -579,11 +580,23 @@ namespace ClassicUO.Game
 
             if (_wall.Active && _wall.Count != 0)
             {
-                StripColumns(x, w, out int lo, out int hi);
-                add = Scenes.MobileWallOrder.CapAdd(add, in _wall, lo, hi, depth, i == 0, out _);
+                add = WallRule(i, x, w, depth, add);
             }
 
             return add;
+        }
+
+        // mobile_wall_order: raised over the stairs under the mobile (round 3), then capped behind the pieces covering it
+        private float WallRule(int i, int x, int w, float depth, float add)
+        {
+            StripColumns(x, w, out int lo, out int hi);
+
+            if (Scenes.MobileWallOrder.FloorAdd(in _wall, lo, hi, depth, out float raise) && raise > add)
+            {
+                add = raise;
+            }
+
+            return Scenes.MobileWallOrder.CapAdd(add, in _wall, lo, hi, depth, i == 0, out _);
         }
 
         // mobile_wall_order: the rows of the upper strip (screen rows [top, top + h)) a piece overhead covers, and their add

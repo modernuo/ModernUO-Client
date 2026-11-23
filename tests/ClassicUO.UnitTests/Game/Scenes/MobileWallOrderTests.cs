@@ -175,7 +175,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             float warm = 0;
 
             // the same calls once first (type initialisers, first-call stubs)
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < 200; i++)
             {
                 s = default;
                 MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
@@ -334,6 +334,22 @@ namespace ClassicUO.UnitTests.Game.Scenes
             ScanAt(map, MX, MY, Z).Count.Should().Be(1);
         }
 
+        // the entries that cover the mobile (not the stairs under it, not the shadow-only pieces behind it)
+        private static int Covers(in MobileWallOrder.Scan s)
+        {
+            int n = 0;
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                if (!s.Walls[i].Floor && !s.Walls[i].ShadowOnly)
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+
         [Fact]
         public void OnStairsTheRunAndWhatLiesOnItAreFloor()
         {
@@ -353,7 +369,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Add(map, Table, MX + 1, MY + 1, 25);
             MobileWallOrder.Scan s = default;
             MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
-            s.Count.Should().Be(0);
+            Covers(in s).Should().Be(0);
 
             // a staircase rising ahead (south-east), one step per tile: the run is floor, two tiles out too
             map = Studio(false, false, false);
@@ -363,13 +379,117 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Add(map, Stairs, MX + 1, MY + 1, 40);
             s = default;
             MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
-            s.Count.Should().Be(0);
+            Covers(in s).Should().Be(0);
 
             // a block standing far above the run still covers
             Add(map, Easel, MX, MY + 1, 45);
             s = default;
             MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            Covers(in s).Should().Be(1);
+        }
+
+        [Fact]
+        public void OnStairsTheStepBesideIsFloorItIsDrawnOver()
+        {
+            // round 3 (owner, Felucca 1376 1625 42, stairs facing east): the same step on the tile south of the mobile (one
+            // diagonal ahead) out-keyed its upper strip (a mount's legs); now the strips rise one key over it
+            var map = Studio(false, false, false);
+            Add(map, Stairs, MX, MY, 40);
+            Add(map, Stairs, MX, MY + 1, 40);
+            MobileWallOrder.Scan s = default;
+            s.Active = true;
+            MobileWallOrder.ScanStep(map, MX, MY, 42, Vector3.Zero, MX, MY, ref s);
             s.Count.Should().Be(1);
+            s.Walls[0].Floor.Should().BeTrue();
+
+            float depth = MobileDepth(MX, MY, 42);
+            Key(depth, 0).Should().BeLessThan(s.Walls[0].D, "before: the step beside beat the upper strip");
+            MobileWallOrder.FloorAdd(in s, -11, 11, depth, out float add).Should().BeTrue();
+            Key(depth, add).Should().Be(s.Walls[0].D + 1);
+            MobileWallOrder.CapAdd(add, in s, -11, 11, depth, true, out _).Should().Be(add, "a floor piece never caps");
+
+            // not standing on the staircase (on the land beside it): the step is not floor and covers as before
+            map = Studio(false, false, false);
+            Add(map, Stairs, MX, MY + 1, 40);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 30, Vector3.Zero, MX, MY, ref s);
+            for (int i = 0; i < s.Count; i++)
+            {
+                s.Walls[i].Floor.Should().BeFalse();
+            }
+        }
+
+        [Fact]
+        public void ShadowLosesToTheWallBehind()
+        {
+            // round 3 (owner, Felucca 1453 1660 10): a wall north of the mobile (behind it) covers its shadow, not its strips
+            var map = Studio(false, false, false);
+            Add(map, South, MX, MY - 1, Z);
+            MobileWallOrder.Scan s = default;
+            s.Active = true;
+            MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
+            s.Count.Should().Be(1);
+            s.Walls[0].ShadowOnly.Should().BeTrue();
+            float depth = MobileDepth(MX, MY, Z);
+            MobileWallOrder.ShadowAdd(in s, -30, 30, depth, out float add, out _).Should().BeTrue();
+            Key(depth, add).Should().Be(s.Walls[0].D - 1);
+            MobileWallOrder.CapAdd(2, in s, -30, 30, depth, out _).Should().Be(2, "the strips ignore it");
+
+            // a wall two diagonals behind: the shadow stays over the land and background floors one diagonal behind
+            map = Studio(false, false, false);
+            Add(map, South, MX - 1, MY - 1, Z);
+            s = default;
+            MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
+            MobileWallOrder.ShadowAdd(in s, -60, 30, depth, out add, out _).Should().BeTrue();
+            Key(depth, add).Should().Be(100 * (MX + MY - 1) + 127 + Z, "over the land and background floors (+ 126 + z), under the wall right behind (+ 128 + z)");
+
+            // a flat behind stays under the shadow
+            map = Studio(false, false, false);
+            Add(map, Floor, MX, MY - 1, Z);
+            s = default;
+            MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
+            s.Count.Should().Be(0);
+        }
+
+        [Fact]
+        public void OverhangOverAPieceInFrontOfTheSideTileIsCapped()
+        {
+            // round 3 item C (owner, Felucca 1466 1670 0, a mount facing west): its head and chest hang over (x - 1, y); the table
+            // on (x - 1, y + 1), the mobile's own diagonal, is in front of that tile and covers the overhang
+            var map = Studio(false, false, false);
+            Add(map, Table, MX - 1, MY + 1, Z);
+            MobileWallOrder.Scan s = default;
+            s.Active = true;
+            MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(1);
+            s.Walls[0].Side.Should().BeTrue();
+            s.Walls[0].Hi.Should().Be(-22, "only the columns past the anchor tile's half-width");
+            float depth = MobileDepth(MX, MY, Z);
+
+            // a wide mount's upper strip reaching left over it: capped one key behind the table, above its own floor
+            float add = MobileWallOrder.CapAdd(0, in s, -33, 33, depth, true, out int wall);
+            wall.Should().Be(0);
+            Key(depth, add).Should().Be(s.Walls[0].D - 1);
+            Key(depth, add).Should().BeGreaterThan(100 * (MX + MY) + 127 + Z - 1, "over its own tile's floor");
+
+            // a narrow body (within the tile) is not touched
+            MobileWallOrder.CapAdd(0, in s, -15, 15, depth, true, out _).Should().Be(0);
+
+            // the table behind the mobile's other side (x + 1, y - 1) only counts for the right overhang
+            map = Studio(false, false, false);
+            Add(map, Table, MX + 1, MY - 1, Z);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(1);
+            s.Walls[0].Lo.Should().Be(22);
+
+            // a rug there, or a table under the mobile's z, never
+            map = Studio(false, false, false);
+            Add(map, Floor, MX - 1, MY + 1, Z);
+            Add(map, Table, MX + 1, MY - 1, Z - 10);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(0);
         }
 
         [Theory]
