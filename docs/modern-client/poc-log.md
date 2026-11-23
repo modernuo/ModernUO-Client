@@ -8846,3 +8846,54 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
 - **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
   allocation; not timed.
+
+## 2026-11-23 walk_chunk_z (bg/zband, head 20407447c, base aa32c2440)
+
+- **What.** The world fill bands each chunk's vertical range by the Z range recorded for it (Chunk.WalkZLo/WalkZHi, conservative:
+  only grows until a reload or a mesh rebuild recomputes it exactly), so chunks whose objects cannot reach the screen band are not
+  walked. Switch `walk_chunk_z` (settings.json, CUO_WALK_CHUNK_Z=1|0), default off; checker CUO_WALK_CHUNK_Z_CHECK=1. Counters added:
+  fill_chunks, walk_band_tiles, hidden_band_tiles, cull_y. DevTools anim_freeze added for shot comparisons (never in timing runs).
+- **Correctness.** bench-001125 (shots, both renderers, 6 spots, anim_freeze on): SHOTS SAME; checker session mismatch lines 0 and
+  out-of-range 0 in all brwalk/lswalk/still walks, both renderers. The ls spot was only ~47 % stable (2,000 mobiles), unmasked diff 0.
+  Unit tests: WalkChunkZTests 11; CuoDevTools=true 8,751 pass, false 8,355 pass.
+- **Timing.** bench-001134..37, NativeAOT dev build, pinned, ABBA (def x3 vs zb x3 windows), vsync off, presentcap off, anim_freeze
+  off, checkers off. The owner says the machine was quiet through these runs; treated as quiet. Frame p50 ms (off -> on, paired delta,
+  spread of the off arm):
+
+| Scene | Legacy | Gpu |
+|---|---|---|
+| Britain 1080 | 0.567 -> -1.3 % (mixed), p95 -3.0 % (all-) | 0.496 -> -1.0 % (mixed) |
+| brwalk 1080 | 0.547 -> -0.1 % (mixed), p95 -0.5 % | 0.490 -> -0.0 %, p95 -0.2 % |
+| large scene (ls) 1080 | 4.79 -> -5.0 % (all-, about -0.24 ms), spread 5 % | 1.99 -> -3.1 % (mixed), spread 17 %: inconclusive |
+| lswalk 1080 | 5.23 -> +0.7 % (mixed), spread 8 %, window range -10..+13 %: inconclusive | 2.78 -> -5.1 % (mixed), spread 29 %: inconclusive |
+| Britain 4K | 2.80 -> -6.7 % (all-, about -0.19 ms) | 1.035 -> +0.5 % (+0.005 ms, ALL+ but inside 0.1 ms) |
+| ls 4K | 7.15 -> -1.6 % (all-) | 2.61 -> +0.9 % (mixed) |
+
+  CPU phases (world_prepare p50, off -> on): Legacy Britain 0.123 -> 0.098 (-20 %), brwalk 0.112 -> 0.085 (-24 %), ls 1.51 -> 1.24
+  (-16 %), lswalk 1.60 -> 1.54 (-9 %, mixed), Britain 4K 1.03 -> 0.87 (-16.5 %), ls 4K 2.20 -> 2.08 (-5.6 %). Gpu: Britain 0.053 -> 0.051
+  (-5 %), brwalk -7.7 %, Britain 4K 0.257 -> 0.244 (-5 %), lswalk -4.6 %, ls/ls4k mixed. Legacy draw p50 also falls with it (Britain
+  -7 %, brwalk -9 %, ls -5.5 %, Britain 4K -7 %), because fewer objects reach the render list's sort and cull.
+- **Counters (off -> on).** walk_band_tiles -49 % at 1080 (Britain 2,756 -> 1,415; ls 2,752 -> 1,336), -24 % at 4K (22,080 -> 16,719).
+  fill_chunks -33 % Legacy / -21 % Gpu at 1080, -18..-20 % at 4K. objects walked -42 % Britain, -21..-23 % ls (Legacy); cull_y (walked
+  objects culled by anchor y) -80 % Legacy, -90 % Gpu Britain. render_list and draw_calls unchanged (+-1 %), so the picture is the same.
+- **Allocations.** alloc/frame did not rise in any arm: Legacy 0 -> 0 Britain, 4.5 -> 5.0 brwalk (spread 43 %, noise), ls 3.5 -> 0,
+  lswalk 4,518 -> 4,447 (the 2,000 mobiles); Gpu brwalk 11.5 -> 9.4, lswalk 2,442 -> 2,337, 4K scenes 1.5 -> 0 and 4 -> 4. No arm
+  allocates more with the switch on. Not a per-frame allocation source (Chunk fields only).
+- **Memory.** Chunk +20 B (WalkZLo/Hi, FillZLo/Hi, FillSeq) per loaded chunk; GameScene _occChunks list only with light_occlusion on.
+- **Noise / inconclusive arms.** Gpu ls (spread 17 %, one window of the counts table shows +11 % frame while the paired median says
+  -3 %), Gpu lswalk (29 %), Legacy lswalk (window range -10..+13 %), Gpu ls/lswalk update.p50 (43..50 % spread). The 2,000 moving mobiles
+  dominate those scenes; the feature does not touch their cost, so no delta can be claimed for them either way. Legacy present.p50 at
+  brwalk reads +24 % (ALL+, def spread 39 %, 0.16 -> 0.20 ms): present is a wait on the driver, not code the feature runs; frame p50
+  is flat there. Not investigated further.
+- **Verdict vs the budget (perf-budget-tiers rule 1).** Cost: no arm shows a significant frame cost above 0.1 ms (largest: Gpu Britain
+  4K +0.005 ms, within noise), so it meets the always-on bar in every reference scene on frame time. It saves: Legacy -0.24 ms ls, -0.19
+  ms Britain 4K, world_prepare -0.02..-0.27 ms; Gpu CPU phases -0.002..-0.12 ms with no frame-level change (GPU-bound or too small).
+  Bake-in candidate (switch to be deleted after the next quiet pass confirms, with the checker clean on the lswalk/brwalk sessions run
+  with it and the shots job). No ledger row (always on, saves time).
+- **Release variant.** `CuoDevTools=false` NativeAOT win-x64 publish builds (aot-rel, head 20407447c; trim/AOT warnings only, same
+  class as the dev build). Not run in a job.
+- **Not done.** Targeted edge tests (tall statics at the view edge, +-Z nudges, oversized bodies; drafted in
+  cuo-poc-state/measure/batch-1123/README.md and measure/zband/zband-edges.txt). Paths only the checker covers: boats moving, house
+  customisation, corpses, moving effects, server drops.
+- **Accepted costs.** Chunk +20 B per loaded chunk; one NoteWalkZ call per tile join and Z write (not timed separately). Revisit:
+  none needed.
