@@ -736,6 +736,7 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Inc(FrameCounter.PrepareRuns);
             _renderLists.Clear();
             _visibleChunks.Clear();
+            _occChunks.Clear();
 
             _foliageCount = 0;
             _drawFrame++;
@@ -883,7 +884,19 @@ namespace ClassicUO.Game.Scenes
 
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
                     // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
-                    ulong inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out ulong inHidden);
+                    ulong inWalk, inHidden;
+                    bool zForce = false;
+
+                    if (_zband || _zbandCheck)
+                    {
+                        // walk_chunk_z: the S band from the chunk's recorded Z range (WalkChunkZ)
+                        inWalk = ZBandChunkMasks(chunk, chunkX, chunkY, gpuFill, in diamond, out inHidden, out zForce);
+                    }
+                    else
+                    {
+                        inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out inHidden);
+                    }
+
                     inWalk = WalkChunkMask(chunk, chunkX, chunkY, inWalk);
 
                     if (inHidden == 0)
@@ -898,6 +911,8 @@ namespace ClassicUO.Game.Scenes
                         (chunk.Mesh.AtlasEpoch != atlasEpoch && _gpuWorld == null && chunk.Mesh.HoldsFreedPage(atlasEpoch)))
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
+                        // walk_chunk_z: the rebuild drops the range's growth from objects that left or moved
+                        chunk.RecomputeWalkZ();
                         // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
                         chunk.GpuMaskDirty = true;
                         chunk.GpuFreshSteps = GPU_FADE_STEPS;
@@ -994,7 +1009,7 @@ namespace ClassicUO.Game.Scenes
                                 use_handles,
                                 GPU_WALK_MAX_Z,
                                 chunk,
-                                !full,
+                                !full || zForce,
                                 _gpuSkipEnabled,
                                 false,
                                 (mergeCells & bit) != 0
@@ -1046,6 +1061,8 @@ namespace ClassicUO.Game.Scenes
                     }
                 }
             }
+
+            ZBandFrameEnd();
 
             if (FrameStats.On)
             {

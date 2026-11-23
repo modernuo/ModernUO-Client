@@ -235,6 +235,11 @@ namespace ClassicUO.Configuration
         // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
+        // zband: the world fill's vertical band per chunk from the chunk's recorded Z range (WalkChunkZ, Chunk.WalkZLo/Hi)
+        // instead of every sbyte Z. CUO_WALK_CHUNK_Z_CHECK=1 logs objects the full band would have walked or hidden that the
+        // tight band skipped; CUO_WALK_CHUNK_Z=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("walk_chunk_z")] public bool WalkChunkZ { get; set; }
+
         // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
         // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
         // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose

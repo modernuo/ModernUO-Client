@@ -107,6 +107,70 @@ namespace ClassicUO.Game.Map
         /// chunks whose sprites cannot reach it whatever their art size or elevation.</summary>
         internal int OccZLo = int.MaxValue, OccZHi = int.MinValue;
 
+        /// <summary>walk_chunk_z (GameScene's fill, WalkChunkZ): the lowest and highest Z any object of the chunk's tiles is
+        /// anchored at (land: its Z, MinZ and stretched corners), empty while low is above high. Set from the tiles at load and
+        /// at a mesh rebuild (<see cref="RecomputeWalkZ"/>), grown by every object joining a tile (AddGameObject) and every Z
+        /// change of an object on one (GameObject.Z), never shrunk in between: no object of the chunk is outside it.</summary>
+        internal int WalkZLo = int.MaxValue, WalkZHi = int.MinValue;
+        /// <summary>The range the fill last banded this chunk with: a range that grew since brings tiles into the walk
+        /// whose positions missed camera moves.</summary>
+        internal int FillZLo, FillZHi;
+        /// <summary>The fill (GameScene._fillSeq) that last banded this chunk; a chunk not banded at the previous fill may
+        /// hold positions that missed camera moves.</summary>
+        internal uint FillSeq = uint.MaxValue;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal void NoteWalkZ(int z)
+        {
+            if (z < WalkZLo)
+            {
+                WalkZLo = z;
+            }
+
+            if (z > WalkZHi)
+            {
+                WalkZHi = z;
+            }
+        }
+
+        /// <summary>The Z extent an object's anchor (and, for land, its stretched corners) can take on its tile.</summary>
+        internal static void WalkZOf(GameObject obj, out int lo, out int hi)
+        {
+            lo = hi = obj.Z;
+
+            // the walk and GpuLandVisible read MinZ only for stretched land
+            if (obj is Land { IsStretched: true } land)
+            {
+                lo = Math.Min(lo, land.MinZ);
+                hi = Math.Max(hi, Math.Max(Math.Max(land.YOffsets.Top, land.YOffsets.Bottom), Math.Max(land.YOffsets.Left, land.YOffsets.Right)) >> 2);
+            }
+        }
+
+        private void NoteWalkZ(GameObject obj)
+        {
+            WalkZOf(obj, out int lo, out int hi);
+            NoteWalkZ(lo);
+            NoteWalkZ(hi);
+        }
+
+        /// <summary>The exact range of the objects on the chunk's tiles now (the list's and the dynamic index's).</summary>
+        internal void RecomputeWalkZ()
+        {
+            WalkZLo = int.MaxValue;
+            WalkZHi = int.MinValue;
+
+            for (int cell = 0; cell < 64; cell++)
+            {
+                for (GameObject o = TileWalk.Begin(this, cell, out TileWalk walk); o != null; o = walk.Next())
+                {
+                    if (!o.IsDestroyed)
+                    {
+                        NoteWalkZ(o);
+                    }
+                }
+            }
+        }
+
         private bool _loading;
 
         private void RecordOverhang(ushort graphic, int z)
@@ -299,6 +363,9 @@ namespace ClassicUO.Game.Map
         public void Load(int index)
         {
             IsDestroyed = false;
+            WalkZLo = int.MaxValue;
+            WalkZHi = int.MinValue;
+            FillSeq = uint.MaxValue;
 
             Map map = _world.Map;
 
@@ -375,6 +442,7 @@ namespace ClassicUO.Game.Map
             OnTileContentChanged(obj);
             obj.TileChunk = this;
             obj.TileCell = (byte)((x << 3) | y);
+            NoteWalkZ(obj);
 
             short priorityZ = obj.Z;
             sbyte state = -1;
@@ -809,6 +877,9 @@ namespace ClassicUO.Game.Map
                 }
             }
 
+            WalkZLo = int.MaxValue;
+            WalkZHi = int.MinValue;
+            FillSeq = uint.MaxValue;
             Mesh.SoftClear(null); // in-place reload: the chunk stays in use and rebuilds at once, so it keeps its arrays
             ClearLightSources();
             Dynamic?.Clear();

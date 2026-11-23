@@ -385,7 +385,7 @@ namespace ClassicUO.Game.Scenes
 
             int n = _occBase;
             sums = default;
-            List<Chunk> chunks = _visibleChunks;
+            List<Chunk> chunks = OccluderChunks;
 
             for (int c = 0; c < chunks.Count; c++)
             {
@@ -646,7 +646,7 @@ namespace ClassicUO.Game.Scenes
         {
             int end = _occBase + n, refN = end;
             OccluderSums refSums = default;
-            List<Chunk> chunks = _visibleChunks;
+            List<Chunk> chunks = OccluderChunks;
 
             for (int c = 0; c < chunks.Count; c++)
             {

@@ -37,6 +37,11 @@ namespace ClassicUO.Game.Scenes
         public struct Bounds : IEquatable<Bounds>
         {
             public int DLo, DHi, SLo, SHi;
+            /// <summary>walk_chunk_z: the S band's edges in pixels before the Z term (SLo = floor((SLoRaw + 4 * zLo) / 22) - 1,
+            /// SHi = floor((SHiRaw + 4 * zHi) / 22) + 1), for the per-chunk bands of <see cref="ForZ"/>.</summary>
+            public double SLoRaw, SHiRaw;
+
+            public bool RawEquals(in Bounds o) => SLoRaw == o.SLoRaw && SHiRaw == o.SHiRaw;
 
             public bool Contains(int x, int y)
             {
@@ -65,8 +70,8 @@ namespace ClassicUO.Game.Scenes
         {
             // walk: minPixel.X <= D * 22 - offX - 22 <= maxPixel.X
             double dLo = minPixel.X + offX + 22, dHi = maxPixel.X + offX + 22;
-            // walk: minPixel.Y <= S * 22 - offY - 22 - 4Z <= maxPixel.Y for some Z
-            double sLo = minPixel.Y + offY + 22 - Z_DOWN, sHi = maxPixel.Y + offY + 22 + Z_UP;
+            // walk: minPixel.Y <= S * 22 - offY - 22 - 4Z <= maxPixel.Y for some Z (the Z term added below)
+            double sLo = minPixel.Y + offY + 22, sHi = maxPixel.Y + offY + 22;
 
             if (gpu)
             {
@@ -75,17 +80,34 @@ namespace ClassicUO.Game.Scenes
                 dHi = Math.Max(dHi, gpuView.Right + GPU_WIDE_ART + offX + 22);
                 // GpuLandVisible / GpuStaticVisible with base = S * 22 - offY - 22: some sprite bottom (at most base + 556)
                 // below the view's top, some sprite top (land: base - 636, statics: base - 464 - art height) above its bottom
-                sLo = Math.Min(sLo, gpuView.Top - (Z_DOWN + 44) + offY + 22);
-                sHi = Math.Max(sHi, gpuView.Bottom + Math.Max(Z_UP + 128 + 1, Z_UP - 44 + Math.Max(0, maxStaticArtH)) + offY + 22);
+                // (the Z term is the same for both, added below)
+                sLo = Math.Min(sLo, gpuView.Top - 44 + offY + 22);
+                sHi = Math.Max(sHi, gpuView.Bottom + Math.Max(128 + 1, -44 + Math.Max(0, maxStaticArtH)) + offY + 22);
             }
 
             return new Bounds
             {
                 DLo = FloorDiv22(dLo) - 1,
                 DHi = FloorDiv22(dHi) + 1,
-                SLo = FloorDiv22(sLo) - 1,
-                SHi = FloorDiv22(sHi) + 1
+                SLo = FloorDiv22(sLo - Z_DOWN) - 1,
+                SHi = FloorDiv22(sHi + Z_UP) + 1,
+                SLoRaw = sLo,
+                SHiRaw = sHi
             };
+        }
+
+        /// <summary>
+        /// walk_chunk_z: <paramref name="b"/> with its S band for anchors at Z <paramref name="zLo"/>..<paramref name="zHi"/>
+        /// only (a chunk's recorded range, Chunk.WalkZLo/Hi) instead of every sbyte Z. The D band and the art and land-stretch
+        /// terms are unchanged; zLo -128 and zHi 127 give <paramref name="b"/> itself.
+        /// </summary>
+        public static Bounds ForZ(in Bounds b, int zLo, int zHi)
+        {
+            Bounds r = b;
+            r.SLo = FloorDiv22(b.SLoRaw + (zLo << 2)) - 1;
+            r.SHi = FloorDiv22(b.SHiRaw + (zHi << 2)) + 1;
+
+            return r;
         }
 
         /// <summary>The chunk's tiles inside the bands, bit (x &lt;&lt; 3 | y) as in the fill's tile loop.</summary>
@@ -157,6 +179,20 @@ namespace ClassicUO.Game.Scenes
         /// (<paramref name="hidden"/>, a superset; Legacy: the same). A chunk whose hidden mask is
         /// empty gets no chunk-level work at all (perf-18).
         /// </summary>
+        /// <summary>walk_chunk_z: <see cref="ChunkMasks(bool, int, int, in Bands, out ulong)"/> for a chunk whose objects are
+        /// anchored at Z <paramref name="zLo"/>..<paramref name="zHi"/> (empty range: every Z).</summary>
+        public static ulong ChunkMasks(bool gpu, int chunkX, int chunkY, in Bands b, int zLo, int zHi, out ulong hidden)
+        {
+            if (zLo > zHi)
+            {
+                return ChunkMasks(gpu, chunkX, chunkY, in b, out hidden);
+            }
+
+            Bands t = new Bands { Walk = ForZ(in b.Walk, zLo, zHi), Hidden = gpu ? ForZ(in b.Hidden, zLo, zHi) : default };
+
+            return ChunkMasks(gpu, chunkX, chunkY, in t, out hidden);
+        }
+
         public static ulong ChunkMasks(bool gpu, int chunkX, int chunkY, in Bands b, out ulong hidden)
         {
             if (!gpu)
