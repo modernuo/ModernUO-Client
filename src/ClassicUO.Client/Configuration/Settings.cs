@@ -270,6 +270,14 @@ namespace ClassicUO.Configuration
         // bakes once a second; CUO_LIGHT_OCCLUSION_BAKE=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("light_occlusion_bake")] public bool LightOcclusionBake { get; set; }
 
+        // light_occlusion_bake_world_phase (with light_occlusion_bake): a baked glow's key holds the sub-pixel phase of the light's
+        // world pixel at the current scale instead of the frame matrix's float phase, whose rounding changes with every camera
+        // move at a fractional zoom and re-baked every glow each frame while walking (LightBakeWorldPhase). The camera keeps the
+        // world on whole pixels, so the bake is still drawn at the light's own phase. CUO_LIGHT_OCC_BAKE_CHECK counts the
+        // re-bakes the frame phase would have made; CUO_LIGHT_OCC_BAKE_WORLD_PHASE=1|0 overrides the setting in developer
+        // builds. Default off.
+        [JsonPropertyName("light_occlusion_bake_world_phase")] public bool LightOcclusionBakeWorldPhase { get; set; }
+
         // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
         // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
         // fade), so hidden walls leave no floating glows; radial glows (lamps, torches) keep full light. With light_occlusion

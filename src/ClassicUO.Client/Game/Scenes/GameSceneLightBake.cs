@@ -21,8 +21,10 @@ namespace ClassicUO.Game.Scenes
         private bool[] _lkBaked = new bool[64];
         private Rectangle[] _lkSrc = new Rectangle[64];
         private Vector2[] _lkDst = new Vector2[64];
-        private int _lkDraws, _lkStencilRef, _lkFrameBakes, _lkFrameHits;
+        private int _lkDraws, _lkStencilRef, _lkFrameBakes, _lkFrameHits, _lkFrameRebakes;
         private bool _lkUse, _lkClear;
+        // FrameStats lo_rebakes_s
+        private LightBakeRate _lkRebakeRate;
         private BlendState _lkBakeBlend, _lkDrawBlend;
 
         // before the light target is bound: every masked surface glow whose bake is current is flagged for the atlas draw; a new
@@ -31,13 +33,18 @@ namespace ClassicUO.Game.Scenes
         {
             _lkDraws = 0;
             _lkUse = false;
-            _lkFrameBakes = _lkFrameHits = 0;
+            _lkFrameBakes = _lkFrameHits = _lkFrameRebakes = 0;
 
             if (lightTarget == null || !LightOcclusionBake.Active(LightOcclusionBake.Enabled, LightOcclusion.Enabled, LightOcclusionCache.Enabled,
                 LightBatch.Enabled, LightAlphaFade.Enabled && LightOcclusion.Enabled))
             {
+                _lkRebakeRate.Add(0, Time.Ticks);
+
                 return;
             }
+
+            // light_occlusion_bake_world_phase: the key's phase from the light's world pixel (LightBakeWorldPhase)
+            bool worldPhase = LightBakeWorldPhase.Enabled;
 
             BeginLightOcclusionState(lightTarget.Width, lightTarget.Height);
 
@@ -88,8 +95,30 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 float tx = pos.X * s + matrix.M41, ty = pos.Y * s + matrix.M42;
-                int ix = (int)MathF.Floor(tx), iy = (int)MathF.Floor(ty);
-                ulong key = BakeKey(ref l, in lightInfo, hue, s, tx - ix, ty - iy, n);
+                int ix, iy;
+                ulong phase;
+
+                if (worldPhase)
+                {
+                    int px = LightOcclusionBake.WorldPhase(_offset.X + (double)pos.X, s), py = LightOcclusionBake.WorldPhase(_offset.Y + (double)pos.Y, s);
+                    ix = LightOcclusionBake.PhasePixel(tx, px);
+                    iy = LightOcclusionBake.PhasePixel(ty, py);
+                    phase = LightOcclusionBake.PhaseKey(true, px, py, 0f, 0f);
+                }
+                else
+                {
+                    ix = (int)MathF.Floor(tx);
+                    iy = (int)MathF.Floor(ty);
+                    phase = LightOcclusionBake.PhaseKey(false, 0, 0, tx - ix, ty - iy);
+                }
+
+#if CUO_DEVTOOLS
+                if (LightOcclusionBake.Check)
+                {
+                    LightBakePhaseCheck(e, pos, tx, ty, s);
+                }
+#endif
+                ulong key = BakeKey(ref l, in lightInfo, hue, s, phase, n);
 
                 if (e.BakeGen == _lkShelf.Generation && e.BakeKey == key)
                 {
@@ -120,6 +149,12 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     BakeOne(batcher, ref matrix, n, in lightInfo, pos, hue, bx + 1 - ix, by + 1 - iy);
+
+                    if (e.BakeGen >= 0)
+                    {
+                        _lkFrameRebakes++;
+                    }
+
                     e.BakeKey = key;
                     e.BakeGen = _lkShelf.Generation;
                     e.BakeX = bx;
@@ -150,6 +185,8 @@ namespace ClassicUO.Game.Scenes
             _lkUse = _lkDraws > 0;
             _lkBakes += _lkFrameBakes;
             _lkHits += _lkFrameHits;
+            _lkRebakes += _lkFrameRebakes;
+            _lkRebakeRate.Add(_lkFrameRebakes, Time.Ticks);
         }
 
         // a slot for a w x h bake; a full atlas starts over once per pass (every slot dropped, the atlas cleared before the
@@ -271,30 +308,22 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
-        // what the bake depends on: the light (id, colour, hue, its art and texture), the scale and sub-pixel phase, and each
-        // occluder's art, texture, source rectangle and offset from the light
-        private ulong BakeKey(ref FrameLights.Entry l, in SpriteInfo lightInfo, Vector3 hue, float scale, float fx, float fy, int n)
+        // what the bake depends on: the light (id, colour, hue, its art and texture), the scale and sub-pixel phase (the frame's,
+        // or with light_occlusion_bake_world_phase the light's world pixel's), and each occluder's art, texture, source rectangle
+        // and offset from the light
+        private ulong BakeKey(ref FrameLights.Entry l, in SpriteInfo lightInfo, Vector3 hue, float scale, ulong phase, int n)
         {
-            ulong h = 0xCBF29CE484222325UL;
-            h = LightOcclusionBake.Mix(h, l.ID | (ulong)l.Color << 8 | (l.IsHue ? 1UL << 24 : 0) | (ulong)(uint)n << 32);
-            h = LightOcclusionBake.Mix(h, BitConverter.SingleToUInt32Bits(hue.X) | (ulong)BitConverter.SingleToUInt32Bits(hue.Y) << 32);
-            h = LightOcclusionBake.Mix(h, BitConverter.SingleToUInt32Bits(hue.Z) | (ulong)BitConverter.SingleToUInt32Bits(scale) << 32);
-            h = LightOcclusionBake.Mix(h, BitConverter.SingleToUInt32Bits(fx) | (ulong)BitConverter.SingleToUInt32Bits(fy) << 32);
-            h = LightOcclusionBake.Mix(h, PackRect(lightInfo.UV));
-            h = LightOcclusionBake.Mix(h, (uint)RuntimeHelpers.GetHashCode(lightInfo.Texture));
+            ulong h = LightOcclusionBake.KeyLight(l.ID | (ulong)l.Color << 8 | (l.IsHue ? 1UL << 24 : 0) | (ulong)(uint)n << 32, hue, scale,
+                phase, lightInfo.UV, RuntimeHelpers.GetHashCode(lightInfo.Texture));
 
             for (int i = _occBase, end = _occBase + n; i < end; i++)
             {
                 ref LightOccluder o = ref _occluders[i];
-                h = LightOcclusionBake.Mix(h, o.Art | (ulong)(uint)RuntimeHelpers.GetHashCode(o.Texture) << 32);
-                h = LightOcclusionBake.Mix(h, PackRect(o.UV));
-                h = LightOcclusionBake.Mix(h, (uint)(o.DrawX - l.DrawX) | (ulong)(uint)(o.DrawY - l.DrawY) << 32);
+                h = LightOcclusionBake.KeyOccluder(h, o.Art, RuntimeHelpers.GetHashCode(o.Texture), o.UV, o.DrawX - l.DrawX, o.DrawY - l.DrawY);
             }
 
             return h;
         }
-
-        private static ulong PackRect(Rectangle r) => (ulong)(ushort)r.X | (ulong)(ushort)r.Y << 16 | (ulong)(ushort)r.Width << 32 | (ulong)(ushort)r.Height << 48;
 
         // light_batch's pass: the baked lights from the atlas in one batch (target pixels, One/One, point sampled), then the
         // light batch again
@@ -316,9 +345,39 @@ namespace ClassicUO.Game.Scenes
             batcher.SetBlendState(BlendState.Additive);
         }
 
-        private long _lkBakes, _lkHits, _lkResets;
+        private long _lkBakes, _lkHits, _lkResets, _lkRebakes;
 #if CUO_DEVTOOLS
-        private long _lkCompares, _lkDiffPixels, _lkMismatches;
+        private long _lkCompares, _lkDiffPixels, _lkMismatches, _lkPhaseOnly, _lkOffGrid;
+        private double _lkMaxResidual;
+
+        // CUO_LIGHT_OCC_BAKE_CHECK, both states of light_occlusion_bake_world_phase: an entry whose frame phase changed while its
+        // world phase did not (a re-bake with the switch off, none with it on), and slots the world phase places off the
+        // camera's pixel grid (the frame position more than 1/64 pixel from the world phase's: the camera did not snap)
+        private void LightBakePhaseCheck(LightOccluderEntry e, Vector2 pos, float tx, float ty, float s)
+        {
+            int px = LightOcclusionBake.WorldPhase(_offset.X + (double)pos.X, s), py = LightOcclusionBake.WorldPhase(_offset.Y + (double)pos.Y, s);
+            int ix = LightOcclusionBake.PhasePixel(tx, px), iy = LightOcclusionBake.PhasePixel(ty, py);
+            double residual = Math.Max(LightOcclusionBake.PhaseResidual(tx, ix, px), LightOcclusionBake.PhaseResidual(ty, iy, py));
+            _lkMaxResidual = Math.Max(_lkMaxResidual, residual);
+
+            if (residual > 1.0 / 64 && ++_lkOffGrid <= 20)
+            {
+                Log.Warn($"[light-occ-bake-check] light at {pos.X},{pos.Y} (draw offset {_offset.X},{_offset.Y}, scale {s}): frame position " +
+                         $"{tx},{ty} is {residual:F4} px from its world phase ({px},{py})/{LightOcclusionBake.PhaseSteps}");
+            }
+
+            int fx = (int)MathF.Floor(tx), fy = (int)MathF.Floor(ty);
+            ulong frame = LightOcclusionBake.PhaseKey(false, 0, 0, tx - fx, ty - fy), world = LightOcclusionBake.PhaseKey(true, px, py, 0f, 0f);
+
+            if (e.BakeGen == _lkShelf.Generation && e.CheckFramePhase != frame && e.CheckWorldPhase == world)
+            {
+                _lkPhaseOnly++;
+            }
+
+            e.CheckFramePhase = frame;
+            e.CheckWorldPhase = world;
+        }
+
         private int _lkMaxChannel;
         private uint _lkCompareAt, _lkSummaryAt;
         private Color[] _lkRef, _lkCur;
@@ -383,7 +442,10 @@ namespace ClassicUO.Game.Scenes
             _lkSummaryAt = Time.Ticks + 5000;
             Log.Info($"[light-occ-bake-check] light_occlusion_bake {(LightOcclusionBake.Enabled ? "on" : "off")}: bakes {_lkBakes}, atlas draws " +
                      $"{_lkHits + _lkBakes} ({_lkHits} reused), atlas resets {_lkResets}, last pass {_lkDraws} lights from the atlas " +
-                     $"({_lkFrameBakes} baked); {_lkCompares} target compares, {_lkDiffPixels} pixels differ (largest channel difference " +
+                     $"({_lkFrameBakes} baked), re-bakes {_lkRebakes} ({_lkRebakeRate.PerSecond}/s); light_occlusion_bake_world_phase " +
+                     $"{(LightBakeWorldPhase.Enabled ? "on" : "off")}: {_lkPhaseOnly} frame-phase-only key changes " +
+                     $"({(LightBakeWorldPhase.Enabled ? "not re-baked" : "re-baked")}), {_lkOffGrid} off-grid placements (largest " +
+                     $"{_lkMaxResidual:F4} px); {_lkCompares} target compares, {_lkDiffPixels} pixels differ (largest channel difference " +
                      $"{_lkMaxChannel}); mismatches {_lkMismatches}");
         }
 #endif
