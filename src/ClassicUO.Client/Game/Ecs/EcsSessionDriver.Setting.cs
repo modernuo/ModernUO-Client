@@ -12,10 +12,11 @@ namespace ClassicUO.Game
     // the switch matrix (cuo-poc-state measure/matrix) can run arms that differ only in live switches in one process.
     // Without a value it logs the current one. Bools take on|off|true|false. Only the property is written: a switch whose
     // value is latched at startup or login (switches.tsv lifetime) keeps its latched value, and a CUO_* override of the
-    // switch still wins over the setting in the switch's Enabled getter.
+    // switch still wins over the setting in the switch's Enabled getter. DevBench's set:<key>=<value> plan entry calls it too, so
+    // a quiet timing plan can alternate live switch arms in one process.
     internal sealed partial class EcsSessionDriver
     {
-        private static bool ExecuteSetting(string command, string[] args)
+        internal static bool ExecuteSetting(string command, string[] args)
         {
             if (command != "setting" || args.Length == 0)
             {
