@@ -78,6 +78,7 @@ namespace ClassicUO.Game.Scenes
             EndLightOcclusionBatch(batcher);
             batcher.SetBlendState(null);
             batcher.End();
+            EndLightOcclusion();
         }
 
         private static Vector3 LightHue(ref FrameLights.Entry l)

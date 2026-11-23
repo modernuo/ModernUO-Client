@@ -66,12 +66,20 @@ namespace ClassicUO.Game.Scenes
         // one write and one test state per stencil reference (1..255), made on first use and kept with the scene
         private DepthStencilState[] _occWrite, _occTest;
         private BlendState _noColorBlend;
+        // FrameStats: the light pass's occluder search and masked-draw time (Stopwatch ticks), lights drawn masked and their
+        // occluder sprites
+        private long _loSearchTicks, _loMaskTicks;
+        private int _loFrameMasked, _loFrameOccluders, _loFlushes0, _loDrawCalls0;
 
         // the light pass starts: the light target's stencil is cleared when the switch is on
         private void BeginLightOcclusion(GraphicsDevice device)
         {
             _lightOcclusion = LightOcclusion.Enabled;
             _stencilRef = 0;
+            _loSearchTicks = _loMaskTicks = 0;
+            _loFrameMasked = _loFrameOccluders = 0;
+            _loFlushes0 = UltimaBatcher2D.FrameFlushes;
+            _loDrawCalls0 = UltimaBatcher2D.FrameDrawCalls;
 #if CUO_DEVTOOLS
             _loPassLights = _loPassMasked = _loPassRadial = 0;
 #endif
@@ -89,6 +97,22 @@ namespace ClassicUO.Game.Scenes
             {
                 device.Clear(ClearOptions.Stencil, Vector4.Zero, 0f, 0);
             }
+        }
+
+        // the light pass has ended: its FrameStats counters
+        private void EndLightOcclusion()
+        {
+            if (!FrameStats.On)
+            {
+                return;
+            }
+
+            FrameStats.Set(FrameCounter.LightsMasked, _loFrameMasked);
+            FrameStats.Set(FrameCounter.LightOccluders, _loFrameOccluders);
+            FrameStats.Set(FrameCounter.LightFlushes, UltimaBatcher2D.FrameFlushes - _loFlushes0);
+            FrameStats.Set(FrameCounter.LightDrawCalls, UltimaBatcher2D.FrameDrawCalls - _loDrawCalls0);
+            FrameStats.Set(FrameCounter.LightSearchUs, (int)(_loSearchTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency));
+            FrameStats.Set(FrameCounter.LightMaskUs, (int)(_loMaskTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency));
         }
 
         // the light pass's batcher has begun: the masks' circle of transparency as the world draw sets it (DrawWorld; Gpu:
@@ -186,7 +210,11 @@ namespace ClassicUO.Game.Scenes
 
             if (LightOcclusion.Masks(SurfaceGlow(l.Source, l.ID, Client.Game.UO.FileManager.TileData.StaticData)))
             {
-                return CollectLightOccludersCore(ref l, pos, in lightInfo);
+                long t0 = FrameStats.Stamp();
+                int found = CollectLightOccludersCore(ref l, pos, in lightInfo);
+                _loSearchTicks += FrameStats.Stamp() - t0;
+
+                return found;
             }
 
 #if CUO_DEVTOOLS
@@ -243,6 +271,8 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 #endif
+            long t0 = FrameStats.Stamp();
+
             if (++_stencilRef > 255)
             {
                 // every reference used: clear the stencil and start over
@@ -271,6 +301,9 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(_occTest[_stencilRef]);
             batcher.SetBlendState(BlendState.Additive);
             batcher.Draw(lightInfo.Texture, pos, lightInfo.UV, hue, 0f);
+            _loMaskTicks += FrameStats.Stamp() - t0;
+            _loFrameMasked++;
+            _loFrameOccluders += n;
 #if CUO_DEVTOOLS
             _loOccludedLights++;
             _loPassMasked++;
