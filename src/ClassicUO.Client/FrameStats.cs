@@ -262,6 +262,8 @@ namespace ClassicUO
         // margin objects of walked tiles left out by their box
         VmRingTilesSkipped,
         VmRingObjectsSkipped,
+        // vm-body (view_margin_body): mobiles of the walk left out by their body's reach (or that would be, switch off)
+        VmBodyMobilesSkipped,
         Count
     }
 
@@ -334,7 +336,7 @@ namespace ClassicUO
             "mwo_scans", "mwo_tiles", "mwo_objects", "mwo_cache_hits", "mwo_empty",
             "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc",
             "net_cap_bytes", "net_cap_packets", "net_cap_time", "net_cap_waiting",
-            "vm_margin_mesh", "vm_margin_culled", "vm_margin_list", "vm_ring_tiles_skipped", "vm_ring_objects_skipped" };
+            "vm_margin_mesh", "vm_margin_culled", "vm_margin_list", "vm_ring_tiles_skipped", "vm_ring_objects_skipped", "vm_body_mobiles_skipped" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

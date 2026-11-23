@@ -9219,3 +9219,33 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
   bench-001107), so Legacy in dense scenes needs the walk. The walk's value is unmeasured (first bullet).
 - **Left.** Rerun bench-001119-style shots and bench-001120..123 with `chunk_lights=true` set (scripts updated); add ls and lswalk
   to the eqv spots (that is where the cost is); walk + cull + per-body reach (owner decision in the handoff); quiet pass.
+
+## 2026-11-23 vm-body: per-body mobile view margins, view_margin_body (bg/vm-body, base bg/vm-walk cd14b7789)
+- **What.** Owner decision 2026-11-23 (vm-walk follow-up): replace the fixed mobile margin (ViewMargin.MobileSide/MobileUp
+  160/260 px, no top band) with each body's own reach, lazy and capped. Switch `view_margin_body` (default off, needs
+  view_margin; env CUO_VIEW_MARGIN_BODY=1|0). With it on, a mobile whose anchor is outside the view is kept only when its box
+  grown by its reach meets the view (BodyReach.Meets); the walk visits the dynamic tiles of the view grown by the caps
+  (320 beside, 300 below, a new 200 px top band; ViewMargin.BodyRect/BodyTiles); statics keep the per-chunk rectangle.
+- **Reach table (BodyReach).** Per body: side (either facing), side with the shadow, up, and down (frames below the anchor
+  box), from the pack's anim.bin frame index only (trim rect + centre, no pixel decode), over every action and the stored
+  directions 3..7 (the extract mirrors the others). The shadow is the full frame sheared right by half its height from the
+  top visible row and squashed into its lower half (Batcher2D.DrawShadow, DynamicSprite's shadow mode). Body.def aliases are
+  followed. A mobile's reach composes body (+shadow when it has one), equipment draw bodies (EquipmentSlots), the mount
+  (MountBody) and the rider's seat (MountOffsetY or SitX/SitY), shifted by the current walk offset (Steps), then capped.
+  Computed on the main thread the first time the walk needs a body, at most 4 bodies a frame (BudgetPerFrame); until then,
+  and for bodies without frames, the fixed 160/260 plus the 200 top band. Bodies never sent cost nothing but their slot.
+- **Cross-check (ViewMarginBodyTests, CURRENT pack classic-1.6).** Untrimmed, the table equals bodyreach.py's formulas for
+  all 963 bodies (up/down measured from the drawn top, anchor + 19, so +3/-3 against the script). Trimmed: side max 299,
+  side with shadow max 539, up max 254, down max 192; 49 bodies over 160 side; beyond the caps: 20 bodies by the shadow only
+  (their shadows can pop in at the left edge), none by up or down. First sight costs 10.9 us per body on average, 25.7 us
+  worst (warm JIT, pinned, noisy machine), so the budget bounds a frame's cost at ~0.1 ms.
+- **Checker CUO_VIEW_MARGIN_BODY_CHECK=1** (both switch states): every world mobile anchored outside the view, tested as the
+  switch tests it, against the fixed margin and against its current frame's true box (all layers from the pack index); a
+  mobile left out whose frame meets the visible world is a mismatch unless reaching it needs more than the caps (counted as
+  accepted pop-in). FrameStats counter vm_body_mobiles_skipped (computed on the off arm too when FrameStats is on).
+- **Memory:** the table, 8 bytes per body slot (anim.bin's 2,048 slots: 16 KB per client), made on first use. No per-frame
+  allocation. **Cost:** per margin mobile one ECS row read and 1 + equipment-count table reads (~0.1 us, estimate), only for
+  mobiles anchored outside the view; the caps' rectangle adds dynamic tiles to the walk (not measured: timing parked).
+- **Limits.** The top band reaches tiles only through the fill's Z-agnostic band, so a mobile below Z -78 in the top band is
+  not walked; AnimationState of a mobile that has not been updated yet falls back to the fixed margin. Tests 13
+  (ViewMarginBodyTests). No client jobs this wave (owner): the batch section is in cuo-poc-state/measure/batch-1123.

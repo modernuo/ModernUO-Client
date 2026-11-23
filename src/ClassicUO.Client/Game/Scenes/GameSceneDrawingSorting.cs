@@ -731,6 +731,7 @@ namespace ClassicUO.Game.Scenes
             _walkPickTests = 0;
             FlushMarginCull();
             FlushMarginWalk();
+            FlushMarginBody();
 #if CUO_DEVTOOLS
             WalkMaxZ.FrameEnd(_drawFrame);
 #endif
@@ -1264,7 +1265,15 @@ namespace ClassicUO.Game.Scenes
                             }
 #endif
 
-                            if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
+                            bool mobileOutside = screenY < _minPixel.Y || screenY > _maxPixel.Y;
+
+                            // view_margin_body: the mobile's own reach decides (or is counted, switch off)
+                            if (_vmBodyTest)
+                            {
+                                mobileOutside = MarginBodySkips(mobile, screenX, screenY, mobileOutside);
+                            }
+
+                            if (mobileOutside)
                             {
                                 continue;
                             }
@@ -1485,6 +1494,14 @@ namespace ClassicUO.Game.Scenes
             if (_vmSprites)
             {
                 ViewMargin.ArtReach(Client.Game.UO.FileManager.Arts, out artSide, out artUp);
+
+                // view_margin_body: mobiles are kept out to the caps on their reach (the dynamic tiles, ViewMargin.BodyRect)
+                if (ViewMargin.BodyEnabled)
+                {
+                    artSide = Math.Max(artSide, BodyReach.CapSide);
+                    artUp = Math.Max(artUp, BodyReach.CapUp);
+                }
+
                 size += Math.Max(artSide, artUp) / 22 + 2;
 
                 if (ViewMargin.OverhangGrew)
@@ -1560,6 +1577,7 @@ namespace ClassicUO.Game.Scenes
             _offset.Y = winDrawOffsetY;
             Camera.SetWorldOffset(_offset.X, _offset.Y);
             BeginMarginWalk();
+            BeginMarginBody();
 
             _last_scaled_offset.X = winGameScaledOffsetX;
             _last_scaled_offset.Y = winGameScaledOffsetY;
@@ -1579,7 +1597,7 @@ namespace ClassicUO.Game.Scenes
                 chunk.StaticOverUp, out float minX, out float minY, out float maxX, out float maxY);
             FillDiamond.Bounds b = FillDiamond.Compute(_offset.X, _offset.Y, new Vector2(minX, minY), new Vector2(maxX, maxY), false, default, 0);
 
-            return inWalk & FillDiamond.ChunkMask(chunkX, chunkY, in b);
+            return MarginBodyTiles(chunk, chunkX, chunkY, inWalk, FillDiamond.ChunkMask(chunkX, chunkY, in b));
         }
 
         private struct TreeUnion
