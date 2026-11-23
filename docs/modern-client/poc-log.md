@@ -8867,3 +8867,37 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Measurement.** Jobs bench-001098 (shots: alternating cull off/on with view_margin on, 6 spots, both renderers, pixel compare
   with moving pixels masked), bench-001099/100 (paired in-process ABBA def/vm/vmc, quiet-1123 spots, NOT QUIET). Results: see
   the handoff/follow-up entry.
+
+## 2026-11-23 vm-walk: view_margin_cull verdict, view_margin_walk, body reach (bg/vm-walk, base bg/vm-legacy f9c30eacc)
+
+- **view_margin_cull, Legacy counters + paired timing (bench-001107, NOT QUIET, in-process ABBA, 3 rounds, 1920x1080).**
+  Britain still vm -> vmc: render_list 5047 -> 2778 (-45 %), draw calls 137 -> 74 (-46 %), pick tests -45 %, world_draw
+  -40 %, prep_walk -15 % (tiles/objects unchanged: the walk is the same). Paired vs def: frame +20.3 % (vm) -> +1.0 % (vmc),
+  fps -15.0 % -> -2.2 %, world_prepare +89 % -> +66 %, draw +57 % -> +29 %. brwalk the same shape (frame +21.4 % -> +0.1 %).
+  Large scene: vmc saves less (render_list -5.8 %, draw calls -29 %, frame +23.3 % -> +19.4 %): its margin cost is the walk and
+  the unmeshed list entries (vm_margin_list 2264), which the cull does not touch. Visual verdict (shots) and Gpu numbers:
+  bench-001111 / bench-001108, read by the next agent (handoff vm-walk.md). alloc/frame: no change.
+- **view_margin_walk (cb5efaa1c, default off; CUO_VIEW_MARGIN_WALK=1|0; needs chunk_lights).** The remaining margin cost is
+  the walk itself: every chunk's ring is max(overhang, mobile 160/260), so every land tile of the ring is walked. With the
+  switch on, a tile outside the view's own diamond is walked only when `Chunk.ReachCells` (statics and multi pieces whose art
+  reaches past their tile: wider than 44 px or more than 88 px tall; stretched land whose corners rise more than 44 px; set as
+  objects join, cleared on load) or the dynamic index has it, and an object anchored in the margin is processed only when its
+  box meets the view (flat land never; stretched land by its corners; statics by art; items and multi pieces by art + 48 px
+  for boat motion and stacks; mobiles, corpses, effects and multi items always). Draw order is unchanged (the walk keeps its
+  tile order; it only skips). Walked margin tiles use the screen-position generation check (stale positions after skipped
+  frames). The cull and the walk combine. Chosen over a per-chunk object list (owner's option a): same draw-order guarantees
+  without a second structure to keep in step with tile lists, multis and item moves; a stale ReachCells bit only costs a walk.
+  Known differences from the full ring walk: margin objects left out are not stamped DrawnFrame, so a hidden-roof piece in the
+  margin no longer occludes lights (GameSceneLightOcclusion: drawn-or-visible test), and a left-out object above the walk's
+  max Z (150) no longer ends its tile's walk; both the same as view_margin off.
+  Checker CUO_VIEW_MARGIN_WALK_CHECK=1 (both states): every object of the full ring left out (tile or object) whose chunk mesh
+  quad (or art box) meets the visible world is a mismatch. CUO_VIEW_MARGIN_LOG=1 logs the art reach and walked chunks'
+  overhang. FrameStats: vm_ring_tiles_skipped, vm_ring_objects_skipped (with FrameStats on the off arm also computes the
+  decision, a small cost on that arm). No per-frame allocation, no new memory beyond 8 bytes per chunk. Tests:
+  ViewMarginWalkTests (19). Jobs: bench-001119 (shots + checkers), bench-001120..123 (equivalent viewport + paired arms).
+- **Mobile reach from the pack (measure/vm-walk/bodyreach.py, classic pack frames, no shadows or mount shift).** Up: max 251
+  px above the anchor box (MobileUp 260 holds). Side: max 299 px, 49 bodies over MobileSide 160 (38 monsters, e.g. 826, 728,
+  197, 1248, 198, 47; 3 equipment 1531/1532/1545; 7 animals). Down: frames reach up to 195 px below the anchor box (826,
+  1531/1532, 13, 77), but the margin has no top band (the walk's 44 px slack only), so such a mobile above the view top can pop
+  in. Not changed here (owner decision: raise MobileSide to ~300 and add a ~200 px top band for mobiles only, which the
+  dynamic index makes cheap under view_margin_walk).
