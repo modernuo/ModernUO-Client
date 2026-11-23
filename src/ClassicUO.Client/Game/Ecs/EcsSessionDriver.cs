@@ -1154,6 +1154,14 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // shadows on|off: the profile's mobile shadows (mobile_wall_order round 2: a capture without them isolates the
+                // shadow's pixels)
+                case "shadows" when args.Length > 0 && ProfileManager.CurrentProfile is { } shadowProfile:
+                    shadowProfile.ShadowsEnabled = args[0] == "on";
+                    Log.Info($"[ECS] driver: shadows {shadowProfile.ShadowsEnabled}");
+
+                    return false;
+
                 // mobilewall on|off: mobile_wall_order (MobileWallOrder; CUO_MOBILE_WALL_ORDER overrides it)
                 case "mobilewall" when args.Length > 0:
                     Settings.GlobalSettings.MobileWallOrder = args[0] == "on";

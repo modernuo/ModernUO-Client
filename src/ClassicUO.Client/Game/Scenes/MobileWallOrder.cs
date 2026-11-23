@@ -81,7 +81,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The rule applies: the switch is on and the depth key draws (depth_model has its own per-pixel walls).</summary>
         public static bool Rule => On && !DepthModel.On;
 
-        public const int MaxWalls = 6;
+        public const int MaxWalls = 16;
 
         /// <summary>Pixels of each half next to the north vertex column that do not count (a wall's art is a few pixels thick
         /// across its vertex column: the pack's brick walls reach 4-5 px into the other half).</summary>
@@ -98,6 +98,9 @@ namespace ClassicUO.Game.Scenes
             public ushort Graphic, X, Y;
             public sbyte Z;
             public byte Height;
+
+            /// <summary>A piece above the mobile on its own diagonal (bottom at or over its top): caps the upper strip only.</summary>
+            public bool Overhead;
         }
 
         [InlineArray(MaxWalls)]
@@ -118,11 +121,21 @@ namespace ClassicUO.Game.Scenes
             /// <summary>The depth tile's column less the mobile tile's, in tiles (a step's bump, View.CalculateDepthZ).</summary>
             public sbyte Du;
 
+            /// <summary>The lowest add a strip may be capped to (0: the upper strip's). Mid-step it is the tile sum of the
+            /// earlier of the two tiles less the depth tile's (−1 or −2), so every strip, the upper one included, may drop to
+            /// the key it has standing on that tile, behind a wall ahead of the tile it is leaving.</summary>
+            public sbyte MinAdd;
+
+            /// <summary>The mobile's composite columns [SpanLo, SpanHi) relative to its anchor column (its last FrameInfo: every
+            /// non-shadow layer), so all its layers' strips get one cap (a mount's strip capped while the rider's narrower one
+            /// is not let the rider's far foot through the horse). Empty (equal): each layer uses its own frame.</summary>
+            public short SpanLo, SpanHi;
+
             public WallList Walls;
 
             public bool Equals(Scan o)
             {
-                if (Active != o.Active || Count != o.Count || Du != o.Du)
+                if (Active != o.Active || Count != o.Count || Du != o.Du || MinAdd != o.MinAdd || SpanLo != o.SpanLo || SpanHi != o.SpanHi)
                 {
                     return false;
                 }
@@ -132,7 +145,7 @@ namespace ClassicUO.Game.Scenes
                     ref readonly Wall a = ref Walls[i];
                     ref readonly Wall b = ref o.Walls[i];
 
-                    if (a.D != b.D || a.Lo != b.Lo || a.Hi != b.Hi)
+                    if (a.D != b.D || a.Lo != b.Lo || a.Hi != b.Hi || a.Overhead != b.Overhead)
                     {
                         return false;
                     }
@@ -146,11 +159,16 @@ namespace ClassicUO.Game.Scenes
             public override int GetHashCode() => Count | (Active ? 256 : 0);
         }
 
-        // the tiles ahead of the depth tile and the in-front half of each (columns relative to the depth tile's centre column)
+        // the tiles ahead of a scanned tile and, for walls, the in-front half of each (columns relative to that tile's centre
+        // column); other pieces (boxes: tables, counters, easels) count over their whole diamond, [c - 22, c + 22)
         private static readonly sbyte[] s_dx = { 1, 0, 1, 2, 0 };
         private static readonly sbyte[] s_dy = { 0, 1, 1, 0, 2 };
         private static readonly short[] s_lo = { 22 + VertexMargin, -44, -22, 44 + VertexMargin, -66 };
         private static readonly short[] s_hi = { 44, -22 - VertexMargin, 22, 66, -44 - VertexMargin };
+
+        // the step's destination for each screen offset sign (View.CalculateDepthZ's cases): index (sign x + 1) * 3 + sign y + 1
+        private static readonly sbyte[] s_stepDx = { -1, -1, 0, -1, 0, 1, 0, 1, 1 };
+        private static readonly sbyte[] s_stepDy = { 0, 1, 1, -1, 0, 1, -1, -1, 0 };
 
         /// <summary>
         /// The scan for <paramref name="m"/> this frame (MobileAnimationSystem.SelectCached; part of the select key): empty
@@ -171,9 +189,13 @@ namespace ClassicUO.Game.Scenes
 
             if (map != null)
             {
-                DepthTile(m.X, m.Y, m.Offset, out int bx, out int by);
+                Vector3 offset = m.Offset;
+                DepthTile(m.X, m.Y, offset, out int bx, out int by);
                 s.Du = (sbyte)((bx - by) - (m.X - m.Y));
-                ScanAt(map, bx, by, m.Z, ref s);
+                ScanStep(map, m.X, m.Y, m.Z, offset, bx, by, ref s);
+                Rectangle fi = m.FrameInfo;
+                s.SpanLo = (short)-fi.X;
+                s.SpanHi = (short)(fi.Width - fi.X);
             }
 
 #if CUO_DEVTOOLS
@@ -210,16 +232,59 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        /// <summary>Fills <paramref name="s"/> with the walls ahead of depth tile (<paramref name="bx"/>, <paramref name="by"/>)
-        /// that hold z <paramref name="mz"/>.</summary>
-        internal static void ScanAt(Map.Map map, int bx, int by, int mz, ref Scan s)
+        /// <summary>The tile a step with this screen offset ends on (the mobile's own while it stands).</summary>
+        public static void StepTile(int x, int y, Vector3 offset, out int nx, out int ny)
         {
-            StaticTiles[] data = Chunk.StaticTileData;
+            int i = (Math.Sign(offset.X) + 1) * 3 + Math.Sign(offset.Y) + 1;
+            nx = x + s_stepDx[i];
+            ny = y + s_stepDy[i];
+        }
+
+        /// <summary>
+        /// Fills <paramref name="s"/> for a mobile on tile (<paramref name="x"/>, <paramref name="y"/>) at z <paramref name="mz"/>
+        /// with this step offset, sorted on depth tile (<paramref name="bx"/>, <paramref name="by"/>). Standing: the pieces ahead
+        /// of its tile. Mid-step (the sprite moves between two tiles while the key sorts it on the later one): the pieces ahead
+        /// of both tiles, and <see cref="Scan.MinAdd"/> lets every strip drop to the earlier tile's key.
+        /// </summary>
+        internal static void ScanStep(Map.Map map, int x, int y, int mz, Vector3 offset, int bx, int by, ref Scan s)
+        {
+            StepTile(x, y, offset, out int nx, out int ny);
+            int depthCol = bx - by;
+            ScanAt(map, x, y, mz, ((x - y) - depthCol) * 22, ref s);
+            ScanOverhead(map, x, y, mz, ((x - y) - depthCol) * 22, ref s);
+
+            if (nx != x || ny != y)
+            {
+                ScanAt(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ref s);
+                ScanOverhead(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ref s);
+                s.MinAdd = (sbyte)Math.Min(0, Math.Min(x + y, nx + ny) - (bx + by));
+            }
+        }
+
+        /// <summary>The mobile height the overhead rule assumes: UO's person height (the server's walk checks use it for mounted
+        /// mobiles too; a mounted rider's art reaches about 5 z higher, the seat offset).</summary>
+        public const int PersonHeight = 16;
+
+        /// <summary>The lowest add the upper strip is capped to under a piece overhead: its key stays above its own tile's
+        /// floor (D 100 (x + y) + 127 + z) and the pieces standing on it at its z (+ 128 + z).</summary>
+        public const float OverheadMinAdd = -0.49f;
+
+        /// <summary>
+        /// Adds to <paramref name="s"/> the pieces above a mobile on tile (<paramref name="tx"/>, <paramref name="ty"/>) at z
+        /// <paramref name="mz"/>: statics, multi pieces and ground items on that tile and its two neighbours on the same
+        /// diagonal whose bottom z is at or above <paramref name="mz"/> + <see cref="PersonHeight"/> (roofs, upper floors,
+        /// balconies, of any height). Such a piece shares screen pixels only with the mobile's upper part and is in front of it
+        /// there (rays rise toward the camera), but its key (+ 0.5 on the mobile's diagonal) lost to the upper strip (+ 1):
+        /// the rider's head over the roof eave on its own tile (owner, Felucca 1468 1712 0, roof z 23). Columns: the art's
+        /// within the tile's diamond.
+        /// </summary>
+        internal static void ScanOverhead(Map.Map map, int tx0, int ty0, int mz, int shift, ref Scan s)
+        {
             SpriteEntry[] sprites = SpritesForTests ?? Client.Game?.UO?.FileManager?.Arts?.PackSpriteEntries;
 
-            for (int t = 0; t < s_dx.Length; t++)
+            for (int k = -1; k <= 1; k++)
             {
-                int tx = bx + s_dx[t], ty = by + s_dy[t];
+                int tx = tx0 + k, ty = ty0 - k;
                 Chunk chunk = map.GetChunk(tx, ty, false);
 
                 if (chunk == null)
@@ -227,7 +292,7 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                int c = (s_dx[t] - s_dy[t]) * 22;
+                int c = 2 * k * 22;
 
                 for (GameObject o = TileWalk.Begin(chunk, (tx & 7) << 3 | (ty & 7), out TileWalk walk); o != null; o = walk.Next())
                 {
@@ -243,24 +308,13 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    ushort g = o.Graphic;
-
-                    if (g >= data.Length)
+                    if (o.Z < mz + PersonHeight)
                     {
                         continue;
                     }
 
-                    ref StaticTiles td = ref data[g];
-
-                    if (!td.IsWall || mz < o.Z || mz >= o.Z + td.Height)
-                    {
-                        continue;
-                    }
-
-                    int lo = s_lo[t], hi = s_hi[t];
-
-                    // the art's opaque columns: View.DrawStatic puts the art's centre column (OrigW >> 1) on the north vertex
-                    int idx = PackConst.StaticSpriteBase + g;
+                    int lo = c - 22, hi = c + 22;
+                    int idx = PackConst.StaticSpriteBase + o.Graphic;
 
                     if (sprites != null && idx < sprites.Length && sprites[idx].Present && sprites[idx].OrigW != 0)
                     {
@@ -270,7 +324,7 @@ namespace ClassicUO.Game.Scenes
                         hi = Math.Min(hi, left + sp.W);
                     }
 
-                    if (lo >= hi)
+                    if (lo >= hi || Holds(in s, o, tx, ty))
                     {
                         continue;
                     }
@@ -284,33 +338,328 @@ namespace ClassicUO.Game.Scenes
 
                     ref Wall w = ref s.Walls[s.Count++];
                     w.D = 100 * (tx + ty) + 127 + o.PriorityZ;
-                    w.Lo = (short)lo;
-                    w.Hi = (short)hi;
-                    w.Graphic = g;
+                    w.Lo = (short)(lo + shift);
+                    w.Hi = (short)(hi + shift);
+                    w.Graphic = o.Graphic;
                     w.X = (ushort)tx;
                     w.Y = (ushort)ty;
                     w.Z = o.Z;
-                    w.Height = td.Height;
+                    w.Height = o.Graphic < Chunk.StaticTileData.Length ? Chunk.StaticTileData[o.Graphic].Height : (byte)0;
+                    w.Overhead = true;
                 }
             }
+        }
+
+        /// <summary>Fills <paramref name="s"/> with the walls ahead of depth tile (<paramref name="bx"/>, <paramref name="by"/>)
+        /// that hold z <paramref name="mz"/>.</summary>
+        internal static void ScanAt(Map.Map map, int bx, int by, int mz, ref Scan s) => ScanAt(map, bx, by, mz, 0, ref s);
+
+        /// <summary>
+        /// Adds to <paramref name="s"/> the pieces ahead of tile (<paramref name="bx"/>, <paramref name="by"/>) that hold z
+        /// <paramref name="mz"/>, their columns moved by <paramref name="shift"/> (that tile's centre column less the depth
+        /// tile's). A piece is a static, multi piece or ground item with tiledata height &gt; 0 whose [z, z + height) holds
+        /// <paramref name="mz"/>: walls (and doors) count with their in-front half, other pieces with their whole diamond;
+        /// height-0 flats, stairs and bridges (Bridge / StairBack / StairRight) never count. A wall found ahead continues as a
+        /// segment: the wall pieces on the neighbouring tiles of the same line (a left-half piece's line runs along x, a
+        /// right-half piece's along y; a corner continues both), with their face half and their own key, up to
+        /// <see cref="SegmentReach"/> tiles each way, so a wide sprite or its shadow reaching a piece further along the wall
+        /// (beyond the five tiles) is capped by it too.
+        /// </summary>
+        internal static void ScanAt(Map.Map map, int bx, int by, int mz, int shift, ref Scan s)
+        {
+            StaticTiles[] data = Chunk.StaticTileData;
+            SpriteEntry[] sprites = SpritesForTests ?? Client.Game?.UO?.FileManager?.Arts?.PackSpriteEntries;
+
+            // the scanned tiles first (their pieces keep their in-front columns), then the segments from them
+            Span<int> found = stackalloc int[5];
+
+            for (int t = 0; t < s_dx.Length; t++)
+            {
+                found[t] = AddPieces(map, data, sprites, bx + s_dx[t], by + s_dy[t], (s_dx[t] - s_dy[t]) * 22, mz, shift, s_lo[t], s_hi[t], LineAny, ref s);
+            }
+
+            for (int t = 0; t < s_dx.Length; t++)
+            {
+                int dx = s_dx[t], dy = s_dy[t];
+                int lines = found[t];
+
+                for (int k = 1; k <= SegmentReach && (lines & LineX) != 0; k++)
+                {
+                    if ((AddPieces(map, data, sprites, bx + dx + k, by + dy, (dx + k - dy) * 22, mz, shift, 0, 0, LineX, ref s) & LineX) == 0)
+                    {
+                        break;
+                    }
+                }
+
+                for (int k = 1; k <= SegmentReach && (lines & LineX) != 0; k++)
+                {
+                    if ((AddPieces(map, data, sprites, bx + dx - k, by + dy, (dx - k - dy) * 22, mz, shift, 0, 0, LineX, ref s) & LineX) == 0)
+                    {
+                        break;
+                    }
+                }
+
+                for (int k = 1; k <= SegmentReach && (lines & LineY) != 0; k++)
+                {
+                    if ((AddPieces(map, data, sprites, bx + dx, by + dy + k, (dx - dy - k) * 22, mz, shift, 0, 0, LineY, ref s) & LineY) == 0)
+                    {
+                        break;
+                    }
+                }
+
+                for (int k = 1; k <= SegmentReach && (lines & LineY) != 0; k++)
+                {
+                    if ((AddPieces(map, data, sprites, bx + dx, by + dy - k, (dx - dy + k) * 22, mz, shift, 0, 0, LineY, ref s) & LineY) == 0)
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        /// <summary>Tiles a wall segment is followed each way from a piece found ahead (a wide mount's shadow reaches about
+        /// three tiles' columns).</summary>
+        public const int SegmentReach = 3;
+
+        private const int LineX = 1, LineY = 2, LineAny = 4;
+
+        /// <summary>
+        /// The pieces of tile (<paramref name="tx"/>, <paramref name="ty"/>) (north vertex at column <paramref name="c"/>) that
+        /// hold <paramref name="mz"/>. <paramref name="line"/> <see cref="LineAny"/>: a scanned tile; walls take [lo, hi) (their
+        /// in-front half), other pieces their diamond. <see cref="LineX"/> / <see cref="LineY"/>: a segment tile; only wall
+        /// pieces of that line count, with their face half. Returns the lines of the wall pieces found (LineX | LineY).
+        /// </summary>
+        private static int AddPieces(Map.Map map, StaticTiles[] data, SpriteEntry[] sprites, int tx, int ty, int c, int mz, int shift,
+            int lo0, int hi0, int line, ref Scan s)
+        {
+            Chunk chunk = map.GetChunk(tx, ty, false);
+
+            if (chunk == null)
+            {
+                return 0;
+            }
+
+            int lines = 0;
+
+            for (GameObject o = TileWalk.Begin(chunk, (tx & 7) << 3 | (ty & 7), out TileWalk walk); o != null; o = walk.Next())
+            {
+                if (o is Item it)
+                {
+                    if (it.IsDestroyed || !it.OnGround || it.IsCorpse || it.IsMulti)
+                    {
+                        continue;
+                    }
+                }
+                else if (o is not Static && o is not Multi)
+                {
+                    continue;
+                }
+
+                ushort g = o.Graphic;
+
+                if (g >= data.Length)
+                {
+                    continue;
+                }
+
+                ref StaticTiles td = ref data[g];
+
+                if (td.Height == 0 || mz < o.Z || mz >= o.Z + td.Height ||
+                    (td.Flags & (TileFlag.Bridge | TileFlag.StairBack | TileFlag.StairRight)) != 0)
+                {
+                    continue;
+                }
+
+                if (line != LineAny && !td.IsWall)
+                {
+                    continue;
+                }
+
+                // the art's opaque columns: View.DrawStatic puts the art's centre column (OrigW >> 1) on the north vertex
+                int artLo = c - 22, artHi = c + 22;
+                int idx = PackConst.StaticSpriteBase + g;
+
+                if (sprites != null && idx < sprites.Length && sprites[idx].Present && sprites[idx].OrigW != 0)
+                {
+                    ref readonly SpriteEntry sp = ref sprites[idx];
+                    artLo = c - (sp.OrigW >> 1) + sp.TrimX;
+                    artHi = artLo + sp.W;
+                }
+
+                // a wall's line from where its art lies: the left half is a face along x (Y = y + 1), the right half along y
+                int pieceLines = 0;
+
+                if (td.IsWall)
+                {
+                    if (artLo < c - VertexMargin)
+                    {
+                        pieceLines |= LineX;
+                    }
+
+                    if (artHi > c + VertexMargin)
+                    {
+                        pieceLines |= LineY;
+                    }
+                }
+
+                int lo, hi;
+
+                if (line == LineAny)
+                {
+                    lo = td.IsWall ? lo0 : c - 22;
+                    hi = td.IsWall ? hi0 : c + 22;
+                }
+                else if ((pieceLines & line) != 0)
+                {
+                    // the face half of the segment's line
+                    lo = line == LineX ? c - 22 : c + VertexMargin;
+                    hi = line == LineX ? c - VertexMargin : c + 22;
+                }
+                else
+                {
+                    continue;
+                }
+
+                lo = Math.Max(lo, artLo);
+                hi = Math.Min(hi, artHi);
+
+                if (lo >= hi)
+                {
+                    continue;
+                }
+
+                // only a piece that counts ahead starts a segment
+                lines |= pieceLines & (line == LineAny ? LineX | LineY : line);
+
+                if (Holds(in s, o, tx, ty))
+                {
+                    continue;
+                }
+
+                if (s.Count >= MaxWalls)
+                {
+                    s.Dropped++;
+
+                    continue;
+                }
+
+                ref Wall w = ref s.Walls[s.Count++];
+                w.D = 100 * (tx + ty) + 127 + o.PriorityZ;
+                w.Lo = (short)(lo + shift);
+                w.Hi = (short)(hi + shift);
+                w.Graphic = g;
+                w.X = (ushort)tx;
+                w.Y = (ushort)ty;
+                w.Z = o.Z;
+                w.Height = td.Height;
+            }
+
+            return lines;
+        }
+
+        // a piece both tiles of a step see is kept once
+        private static bool Holds(in Scan s, GameObject o, int tx, int ty)
+        {
+            for (int i = 0; i < s.Count; i++)
+            {
+                ref readonly Wall w = ref s.Walls[i];
+
+                if (w.X == tx && w.Y == ty && w.Z == o.Z && w.Graphic == o.Graphic)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
         /// The add (MobileSpriteExtract.DepthOf kind 1: depth + 1 + add) of a strip below the anchor whose frame covers columns
         /// [<paramref name="lo"/>, <paramref name="hi"/>) relative to the depth tile's centre column: <paramref name="add"/>, or
-        /// less so the strip's key is one below the lowest wall of <paramref name="s"/> it overlaps (never below 0, the upper
-        /// strip's). <paramref name="wall"/>: that wall's index, −1 when none overlaps.
+        /// less so the strip's key is one below the lowest wall of <paramref name="s"/> it overlaps (never below
+        /// <see cref="Scan.MinAdd"/>: 0, the upper strip's, unless mid-step). <paramref name="wall"/>: that wall's index, −1 when none overlaps.
         /// </summary>
-        public static float CapAdd(float add, in Scan s, int lo, int hi, float depth, out int wall)
+        public static float CapAdd(float add, in Scan s, int lo, int hi, float depth, out int wall) =>
+            CapAdd(add, in s, lo, hi, depth, false, out wall);
+
+        /// <summary><see cref="CapAdd(float, in Scan, int, int, float, out int)"/> for strip <paramref name="upper"/> (the strip
+        /// from the frame top to the anchor): the overhead pieces cap it too, down to <see cref="OverheadMinAdd"/>; the pieces
+        /// ahead cap it only mid-step (<see cref="Scan.MinAdd"/> below 0). The strips below the anchor ignore overhead pieces.</summary>
+        public static float CapAdd(float add, in Scan s, int lo, int hi, float depth, bool upper, out int wall)
         {
             wall = -1;
+            int minD = int.MaxValue, minOver = int.MaxValue, over = -1;
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                ref readonly Wall w = ref s.Walls[i];
+
+                if (lo >= w.Hi || hi <= w.Lo)
+                {
+                    continue;
+                }
+
+                if (w.Overhead)
+                {
+                    if (upper && w.D < minOver)
+                    {
+                        minOver = w.D;
+                        over = i;
+                    }
+                }
+                else if ((!upper || s.MinAdd < 0) && w.D < minD)
+                {
+                    minD = w.D;
+                    wall = i;
+                }
+            }
+
+            float result = add;
+
+            // DepthOf's key is round((depth + 1 + add) * 100) − 50; D − 1 needs depth + 1 + add = (D + 49) / 100
+            if (wall >= 0)
+            {
+                float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), s.MinAdd);
+
+                if (cap < result)
+                {
+                    result = cap;
+                }
+            }
+
+            if (over >= 0)
+            {
+                float cap = Math.Max((float)((minOver + 49) / 100.0 - (double)(depth + 1f)), Math.Min(OverheadMinAdd, (float)s.MinAdd));
+
+                if (cap < result)
+                {
+                    result = cap;
+                    wall = over;
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// The add (DepthOf kind 1) of a shadow layer over columns [<paramref name="lo"/>, <paramref name="hi"/>) relative to the
+        /// depth tile's centre column: −1 (its base depth, as kind 0 draws it) or less, one key below the lowest piece of
+        /// <paramref name="s"/> it overlaps. A shadow lies on the floor, and a floor pixel sharing a screen pixel with a piece
+        /// standing on that floor is behind the piece's face, so a shadow loses to every overlapped piece, behind the mobile's
+        /// diagonal too (the shadow cast north-east over the next wall pieces of a line, owner Felucca 1453 1665). Floors
+        /// already out-key shadows, so no lower bound. False: nothing overlapped.
+        /// </summary>
+        public static bool ShadowAdd(in Scan s, int lo, int hi, float depth, out float add, out int wall)
+        {
+            wall = -1;
+            add = -1f;
             int minD = int.MaxValue;
 
             for (int i = 0; i < s.Count; i++)
             {
                 ref readonly Wall w = ref s.Walls[i];
 
-                if (lo < w.Hi && hi > w.Lo && w.D < minD)
+                if (!w.Overhead && lo < w.Hi && hi > w.Lo && w.D < minD)
                 {
                     minD = w.D;
                     wall = i;
@@ -319,18 +668,19 @@ namespace ClassicUO.Game.Scenes
 
             if (wall < 0)
             {
-                return add;
+                return false;
             }
 
-            // DepthOf's key is round((depth + 1 + add) * 100) − 50; D − 1 needs depth + 1 + add = (D + 49) / 100
             float cap = (float)((minD + 49) / 100.0 - (double)(depth + 1f));
 
-            if (cap < 0f)
+            if (cap >= add)
             {
-                cap = 0f;
+                return false;
             }
 
-            return cap < add ? cap : add;
+            add = cap;
+
+            return true;
         }
 
 #if CUO_DEVTOOLS

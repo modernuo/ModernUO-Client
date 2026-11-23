@@ -491,6 +491,24 @@ namespace ClassicUO.Game
 
             if (isShadow)
             {
+                // mobile_wall_order: the shadow (sheared right by up to half its height) loses to the pieces it overlaps
+                if (_wall.Count != 0 && !_submerged &&
+                    Scenes.MobileWallOrder.ShadowAdd(in _wall, x - _wallRefX, x - _wallRefX + w + h / 2, depth, out float shadowAdd, out int shadowWall))
+                {
+#if CUO_DEVTOOLS
+                    if (Scenes.MobileWallOrder.Check)
+                    {
+                        Scenes.MobileWallOrder.NoteMoved(in _wall, shadowWall, _objX, _objY, _objZ, id, -1, h, x - _wallRefX, x - _wallRefX + w + h / 2, depth, -1f, shadowAdd);
+                    }
+#endif
+                    if (_wall.Active)
+                    {
+                        Write(index, x, y, 0, h, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), mirror, depth, 1, shadowAdd);
+
+                        return;
+                    }
+                }
+
                 Write(index, x, y, 0, h, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), mirror, depth, 0, 0f);
 
                 return;
@@ -517,13 +535,14 @@ namespace ClassicUO.Game
                 {
                     float add = StripAdd(i, x, w, depth);
 #if CUO_DEVTOOLS
-                    if (Scenes.MobileWallOrder.Check && i > 0 && _wall.Count != 0 && !_submerged)
+                    if (Scenes.MobileWallOrder.Check && _wall.Count != 0 && !_submerged)
                     {
-                        float capped = Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, x - _wallRefX, x - _wallRefX + w, depth, out int wall);
+                        StripColumns(x, w, out int clo, out int chi);
+                        float capped = Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, clo, chi, depth, i == 0, out int wall);
 
                         if (capped < i * 2)
                         {
-                            Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, i, strips[i].H, x - _wallRefX, x - _wallRefX + w, depth, i * 2, capped);
+                            Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, i, strips[i].H, clo, chi, depth, i * 2, capped);
                         }
                     }
 #endif
@@ -533,7 +552,8 @@ namespace ClassicUO.Game
         }
 
         // the add of strip i (DepthOf kind 1): + 2i, + 0 under a wet surface (wet_surface_depth), and with mobile_wall_order the
-        // strips below the anchor capped just behind a wall ahead that the frame's columns overlap (MobileWallOrder.CapAdd)
+        // strips below the anchor capped just behind a piece ahead that the composite's columns overlap, the upper strip just
+        // behind a piece overhead (and mid-step behind a piece ahead of the tile it leaves) (MobileWallOrder.CapAdd)
         private float StripAdd(int i, int x, int w, float depth)
         {
             if (_submerged)
@@ -543,12 +563,29 @@ namespace ClassicUO.Game
 
             float add = i * 2;
 
-            if (i > 0 && _wall.Active && _wall.Count != 0)
+            if (_wall.Active && _wall.Count != 0)
             {
-                add = Scenes.MobileWallOrder.CapAdd(add, in _wall, x - _wallRefX, x - _wallRefX + w, depth, out _);
+                StripColumns(x, w, out int lo, out int hi);
+                add = Scenes.MobileWallOrder.CapAdd(add, in _wall, lo, hi, depth, i == 0, out _);
             }
 
             return add;
+        }
+
+        // mobile_wall_order: a strip's columns relative to the depth tile's centre: the composite's (MobileWallOrder.Scan.SpanLo,
+        // the last FrameInfo, so every layer gets one cap), else the layer's frame [x, x + w)
+        private void StripColumns(int x, int w, out int lo, out int hi)
+        {
+            if (_wall.SpanHi > _wall.SpanLo)
+            {
+                lo = _geoAnchorX + _wall.SpanLo - _wallRefX;
+                hi = _geoAnchorX + _wall.SpanHi - _wallRefX;
+            }
+            else
+            {
+                lo = x - _wallRefX;
+                hi = x - _wallRefX + w;
+            }
         }
 
         private void AddLight(uint item, int x, int y)
