@@ -269,14 +269,9 @@ namespace ClassicUO.Game
                                 {
                                     int objZ = obj.Z;
                                     int staticHeight = itemdata.Height;
-                                    int staticAverageZ = staticHeight;
-
-                                    if (itemdata.IsBridge)
-                                    {
-                                        staticAverageZ /= 2;
-                                        // revert fix from fwiffo because it causes unwalkable stairs [down --> up]
-                                        //staticAverageZ += staticHeight % 2;
-                                    }
+                                    // revert fix from fwiffo because it causes unwalkable stairs [down --> up]: a bridge's
+                                    // top is z + height / 2, not rounded up
+                                    int staticAverageZ = WalkableTop(0, staticHeight, itemdata.IsBridge);
 
                                     list.Add
                                     (
@@ -299,6 +294,13 @@ namespace ClassicUO.Game
 
             return list.Count != 0;
         }
+
+        /// <summary>How far above its z a mobile may step onto a surface's walkable top or a bridge's base (CalculateMinMaxZ's
+        /// maxZ). Shared with Scenes.MobileWallOrder (a piece the mobile could step onto does not cover it).</summary>
+        internal const int ClimbLimit = 2;
+
+        /// <summary>A static's walkable top (PathObject.AverageZ): z + height, a bridge's z + height / 2.</summary>
+        internal static int WalkableTop(int z, int height, bool bridge) => z + (bridge ? height / 2 : height);
 
         private int CalculateMinMaxZ
         (
@@ -369,7 +371,7 @@ namespace ClassicUO.Game
                 }
             }
 
-            maxZ += 2;
+            maxZ += ClimbLimit;
 
             return maxZ;
         }

@@ -237,6 +237,7 @@ namespace ClassicUO.Game
             _geoAnchorY = drawY;
             // mobile_wall_order: the centre column of the tile the depth key sorts the mobile on
             _wallRefX = posX + 22 + _wall.Du * 22;
+            _wallRefY = posY + 22 + _wall.Dv * 22;
             float alpha = rs.Alpha / 255f;
             bool mirror = (s.Flags & AnimStateFlags.Mirror) != 0;
             bool shadow = (s.Flags & AnimStateFlags.Shadow) != 0;
@@ -491,6 +492,24 @@ namespace ClassicUO.Game
 
             if (isShadow)
             {
+                // mobile_wall_order: the shadow (sheared right by up to half its height) loses to the pieces it overlaps
+                if (_wall.Count != 0 && !_submerged &&
+                    Scenes.MobileWallOrder.ShadowAdd(in _wall, x - _wallRefX, x - _wallRefX + w + h / 2, depth, out float shadowAdd, out int shadowWall))
+                {
+#if CUO_DEVTOOLS
+                    if (Scenes.MobileWallOrder.Check)
+                    {
+                        Scenes.MobileWallOrder.NoteMoved(in _wall, shadowWall, _objX, _objY, _objZ, id, -1, h, x - _wallRefX, x - _wallRefX + w + h / 2, depth, -1f, shadowAdd);
+                    }
+#endif
+                    if (_wall.Active)
+                    {
+                        Write(index, x, y, 0, h, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), mirror, depth, 1, shadowAdd);
+
+                        return;
+                    }
+                }
+
                 Write(index, x, y, 0, h, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), mirror, depth, 0, 0f);
 
                 return;
@@ -517,23 +536,38 @@ namespace ClassicUO.Game
                 {
                     float add = StripAdd(i, x, w, depth);
 #if CUO_DEVTOOLS
-                    if (Scenes.MobileWallOrder.Check && i > 0 && _wall.Count != 0 && !_submerged)
+                    if (Scenes.MobileWallOrder.Check && _wall.Count != 0 && !_submerged)
                     {
-                        float capped = Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, x - _wallRefX, x - _wallRefX + w, depth, out int wall);
+                        StripColumns(x, w, out int clo, out int chi);
+                        float capped = Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, clo, chi, depth, i == 0, out int wall);
 
                         if (capped < i * 2)
                         {
-                            Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, i, strips[i].H, x - _wallRefX, x - _wallRefX + w, depth, i * 2, capped);
+                            Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, i, strips[i].H, clo, chi, depth, i * 2, capped);
                         }
                     }
 #endif
+                    if (i == 0 && _wall.Count != 0 && !_submerged && OverheadRows(x, w, y + strips[0].Y, strips[0].H, depth, add, id, out int topRows, out float topAdd))
+                    {
+                        // mobile_wall_order: the upper strip's rows under a piece overhead behind it, the rest as before
+                        Write(index, x, y + strips[0].Y, strips[0].Y, topRows, hueVec, mirror, depth, 1, topAdd);
+
+                        if (strips[0].H > topRows)
+                        {
+                            Write(index, x, y + strips[0].Y + topRows, strips[0].Y + topRows, strips[0].H - topRows, hueVec, mirror, depth, 1, add);
+                        }
+
+                        continue;
+                    }
+
                     Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, add);
                 }
             }
         }
 
         // the add of strip i (DepthOf kind 1): + 2i, + 0 under a wet surface (wet_surface_depth), and with mobile_wall_order the
-        // strips below the anchor capped just behind a wall ahead that the frame's columns overlap (MobileWallOrder.CapAdd)
+        // strips below the anchor capped just behind a piece ahead that the composite's columns overlap, the upper strip just
+        // behind a piece overhead (and mid-step behind a piece ahead of the tile it leaves) (MobileWallOrder.CapAdd)
         private float StripAdd(int i, int x, int w, float depth)
         {
             if (_submerged)
@@ -543,12 +577,57 @@ namespace ClassicUO.Game
 
             float add = i * 2;
 
-            if (i > 0 && _wall.Active && _wall.Count != 0)
+            if (_wall.Active && _wall.Count != 0)
             {
-                add = Scenes.MobileWallOrder.CapAdd(add, in _wall, x - _wallRefX, x - _wallRefX + w, depth, out _);
+                StripColumns(x, w, out int lo, out int hi);
+                add = Scenes.MobileWallOrder.CapAdd(add, in _wall, lo, hi, depth, i == 0, out _);
             }
 
             return add;
+        }
+
+        // mobile_wall_order: the rows of the upper strip (screen rows [top, top + h)) a piece overhead covers, and their add
+        private bool OverheadRows(int x, int w, int top, int h, float depth, float add, ushort id, out int rows, out float topAdd)
+        {
+            rows = 0;
+            StripColumns(x, w, out int lo, out int hi);
+
+            if (!Scenes.MobileWallOrder.OverheadSplit(in _wall, lo, hi, depth, add, out int splitRow, out topAdd, out int wall))
+            {
+                return false;
+            }
+
+            rows = Math.Min(h, _wallRefY + splitRow - top);
+
+            if (rows <= 0)
+            {
+                return false;
+            }
+
+#if CUO_DEVTOOLS
+            if (Scenes.MobileWallOrder.Check)
+            {
+                Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, 0, rows, lo, hi, depth, add, topAdd);
+            }
+#endif
+
+            return _wall.Active;
+        }
+
+        // mobile_wall_order: a strip's columns relative to the depth tile's centre: the composite's (MobileWallOrder.Scan.SpanLo,
+        // the last FrameInfo, so every layer gets one cap), else the layer's frame [x, x + w)
+        private void StripColumns(int x, int w, out int lo, out int hi)
+        {
+            if (_wall.SpanHi > _wall.SpanLo)
+            {
+                lo = _geoAnchorX + _wall.SpanLo - _wallRefX;
+                hi = _geoAnchorX + _wall.SpanHi - _wallRefX;
+            }
+            else
+            {
+                lo = x - _wallRefX;
+                hi = x - _wallRefX + w;
+            }
         }
 
         private void AddLight(uint item, int x, int y)
@@ -652,7 +731,7 @@ namespace ClassicUO.Game
         // mobile_wall_order (key mode): the mobile's wall scan (MobileFrameCache.Wall, part of the select key) and the screen
         // column of its depth tile's centre, which the scan's wall columns are relative to
         private Scenes.MobileWallOrder.Scan _wall;
-        private int _wallRefX;
+        private int _wallRefX, _wallRefY;
 #if CUO_DEVTOOLS
         // CUO_CLIP_ORDER_CHECK: the mobile's tile y and whether it stands still (ClipOrderCheck.Layer)
         private int _objY;
