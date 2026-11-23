@@ -8846,3 +8846,30 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
 - **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
   allocation; not timed.
+
+## mwo-perf: mobile_wall_order large-scene regression (bg/mwo-perf, 2026-11-23)
+
+- **The ~310 allocations/frame** (quiet-1123 busy-gpu, ls with the switch on) are 310 *bytes* per frame and are not the rule's:
+  FrameStats' session timeline logs one "[gcs] slow frame" line (string.Format, boxed doubles, Log.Info) for every frame over
+  8 ms, and with the switch on every ls frame took ~27 ms. bench-001082: main-thread alloc p50 272 B on 184 of 184 frames
+  (hitch8), 0 B with the switch off. In lswalk the bytes per second are the same in both arms (0.6-0.97 MB/s: packets, chunk
+  loads); per frame they are x10 because fps is /10. The scan itself allocates nothing. FrameStats now leaves the line's
+  bytes out of alloc_bytes / alloc_per_frame and reports them as stats_self_alloc (c3b7f38bc).
+- **The cost** was the scan: run for every mobile every frame before the select-cache test (5 tiles ahead + segments, sides,
+  overhead, stand top, 12 behind with a shadow, twice mid-step), and its frame span came from the last draw's FrameInfo, a
+  frame late, so every animation frame changed the select key twice (re-select, re-record). Counters per frame (mwo_scans,
+  mwo_tiles, mwo_objects, mob_select_*, mob_emit_misses, mob_legacy_misses): bench-001109 (old) vs bench-001118 (new).
+- **Design (owner-approved), behind the existing switch:** Scan is a class (shared Empty; kept results pooled, wall array
+  from BufferPool sized to the count; the select key holds its version). Chunk keeps a per-tile cap summary (highest top of
+  pieces with height, highest z of any piece and of items without height) with CapVersion (pieces with height, statics,
+  multis) and CapFlatVersion (items without height: a dropped coin does not invalidate). Resolve keeps a mobile's scan while
+  tile, z, step, shadow, rule and the cap versions of the chunks the scan read are unchanged; otherwise Empty when the
+  summaries show nothing around (no tile walk), else the full scan. The composite span is measured by the extract before the
+  strips (same steady-state output, no frame lag). CUO_MOBILE_WALL_ORDER_CACHE_CHECK=1 compares every result with a full scan.
+- **Tests.** MobileWallOrderTests 79 (cache hit, open field, coin vs table, flat item overhead, cap summary, a random-room fuzz
+  of Resolve vs the full scan over steps, shadows and item changes, no allocation over steps and idle frames).
+  ClassicUO.UnitTests dev 8751 / 6 skipped. Release builds: both variants.
+- **Memory.** Chunk: 192 B summary + 8 B per chunk; per mobile frame cache ~170 B ScanCache; kept scans only for mobiles with
+  walls (wall arrays pooled, up to 256 scan objects pooled).
+- **Pending jobs:** bench-001115 (checker in Britain and the large scene), 001116/001117 (parity shots new/old), 001118
+  (counters/alloc, not quiet). Quiet timing parked: measure/mwo-perf/job-qs1/qs2-PARKED.sh (quiet-next.md row).
