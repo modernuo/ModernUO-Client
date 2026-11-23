@@ -8,22 +8,17 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Renderer
 {
-    // ui_border_bake (G11a): the switch, and where the B8 results say the UI target changed. The composite itself needs a
-    // device; CUO_UI_COMPOSITE_CHECK compares it pixel for pixel in a running client.
+    // ui_border_bake (G11a, permanent since quiet-1123): where the B8 results say the UI target changed. The composite itself
+    // needs a device.
     public class UiCompositeSwitchTests
     {
         private static RenderGeometry Geometry() => RenderGeometry.Compute(0, 0, 1920, 1080, 1f, new Rectangle(20, 30, 1200, 800));
 
-        [Fact]
-        public void Default_Is_Off()
-        {
-            new Settings().UiBorderBake.Should().BeFalse();
-        }
-
+        // an old settings.json that still names the retired key loads (unknown keys are skipped)
         [Theory]
-        [InlineData("true", true)]
-        [InlineData("false", false)]
-        public void Key_Loads_In_Both_States(string value, bool expected)
+        [InlineData("true")]
+        [InlineData("false")]
+        public void Retired_Key_Still_Loads(string value)
         {
             string path = Path.Combine(Path.GetTempPath(), $"cuo-uiborderbake-{Guid.NewGuid():N}.json");
 
@@ -31,7 +26,7 @@ namespace ClassicUO.UnitTests.Renderer
             {
                 File.WriteAllText(path, $"{{\n  \"username\": \"tester\",\n  \"ui_border_bake\": {value}\n}}\n");
 
-                ConfigurationResolver.Load(path, SettingsJsonContext.RealDefault.Settings).UiBorderBake.Should().Be(expected);
+                ConfigurationResolver.Load(path, SettingsJsonContext.RealDefault.Settings).Username.Should().Be("tester");
             }
             finally
             {
@@ -39,58 +34,29 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Override_Decides_The_Switch(bool on)
+        [Fact]
+        public void KeptUi_BakesNothing()
         {
-            UiComposite.OverrideForTests = on;
+            (UiBorderBake bake, RecordedPass pass, RenderGeometry g) = Baked(new Rectangle(100, 100, 32, 32));
+            Rectangle? cursor = new Rectangle(100, 100, 32, 32);
 
-            try
-            {
-                UiComposite.Enabled.Should().Be(on);
-            }
-            finally
-            {
-                UiComposite.OverrideForTests = null;
-            }
+            UiComposite.NoteUiChange(bake, g, RecordingResult.Same, RecordingResult.Same, pass, ref cursor);
+
+            bake.Next(g, 1, this, this, out _).Should().Be(BorderBakeKind.None);
         }
 
-        // The tracking runs in both switch states (a switch turned on mid-session bakes only what changed since), so the
-        // outcomes below hold in both.
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void KeptUi_BakesNothing(bool on)
+        [Fact]
+        public void CursorOnlyChange_BakesTheOldAndNewCursorRects()
         {
-            WithSwitch(on, () =>
-            {
-                (UiBorderBake bake, RecordedPass pass, RenderGeometry g) = Baked(new Rectangle(100, 100, 32, 32));
-                Rectangle? cursor = new Rectangle(100, 100, 32, 32);
+            (UiBorderBake bake, RecordedPass pass, RenderGeometry g) = Baked(new Rectangle(300, 200, 32, 32));
+            Rectangle? cursor = new Rectangle(100, 100, 32, 32);
 
-                UiComposite.NoteUiChange(bake, g, RecordingResult.Same, RecordingResult.Same, pass, ref cursor);
+            UiComposite.NoteUiChange(bake, g, RecordingResult.Same, RecordingResult.Changed, pass, ref cursor);
 
-                bake.Next(g, 1, this, this, out _).Should().Be(BorderBakeKind.None);
-            });
-        }
-
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void CursorOnlyChange_BakesTheOldAndNewCursorRects(bool on)
-        {
-            WithSwitch(on, () =>
-            {
-                (UiBorderBake bake, RecordedPass pass, RenderGeometry g) = Baked(new Rectangle(300, 200, 32, 32));
-                Rectangle? cursor = new Rectangle(100, 100, 32, 32);
-
-                UiComposite.NoteUiChange(bake, g, RecordingResult.Same, RecordingResult.Changed, pass, ref cursor);
-
-                bake.Next(g, 1, this, this, out Rectangle r).Should().Be(BorderBakeKind.Partial);
-                r.Contains(new Rectangle(100, 100, 32, 32)).Should().BeTrue();
-                r.Contains(new Rectangle(300, 200, 32, 32)).Should().BeTrue();
-                cursor.Should().Be(new Rectangle(300, 200, 32, 32));
-            });
+            bake.Next(g, 1, this, this, out Rectangle r).Should().Be(BorderBakeKind.Partial);
+            r.Contains(new Rectangle(100, 100, 32, 32)).Should().BeTrue();
+            r.Contains(new Rectangle(300, 200, 32, 32)).Should().BeTrue();
+            cursor.Should().Be(new Rectangle(300, 200, 32, 32));
         }
 
         [Theory]
@@ -117,21 +83,6 @@ namespace ClassicUO.UnitTests.Renderer
 
             bake.Next(g, 1, this, this, out _).Should().Be(BorderBakeKind.Full);
             cursor.Should().Be(new Rectangle(300, 200, 32, 32));
-        }
-
-        private static void WithSwitch(bool on, Action body)
-        {
-            UiComposite.OverrideForTests = on;
-
-            try
-            {
-                UiComposite.Enabled.Should().Be(on);
-                body();
-            }
-            finally
-            {
-                UiComposite.OverrideForTests = null;
-            }
         }
 
         // a border baked once, and a final pass: segment 0 the cache copy, segment 1 the cursor at cursorNow
