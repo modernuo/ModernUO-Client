@@ -248,6 +248,13 @@ namespace ClassicUO.Configuration
         // setting in developer builds. Default off.
         [JsonPropertyName("view_margin_walk")] public bool ViewMarginWalk { get; set; }
 
+        // vm-body (with view_margin): each mobile is tested against the view grown by its own body's reach (its frames,
+        // shadow, mount and equipment from the pack's animation index, capped at 320 beside, 300 above and 200 below) instead
+        // of the fixed 160/260 px, so humans keep a small margin, large bodies are drawn from further out, and frames reaching
+        // below their anchor get a top band. CUO_VIEW_MARGIN_BODY_CHECK=1 flags a mobile it leaves out that the fixed margin or
+        // its current frame would have drawn; CUO_VIEW_MARGIN_BODY=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("view_margin_body")] public bool ViewMarginBody { get; set; }
+
         // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
         // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
         // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose
