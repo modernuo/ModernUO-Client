@@ -39,32 +39,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
         }
 
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Surface_only_switch_override_wins_in_both_states(bool on)
-        {
-            LightOcclusion.SurfaceOnlyOverrideForTests = on;
-
-            try
-            {
-                Assert.Equal(on, LightOcclusion.SurfaceOnly);
-            }
-            finally
-            {
-                LightOcclusion.SurfaceOnlyOverrideForTests = null;
-            }
-        }
-
         [Fact]
-        public void Surface_only_masks_surface_glows_only()
+        public void Only_surface_glows_are_masked()
         {
-            // round 7: on, a radial light (candelabra, lamp, torch) gets no occluders; a surface glow (a lit window) does.
-            // Off: every light, as before
-            Assert.True(LightOcclusion.Masks(false, true));
-            Assert.True(LightOcclusion.Masks(false, false));
-            Assert.True(LightOcclusion.Masks(true, true));
-            Assert.False(LightOcclusion.Masks(true, false));
+            // round 7, folded into light_occlusion: a radial light (candelabra, lamp, torch) gets no occluders; a surface glow
+            // (a lit window) does
+            Assert.True(LightOcclusion.Masks(true));
+            Assert.False(LightOcclusion.Masks(false));
         }
 
         private static StaticTiles LitWindow() => new StaticTiles { Flags = TileFlag.Wall | TileFlag.Window | TileFlag.LightSource, Height = 20, Layer = 27 };

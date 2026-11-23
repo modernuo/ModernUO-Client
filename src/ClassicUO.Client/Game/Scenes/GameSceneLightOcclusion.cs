@@ -43,9 +43,8 @@ namespace ClassicUO.Game.Scenes
             public int Opaque;
         }
 
+        // light_occlusion: only surface glows get occluders and masks (LightOcclusion.Masks)
         private bool _lightOcclusion;
-        // light_occlusion_surface_only (with light_occlusion): only surface glows get occluders and masks (LightOcclusion.Masks)
-        private bool _surfaceOnly;
         // light_alpha_fade: surface glows fade with their emitter (_alphaFade); masks dithered to alpha (_ditherMasks, with
         // light_occlusion); the least alpha that masks (LightAlphaFade.MinMaskAlpha)
         private bool _alphaFade, _ditherMasks;
@@ -72,7 +71,6 @@ namespace ClassicUO.Game.Scenes
         private void BeginLightOcclusion(GraphicsDevice device)
         {
             _lightOcclusion = LightOcclusion.Enabled;
-            _surfaceOnly = _lightOcclusion && LightOcclusion.SurfaceOnly;
             _stencilRef = 0;
 #if CUO_DEVTOOLS
             _loPassLights = _loPassMasked = _loPassRadial = 0;
@@ -176,9 +174,9 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
-        // light l's occluders (light_occlusion, or its checker) into _occluders from _occBase: their count. With
-        // light_occlusion_surface_only a radial light gets none (no search, no stencil work); the checker still collects its
-        // occluders to count the radial lights the switch leaves unmasked
+        // light l's occluders (light_occlusion, or its checker) into _occluders from _occBase: their count. A radial light
+        // gets none (no search, no stencil work); the checker still collects its occluders to count the radial lights with
+        // occluders left unmasked
         private int CollectLightOccluders(ref FrameLights.Entry l, Vector2 pos, in SpriteInfo lightInfo)
         {
             if (!(_lightOcclusion || LightOcclusion.Check) || l.Source == null)
@@ -186,9 +184,7 @@ namespace ClassicUO.Game.Scenes
                 return 0;
             }
 
-            bool masks = LightOcclusion.Masks(_surfaceOnly, _surfaceOnly && SurfaceGlow(l.Source, l.ID, Client.Game.UO.FileManager.TileData.StaticData));
-
-            if (masks)
+            if (LightOcclusion.Masks(SurfaceGlow(l.Source, l.ID, Client.Game.UO.FileManager.TileData.StaticData)))
             {
                 return CollectLightOccludersCore(ref l, pos, in lightInfo);
             }
@@ -235,14 +231,14 @@ namespace ClassicUO.Game.Scenes
         private void DrawMasked(UltimaBatcher2D batcher, ref Matrix matrix, ref FrameLights.Entry l, int first, int n, in SpriteInfo lightInfo, Vector2 pos, Vector3 hue)
         {
 #if CUO_DEVTOOLS
-            // CUO_LIGHT_OCCLUSION_CHECK: light_occlusion_surface_only draws no radial light masked
-            if (LightOcclusion.Check && _surfaceOnly && !SurfaceGlow(l.Source, l.ID, Client.Game.UO.FileManager.TileData.StaticData))
+            // CUO_LIGHT_OCCLUSION_CHECK: light_occlusion draws no radial light masked
+            if (LightOcclusion.Check && !SurfaceGlow(l.Source, l.ID, Client.Game.UO.FileManager.TileData.StaticData))
             {
                 _loMismatches++;
 
                 if (_loMismatches <= 20)
                 {
-                    Log.Warn($"[light-occlusion-check] light_occlusion_surface_only: radial light {l.ID} from {l.SrcX},{l.SrcY},{l.SrcZ} " +
+                    Log.Warn($"[light-occlusion-check] radial light {l.ID} from {l.SrcX},{l.SrcY},{l.SrcZ} " +
                              $"(0x{l.Source.Graphic:X4}) drawn with {n} occluder sprites");
                 }
             }
@@ -639,8 +635,8 @@ namespace ClassicUO.Game.Scenes
 
 #if CUO_DEVTOOLS
         private long _loFrames, _loLights, _loOccludedLights, _loOccluderSprites, _loMismatches, _loRadialUnmasked;
-        // the last light pass's lights checked, lights drawn masked and radial lights with occluders left unmasked
-        // (light_occlusion_surface_only), for the summary
+        // the last light pass's lights checked, lights drawn masked and radial lights with occluders left unmasked, for the
+        // summary
         private int _loPassLights, _loPassMasked, _loPassRadial;
         private uint _loSummaryAt;
 
@@ -697,7 +693,7 @@ namespace ClassicUO.Game.Scenes
             if (Time.Ticks >= _loSummaryAt)
             {
                 _loSummaryAt = Time.Ticks + 5000;
-                Log.Info($"[light-occlusion-check] light_occlusion {(_lightOcclusion ? "on" : "off")} (surface_only {(_surfaceOnly ? "on" : "off")}): " +
+                Log.Info($"[light-occlusion-check] light_occlusion {(_lightOcclusion ? "on" : "off")}: " +
                          $"{_loFrames} light passes, {_loLights} lights checked, {_loOccludedLights} drawn with occluders ({_loOccluderSprites} occluder sprites), " +
                          $"{_loRadialUnmasked} radial lights with occluders left unmasked; last pass: {_loPassLights} lights, {_loPassMasked} masked, " +
                          $"{_loPassRadial} radial unmasked; mismatches {_loMismatches}");

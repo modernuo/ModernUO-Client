@@ -30,7 +30,7 @@ namespace ClassicUO.Game.Scenes
 
         // light id's glow from emitter src is a surface glow (LightAlphaFade.IsSurface: its shape's class in lightclass.bin,
         // else the emitter's tiledata Wall/Window flags); a mobile's light is radial. light_alpha_fade and
-        // light_occlusion_surface_only share it
+        // light_occlusion (only surface glows are masked) share it
         private static bool SurfaceGlow(GameObject src, byte id, StaticTiles[] staticData)
         {
             if (src == null || src is Mobile)
