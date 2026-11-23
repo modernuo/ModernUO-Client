@@ -171,8 +171,17 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             var map = Studio();
             float depth = MobileDepth(MX, MY, Z);
-            MobileWallOrder.Scan s = ScanAt(map, MX, MY, Z);
-            MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out _);
+            MobileWallOrder.Scan s = default;
+            float warm = 0;
+
+            // the same calls once first (type initialisers, first-call stubs)
+            for (int i = 0; i < 2; i++)
+            {
+                s = default;
+                MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
+                warm += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
+            }
+
             long before = GC.GetAllocatedBytesForCurrentThread();
             float sum = 0;
 
@@ -229,8 +238,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [Theory]
         [InlineData(10, 3)] // standing on the storey's floor, inside the walls
         [InlineData(29, 3)] // still inside
-        [InlineData(30, 0)] // on the walls' top (the next storey): not inside
-        [InlineData(9, 0)] // under their base
+        [InlineData(30, 0)] // on the walls' top (the next storey): above them
+        [InlineData(9, 3)] // under their base: the walls ahead still cover it (owner rule, round 2)
+        [InlineData(-20, 3)]
         public void WallsHoldTheMobilesZ(int mobileZ, int expected)
         {
             ScanAt(Studio(), MX, MY, mobileZ).Count.Should().Be((byte)expected);
@@ -295,9 +305,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
         [Theory]
         [InlineData(Z, 1)] // an NPC behind the counter, at its base
-        [InlineData(Z + 5, 1)]
+        [InlineData(Z + 5, 0)] // the counter top (z + 6) within its climb limit: it could step onto it
         [InlineData(Z + 6, 0)] // standing on it
-        [InlineData(Z - 1, 0)]
+        [InlineData(Z - 1, 1)] // under it: still covered
         public void BoxesHoldTheMobilesZ(int mobileZ, int expected)
         {
             var map = Studio(false, false, false);
@@ -306,13 +316,35 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void StairsAndFlatsNeverCount()
+        public void FlatsAndPiecesBelowTheMobileNeverCount()
         {
+            // a rug ahead, and stairs going down ahead (tops at or under the mobile's z): the mobile is drawn over them
             var map = Studio(false, false, false);
-            Add(map, Stairs, MX + 1, MY, Z);
-            Add(map, Stairs, MX, MY + 1, Z);
+            Add(map, Stairs, MX + 1, MY, Z - 5);
+            Add(map, Stairs, MX, MY + 1, Z - 10);
             Add(map, Floor, MX + 1, MY + 1, Z);
             ScanAt(map, MX, MY, Z).Count.Should().Be(0);
+
+            // the first step rising ahead is one the mobile can climb (the pathfinder's limit): a floor, its hooves over it
+            Add(map, Stairs, MX + 1, MY + 1, Z);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(0);
+
+            // a step further up, or a stair block standing from the ground well above the limit, covers like any piece
+            Add(map, Stairs, MX + 2, MY, Z + Pathfinder.ClimbLimit + 1);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(1);
+        }
+
+        [Theory]
+        [InlineData(TileFlag.Surface | TileFlag.Impassable, 2, 0, true)] // a low platform: walkable top within the limit
+        [InlineData(TileFlag.Surface | TileFlag.Impassable, 6, 0, false)] // a counter: top 6 above
+        [InlineData(TileFlag.Surface | TileFlag.Bridge, 10, 0, true)] // the teleporter altar block (bridge base at the mobile's z)
+        [InlineData(TileFlag.Surface | TileFlag.Bridge, 10, 3, false)] // a bridge whose base is above the limit
+        [InlineData(TileFlag.StairRight, 5, 2, true)]
+        [InlineData(TileFlag.Impassable, 12, -10, false)] // an easel standing lower: not walkable
+        public void ClimbableFollowsThePathfinder(TileFlag flags, int height, int dz, bool expected)
+        {
+            var td = new StaticTiles { Flags = flags, Height = (byte)height };
+            MobileWallOrder.Climbable(in td, Z + dz, Z).Should().Be(expected);
         }
 
         // the owner's shadow spot (Felucca 1453 1665): the studio's east wall line (right-half pieces, a line along y at x + 1)
@@ -387,7 +419,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Add(map, Table, MX + 1, MY - 1, Z); // furniture beside it on its diagonal
             MobileWallOrder.Scan s = default;
             s.Active = true;
-            MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, ref s);
+            MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(capped ? (byte)1 : (byte)0);
 
             if (!capped)
@@ -397,12 +429,16 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             s.Walls[0].Overhead.Should().BeTrue();
             float depth = MobileDepth(MX, MY, Z);
-            float add = MobileWallOrder.CapAdd(0, in s, -11, 11, depth, true, out int wall);
+            MobileWallOrder.OverheadSplit(in s, -11, 11, depth, 0, out int splitRow, out float add, out int wall).Should().BeTrue();
             wall.Should().Be(0);
+
+            // the rows above the roof art's bottom (90 px art on the south vertex, 4 px per z above the mobile) take the cap
+            splitRow.Should().Be(22 - 4 * (roofZ - Z));
             Key(depth, add).Should().Be(Math.Max(s.Walls[0].D - 1, Key(depth, MobileWallOrder.OverheadMinAdd)));
             Key(depth, add).Should().BeGreaterThan(100 * (MX + MY) + 127 + Z + 1, "still over the floor and the pieces at its z");
 
-            // the strips below the anchor ignore pieces overhead
+            // the strip rules ignore pieces overhead (the upper strip's other rows, the strips below the anchor)
+            MobileWallOrder.CapAdd(0, in s, -11, 11, depth, true, out _).Should().Be(0);
             MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out _).Should().Be(2);
         }
 
@@ -413,7 +449,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Add(map, Roof, MX + 1, MY - 1, Z + 23);
             Add(map, Roof, MX + 1, MY, Z + 23); // the next diagonal's roof wins by key already: not scanned
             MobileWallOrder.Scan s = default;
-            MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, ref s);
+            MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(1);
             s.Walls[0].X.Should().Be((ushort)(MX + 1));
             s.Walls[0].Lo.Should().Be(22);
@@ -614,6 +650,34 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 span.SpanHi = 10000;
                 Depths(name, span, seed).Should().OnlyContain(d => d == shadow || d == upper || d == capped, $"seed {seed}");
             }
+        }
+
+        [Theory]
+        [InlineData("plain")]
+        [InlineData("mounted")]
+        public void PieceOverheadSplitsTheUpperStrip(string name)
+        {
+            // a piece overhead over every column whose art ends 40 px above the tile centre (the fixture draws at 600, 400:
+            // centre row 422): every upper strip reaching above that row is split, its top rows a key below the piece
+            MobileWallOrder.Scan over = default;
+            over.Active = true;
+            over.Count = 1;
+            over.Walls[0] = new MobileWallOrder.Wall { D = 81260, Lo = -10000, Hi = 10000, Overhead = true, Bottom = -40 };
+            uint top = BakeJob.DepthKeyD(81259, 1000, 7);
+            int split = 0;
+
+            for (int seed = 1; seed <= 20; seed++)
+            {
+                uint[] off = Depths(name, default, seed);
+                uint[] on = Depths(name, over, seed);
+                on.Length.Should().BeGreaterOrEqualTo(off.Length);
+                split += on.Length - off.Length;
+                on.Count(d => d == top).Should().BeGreaterOrEqualTo(on.Length - off.Length, $"seed {seed}: a capped top part per split (a strip wholly above the row is capped whole)");
+                on.Where(d => d != top).Should().BeSubsetOf(off, $"seed {seed}: every other key as before");
+            }
+
+            split.Should().BeGreaterThan(0, "some upper strips reach above the piece's art");
+            Depths(name, over with { Active = false }, 3).Should().Equal(Depths(name, default, 3), "switch off");
         }
 
         [Fact]

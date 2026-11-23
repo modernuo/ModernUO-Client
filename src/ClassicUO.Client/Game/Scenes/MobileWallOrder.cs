@@ -30,6 +30,11 @@ namespace ClassicUO.Game.Scenes
     /// relative to the depth tile's centre column.</item>
     /// <item>A strip whose frame columns overlap a wall's range takes the depth key one below the lowest such wall's
     /// (D − 1, D = 100 (x + y) + 127 + PriorityZ), never less than the upper strip's + 1, and never more than before.</item>
+    /// <item>Round 2 (owner): other pieces with height &gt; 0 (furniture: counters, tables, easels) count over their whole
+    /// diamond; a wall found ahead continues along its line as one segment (<see cref="SegmentReach"/>); mid-step both tiles
+    /// are scanned and every strip may drop to the earlier tile's key (<see cref="Scan.MinAdd"/>); shadows lose to every piece
+    /// they overlap (<see cref="ShadowAdd"/>); all layers take one cap from the composite's columns (<see cref="Scan.SpanLo"/>);
+    /// pieces overhead on the mobile's diagonal (bottom at or over z + <see cref="PersonHeight"/>) cap the upper strip.</item>
     /// </list>
     /// The scan runs per mobile per frame while the rule (or the checker) is on; its result is part of the mobile's select key
     /// (MobileFrameCache), so recorded strips follow it. <c>CUO_MOBILE_WALL_ORDER=1|0</c> overrides the setting and
@@ -81,7 +86,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The rule applies: the switch is on and the depth key draws (depth_model has its own per-pixel walls).</summary>
         public static bool Rule => On && !DepthModel.On;
 
-        public const int MaxWalls = 16;
+        public const int MaxWalls = 24;
 
         /// <summary>Pixels of each half next to the north vertex column that do not count (a wall's art is a few pixels thick
         /// across its vertex column: the pack's brick walls reach 4-5 px into the other half).</summary>
@@ -99,8 +104,13 @@ namespace ClassicUO.Game.Scenes
             public sbyte Z;
             public byte Height;
 
-            /// <summary>A piece above the mobile on its own diagonal (bottom at or over its top): caps the upper strip only.</summary>
+            /// <summary>A piece above the mobile on its own diagonal (bottom at or over its top): caps the upper strip's rows
+            /// above <see cref="Bottom"/> only.</summary>
             public bool Overhead;
+
+            /// <summary>Overhead pieces: the screen row just below the art's lowest opaque row, relative to the depth tile's
+            /// centre row at the mobile's z.</summary>
+            public short Bottom;
         }
 
         [InlineArray(MaxWalls)]
@@ -121,6 +131,10 @@ namespace ClassicUO.Game.Scenes
             /// <summary>The depth tile's column less the mobile tile's, in tiles (a step's bump, View.CalculateDepthZ).</summary>
             public sbyte Du;
 
+            /// <summary>The depth tile's diagonal less the mobile tile's (a step's bump): the depth tile's centre row is
+            /// 22 · Dv below the mobile tile's.</summary>
+            public sbyte Dv;
+
             /// <summary>The lowest add a strip may be capped to (0: the upper strip's). Mid-step it is the tile sum of the
             /// earlier of the two tiles less the depth tile's (−1 or −2), so every strip, the upper one included, may drop to
             /// the key it has standing on that tile, behind a wall ahead of the tile it is leaving.</summary>
@@ -135,7 +149,7 @@ namespace ClassicUO.Game.Scenes
 
             public bool Equals(Scan o)
             {
-                if (Active != o.Active || Count != o.Count || Du != o.Du || MinAdd != o.MinAdd || SpanLo != o.SpanLo || SpanHi != o.SpanHi)
+                if (Active != o.Active || Count != o.Count || Du != o.Du || Dv != o.Dv || MinAdd != o.MinAdd || SpanLo != o.SpanLo || SpanHi != o.SpanHi)
                 {
                     return false;
                 }
@@ -145,7 +159,7 @@ namespace ClassicUO.Game.Scenes
                     ref readonly Wall a = ref Walls[i];
                     ref readonly Wall b = ref o.Walls[i];
 
-                    if (a.D != b.D || a.Lo != b.Lo || a.Hi != b.Hi || a.Overhead != b.Overhead)
+                    if (a.D != b.D || a.Lo != b.Lo || a.Hi != b.Hi || a.Overhead != b.Overhead || a.Bottom != b.Bottom)
                     {
                         return false;
                     }
@@ -192,6 +206,7 @@ namespace ClassicUO.Game.Scenes
                 Vector3 offset = m.Offset;
                 DepthTile(m.X, m.Y, offset, out int bx, out int by);
                 s.Du = (sbyte)((bx - by) - (m.X - m.Y));
+                s.Dv = (sbyte)((bx + by) - (m.X + m.Y));
                 ScanStep(map, m.X, m.Y, m.Z, offset, bx, by, ref s);
                 Rectangle fi = m.FrameInfo;
                 s.SpanLo = (short)-fi.X;
@@ -251,12 +266,12 @@ namespace ClassicUO.Game.Scenes
             StepTile(x, y, offset, out int nx, out int ny);
             int depthCol = bx - by;
             ScanAt(map, x, y, mz, ((x - y) - depthCol) * 22, ref s);
-            ScanOverhead(map, x, y, mz, ((x - y) - depthCol) * 22, ref s);
+            ScanOverhead(map, x, y, mz, ((x - y) - depthCol) * 22, ((x + y) - (bx + by)) * 22, ref s);
 
             if (nx != x || ny != y)
             {
                 ScanAt(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ref s);
-                ScanOverhead(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ref s);
+                ScanOverhead(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ((nx + ny) - (bx + by)) * 22, ref s);
                 s.MinAdd = (sbyte)Math.Min(0, Math.Min(x + y, nx + ny) - (bx + by));
             }
         }
@@ -278,7 +293,7 @@ namespace ClassicUO.Game.Scenes
         /// the rider's head over the roof eave on its own tile (owner, Felucca 1468 1712 0, roof z 23). Columns: the art's
         /// within the tile's diamond.
         /// </summary>
-        internal static void ScanOverhead(Map.Map map, int tx0, int ty0, int mz, int shift, ref Scan s)
+        internal static void ScanOverhead(Map.Map map, int tx0, int ty0, int mz, int shift, int rowShift, ref Scan s)
         {
             SpriteEntry[] sprites = SpritesForTests ?? Client.Game?.UO?.FileManager?.Arts?.PackSpriteEntries;
 
@@ -314,6 +329,8 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     int lo = c - 22, hi = c + 22;
+                    // View.DrawStatic: the art's bottom row on the tile's south vertex (centre + 22), 4 px up per z
+                    int bottom = rowShift - 4 * (o.Z - mz) + 22;
                     int idx = PackConst.StaticSpriteBase + o.Graphic;
 
                     if (sprites != null && idx < sprites.Length && sprites[idx].Present && sprites[idx].OrigW != 0)
@@ -322,6 +339,7 @@ namespace ClassicUO.Game.Scenes
                         int left = c - (sp.OrigW >> 1) + sp.TrimX;
                         lo = Math.Max(lo, left);
                         hi = Math.Min(hi, left + sp.W);
+                        bottom += sp.TrimY + sp.H - sp.OrigH;
                     }
 
                     if (lo >= hi || Holds(in s, o, tx, ty))
@@ -346,6 +364,7 @@ namespace ClassicUO.Game.Scenes
                     w.Z = o.Z;
                     w.Height = o.Graphic < Chunk.StaticTileData.Length ? Chunk.StaticTileData[o.Graphic].Height : (byte)0;
                     w.Overhead = true;
+                    w.Bottom = (short)bottom;
                 }
             }
         }
@@ -357,9 +376,10 @@ namespace ClassicUO.Game.Scenes
         /// <summary>
         /// Adds to <paramref name="s"/> the pieces ahead of tile (<paramref name="bx"/>, <paramref name="by"/>) that hold z
         /// <paramref name="mz"/>, their columns moved by <paramref name="shift"/> (that tile's centre column less the depth
-        /// tile's). A piece is a static, multi piece or ground item with tiledata height &gt; 0 whose [z, z + height) holds
-        /// <paramref name="mz"/>: walls (and doors) count with their in-front half, other pieces with their whole diamond;
-        /// height-0 flats, stairs and bridges (Bridge / StairBack / StairRight) never count. A wall found ahead continues as a
+        /// tile's). A piece is a static, multi piece or ground item with tiledata height &gt; 0 whose top (z + height) is above
+        /// <paramref name="mz"/> (owner rule, round 2: a piece in front covers the mobile unless it is flat or the mobile stands
+        /// above it; a piece entirely above the mobile in front covers it too): walls (and doors) count with their in-front half,
+        /// other pieces with their whole diamond. A wall found ahead continues as a
         /// segment: the wall pieces on the neighbouring tiles of the same line (a left-half piece's line runs along x, a
         /// right-half piece's along y; a corner continues both), with their face half and their own key, up to
         /// <see cref="SegmentReach"/> tiles each way, so a wide sprite or its shadow reaching a piece further along the wall
@@ -464,8 +484,8 @@ namespace ClassicUO.Game.Scenes
 
                 ref StaticTiles td = ref data[g];
 
-                if (td.Height == 0 || mz < o.Z || mz >= o.Z + td.Height ||
-                    (td.Flags & (TileFlag.Bridge | TileFlag.StairBack | TileFlag.StairRight)) != 0)
+                // owner rule (round 2): a piece in front covers the mobile unless it is flat or the mobile stands above it
+                if (td.Height == 0 || o.Z + td.Height <= mz || Climbable(in td, o.Z, mz))
                 {
                     continue;
                 }
@@ -557,6 +577,24 @@ namespace ClassicUO.Game.Scenes
             return lines;
         }
 
+        /// <summary>
+        /// A piece the mobile could step onto from z <paramref name="mz"/>, as the pathfinder tests it (Pathfinder.CalculateNewZ
+        /// with CalculateMinMaxZ's maxZ = z + <see cref="Pathfinder.ClimbLimit"/>): a bridge or stair piece whose base is within
+        /// the climb limit, or a surface whose walkable top (<see cref="Pathfinder.WalkableTop"/>) is. It is a floor for the
+        /// mobile (the first stair step, the teleporter altar blocks), so it does not cover it; one higher does.
+        /// </summary>
+        internal static bool Climbable(in StaticTiles td, int z, int mz)
+        {
+            int maxZ = mz + Pathfinder.ClimbLimit;
+
+            if ((td.Flags & (TileFlag.Bridge | TileFlag.StairBack | TileFlag.StairRight)) != 0)
+            {
+                return z <= maxZ;
+            }
+
+            return td.IsSurface && Pathfinder.WalkableTop(z, td.Height, false) <= maxZ;
+        }
+
         // a piece both tiles of a step see is kept once
         private static bool Holds(in Scan s, GameObject o, int tx, int ty)
         {
@@ -583,62 +621,85 @@ namespace ClassicUO.Game.Scenes
             CapAdd(add, in s, lo, hi, depth, false, out wall);
 
         /// <summary><see cref="CapAdd(float, in Scan, int, int, float, out int)"/> for strip <paramref name="upper"/> (the strip
-        /// from the frame top to the anchor): the overhead pieces cap it too, down to <see cref="OverheadMinAdd"/>; the pieces
-        /// ahead cap it only mid-step (<see cref="Scan.MinAdd"/> below 0). The strips below the anchor ignore overhead pieces.</summary>
+        /// from the frame top to the anchor): the pieces ahead cap it only mid-step (<see cref="Scan.MinAdd"/> below 0).
+        /// Overhead pieces are not considered here (<see cref="OverheadSplit"/>).</summary>
         public static float CapAdd(float add, in Scan s, int lo, int hi, float depth, bool upper, out int wall)
         {
             wall = -1;
-            int minD = int.MaxValue, minOver = int.MaxValue, over = -1;
+            int minD = int.MaxValue;
+
+            if (upper && s.MinAdd >= 0)
+            {
+                return add;
+            }
 
             for (int i = 0; i < s.Count; i++)
             {
                 ref readonly Wall w = ref s.Walls[i];
 
-                if (lo >= w.Hi || hi <= w.Lo)
-                {
-                    continue;
-                }
-
-                if (w.Overhead)
-                {
-                    if (upper && w.D < minOver)
-                    {
-                        minOver = w.D;
-                        over = i;
-                    }
-                }
-                else if ((!upper || s.MinAdd < 0) && w.D < minD)
+                if (!w.Overhead && lo < w.Hi && hi > w.Lo && w.D < minD)
                 {
                     minD = w.D;
                     wall = i;
                 }
             }
 
-            float result = add;
+            if (wall < 0)
+            {
+                return add;
+            }
 
             // DepthOf's key is round((depth + 1 + add) * 100) − 50; D − 1 needs depth + 1 + add = (D + 49) / 100
-            if (wall >= 0)
-            {
-                float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), s.MinAdd);
+            float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), s.MinAdd);
 
-                if (cap < result)
+            return cap < add ? cap : add;
+        }
+
+        /// <summary>
+        /// The overhead pieces over columns [<paramref name="lo"/>, <paramref name="hi"/>): the screen row (relative to the depth
+        /// tile's centre row) below which they cover nothing (the lowest art bottom among them) and the add their lowest key
+        /// allows (D − 1, not below <see cref="OverheadMinAdd"/>). The upper strip's rows above that row take the add; the rows
+        /// below keep theirs: lowering the whole strip let a mobile one diagonal behind (its lower strip at + 3, the same key as
+        /// this upper strip at the same z) draw over this one's body. False: none, or none lower than <paramref name="add"/>.
+        /// </summary>
+        public static bool OverheadSplit(in Scan s, int lo, int hi, float depth, float add, out int splitRow, out float overheadAdd, out int wall)
+        {
+            splitRow = int.MinValue;
+            overheadAdd = add;
+            wall = -1;
+            int minD = int.MaxValue;
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                ref readonly Wall w = ref s.Walls[i];
+
+                if (w.Overhead && lo < w.Hi && hi > w.Lo)
                 {
-                    result = cap;
+                    splitRow = Math.Max(splitRow, w.Bottom);
+
+                    if (w.D < minD)
+                    {
+                        minD = w.D;
+                        wall = i;
+                    }
                 }
             }
 
-            if (over >= 0)
+            if (wall < 0)
             {
-                float cap = Math.Max((float)((minOver + 49) / 100.0 - (double)(depth + 1f)), Math.Min(OverheadMinAdd, (float)s.MinAdd));
-
-                if (cap < result)
-                {
-                    result = cap;
-                    wall = over;
-                }
+                return false;
             }
 
-            return result;
+            float cap = Math.Max((float)((minD + 49) / 100.0 - (double)(depth + 1f)), OverheadMinAdd);
+
+            if (cap >= add)
+            {
+                return false;
+            }
+
+            overheadAdd = cap;
+
+            return true;
         }
 
         /// <summary>

@@ -237,6 +237,7 @@ namespace ClassicUO.Game
             _geoAnchorY = drawY;
             // mobile_wall_order: the centre column of the tile the depth key sorts the mobile on
             _wallRefX = posX + 22 + _wall.Du * 22;
+            _wallRefY = posY + 22 + _wall.Dv * 22;
             float alpha = rs.Alpha / 255f;
             bool mirror = (s.Flags & AnimStateFlags.Mirror) != 0;
             bool shadow = (s.Flags & AnimStateFlags.Shadow) != 0;
@@ -546,6 +547,19 @@ namespace ClassicUO.Game
                         }
                     }
 #endif
+                    if (i == 0 && _wall.Count != 0 && !_submerged && OverheadRows(x, w, y + strips[0].Y, strips[0].H, depth, add, id, out int topRows, out float topAdd))
+                    {
+                        // mobile_wall_order: the upper strip's rows under a piece overhead behind it, the rest as before
+                        Write(index, x, y + strips[0].Y, strips[0].Y, topRows, hueVec, mirror, depth, 1, topAdd);
+
+                        if (strips[0].H > topRows)
+                        {
+                            Write(index, x, y + strips[0].Y + topRows, strips[0].Y + topRows, strips[0].H - topRows, hueVec, mirror, depth, 1, add);
+                        }
+
+                        continue;
+                    }
+
                     Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, add);
                 }
             }
@@ -570,6 +584,34 @@ namespace ClassicUO.Game
             }
 
             return add;
+        }
+
+        // mobile_wall_order: the rows of the upper strip (screen rows [top, top + h)) a piece overhead covers, and their add
+        private bool OverheadRows(int x, int w, int top, int h, float depth, float add, ushort id, out int rows, out float topAdd)
+        {
+            rows = 0;
+            StripColumns(x, w, out int lo, out int hi);
+
+            if (!Scenes.MobileWallOrder.OverheadSplit(in _wall, lo, hi, depth, add, out int splitRow, out topAdd, out int wall))
+            {
+                return false;
+            }
+
+            rows = Math.Min(h, _wallRefY + splitRow - top);
+
+            if (rows <= 0)
+            {
+                return false;
+            }
+
+#if CUO_DEVTOOLS
+            if (Scenes.MobileWallOrder.Check)
+            {
+                Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, 0, rows, lo, hi, depth, add, topAdd);
+            }
+#endif
+
+            return _wall.Active;
         }
 
         // mobile_wall_order: a strip's columns relative to the depth tile's centre: the composite's (MobileWallOrder.Scan.SpanLo,
@@ -689,7 +731,7 @@ namespace ClassicUO.Game
         // mobile_wall_order (key mode): the mobile's wall scan (MobileFrameCache.Wall, part of the select key) and the screen
         // column of its depth tile's centre, which the scan's wall columns are relative to
         private Scenes.MobileWallOrder.Scan _wall;
-        private int _wallRefX;
+        private int _wallRefX, _wallRefY;
 #if CUO_DEVTOOLS
         // CUO_CLIP_ORDER_CHECK: the mobile's tile y and whether it stands still (ClipOrderCheck.Layer)
         private int _objY;
