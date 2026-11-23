@@ -66,8 +66,6 @@ namespace ClassicUO.Configuration
 
         public static readonly Row[] Rows =
         {
-            // light_range needs chunk_lights; chunk_lights is baked in (bg/bake-1123), so it is on at every tier.
-            new Row("chunk_lights", RowKind.Always, QualityTier.Low, s => s.ChunkLights, (s, v) => s.ChunkLights = v, "baked in; light_range prerequisite"),
             new Row("light_range", RowKind.Reducer, QualityTier.Low, s => s.LightRange, (s, v) => s.LightRange = v, "Low lowers the light range"),
             new Row("view_margin", RowKind.Feature, QualityTier.High, s => s.ViewMargin, (s, v) => s.ViewMargin = v, "High (proposed Medium after bg/vm-legacy)"),
             new Row("light_occlusion", RowKind.Feature, QualityTier.High, s => s.LightOcclusion, (s, v) => s.LightOcclusion = v, "High"),

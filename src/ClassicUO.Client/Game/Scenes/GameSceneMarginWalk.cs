@@ -13,7 +13,7 @@ namespace ClassicUO.Game.Scenes
     {
         // view_margin_walk (vm-walk): view_margin grows every chunk's walk by max(its overhang, the mobile 160/260 px), so each
         // land tile and static of the margin is visited (position, alpha, mesh mark, pick test) for the few tall sprites and
-        // mobiles that reach the view from there. With the switch on (and chunk_lights, which lights the margin's statics from
+        // mobiles that reach the view from there. With the switch on (chunk_lights, always on, lights the margin's statics from
         // the chunks' emitter lists), a margin tile is walked only when Chunk.ReachCells or the dynamic index has it, and an
         // object whose anchor is in the margin is processed only when its box meets the view (ViewMargin.RingSkips).
         // _vmRing: the margin decision is computed this frame (the switch, FrameStats counters or the checker).
@@ -23,7 +23,7 @@ namespace ClassicUO.Game.Scenes
 
         private void BeginMarginWalk()
         {
-            _vmWalk = _vmSprites && ChunkStaticLights && ViewMargin.WalkEnabled;
+            _vmWalk = _vmSprites && ViewMargin.WalkEnabled;
             _vmRing = _vmSprites && (_vmWalk || FrameStats.On || ViewMargin.WalkCheck);
 
             if (_vmRing)

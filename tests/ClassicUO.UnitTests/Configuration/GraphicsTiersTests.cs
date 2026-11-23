@@ -153,13 +153,12 @@ namespace ClassicUO.UnitTests.Configuration
         [Fact]
         public void ASavedFileWithExplicitValuesLoadsUnchanged()
         {
-            Settings high = Parse("{\"chunk_lights\":true,\"light_range\":false,\"view_margin\":true,\"light_occlusion\":true,\"light_batch\":true}");
+            Settings high = Parse("{\"light_range\":false,\"view_margin\":true,\"light_occlusion\":true,\"light_batch\":true}");
             Assert.Equal(QualityTier.High, GraphicsTiers.Detect(high));
 
-            Settings custom = Parse("{\"chunk_lights\":false,\"light_range\":true,\"view_margin\":true}");
+            Settings custom = Parse("{\"light_range\":true,\"view_margin\":true}");
             Assert.True(custom.ViewMargin);
             Assert.True(custom.LightRange);
-            Assert.False(custom.ChunkLights);
             Assert.False(custom.LightOcclusion);
             Assert.Null(GraphicsTiers.Detect(custom));
         }
