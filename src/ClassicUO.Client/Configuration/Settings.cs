@@ -343,12 +343,6 @@ namespace ClassicUO.Configuration
         // each patched gump with an old-path rebuild. Default off.
         [JsonPropertyName("gump_resend_patch")] public bool GumpResendPatch { get; set; }
 
-        // qw-renderlist: no world pick tests in a frame whose mouse is not over the world (over a gump, outside the viewport):
-        // GameScene.DrawUI clears that frame's selection anyway (PickSkip). Drops the world draw's highlight of the object
-        // under a gump. CUO_PICK_SKIP_OFF_WORLD=1|0 overrides it in developer builds, CUO_PICK_SKIP_CHECK=1 checks it.
-        // Default off.
-        [JsonPropertyName("pick_skip_off_world")] public bool PickSkipOffWorld { get; set; }
-
         // pa-itemprep: the world fill's item branch reads the graphic and the flags from the item's packed ItemDrawRow (one
         // record lookup) instead of the Graphic and Flags getters (ItemPrep). CUO_ITEM_PREP_ROWS=1|0 overrides it in developer
         // builds, CUO_ITEM_PREP_CHECK=1 checks it. Default off.
