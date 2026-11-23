@@ -1091,11 +1091,6 @@ namespace ClassicUO.Game.Scenes
                 PrepCheck.Report();
             }
 #if CUO_DEVTOOLS
-            if (_meshHueCheck)
-            {
-                ReportMeshHueCheck();
-            }
-
             if (_meshVisCheck)
             {
                 ReportMeshVisCheck();
