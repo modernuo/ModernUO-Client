@@ -189,21 +189,35 @@ namespace ClassicUO.UnitTests.Game.Scenes
                 cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
             }
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
             float sum = 0;
+            long best = long.MaxValue;
 
-            for (int i = 0; i < 1000; i++)
+            // Tier-up during the loop can show as a few KB on this thread (0 with DOTNET_TieredCompilation=0 and in
+            // NativeAOT), so the loop is measured again until it settles; a real per-call allocation never reaches 0.
+            for (int attempt = 0; attempt < 40 && best > 0; attempt++)
             {
-                s.Clear();
-                MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
-                sum += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
-                // a step back and forth: a new scan every call, kept scans from the pool
-                cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
-                // idle: the kept scan
-                cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
+                if (attempt > 0)
+                {
+                    System.Threading.Thread.Sleep(50);
+                }
+
+                long before = GC.GetAllocatedBytesForCurrentThread();
+
+                for (int i = 0; i < 1000; i++)
+                {
+                    s.Clear();
+                    MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
+                    sum += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
+                    // a step back and forth: a new scan every call, kept scans from the pool
+                    cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
+                    // idle: the kept scan
+                    cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
+                }
+
+                best = Math.Min(best, GC.GetAllocatedBytesForCurrentThread() - before);
             }
 
-            (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+            best.Should().Be(0);
             sum.Should().BeGreaterThan(0);
         }
 
