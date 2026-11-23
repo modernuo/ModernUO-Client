@@ -33,6 +33,8 @@ namespace ClassicUO.Game.Scenes
             public bool Cot;
             // light_alpha_fade: its drawn alpha (the dithered mask's coverage)
             public byte Alpha;
+            // light_occlusion_bake: the art id drawn (the bake key)
+            public uint Art;
         }
 
         // light_occlusion's occluder sums (LightOcclusion.Mix): every occluder found, and those at least
@@ -82,6 +84,18 @@ namespace ClassicUO.Game.Scenes
         // the light pass starts: the light target's stencil is cleared when the switch is on
         private void BeginLightOcclusion(GraphicsDevice device)
         {
+            BeginLightOcclusionState(device.Viewport.Width, device.Viewport.Height);
+
+            if (_lightOcclusion)
+            {
+                device.Clear(ClearOptions.Stencil, Vector4.Zero, 0f, 0);
+            }
+        }
+
+        // the light pass's occlusion state for a light target of width x height (light_occlusion_bake's prepass runs it before
+        // the light target is bound)
+        private void BeginLightOcclusionState(int width, int height)
+        {
             _lightOcclusion = LightOcclusion.Enabled;
             _stencilRef = 0;
             _loSearchTicks = _loMaskTicks = 0;
@@ -99,14 +113,9 @@ namespace ClassicUO.Game.Scenes
             _alphaFade = LightAlphaFade.Enabled;
             _ditherMasks = _alphaFade && _lightOcclusion;
             _minMaskAlpha = LightAlphaFade.MinMaskAlpha(_ditherMasks);
-            _lafCx = device.Viewport.Width * 0.5f;
-            _lafCy = device.Viewport.Height * 0.5f;
+            _lafCx = width * 0.5f;
+            _lafCy = height * 0.5f;
             _lafRadius = _loCot ? profile.CircleOfTransparencyRadius / Camera.Zoom : 0f;
-
-            if (_lightOcclusion)
-            {
-                device.Clear(ClearOptions.Stencil, Vector4.Zero, 0f, 0);
-            }
         }
 
         // the light pass has ended: its FrameStats counters
@@ -125,6 +134,8 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Set(FrameCounter.LightMaskUs, (int)(_loMaskTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency));
             FrameStats.Set(FrameCounter.LoCacheHits, _loFrameHits);
             FrameStats.Set(FrameCounter.LoCacheMisses, _loFrameMisses);
+            FrameStats.Set(FrameCounter.LoBakes, _lkFrameBakes);
+            FrameStats.Set(FrameCounter.LoBakeDraws, _lkDraws);
         }
 
         // light_occlusion_cache: on with light_occlusion; the drawn chunks' signature (an entry built under another set is
@@ -640,7 +651,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        private void AddOccluder(int i, Texture2D texture, Rectangle uv, int x, int y, bool cot, byte alpha)
+        private void AddOccluder(int i, Texture2D texture, Rectangle uv, int x, int y, bool cot, byte alpha, uint art)
         {
             if (i == _occluders.Length)
             {
@@ -654,6 +665,7 @@ namespace ClassicUO.Game.Scenes
             o.DrawY = y;
             o.Cot = cot;
             o.Alpha = alpha;
+            o.Art = art;
         }
 
         // the cheap terms of light l's occluder test (LightOcclusion.Hides as if its art covered the light point or, a wall
@@ -717,7 +729,7 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            AddOccluder(n++, art.Texture, art.UV, x, y, cot, alpha);
+            AddOccluder(n++, art.Texture, art.UV, x, y, cot, alpha, drawn);
 
             return true;
         }
@@ -768,7 +780,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 hides |= SpriteHides(in t, ref data, sp.Id, d.Source.Width, d.Source.Height, x, y, item.X - l.SrcX, item.Y - l.SrcY, item.Z - l.SrcZ);
-                AddOccluder(n++, d.Texture, d.Source, x, y, false, (byte)Math.Clamp((int)(sp.Hue.Z * 255f + 0.5f), 0, 255));
+                AddOccluder(n++, d.Texture, d.Source, x, y, false, (byte)Math.Clamp((int)(sp.Hue.Z * 255f + 0.5f), 0, 255), sp.Id);
             }
 
             if (!hides)

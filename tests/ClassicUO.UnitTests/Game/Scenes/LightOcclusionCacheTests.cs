@@ -171,3 +171,75 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
     }
 }
+
+namespace ClassicUO.UnitTests.Game.Scenes
+{
+    /// <summary>light_occlusion_bake: the switch in both states, when it runs, slot sizes and the atlas shelf.</summary>
+    public sealed class LightOcclusionBakeTests : IDisposable
+    {
+        public void Dispose() => LightOcclusionBake.OverrideForTests = null;
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Switch_FollowsOverride(bool on)
+        {
+            LightOcclusionBake.OverrideForTests = on;
+            Assert.Equal(on, LightOcclusionBake.Enabled);
+        }
+
+        [Fact]
+        public void Settings_DefaultOff()
+        {
+            Assert.False(new ClassicUO.Configuration.Settings().LightOcclusionBake);
+        }
+
+        [Theory]
+        [InlineData(true, true, true, true, false, true)]
+        [InlineData(false, true, true, true, false, false)]
+        [InlineData(true, false, true, true, false, false)]
+        [InlineData(true, true, false, true, false, false)]
+        [InlineData(true, true, true, false, false, false)]
+        [InlineData(true, true, true, true, true, false)]
+        public void Active_NeedsOcclusionCacheBatchAndNoDither(bool on, bool occlusion, bool cache, bool batch, bool dither, bool expected)
+        {
+            Assert.Equal(expected, LightOcclusionBake.Active(on, occlusion, cache, batch, dither));
+        }
+
+        [Theory]
+        [InlineData(100, 1f, 103)]
+        [InlineData(100, 0.4f, 43)]
+        [InlineData(101, 2f, 205)]
+        public void SlotSize_CoversScaledQuadPhaseAndMargin(int size, float scale, int expected)
+        {
+            Assert.Equal(expected, LightOcclusionBake.SlotSize(size, scale));
+        }
+
+        [Fact]
+        public void Shelf_PacksRowsAndRefusesWhenFull()
+        {
+            var shelf = new LightBakeShelf(100, 50);
+            Assert.True(shelf.TryAlloc(60, 20, out int x, out int y));
+            Assert.Equal((0, 0), (x, y));
+            Assert.True(shelf.TryAlloc(40, 10, out x, out y));
+            Assert.Equal((60, 0), (x, y));
+            Assert.True(shelf.TryAlloc(30, 25, out x, out y));
+            Assert.Equal((0, 20), (x, y));
+            Assert.False(shelf.TryAlloc(80, 10, out _, out _));
+            Assert.False(shelf.TryAlloc(101, 1, out _, out _));
+            int gen = shelf.Generation;
+            shelf.Reset();
+            Assert.Equal(gen + 1, shelf.Generation);
+            Assert.True(shelf.TryAlloc(100, 50, out x, out y));
+            Assert.Equal((0, 0), (x, y));
+        }
+
+        [Fact]
+        public void Mix_DependsOnEveryValue()
+        {
+            ulong a = LightOcclusionBake.Mix(LightOcclusionBake.Mix(1, 2), 3);
+            Assert.NotEqual(a, LightOcclusionBake.Mix(LightOcclusionBake.Mix(1, 3), 2));
+            Assert.NotEqual(a, LightOcclusionBake.Mix(LightOcclusionBake.Mix(1, 2), 4));
+        }
+    }
+}

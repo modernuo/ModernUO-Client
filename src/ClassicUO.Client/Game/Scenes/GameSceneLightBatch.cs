@@ -106,6 +106,12 @@ namespace ClassicUO.Game.Scenes
 
             for (int i = 0; i < lightCount; i++)
             {
+                // light_occlusion_bake: drawn from the atlas below
+                if (_lkUse && _lkBaked[i])
+                {
+                    continue;
+                }
+
                 ref FrameLights.Entry l = ref _frameLights[i];
                 ref readonly var lightInfo = ref Client.Game.UO.Lights.GetLight(l.ID);
 
@@ -150,6 +156,11 @@ namespace ClassicUO.Game.Scenes
 
             int total = _occBase;
             _occBase = 0;
+
+            if (_lkUse)
+            {
+                DrawBakedLights(batcher, ref matrix);
+            }
 
             for (int j = 0; j < occluded; j++)
             {

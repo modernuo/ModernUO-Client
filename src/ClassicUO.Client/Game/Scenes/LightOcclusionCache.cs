@@ -66,6 +66,10 @@ namespace ClassicUO.Game.Scenes
         public uint UsedPass;
         // the entry's index in the table's list
         public int Slot;
+        // light_occlusion_bake: the bake's key, the atlas generation it was baked in (-1: none) and its atlas rectangle
+        public ulong BakeKey;
+        public int BakeGen = -1;
+        public int BakeX, BakeY, BakeW, BakeH;
 
         public bool KeyMatches(int srcX, int srcY, int srcZ, ushort srcGraphic, int px, int py, int left, int top, int right, int bottom,
             int srcTop, byte facing, uint visibleSig) =>
@@ -199,6 +203,7 @@ namespace ClassicUO.Game.Scenes
 
                 e = _free.Count > 0 ? _free.Pop() : new LightOccluderEntry();
                 e.Source = source;
+                e.BakeGen = -1;
                 e.Slot = _live.Count;
                 _live.Add(e);
                 _bySource.Add(source, e);

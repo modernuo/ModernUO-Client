@@ -339,6 +339,9 @@ namespace ClassicUO.Game.Scenes
 
             // T9 S9: the house placement preview's record, when the scene goes while placing
             _world.Ecs.ReleasePreviews(this);
+            // light_occlusion_bake's atlas; light_occlusion_cache's entries (their objects)
+            DisposeLightBake();
+            _loTable.Reset();
 
 
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
@@ -1844,10 +1847,26 @@ namespace ClassicUO.Game.Scenes
 
             _lightTargetMode = UseAltLights ? 2 : 1;
 #endif
+            // light_occlusion_bake: new or changed masked glows into the atlas before the light target is bound
+            LightBakePrepass(batcher, ref matrix, lightCount, renderTargets.LightRenderTarget);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
             // light_batch: the batched path runs with light_occlusion (LightBatch)
             bool batch = LightBatch.Enabled;
 #if CUO_DEVTOOLS
+            // CUO_LIGHT_OCC_BAKE_CHECK: the pass without the atlas first, read back, then the baked one over it
+            bool bakeCompare = LightBakeCompareDue();
+
+            if (bakeCompare)
+            {
+                _lkUse = false;
+                ClearLightTarget(batcher.GraphicsDevice);
+                DrawLightPass(batcher, ref matrix, lightCount, batch);
+                batcher.GraphicsDevice.SetRenderTarget(null);
+                LightBakeReadback(renderTargets.LightRenderTarget, true);
+                batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
+                _lkUse = true;
+            }
+
             // CUO_LIGHT_BATCH_CHECK: the other path first, read back, then the active one over it
             bool compare = LightBatchCompareDue();
 
@@ -1898,6 +1917,13 @@ namespace ClassicUO.Game.Scenes
             {
                 LightBatchReadback(renderTargets.LightRenderTarget, false);
             }
+
+            if (bakeCompare)
+            {
+                LightBakeReadback(renderTargets.LightRenderTarget, false);
+            }
+
+            LightBakeSummary();
 
             LightBatchSummary();
 #endif
