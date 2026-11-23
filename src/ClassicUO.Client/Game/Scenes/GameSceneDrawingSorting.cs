@@ -542,12 +542,13 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 obj.DrawnFrame = _drawFrame;
+                bool culled = false;
 
                 if (_gpuWorld != null)
                 {
                     GpuOnDrawn(obj);
                 }
-                else
+                else if (!(culled = MarginCulled(obj, mesh.Statics)))
                 {
                     FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
                     mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
@@ -561,7 +562,7 @@ namespace ClassicUO.Game.Scenes
                     AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                 }
 
-                if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
+                if (!culled && allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
                 {
                     if (SelectedObject.Object is GameObject prev)
                     {
@@ -745,6 +746,7 @@ namespace ClassicUO.Game.Scenes
 
             _walkObjects = 0;
             _walkPickTests = 0;
+            FlushMarginCull();
 #if CUO_DEVTOOLS
             WalkMaxZ.FrameEnd(_drawFrame);
 #endif
@@ -828,6 +830,11 @@ namespace ClassicUO.Game.Scenes
             if (obj.AlphaHue == 0)
             {
                 return;
+            }
+
+            if (_vmCount)
+            {
+                CountMarginListed(obj);
             }
 
             if (
@@ -986,6 +993,10 @@ namespace ClassicUO.Game.Scenes
                             {
                                 GpuOnDrawn(obj);
                             }
+                            else if (MarginCulled(obj, mesh.Land))
+                            {
+                                continue;
+                            }
                             else
                             {
                                 FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
@@ -1079,12 +1090,13 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     obj.DrawnFrame = _drawFrame;
+                    bool meshCulled = false;
 
                     if (_gpuWorld != null)
                     {
                         GpuOnDrawn(obj);
                     }
-                    else
+                    else if (!(meshCulled = MarginCulled(obj, mesh.Statics)))
                     {
                         FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
                         mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
@@ -1099,6 +1111,11 @@ namespace ClassicUO.Game.Scenes
                     if (ViewMargin.WalkLightsStatic(meshItemData.IsLight, ChunkStaticLights))
                     {
                         AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                    }
+
+                    if (meshCulled)
+                    {
+                        continue;
                     }
 
                     TrySelectObject(obj, meshAllowSelection && !(meshCot && IsMouseInsideCotCircle()));
@@ -1536,6 +1553,7 @@ namespace ClassicUO.Game.Scenes
             _maxPixel.Y = maxPixelsY;
             _viewMinPixel = _minPixel;
             _viewMaxPixel = _maxPixel;
+            BeginMarginCull();
 
             if (_vmSprites)
             {

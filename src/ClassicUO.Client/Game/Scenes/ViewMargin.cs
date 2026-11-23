@@ -31,13 +31,72 @@ namespace ClassicUO.Game.Scenes
         };
 
         public static readonly bool Check = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_CHECK") == "1";
+
+        private static readonly bool? _cullEnv = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_CULL") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
 #else
         private static readonly bool? _env = null;
+        private static readonly bool? _cullEnv = null;
         public const bool Check = false;
 #endif
 
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
+
+        /// <summary>Tests: view_margin_cull (null: the setting).</summary>
+        [ThreadStatic] internal static bool? CullOverrideForTests;
+
+        /// <summary>view_margin_cull (Legacy, with view_margin on): a chunk-mesh sprite whose anchor is in the margin and whose
+        /// quad misses the view is not submitted (<see cref="MarginCulls"/>).</summary>
+        public static bool CullEnabled => CullOverrideForTests ?? _cullEnv ?? (Settings.GlobalSettings?.ViewMarginCull ?? false);
+
+        /// <summary>view_margin_cull: the walk leaves out a sprite whose anchor (ax, ay) is outside the view rectangle (the
+        /// walk's own without the margin, left..bottom) and whose box (x0..x1, y0..y1, same coordinates) misses it. An anchor
+        /// inside it is drawn as without the margin.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool MarginCulls(int ax, int ay, float x0, float y0, float x1, float y1, float left, float top, float right, float bottom)
+        {
+            if (ax >= left && ax <= right && ay >= top && ay <= bottom)
+            {
+                return false;
+            }
+
+            return x1 < left || x0 > right || y1 < top || y0 > bottom;
+        }
+
+        /// <summary>CUO_VIEW_MARGIN_CHECK (view_margin_cull): a static or multi piece's art box from its anchor and art size,
+        /// as the mesh places it (ChunkMesh.TryAddStaticLike).</summary>
+        public static void StaticBox(int ax, int ay, int width, int height, out int x0, out int y0, out int x1, out int y1)
+        {
+            x0 = ax - ((width >> 1) - 22);
+            y0 = ay - (height - 44);
+            x1 = x0 + width;
+            y1 = y0 + height;
+        }
+
+        /// <summary>CUO_VIEW_MARGIN_CHECK (view_margin_cull): a land tile's box from its anchor (Z included) and, stretched, the
+        /// corner offsets (Land.YOffsets: top, right, bottom, left) relative to its Z-less position.</summary>
+        public static void LandBox(int ax, int ay, int z, bool stretched, int top, int right, int bottom, int left, out int x0, out int y0, out int x1, out int y1)
+        {
+            x0 = ax;
+            x1 = ax + 44;
+
+            if (!stretched)
+            {
+                y0 = ay;
+                y1 = ay + 44;
+
+                return;
+            }
+
+            int py = ay + (z << 2);
+            y0 = Math.Min(Math.Min(py - top, py + 22 - right), Math.Min(py + 22 - left, py + 44 - bottom));
+            y1 = Math.Max(Math.Max(py - top, py + 22 - right), Math.Max(py + 22 - left, py + 44 - bottom));
+        }
 
         /// <summary>Whether the world walk (or the view it draws) lights a static or multi component: never under
         /// view_margin (<paramref name="chunkLights"/>, GameScene.ChunkStaticLights), whose chunk emitter lists already hold

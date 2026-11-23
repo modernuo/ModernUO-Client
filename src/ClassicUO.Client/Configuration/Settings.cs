@@ -235,6 +235,12 @@ namespace ClassicUO.Configuration
         // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
+        // vm-legacy: with view_margin on, the Legacy walk leaves out the chunk-mesh sprites (land, statics, multi pieces) of
+        // the margin whose quad misses the view: they would be submitted and drawn off screen (the margin's tiles are walked
+        // for the few tall sprites that reach the view). CUO_VIEW_MARGIN_CHECK=1 also tests every sprite it leaves out against
+        // the object's own art box; CUO_VIEW_MARGIN_CULL=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("view_margin_cull")] public bool ViewMarginCull { get; set; }
+
         // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
         // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
         // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose
