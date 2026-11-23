@@ -230,6 +230,9 @@ namespace ClassicUO
         // light_occlusion_bake: masked glows baked into the atlas this pass, and glows drawn from it
         LoBakes,
         LoBakeDraws,
+        // light_occlusion_bake: bakes of glows baked before (key changed or atlas started over), this pass and over the last second
+        LoRebakes,
+        LoRebakesPerSecond,
         Count
     }
 
@@ -298,7 +301,7 @@ namespace ClassicUO
             "text_exp_mobile", "text_exp_item", "text_exp_other",
             "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits",
             "lights_masked", "light_occluders", "light_flushes", "light_draw_calls", "light_search_us", "light_mask_us",
-            "lo_cache_hits", "lo_cache_misses", "lo_bakes", "lo_bake_draws" };
+            "lo_cache_hits", "lo_cache_misses", "lo_bakes", "lo_bake_draws", "lo_rebakes", "lo_rebakes_s" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

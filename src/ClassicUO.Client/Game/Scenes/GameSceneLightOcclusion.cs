@@ -136,6 +136,8 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Set(FrameCounter.LoCacheMisses, _loFrameMisses);
             FrameStats.Set(FrameCounter.LoBakes, _lkFrameBakes);
             FrameStats.Set(FrameCounter.LoBakeDraws, _lkDraws);
+            FrameStats.Set(FrameCounter.LoRebakes, _lkFrameRebakes);
+            FrameStats.Set(FrameCounter.LoRebakesPerSecond, _lkRebakeRate.PerSecond);
         }
 
         // light_occlusion_cache: on with light_occlusion; the drawn chunks' signature (an entry built under another set is
