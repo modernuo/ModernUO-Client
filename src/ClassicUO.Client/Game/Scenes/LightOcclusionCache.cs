@@ -70,6 +70,8 @@ namespace ClassicUO.Game.Scenes
         public ulong BakeKey;
         public int BakeGen = -1;
         public int BakeX, BakeY, BakeW, BakeH;
+        // CUO_LIGHT_OCC_BAKE_CHECK: the last pass's frame and world phase key terms (LightBakeWorldPhase)
+        public ulong CheckFramePhase, CheckWorldPhase;
 
         public bool KeyMatches(int srcX, int srcY, int srcZ, ushort srcGraphic, int px, int py, int left, int top, int right, int bottom,
             int srcTop, byte facing, uint visibleSig) =>
