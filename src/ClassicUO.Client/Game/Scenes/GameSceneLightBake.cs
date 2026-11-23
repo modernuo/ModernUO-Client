@@ -128,7 +128,27 @@ namespace ClassicUO.Game.Scenes
                 {
                     int w = LightOcclusionBake.SlotSize(lightInfo.UV.Width, s), h = LightOcclusionBake.SlotSize(lightInfo.UV.Height, s);
 
-                    if (_lkFrameBakes >= LightOcclusionBake.BakesPerPass || !AllocSlot(w, h, ref reset, out int bx, out int by))
+                    if (_lkFrameBakes >= LightOcclusionBake.BakesPerPass)
+                    {
+                        ReleaseOccluders(n);
+
+                        continue;
+                    }
+
+                    // the atlas before the slot: a new atlas starts the shelf over, so a slot taken before it was made would be
+                    // handed out again and two bakes would share it (the 315 px Moonglow bank mismatch, CUO_LIGHT_OCC_BAKE_CHECK)
+                    bool atlasNew = EnsureAtlas(device), wasReset = reset;
+                    bool slot = LightOcclusionBake.AllocSlot(_lkShelf, atlasNew, w, h, ref reset, ref _lkClear, ref _lkResets, out int bx, out int by);
+
+                    if (atlasNew || reset != wasReset)
+                    {
+                        // the atlas is cleared before the next bake: the lights flagged for it so far this pass take the
+                        // stencil path instead (their slots are gone; they bake again next pass)
+                        Array.Clear(_lkBaked, 0, i);
+                        _lkDraws = 0;
+                    }
+
+                    if (!slot)
                     {
                         ReleaseOccluders(n);
 
@@ -137,7 +157,7 @@ namespace ClassicUO.Game.Scenes
 
                     if (!bound)
                     {
-                        BindAtlas(device);
+                        device.SetRenderTarget(_lkAtlas);
                         bound = true;
                     }
 
@@ -189,38 +209,21 @@ namespace ClassicUO.Game.Scenes
             _lkRebakeRate.Add(_lkFrameRebakes, Time.Ticks);
         }
 
-        // a slot for a w x h bake; a full atlas starts over once per pass (every slot dropped, the atlas cleared before the
-        // next bake)
-        private bool AllocSlot(int w, int h, ref bool reset, out int x, out int y)
+        // the atlas, made on first use (or again after its device lost it): true when it was made now (it holds no bake)
+        private bool EnsureAtlas(GraphicsDevice device)
         {
-            if (_lkShelf.TryAlloc(w, h, out x, out y))
-            {
-                return true;
-            }
-
-            if (reset)
+            if (_lkAtlas != null && !_lkAtlas.IsDisposed)
             {
                 return false;
             }
 
-            reset = true;
-            _lkShelf.Reset();
-            _lkClear = true;
-            _lkResets++;
+            int size = LightOcclusionBake.AtlasSize;
+            _lkAtlas = new RenderTarget2D(device, size, size, false, SurfaceFormat.Color, DepthFormat.Depth24Stencil8, 0,
+                RenderTargetUsage.PreserveContents);
+            Log.Info($"[light-occlusion-bake] atlas {size}x{size} Color + Depth24Stencil8 ({size * size * 8 / (1024 * 1024)} MB)");
 
-            return _lkShelf.TryAlloc(w, h, out x, out y);
-        }
-
-        private void BindAtlas(GraphicsDevice device)
-        {
-            if (_lkAtlas == null || _lkAtlas.IsDisposed)
+            if (_lkBakeBlend == null)
             {
-                int size = LightOcclusionBake.AtlasSize;
-                _lkAtlas = new RenderTarget2D(device, size, size, false, SurfaceFormat.Color, DepthFormat.Depth24Stencil8, 0,
-                    RenderTargetUsage.PreserveContents);
-                _lkShelf.Reset();
-                _lkClear = true;
-                Log.Info($"[light-occlusion-bake] atlas {size}x{size} Color + Depth24Stencil8 ({size * size * 8 / (1024 * 1024)} MB)");
                 // the bake: the light's contribution as the light target's Additive blend adds it (colour x alpha), alpha kept
                 // non-zero where it adds anything; the draw: that contribution added as it is
                 _lkBakeBlend = new BlendState
@@ -239,7 +242,7 @@ namespace ClassicUO.Game.Scenes
                 };
             }
 
-            device.SetRenderTarget(_lkAtlas);
+            return true;
         }
 
         // one masked light into its slot: the light pass's matrix moved by whole pixels (shiftX, shiftY), so the light and its
