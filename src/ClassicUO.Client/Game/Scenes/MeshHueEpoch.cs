@@ -54,40 +54,27 @@ namespace ClassicUO.Game.Scenes
         }
 
         /// <summary>
-        /// Sets the sprite's vertex hue from <paramref name="source"/>: every call with <paramref name="onChange"/> off; with it
-        /// on only when the sprite's key is not this epoch, <paramref name="objGraphic"/> and <paramref name="objHue"/>.
-        /// Returns true when the hue was kept.
+        /// Sets the sprite's vertex hue from <paramref name="source"/> when the sprite's key is not this epoch,
+        /// <paramref name="objGraphic"/> and <paramref name="objHue"/>. Returns true when the hue was kept.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool Apply<T>(MeshLayer layer, int index, bool onChange, int epoch, ushort objGraphic, ushort objHue, ref T source)
+        public static bool Apply<T>(MeshLayer layer, int index, int epoch, ushort objGraphic, ushort objHue, ref T source)
             where T : struct, IMeshHueSource
         {
-            float hueX, hueY;
+            long key = MeshLayer.HueKey(epoch, objGraphic, objHue);
 
-            if (onChange)
+            if (layer.HueKeyAt(index) == key)
             {
-                long key = MeshLayer.HueKey(epoch, objGraphic, objHue);
-
-                if (layer.HueKeyAt(index) == key)
-                {
-                    return true;
-                }
-
-                source.HueOf(out hueX, out hueY);
-                layer.SetHue(index, hueX, hueY, key);
-
-                return false;
+                return true;
             }
 
-            // the old per-frame path, without a key store (keys from an earlier on period never match: BeginMeshHueFrame
-            // moves the epoch when the switch changes)
-            source.HueOf(out hueX, out hueY);
-            layer.SetHueKeyless(index, hueX, hueY);
+            source.HueOf(out float hueX, out float hueY);
+            layer.SetHue(index, hueX, hueY, key);
 
             return false;
         }
 
-        /// <summary>Invalidates every key made so far (the switch turned on, a new map).</summary>
+        /// <summary>Invalidates every key made so far.</summary>
         public void Bump()
         {
             Epoch++;

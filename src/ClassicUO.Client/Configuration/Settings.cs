@@ -370,12 +370,6 @@ namespace ClassicUO.Configuration
         // heap path's). Default off.
         [JsonPropertyName("shared_cliloc")] public bool SharedCliloc { get; set; }
 
-        // pa-meshhue: a Legacy chunk-mesh sprite recomputes its vertex hue only when an input changes (the object's hue, the
-        // out-of-range tint setting with the range centre and view range, the dead player's gray, a mesh rebuild) instead of
-        // every frame it is visible (GameScene.ApplyMeshHue, MeshHueEpoch). Read once per frame (CUO_MESH_HUE=1|0 overrides
-        // it in developer builds; CUO_MESH_HUE_CHECK=1 compares every kept hue with the per-frame one). Default off.
-        [JsonPropertyName("mesh_hue_on_change")] public bool MeshHueOnChange { get; set; }
-
         // pa-meshhue: Legacy chunk-mesh layers keep the frame's sprite visibility as bits (MeshLayer.ResetVisibility clears a
         // word per 64 sprites instead of a byte each; BuildVisibleIndices compares words and walks set bits). Read once per
         // frame (CUO_MESH_VIS=1|0 overrides it in developer builds; CUO_MESH_VIS_CHECK=1 compares every layer's indices and

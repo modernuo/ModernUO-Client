@@ -8,8 +8,8 @@ using Xunit;
 namespace ClassicUO.UnitTests.Game.Scenes
 {
     /// <summary>
-    /// mesh_hue_on_change: MeshHueEpoch.Apply (the code GameScene.ApplyMeshHue runs for every visible meshed sprite) on a
-    /// real MeshLayer, with the switch off (the per-frame recompute) and on (recompute only on an input change).
+    /// mesh_hue_on_change (permanent since quiet-1123): MeshHueEpoch.Apply (the code GameScene.ApplyMeshHue runs for every
+    /// visible meshed sprite) on a real MeshLayer: the hue is recomputed only on an input change.
     /// </summary>
     public sealed class MeshHueTests
     {
@@ -47,10 +47,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             return x;
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Hue_follows_its_inputs_in_both_switch_states(bool onChange)
+        [Fact]
+        public void Hue_follows_its_inputs()
         {
             var layer = Layer(4);
             var epoch = new MeshHueEpoch();
@@ -58,24 +56,24 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var src = new FakeSource { C = c };
 
             epoch.Update(false, 0, 0, 18, false);
-            MeshHueEpoch.Apply(layer, 2, onChange, epoch.Epoch, 0x10, 11, ref src);
+            MeshHueEpoch.Apply(layer, 2, epoch.Epoch, 0x10, 11, ref src);
             HueX(layer, 2).Should().Be(10);
 
             // a stationary frame: nothing changed
             epoch.Update(false, 0, 0, 18, false);
-            bool kept = MeshHueEpoch.Apply(layer, 2, onChange, epoch.Epoch, 0x10, 11, ref src);
-            kept.Should().Be(onChange);
-            c.Computes.Should().Be(onChange ? 1 : 2);
+            bool kept = MeshHueEpoch.Apply(layer, 2, epoch.Epoch, 0x10, 11, ref src);
+            kept.Should().BeTrue();
+            c.Computes.Should().Be(1);
 
             // the object's hue changes
             c.X = 20;
-            MeshHueEpoch.Apply(layer, 2, onChange, epoch.Epoch, 0x10, 21, ref src);
+            MeshHueEpoch.Apply(layer, 2, epoch.Epoch, 0x10, 21, ref src);
             HueX(layer, 2).Should().Be(20);
 
             // a frame-wide input changes (the player died with the black-and-white effect on)
             c.X = 30;
             epoch.Update(false, 0, 0, 18, true);
-            MeshHueEpoch.Apply(layer, 2, onChange, epoch.Epoch, 0x10, 21, ref src);
+            MeshHueEpoch.Apply(layer, 2, epoch.Epoch, 0x10, 21, ref src);
             HueX(layer, 2).Should().Be(30);
         }
 
@@ -87,34 +85,11 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var c = new Counter { X = 5, Y = 1 };
             var src = new FakeSource { C = c };
 
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, 0x10, 6, ref src);
+            MeshHueEpoch.Apply(layer, 0, epoch.Epoch, 0x10, 6, ref src);
             layer.SetHue(0, 0x34, 1);
             layer.HueKeyAt(0).Should().Be(0);
 
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, 0x10, 6, ref src).Should().BeFalse();
-            HueX(layer, 0).Should().Be(5);
-        }
-
-        [Fact]
-        public void Turning_the_switch_off_and_on_again_recomputes()
-        {
-            var layer = Layer(2);
-            var epoch = new MeshHueEpoch();
-            var c = new Counter { X = 5, Y = 1 };
-            var src = new FakeSource { C = c };
-
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, 0x10, 6, ref src);
-
-            // off (BeginMeshHueFrame bumps on every switch change): the per-frame path writes, the key stays
-            epoch.Bump();
-            c.X = 7;
-            MeshHueEpoch.Apply(layer, 0, false, epoch.Epoch, 0x10, 6, ref src);
-            HueX(layer, 0).Should().Be(7);
-
-            // on again with the inputs as they were in the first on period
-            epoch.Bump();
-            c.X = 5;
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, 0x10, 6, ref src).Should().BeFalse();
+            MeshHueEpoch.Apply(layer, 0, epoch.Epoch, 0x10, 6, ref src).Should().BeFalse();
             HueX(layer, 0).Should().Be(5);
         }
 
@@ -148,14 +123,14 @@ namespace ClassicUO.UnitTests.Game.Scenes
             epoch.Update(false, 0, 0, 18, false);
             var src = new StaticSource { Obj = s, Partial = partial };
 
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, s.Graphic, s.Hue, ref src);
+            MeshHueEpoch.Apply(layer, 0, epoch.Epoch, s.Graphic, s.Hue, ref src);
             layer.GetHue(0, out _, out float y);
             y.Should().Be(ShaderHueTranslator.SHADER_HUED);
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, s.Graphic, s.Hue, ref src).Should().BeTrue();
+            MeshHueEpoch.Apply(layer, 0, epoch.Epoch, s.Graphic, s.Hue, ref src).Should().BeTrue();
 
             s.SetGraphic(Winter);
             epoch.Update(false, 0, 0, 18, false); // no frame-wide input changed
-            MeshHueEpoch.Apply(layer, 0, true, epoch.Epoch, s.Graphic, s.Hue, ref src).Should().BeFalse();
+            MeshHueEpoch.Apply(layer, 0, epoch.Epoch, s.Graphic, s.Hue, ref src).Should().BeFalse();
             layer.GetHue(0, out float x, out y);
             x.Should().Be(0x20);
             y.Should().Be(ShaderHueTranslator.SHADER_PARTIAL_HUED);
@@ -168,13 +143,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var epoch = new MeshHueEpoch();
             var src = new FakeSource { C = new Counter { X = 5, Y = 1 } };
 
-            MeshHueEpoch.Apply(layer, 1, true, epoch.Epoch, 0x10, 6, ref src);
+            MeshHueEpoch.Apply(layer, 1, epoch.Epoch, 0x10, 6, ref src);
             layer.HueKeyAt(1).Should().NotBe(0);
 
             layer.Reset();
             layer.HueKeyAt(1).Should().Be(0);
 
-            MeshHueEpoch.Apply(layer, 1, true, epoch.Epoch, 0x10, 6, ref src);
+            MeshHueEpoch.Apply(layer, 1, epoch.Epoch, 0x10, 6, ref src);
             layer.SoftReset();
             layer.HueKeyAt(1).Should().Be(0);
         }
@@ -186,7 +161,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var epoch = new MeshHueEpoch();
             var src = new FakeSource { C = new Counter { X = 5, Y = 1 } };
 
-            MeshHueEpoch.Apply(layer, 1, true, epoch.Epoch, 0x10, 6, ref src);
+            MeshHueEpoch.Apply(layer, 1, epoch.Epoch, 0x10, 6, ref src);
             long key = layer.HueKeyAt(1);
             layer.EnsureCapacity(1000);
 
