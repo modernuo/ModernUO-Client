@@ -236,8 +236,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // The layout is replaced or dropped: with font_layout_pool its nodes go back to the font loader's pool (nothing else
-        // keeps them: readers of GetInfo use it within one call). Off: the nodes are left to the GC, as before.
+        // The layout is replaced or dropped: its nodes go back to the font loader's pool (font_layout_pool; nothing else keeps
+        // them: readers of GetInfo use it within one call).
         private void DropLayout()
         {
             MultilinesFontInfo info = _info;
@@ -259,10 +259,7 @@ namespace ClassicUO.Game
             _layoutSnapshot = null;
 #endif
 
-            if (FontLayoutPoolSwitch.Enabled)
-            {
-                Client.Game.UO.FileManager.Fonts.ReleaseLayout(info);
-            }
+            Client.Game.UO.FileManager.Fonts.ReleaseLayout(info);
         }
 
         public int LinesCount { get; set; }
@@ -1043,10 +1040,7 @@ namespace ClassicUO.Game
                 Texture.Dispose();
             }
 
-            if (FontLayoutPoolSwitch.Enabled)
-            {
-                DropLayout();
-            }
+            DropLayout();
 
             // a pooled object no longer keeps its last string alive
             _text = string.Empty;

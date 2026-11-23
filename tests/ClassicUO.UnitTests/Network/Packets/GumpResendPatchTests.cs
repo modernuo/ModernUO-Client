@@ -36,7 +36,6 @@ namespace ClassicUO.UnitTests.Network.Packets
         {
             GumpLayoutSwitch.OverrideForTests = null;
             GumpResendPatchSwitch.OverrideForTests = null;
-            FontLayoutPoolSwitch.OverrideForTests = null;
 #if CUO_DEVTOOLS
             Client.Game.UO.GumpResendCheck.ForceForTests = false;
 #endif
@@ -263,7 +262,6 @@ namespace ClassicUO.UnitTests.Network.Packets
         public void A_Resend_With_Unchanged_Lines_Allocates_Little_With_The_Patch(bool patch, long bound)
         {
             World world = Setup(patch);
-            FontLayoutPoolSwitch.OverrideForTests = true;
 #if CUO_DEVTOOLS
             Client.Game.UO.GumpResendCheck.ForceForTests = false;
 #endif
@@ -278,7 +276,7 @@ namespace ClassicUO.UnitTests.Network.Packets
             long before = GC.GetAllocatedBytesForCurrentThread();
             Gump again = Open(world, layout, lines);
             long bytes = GC.GetAllocatedBytesForCurrentThread() - before;
-            _out.WriteLine($"server gump 50/20 resend, same lines, gump_resend_patch={patch} (v2, font_layout_pool): {bytes} B");
+            _out.WriteLine($"server gump 50/20 resend, same lines, gump_resend_patch={patch} (v2): {bytes} B");
 
             again.Should().BeSameAs(g);
             bytes.Should().BeLessThan(bound);

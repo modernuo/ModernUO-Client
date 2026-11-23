@@ -11,9 +11,9 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Game.GameObjects
 {
-    // font_layout_pool (gump-system G5): a RenderedText gives its layout back to the font loader's node pool when its text
-    // changes or it is destroyed. Both switch states: the layouts of every kind of text (wrapped, multi-line, cropped,
-    // html with links, ASCII) are the same as fresh ones after the pool has been churned; only the on state refills the
+    // font_layout_pool (gump-system G5, permanent since quiet-1123): a RenderedText gives its layout back to the font loader's
+    // node pool when its text changes or it is destroyed. The layouts of every kind of text (wrapped, multi-line, cropped,
+    // html with links, ASCII) are the same as fresh ones after the pool has been churned; kept layouts come back to the
     // pool; the pool stays bounded; CUO_FONT_LAYOUT_CHECK finds nothing in a churn and reports a layout reused while held.
     [Collection(nameof(SpanBuffersCollection))]
     public sealed class FontLayoutPoolTests : IDisposable
@@ -22,7 +22,6 @@ namespace ClassicUO.UnitTests.Game.GameObjects
 
         public void Dispose()
         {
-            FontLayoutPoolSwitch.OverrideForTests = null;
 #if CUO_DEVTOOLS
             Client.Game.UO.FontLayoutCheck.ForceForTests = false;
 #endif
@@ -108,12 +107,9 @@ namespace ClassicUO.UnitTests.Game.GameObjects
             }
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Layouts_After_A_Churn_Are_The_Same_As_Fresh_Ones(bool pool)
+        [Fact]
+        public void Layouts_After_A_Churn_Are_The_Same_As_Fresh_Ones()
         {
-            FontLayoutPoolSwitch.OverrideForTests = false;
             var expected = new string[Specs.Length];
 
             for (int i = 0; i < Specs.Length; i++)
@@ -123,8 +119,6 @@ namespace ClassicUO.UnitTests.Game.GameObjects
                 expected[i].Should().NotBeEmpty();
             }
 
-            FontLayoutPoolSwitch.OverrideForTests = pool;
-
             for (int round = 0; round < 5; round++)
             {
                 Churn(round);
@@ -132,18 +126,15 @@ namespace ClassicUO.UnitTests.Game.GameObjects
                 for (int i = 0; i < Specs.Length; i++)
                 {
                     RenderedText r = Make(Specs[i]);
-                    Describe(r.GetInfo()).Should().Be(expected[i], $"spec {i}, round {round}, font_layout_pool={pool}");
+                    Describe(r.GetInfo()).Should().Be(expected[i], $"spec {i}, round {round}");
                     r.Destroy();
                 }
             }
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void Only_The_Pool_Takes_Kept_Layouts_Back(bool pool)
+        [Fact]
+        public void The_Pool_Takes_Kept_Layouts_Back()
         {
-            FontLayoutPoolSwitch.OverrideForTests = pool;
             Make(Specs[0]).Destroy(); // fills the transient tier once
             int before = Fonts.PooledLayoutNodes;
 
@@ -154,29 +145,17 @@ namespace ClassicUO.UnitTests.Game.GameObjects
                 labels.Add(Make(Specs[1]));
             }
 
-            int taken = before - Fonts.PooledLayoutNodes;
-
             foreach (RenderedText r in labels)
             {
                 r.Destroy();
             }
 
-            int after = Fonts.PooledLayoutNodes;
-
-            if (pool)
-            {
-                after.Should().BeGreaterThanOrEqualTo(before + 10, "each wrapped label returns its nodes");
-            }
-            else
-            {
-                after.Should().Be(before - taken, "kept layouts stay with their (destroyed) owners");
-            }
+            Fonts.PooledLayoutNodes.Should().BeGreaterThanOrEqualTo(before + 10, "each wrapped label returns its nodes");
         }
 
         [Fact]
         public void A_Text_Change_Returns_The_Old_Layout_With_The_Pool()
         {
-            FontLayoutPoolSwitch.OverrideForTests = true;
             RenderedText r = Make(Specs[1]);
             MultilinesFontInfo old = r.GetInfo();
             int nodes = 0;
@@ -200,7 +179,6 @@ namespace ClassicUO.UnitTests.Game.GameObjects
         [Fact]
         public void The_Pool_Is_Bounded()
         {
-            FontLayoutPoolSwitch.OverrideForTests = true;
             var labels = new List<RenderedText>();
 
             for (int i = 0; i < 400; i++)
@@ -216,13 +194,9 @@ namespace ClassicUO.UnitTests.Game.GameObjects
             Fonts.PooledLayoutNodes.Should().BeLessThanOrEqualTo(256);
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void A_Label_Reopened_Allocates_No_Layout_With_The_Pool(bool pool)
+        [Fact]
+        public void A_Label_Reopened_Allocates_No_Layout_With_The_Pool()
         {
-            FontLayoutPoolSwitch.OverrideForTests = pool;
-
             for (int i = 0; i < 3; i++)
             {
                 new Label(Specs[0].Text, true, 0x0481, style: FontStyle.BlackBorder).Dispose();
@@ -232,25 +206,15 @@ namespace ClassicUO.UnitTests.Game.GameObjects
             new Label(Specs[0].Text, true, 0x0481, style: FontStyle.BlackBorder).Dispose();
             long bytes = GC.GetAllocatedBytesForCurrentThread() - before;
 
-            if (pool)
-            {
-                bytes.Should().BeLessThan(500, "only the control itself");
-            }
-            else
-            {
-                bytes.Should().BeGreaterThan(800, "a new layout per label");
-            }
+            bytes.Should().BeLessThan(500, "only the control itself");
         }
 
 #if CUO_DEVTOOLS
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void The_Checker_Finds_Nothing_In_A_Churn(bool pool)
+        [Fact]
+        public void The_Checker_Finds_Nothing_In_A_Churn()
         {
             FontLayoutCheck check = Client.Game.UO.FontLayoutCheck;
             check.ForceForTests = true;
-            FontLayoutPoolSwitch.OverrideForTests = pool;
 
             for (int round = 0; round < 3; round++)
             {
@@ -266,7 +230,6 @@ namespace ClassicUO.UnitTests.Game.GameObjects
         {
             FontLayoutCheck check = Client.Game.UO.FontLayoutCheck;
             check.ForceForTests = true;
-            FontLayoutPoolSwitch.OverrideForTests = true;
 
             RenderedText a = Make(Specs[0]);
             Fonts.ReleaseLayout(a.GetInfo()); // the bug the checker is for: nodes back in the pool while a still draws them
