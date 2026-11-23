@@ -255,6 +255,7 @@ namespace ClassicUO.Game.GameObjects
         public void RemoveFromTile()
         {
             TileListObject node = this as TileListObject;
+            Chunk left = TileChunk;
 
             if (TileChunk != null)
             {
@@ -282,6 +283,8 @@ namespace ClassicUO.Game.GameObjects
 
             node?.Unlink();
             PendingBlock = -1;
+            // mobile_wall_order's cap summary, taken from what is left on the tile (Chunk.CapRemoved)
+            left?.CapRemoved(this, TileCell);
         }
 
         public virtual void UpdateGraphicBySeason() { }
