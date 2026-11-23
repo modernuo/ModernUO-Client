@@ -8846,3 +8846,22 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
 - **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
   allocation; not timed.
+
+## 2026-11-23 bake-1123: seven quiet-1123 switches made permanent (bg/bake-1123 on poc aa32c2440)
+
+- **What.** Owner decision after quiet-1123 (measure/quiet-1123/results.md): `gpu_prepare_item_cache_gen`, `pick_skip_off_world`,
+  `chunk_lights`, `ui_border_bake`, `mesh_hue_on_change`, `mesh_vis_bits` and `font_layout_pool` lose their setting, `CUO_*`
+  override, driver command and old-path checker; the off paths are deleted. One code commit per switch, then devdocs and docs.
+- **Entangled spots.** chunk_lights: the walk-side static/multi light adds (StaticView, MultiView, both meshed walk branches, the Gpu
+  fill) and `WalkLightsStatic`/`ChunkStaticLights`/`AddLightTimed` go; AddLightCore always ranks (the classic first-100 cap path is
+  gone); light_range drops its chunk_lights precondition; view_margin untouched (AddChunkLights reads the pre-margin view in both
+  states). mesh_vis_bits: `MeshLayer.Visible[]` and its previous-frame copy are deleted (layers and pooled sets), tests compare the
+  packed indices with a plain walk. ui_border_bake: the full composite stays only as the no-UI-target fallback; the back-buffer clear
+  before the scene is gone. `CUO_FONT_LAYOUT_CHECK` is kept (it guards the pool, not an old-vs-new compare).
+- **Old settings.json.** `UiCompositeSwitchTests.Retired_Key_Still_Loads` loads a file naming a removed key; the smoke job writes all
+  seven keys into its settings.json.
+- **Gates.** Release build dev and `CuoDevTools=false`: 0 errors (warnings unchanged in touched files). ClassicUO.UnitTests: 8708
+  passed, 6 skipped; WriteSiteBudgetTests and ClassAMemberTests pass with no allowlist change. Smoke job bench-001102 (Gpu + Legacy at
+  Britain, day/night/zoom 2.5/gumps).
+- **Costs.** ui_border_bake: one back-buffer-sized target (8 MB 1080p, 33 MB 4K), in accepted-costs.md. mesh_vis_bits now saves two
+  bytes per mesh sprite. No timing run (all seven were measured in quiet-1123).
