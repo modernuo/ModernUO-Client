@@ -293,6 +293,7 @@ namespace ClassicUO.Game.Scenes
             public sbyte Z;
             public int Cx0, Cy0;
             public byte Cw, Ch;
+            public uint Seq;
             public ChunkStamps Chunks;
         }
 
@@ -483,6 +484,7 @@ namespace ClassicUO.Game.Scenes
         // the chunks covering the tiles read, with their cap versions
         private static void TakeVersions(Map.Map map, ref ScanCache c)
         {
+            c.Seq = Chunk.CapSeq;
             int cx0 = s_minX >> 3, cx1 = s_maxX >> 3, cy0 = s_minY >> 3, cy1 = s_maxY >> 3;
             c.Cx0 = cx0;
             c.Cy0 = cy0;
@@ -506,6 +508,12 @@ namespace ClassicUO.Game.Scenes
         // item without height came or went) matters only when such an item is or was overhead
         private static bool Unchanged(Map.Map map, ref ScanCache c, int x, int y, int mz, int nx, int ny)
         {
+            // no chunk anywhere took a new cap version since: every stamp below still matches (an idle scene, one compare)
+            if (c.Seq == Chunk.CapSeq)
+            {
+                return true;
+            }
+
             bool flat = false;
 
             for (int j = 0; j < c.Ch; j++)
@@ -550,6 +558,8 @@ namespace ClassicUO.Game.Scenes
                     st.Flat = st.Chunk?.CapFlatVersion ?? 0;
                 }
             }
+
+            c.Seq = Chunk.CapSeq;
 
             return true;
         }

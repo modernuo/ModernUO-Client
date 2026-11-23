@@ -794,6 +794,33 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void FarChangeKeepsTheScanAndCatchesUpTheSequence()
+        {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            TileMap map = Studio();
+            var cache = new MobileFrameCache();
+            cache.Wall = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true);
+            MobileWallOrder.Scan first = cache.Wall;
+
+            // Chunk.CapSeq is global and other test classes run in parallel, so the checks below are lower bounds
+            int fx = MX + 48, fy = MY + 48;
+            map.LoadEmptyChunkForTest(fx >> 3, fy >> 3);
+            AddItem(map, Table, fx, fy, Z);
+            cache.WallCache.Seq.Should().NotBe(Chunk.CapSeq, "a chunk far away loaded and took a table");
+
+            uint seq = Chunk.CapSeq;
+            MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true).Should().BeSameAs(first, "the chunks around are unchanged");
+            cache.WallCache.Seq.Should().BeGreaterThanOrEqualTo(seq, "the stamps were checked, so the next frame needs one compare");
+            MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true).Should().BeSameAs(first);
+
+            AddItem(map, Table, MX + 2, MY, Z);
+            cache.Wall = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true);
+            cache.Wall.Version.Should().NotBe(first.Version, "a table ahead changes the chunk the scan read");
+            cache.Wall.SameAs(Reference(map, MX, MY, Z, Vector3.Zero, true)).Should().BeTrue();
+        }
+
+        [Fact]
         public void OpenFieldIsEmptyWithoutAWalk()
         {
             MobileWallOrder.OverrideForTests = true;

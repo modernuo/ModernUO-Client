@@ -99,6 +99,10 @@ namespace ClassicUO.Game.Map
         internal uint CapVersion, CapFlatVersion;
         private static uint s_capSeq;
 
+        /// <summary>The last version handed to any chunk: unchanged means no chunk's cap summary changed and no chunk was
+        /// loaded, reused or torn down since (MobileWallOrder's one-compare cache test).</summary>
+        internal static uint CapSeq => s_capSeq;
+
         internal const short CapNone = short.MinValue;
 
         /// <summary>Forgets the cap summary (no pieces) under new versions: load, reuse, teardown.</summary>
