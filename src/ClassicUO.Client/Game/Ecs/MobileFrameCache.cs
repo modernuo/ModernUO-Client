@@ -39,11 +39,12 @@ namespace ClassicUO.Game
             // wet_surface_depth (Scenes.WetSurfaceDepth.KeySubmerged): the strips' depths the recorded draws carry
             public bool Submerged;
             public Chunk Tile;
-            // mobile_wall_order (Scenes.MobileWallOrder.KeyScan): the walls ahead that cap the recorded strips' depths
-            public Scenes.MobileWallOrder.Scan Wall;
+            // mobile_wall_order (Scenes.MobileWallOrder.Resolve): the version of the scan whose walls cap the recorded strips'
+            // depths (0: none)
+            public uint WallVersion;
 
             public bool Equals(SelectKey o) =>
-                Submerged == o.Submerged && Wall.Equals(o.Wall) && Flags == o.Flags && NextFrameTime == o.NextFrameTime && TileVersion == o.TileVersion && Body == o.Body && Graphic == o.Graphic &&
+                Submerged == o.Submerged && WallVersion == o.WallVersion && Flags == o.Flags && NextFrameTime == o.NextFrameTime && TileVersion == o.TileVersion && Body == o.Body && Graphic == o.Graphic &&
                 EquipVersion == o.EquipVersion && X == o.X && Y == o.Y && ServerGroup == o.ServerGroup && Facing == o.Facing && Frame == o.Frame &&
                 Season == o.Season && Z == o.Z && ReferenceEquals(Tile, o.Tile);
 
@@ -62,9 +63,10 @@ namespace ClassicUO.Game
         public Chunk WetChunk;
         public bool Submerged;
 
-        // mobile_wall_order: this frame's scan (Scenes.MobileWallOrder.KeyScan), part of the select key; MobileSpriteExtract caps
-        // the strips below the anchor with it
-        public Scenes.MobileWallOrder.Scan Wall;
+        // mobile_wall_order: this frame's scan (Scenes.MobileWallOrder.Resolve; its version is part of the select key) and the
+        // inputs it was made from; MobileSpriteExtract caps the strips with it
+        public Scenes.MobileWallOrder.Scan Wall = Scenes.MobileWallOrder.Scan.Empty;
+        public Scenes.MobileWallOrder.ScanCache WallCache;
 
         // selection
         public bool SelectValid;
@@ -298,7 +300,7 @@ namespace ClassicUO.Game
             Selected = default;
             WetChunk = null;
             Submerged = false;
-            Wall = default;
+            Scenes.MobileWallOrder.Forget(this);
             Array.Clear(LegacyEntries);
         }
 

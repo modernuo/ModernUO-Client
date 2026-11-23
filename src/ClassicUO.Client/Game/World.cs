@@ -360,6 +360,9 @@ namespace ClassicUO.Game
                         }
                     }
                 }
+
+                // mobile_wall_order: the new graphics' heights and art
+                chunk?.RebuildCaps();
             }
 
             // the season's graphics change the tiledata flags the max-Z decision reads, without touching the tile lists

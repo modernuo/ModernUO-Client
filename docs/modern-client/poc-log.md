@@ -8934,3 +8934,76 @@ lb1 (+cache +bake); frame.p50 in ms, Moonglow bank unless named. Machine not qui
   off-grid placements. Memory: 16 B per occluder cache entry (two check fields); no per-frame allocation.
 - **Gates**: Release builds CuoDevTools=true/false clean; unit tests 8783 passed, 6 skipped (dev). Client runs: none (owner,
   batch wave 1123): see cuo-poc-state/measure/batch-1123/README.md section lo-frac and its lo-frac-parity.sh / lo-frac-walk.sh.
+
+## mwo-perf: mobile_wall_order large-scene regression (bg/mwo-perf, 2026-11-23)
+
+- **The ~310 allocations/frame** (quiet-1123 busy-gpu, ls with the switch on) are 310 *bytes* per frame and are not the rule's:
+  FrameStats' session timeline logs one "[gcs] slow frame" line (string.Format, boxed doubles, Log.Info) for every frame over
+  8 ms, and with the switch on every ls frame took ~27 ms. bench-001082: main-thread alloc p50 272 B on 184 of 184 frames
+  (hitch8), 0 B with the switch off. In lswalk the bytes per second are the same in both arms (0.6-0.97 MB/s: packets, chunk
+  loads); per frame they are x10 because fps is /10. The scan itself allocates nothing. FrameStats now leaves the line's
+  bytes out of alloc_bytes / alloc_per_frame and reports them as stats_self_alloc (c3b7f38bc).
+- **The cost** was the scan: run for every mobile every frame before the select-cache test (5 tiles ahead + segments, sides,
+  overhead, stand top, 12 behind with a shadow, twice mid-step), and its frame span came from the last draw's FrameInfo, a
+  frame late, so every animation frame changed the select key twice (re-select, re-record). Counters per frame (mwo_scans,
+  mwo_tiles, mwo_objects, mob_select_*, mob_emit_misses, mob_legacy_misses): bench-001109 (old) vs bench-001118 (new).
+- **Design (owner-approved), behind the existing switch:** Scan is a class (shared Empty; kept results pooled, wall array
+  from BufferPool sized to the count; the select key holds its version). Chunk keeps a per-tile cap summary (highest top of
+  pieces with height, highest z of any piece and of items without height) with CapVersion (pieces with height, statics,
+  multis) and CapFlatVersion (items without height: a dropped coin does not invalidate). Resolve keeps a mobile's scan while
+  tile, z, step, shadow, rule and the cap versions of the chunks the scan read are unchanged; otherwise Empty when the
+  summaries show nothing around (no tile walk), else the full scan. The composite span is measured by the extract before the
+  strips (same steady-state output, no frame lag). CUO_MOBILE_WALL_ORDER_CACHE_CHECK=1 compares every result with a full scan.
+- **Tests.** MobileWallOrderTests 79 (cache hit, open field, coin vs table, flat item overhead, cap summary, a random-room fuzz
+  of Resolve vs the full scan over steps, shadows and item changes, no allocation over steps and idle frames).
+  ClassicUO.UnitTests dev 8751 / 6 skipped. Release builds: both variants.
+- **Memory.** Chunk: 192 B summary + 8 B per chunk; per mobile frame cache ~170 B ScanCache; kept scans only for mobiles with
+  walls (wall arrays pooled, up to 256 scan objects pooled).
+- **Pending jobs:** bench-001115 (checker in Britain and the large scene), 001116/001117 (parity shots new/old), 001118
+  (counters/alloc, not quiet). Quiet timing parked: measure/mwo-perf/job-qs1/qs2-PARKED.sh (quiet-next.md row).
+
+### mwo-perf follow-up: job results (bench-001109 / 001115-001118, NOT QUIET) and the O(1) cache test (2026-11-23)
+
+- **Checker: 0 mismatches.** bench-001115 (new binary, CUO_MOBILE_WALL_ORDER_CACHE_CHECK + CUO_MOBILE_CACHE_CHECK, Britain,
+  brwalk, ls, lswalk): Gpu 2,133,729 compares (kept 2,112,104, empty from the cap summaries 1,677, full scans 19,948), Legacy
+  2,042,685 compares, mismatches 0 both; mobile-cache-check 0 different (Gpu 21.7 M selections replayed, Legacy 14.0 M legacy
+  calls). Parity run bench-001116: 752,087 compares at the owner spots, 0 mismatches; 0 exceptions.
+- **Parity shots (001116 new vs 001117 old, 1368 files each: 408 PNG + 960 raw walk frames): not pixel-identical, no
+  rule-caused difference found.** 671 equal; 203 PNG and 494 raw frames differ. Inspected diffs: wandering NPCs and the
+  player's mount at another animation phase (the plan has no anim_freeze / cantwalk, so the scene drifts between runs), and on
+  some Legacy L1 shots scattered 1-px seam pixels along land tile edges (not near mobiles). Shots are in colour (character
+  alive). The exact proof is the checker (every kept/empty result equals a fresh full scan). The composite-span change (span
+  measured at extract instead of the last draw) is by design different only on an animation frame's first draw; a frozen
+  old-vs-new parity (anim_freeze + NPC cantwalk) is in the batch (batch-1123/README.md).
+- **Cost, ms, frame p50 median of 4 windows (2 rounds x 2), off -> on, NOT QUIET:**
+
+  | scene | old rule Gpu | old rule Legacy | new Gpu | new Legacy |
+  |---|---|---|---|---|
+  | Britain | 0.473 -> 0.473 | 0.565 -> 0.564 | 0.474 -> 0.473 | 0.565 -> 0.570 |
+  | brwalk | 0.466 -> 0.467 | 0.548 -> 0.546 | 0.467 -> 0.467 | 0.551 -> 0.542 |
+  | ls | 2.044 -> 29.319 (+27.3) | 4.547 -> 31.623 (+27.1) | 1.842 -> 1.877 (+0.03) | 4.551 -> 4.731 (+0.18) |
+  | lswalk | 2.020 -> 25.203 (+23.2) | 4.476 -> 27.373 (+22.9) | 1.787 -> 2.039 (+0.25, spread 36 %) | 4.811 -> 4.771 (-0.04) |
+
+  Where: Gpu ls prep_cap_mobile +0.049 (old +26.3); Legacy ls world_draw +0.113 (old +26.5). ip.py: new Gpu ls +1.3 %
+  [-3.3..+5.9], Legacy ls +4.0 % [+3.1..+4.9], lswalk Gpu +9 % [-15..+33], Legacy +1.1 % [-10.7..+12.9].
+- **Counters per frame at ls (on arm):** old: mwo_scans 2980 (Gpu) / 2986 (Legacy), tiles 68.6 k, objects 1.20 M; mobile
+  select hits 940 / misses 671 (off: 1555 / 56: the frame-late span re-keyed every animation frame). New: scans 1.1 / 2.8,
+  tiles 26 / 65, objects 326 / 815, cache hits 2705 / 2825, empty 0.1 / 0.4; select hits 1559 / misses 52 (= off). lswalk new:
+  scans 2.8 / 6.6, hits 2544 / 2522. (The def arm shows 75-136 cache hits/frame: frames right after the in-process switch flip.)
+- **Allocation:** the rule adds none. Gpu ls 2 -> 2 B/frame; Legacy ls 80 -> 152, lswalk 1629 -> 1686 (Gpu) / 3420 -> 3772
+  (Legacy) are within those windows' spread (26-53 %; packets and chunk loads); stats_self_alloc 0 at ls (no slow frames now).
+  Old binary on-arm ls 1411 B/frame + 272 B stats_self_alloc (the slow-frame line, bg/fstats-mem replaces it).
+- **Bar (perf-budget-tiers rule 4, < 0.1 ms in every reference scene): not shown yet.** Gpu ls +0.03 meets it; Legacy ls
+  +0.18 (world_draw +0.11) does not on this busy machine, and lswalk Gpu is inconclusive (+0.25 with 36 % spread). The
+  remaining cost is the per-frame hit path: ~2700-2800 Resolve hits/frame (more than the 1985 mobiles: open question why some
+  mobiles resolve twice a frame), each walking 1-9 chunk stamps (chunk deref + two version compares) after the key compares.
+- **Next step done (this follow-up, code commit on bg/mwo-perf):** an O(1) neighbourhood test. Every cap version comes from
+  one global sequence (Chunk.s_capSeq: load, reuse, teardown, season, piece add/remove), so ScanCache keeps the sequence it saw
+  (`Seq`); Unchanged returns at once when Chunk.CapSeq is the same (an idle scene: one compare, no chunk touched), else checks
+  the stamps as before and, when they still hold, catches Seq up so the next frame is one compare again. Exact: an unchanged
+  sequence means no stamp could have changed. ScanCache +4 B (~174 B per mobile). Unit test
+  FarChangeKeepsTheScanAndCatchesUpTheSequence; MobileWallOrderTests 80. In lswalk the sequence moves every chunk load, so
+  the walk keeps the stamp path. Not measured (owner batches testing).
+- **If the batch still shows > 0.1 ms:** (1) find why hits exceed mobiles (Resolve twice for some mobiles per frame) and
+  resolve once; (2) skip Resolve for mobiles whose select key inputs (tile, z, step) and the global sequence are unchanged
+  before DepthTile/StepTile; (3) a per-chunk "any capped tile" bit so Quiet answers open fields without the 3 x 5 tile reads.

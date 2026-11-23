@@ -126,7 +126,7 @@ namespace ClassicUO.Game
             _atlas = null;
             _geo = Scenes.DepthModel.On;
             _submerged = false;
-            _wall = default;
+            _wall = Scenes.MobileWallOrder.Scan.Empty;
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
@@ -238,6 +238,40 @@ namespace ClassicUO.Game
             // mobile_wall_order: the centre column of the tile the depth key sorts the mobile on
             _wallRefX = posX + 22 + _wall.Du * 22;
             _wallRefY = posY + 22 + _wall.Dv * 22;
+            _spanLo = _spanHi = 0;
+
+            if (_wall.Count != 0)
+            {
+                // mobile_wall_order: the composite's columns first (they were the last draw's FrameInfo, a frame late, which
+                // changed the select key on every animation frame)
+                _measure = true;
+
+                try
+                {
+                    EmitLayers(in s, in rs, in eq, bodyHue, drawX, drawY, depth);
+                }
+                finally
+                {
+                    _measure = false;
+                }
+
+                _spanLo = Math.Min(0, _spanLo);
+                _spanHi = Math.Max(0, _spanHi);
+                _geoAnchorX = drawX;
+                _geoAnchorY = drawY;
+            }
+
+            EmitLayers(in s, in rs, in eq, bodyHue, drawX, drawY, depth);
+
+            // MobileView.Draw's final FrameInfo transform
+            _fiX = Math.Abs(_fiX);
+            _fiY = Math.Abs(_fiY);
+            _fiW += _fiX;
+            _fiH += _fiY;
+        }
+
+        private void EmitLayers(in AnimationState s, in MobileRenderState rs, in EquipmentSlots eq, ushort bodyHue, int drawX, int drawY, float depth)
+        {
             float alpha = rs.Alpha / 255f;
             bool mirror = (s.Flags & AnimStateFlags.Mirror) != 0;
             bool shadow = (s.Flags & AnimStateFlags.Shadow) != 0;
@@ -285,12 +319,6 @@ namespace ClassicUO.Game
                     AddLight(eq.LightItems[i], drawX, drawY);
                 }
             }
-
-            // MobileView.Draw's final FrameInfo transform
-            _fiX = Math.Abs(_fiX);
-            _fiY = Math.Abs(_fiY);
-            _fiW += _fiX;
-            _fiH += _fiY;
         }
 
         private void EmitEquipment(in AnimationState s, in EquipmentSlots eq, int n, int drawX, int drawY, bool mirror, float alpha, float depth, int mountOffset, ushort over, bool charSitting)
@@ -442,7 +470,10 @@ namespace ClassicUO.Game
 
                 if (frameIndex >= atlasFrames.Length || atlasFrames[frameIndex].Texture == null)
                 {
-                    _atlasMiss = true;
+                    if (!_measure)
+                    {
+                        _atlasMiss = true;
+                    }
 
                     return;
                 }
@@ -451,6 +482,18 @@ namespace ClassicUO.Game
             int anchorX = x, anchorY = y;
             x -= mirror ? w - fe.CenterX : fe.CenterX;
             y -= h + fe.CenterY;
+
+            if (_measure)
+            {
+                // the columns the draw below adds to FrameInfo
+                if (!isShadow)
+                {
+                    _spanLo = Math.Min(_spanLo, x - anchorX);
+                    _spanHi = Math.Max(_spanHi, x - anchorX + w);
+                }
+
+                return;
+            }
 
 #if CUO_DEVTOOLS
             if (Scenes.ClipDump.Active && !isShadow)
@@ -627,14 +670,14 @@ namespace ClassicUO.Game
             return _wall.Active;
         }
 
-        // mobile_wall_order: a strip's columns relative to the depth tile's centre: the composite's (MobileWallOrder.Scan.SpanLo,
-        // the last FrameInfo, so every layer gets one cap), else the layer's frame [x, x + w)
+        // mobile_wall_order: a strip's columns relative to the depth tile's centre: the composite's (_spanLo, _spanHi, so every
+        // layer gets one cap), else the layer's frame [x, x + w)
         private void StripColumns(int x, int w, out int lo, out int hi)
         {
-            if (_wall.SpanHi > _wall.SpanLo)
+            if (_spanHi > _spanLo)
             {
-                lo = _geoAnchorX + _wall.SpanLo - _wallRefX;
-                hi = _geoAnchorX + _wall.SpanHi - _wallRefX;
+                lo = _geoAnchorX + _spanLo - _wallRefX;
+                hi = _geoAnchorX + _spanHi - _wallRefX;
             }
             else
             {
@@ -645,6 +688,11 @@ namespace ClassicUO.Game
 
         private void AddLight(uint item, int x, int y)
         {
+            if (_measure)
+            {
+                return;
+            }
+
             if (_lightCount >= _lights.Length)
             {
                 Array.Resize(ref _lights, _lights.Length * 2);
@@ -743,8 +791,13 @@ namespace ClassicUO.Game
 
         // mobile_wall_order (key mode): the mobile's wall scan (MobileFrameCache.Wall, part of the select key) and the screen
         // column of its depth tile's centre, which the scan's wall columns are relative to
-        private Scenes.MobileWallOrder.Scan _wall;
+        private Scenes.MobileWallOrder.Scan _wall = Scenes.MobileWallOrder.Scan.Empty;
         private int _wallRefX, _wallRefY;
+        // mobile_wall_order: the composite's columns [_spanLo, _spanHi) relative to its anchor column (every non-shadow
+        // layer of this selection, MobileView's FrameInfo), measured before the strips are written (_measure: Layer only
+        // takes each layer's columns), so all layers get one cap; empty (equal): each layer uses its own frame
+        private int _spanLo, _spanHi;
+        private bool _measure;
 #if CUO_DEVTOOLS
         // CUO_CLIP_ORDER_CHECK: the mobile's tile y and whether it stands still (ClipOrderCheck.Layer)
         private int _objY;
@@ -793,7 +846,7 @@ namespace ClassicUO.Game
         public void Emit(EcsEntity e, in EcsRow data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
             _submerged = cache != null && cache.Submerged;
-            _wall = cache != null ? cache.Wall : default;
+            _wall = cache != null ? cache.Wall : Scenes.MobileWallOrder.Scan.Empty;
 
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
@@ -859,6 +912,7 @@ namespace ClassicUO.Game
 
             MaterializeView();
             MobileFrameCache.EmitMisses++;
+            FrameStats.Inc(FrameCounter.MobEmitMisses);
             int recStart = _count;
             int recLights = _lightCount;
             _record = cache;
@@ -1220,7 +1274,7 @@ namespace ClassicUO.Game
         {
             BeginSelect(src);
             _submerged = cache != null && cache.Submerged;
-            _wall = cache != null ? cache.Wall : default;
+            _wall = cache != null ? cache.Wall : Scenes.MobileWallOrder.Scan.Empty;
 
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
@@ -1261,6 +1315,7 @@ namespace ClassicUO.Game
             }
 
             MobileFrameCache.LegacyMisses++;
+            FrameStats.Inc(FrameCounter.MobLegacyMisses);
             Select(e, data, posX, posY, depth);
             bool hold = LookPrefetch.HoldEnabled;
 
