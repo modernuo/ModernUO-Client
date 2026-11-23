@@ -28,6 +28,76 @@ public class DisplayRateTests
         Assert.Equal(214, next);
     }
 
+    // fade_time_based: the frames a full fade (11 steps of 25) takes at a frame interval, with the scene's catch-up rule
+    private static long FadeDuration(int frameMs, bool timeBased, bool displayPaced)
+    {
+        FadeTiming.OverrideForTests = timeBased;
+
+        try
+        {
+            long next = 0, now = 1000, start = now;
+            int alpha = 0;
+
+            while (alpha < 255)
+            {
+                int steps = GameScene.FadeSteps(now, ref next, displayPaced || FadeTiming.TimeBased);
+                alpha += 25 * steps;
+
+                if (alpha >= 255)
+                {
+                    break;
+                }
+
+                now += frameMs;
+            }
+
+            return now - start;
+        }
+        finally
+        {
+            FadeTiming.OverrideForTests = null;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Fade_Duration_Across_Frame_Rates(bool timeBased)
+    {
+        long at12 = FadeDuration(83, timeBased, false);
+        long at60 = FadeDuration(16, timeBased, false);
+        long at144 = FadeDuration(7, timeBased, false);
+        long at240 = FadeDuration(4, timeBased, false);
+
+        if (timeBased)
+        {
+            // ~200 ms at every rate (the steps are on a 20 ms grid; one frame of slack)
+            foreach (long d in new[] { at12, at60, at144, at240 })
+            {
+                Assert.InRange(d, 180, 200 + 83);
+            }
+
+            // the same as display-paced drawing at the same rate
+            Assert.Equal(FadeDuration(83, false, true), at12);
+        }
+        else
+        {
+            // one step per unpaced frame at most: 12 fps takes ten frames (~830 ms after the first)
+            Assert.Equal(830, at12);
+            Assert.InRange(at144, 180, 240);
+        }
+    }
+
+    [Fact]
+    public void Time_Based_Fade_Keeps_The_Next_Step_On_The_Grid()
+    {
+        // the visual-due wake reads the next step time: after a catch-up it is the next 20 ms boundary after now
+        long next = 100;
+        Assert.Equal(5, GameScene.FadeSteps(183, ref next, true));
+        Assert.Equal(200, next);
+        Assert.True(next > 183 && next - 183 <= 20);
+    }
+
 #if CUO_DEVTOOLS
     [Fact]
     public void CheckerFlagsLateAndOverRateOnlyAboveThresholds()

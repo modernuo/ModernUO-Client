@@ -236,6 +236,11 @@ namespace ClassicUO.Configuration
         // they reach it; CUO_MOBILE_FADE_IN=1|0 overrides the setting in developer builds. Default on; off is the new path.
         [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; } = true;
 
+        // mount-fix: object fades (roof, max Z, new objects) catch up the 20 ms steps a long frame missed in every pacing
+        // mode, so a fade takes the same ~220 ms at any frame rate; before, only display-paced drawing caught up and an
+        // unpaced 12 fps frame took one step (~917 ms). CUO_FADE_TIME_BASED=1|0 overrides it in developer builds. Default off.
+        [JsonPropertyName("fade_time_based")] public bool FadeTimeBased { get; set; }
+
         // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
         // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
         // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the
