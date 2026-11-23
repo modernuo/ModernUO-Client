@@ -8846,3 +8846,45 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
 - **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
   allocation; not timed.
+
+## 2026-11-23 mount-fix (bg/mount-fix, base aa32c2440)
+
+Owner findings (Gpu, anim_async_turn off): mount/dismount flashed every cycle; with object fading off it still flashed
+intermittently, more often at high fps. Analysis: measure/mount-flash and handoffs/mount-flash.md. Five switches, each in its own
+commit, all default today's behaviour:
+
+- **mobile_fade_in** (default on). Off: a mobile WorldWriter.UpsertMobile creates is marked (GameObject.AlphaSnap) and its first
+  walk puts AlphaHue at its target (full, or 0 above the max Z) instead of fading in from 0 over ~220 ms. This was the every-cycle
+  dismount flash (the new horse invisible for its first frames). Roof, max-Z, translucency and chunk fades unchanged; items keep
+  their fade (owner question). CUO_MOBILE_FADE_CHECK: created mobiles first drawn below target and the ramp ms.
+- **fade_time_based** (default off). FadeSteps caught up missed 20 ms steps only when display-paced; unpaced a fade took one step a
+  frame (~917 ms at 12 fps). On: catch-up in every mode, steps stay on the 20 ms grid (the _alphaMoved visual-due wake still names
+  the next step). Unit tests compare durations at 12/60/144/240 fps.
+- **idle_on_spawn** (default on). A new mobile record started with IdleDue 0, so every mobile entering the scene (a dismounted
+  horse, a teleport into a crowd, walking into view) played its client-side idle on its first update, a crowd in sync. Off: the
+  first IdleDue is the steady-state residual of the 30-60 s renewal (x = sqrt(900 + 2700 u1) s, delay u2 x; density 1/45 per s to
+  30 s, linear to 0 at 60 s; mean 23.3 s, about 2 % in the first second). Later idles unchanged. **Walk baselines (brwalk, lswalk,
+  large scene) taken before this switch include these spawn idles**; the switch stays through the next quiet pass to compare.
+- **asset_prefetch_on_packet coverage**: a worn item leaving its wearer (0x1D, into a container, picked up) notes the wearer (the
+  dismount now requests the rider's on-foot actions; before, nothing noted the removal); SetWarMode notes the mobile (with
+  anim_async_turn off nothing did); while a mount is worn its body's standing group is requested too (the horse a dismount leaves
+  stands in its own group, not the ridden one, and had no complete look at its first frame).
+- **mount_swap** (default off, owner-approved). A matched dismount (Mount-layer item leaves; exactly one mobile of the mount's body
+  created within 1 tile and 25 ms) keeps drawing the rider's recorded mounted look and hides the horse until both new looks are
+  drawable, at most 25 ms (LookPrefetch.FirstSightMaxMs), then both switch in one frame. Unmatched cases unchanged. Not covered: the
+  mount side (the horse's removal destroys it before the rider's mounted look is drawable) and a server split with a frame between;
+  the ModernUO fix for the mount-side split is in modernuo-improvements.md (2026-11-23). CUO_MOUNT_SWAP_CHECK counts frames that
+  drew a matched pair inconsistently, in both states.
+- **Uncovered-draw detector** (CUO_LOOK_PREFETCH_CHECK): each mobile draw with a layer drawn as nothing or partial is attributed to a
+  noted look still loading, first sight, or UNCOVERED (logged with body, group, direction and the last WorldWriter operation on the
+  mobile and its equipment).
+
+Scenario jobs (results pending at the time of this entry; see the follow-up entry): bench-001132 (10 mount/dismount cycles, 7 arms:
+today's defaults, Gpu uncapped and 144 fps + vsync, Legacy, swap off/on) and bench-001133 (coverage: ethereal, war mode, weapon and
+cloak, bodyvalue, death and res, teleport, [add of unseen creatures, Gpu and Legacy). Scenes, jobs and analysis:
+cuo-poc-state/measure/mount-fix.
+
+Costs (estimated, not timed; machine not quiet): the mount standing group is one more action of the ridden body (8 directions on
+Gpu, about 1-2 MiB of anim pages while riding, LRU-managed); mount_swap holds the rider's on-foot look up to 25 ms on a matched
+dismount (by design) and costs one branch per frame otherwise; no new per-frame allocation (fixed 4-entry rings). Checkers allocate
+only when on.
