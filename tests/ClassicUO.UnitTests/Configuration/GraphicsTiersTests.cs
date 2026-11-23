@@ -136,9 +136,52 @@ namespace ClassicUO.UnitTests.Configuration
         }
 
         [Fact]
-        public void ADefaultInstallIsCustom()
+        public void ANewInstallIsMedium()
         {
-            Assert.Null(GraphicsTiers.Detect(new Settings()));
+            var settings = new Settings();
+            Assert.Equal(QualityTier.Medium, GraphicsTiers.Detect(settings));
+
+            foreach (GraphicsTiers.Row row in GraphicsTiers.Rows)
+            {
+                Assert.Equal(row.ValueAt(QualityTier.Medium), row.Get(settings));
+            }
+        }
+
+        private static Settings Parse(string json) =>
+            System.Text.Json.JsonSerializer.Deserialize(json, SettingsJsonContext.RealDefault.Settings);
+
+        [Fact]
+        public void ASavedFileWithExplicitValuesLoadsUnchanged()
+        {
+            Settings high = Parse("{\"chunk_lights\":true,\"light_range\":false,\"view_margin\":true,\"light_occlusion\":true,\"light_batch\":true}");
+            Assert.Equal(QualityTier.High, GraphicsTiers.Detect(high));
+
+            Settings custom = Parse("{\"chunk_lights\":false,\"light_range\":true,\"view_margin\":true}");
+            Assert.True(custom.ViewMargin);
+            Assert.True(custom.LightRange);
+            Assert.False(custom.ChunkLights);
+            Assert.False(custom.LightOcclusion);
+            Assert.Null(GraphicsTiers.Detect(custom));
+        }
+
+        [Fact]
+        public void ASavedFileWithoutTierKeysKeepsThemOff()
+        {
+            Settings old = Parse("{\"language\":\"\"}");
+            foreach (GraphicsTiers.Row row in GraphicsTiers.Rows)
+            {
+                Assert.False(row.Get(old), row.Key);
+            }
+        }
+
+        [Fact]
+        public void PickingAPresetOverwritesASavedFile()
+        {
+            Settings custom = Parse("{\"light_range\":true,\"view_margin\":true}");
+            GraphicsTiers.Apply(custom, QualityTier.Medium);
+            Assert.Equal(QualityTier.Medium, GraphicsTiers.Detect(custom));
+            GraphicsTiers.Apply(custom, QualityTier.High);
+            Assert.Equal(QualityTier.High, GraphicsTiers.Detect(custom));
         }
 
         [Fact]
