@@ -8866,3 +8866,36 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Measurements**: pending (main bench runner failed all jobs 16:27-16:48 with exit 66; the first bench2 run hit a server
   that refused connections). Jobs: lo-parity-b, lo-prof2-gpu/legacy; see cuo-poc-state/handoffs/lo-cache.md. Quiet row:
   quiet-next #21.
+
+## 2026-11-23 lo-cache measurements (bench-001112 parity, bench-001113/001114 profile; NOT QUIET)
+
+All numbers: main runner, pinned p-cores, 2560x1440, light 05, ABBA x3, arms lo0 (occlusion off) / lo1 (on) / lc1 (+cache) /
+lb1 (+cache +bake); frame.p50 in ms, Moonglow bank unless named. Machine not quiet: treat as +-0.05 ms.
+
+- **Cache parity.** `[light-occlusion-cache-check]` mismatches 0 over 800k checked cached searches (both renderers, bank,
+  lamps, britz 2.5, bankcot, luna, walk). No exceptions. Lights-only target c1 vs c0: 0 px everywhere except bank (below).
+- **Bake parity: not clean.** `[light-occ-bake-check]` at bank: 315 px differ from the stencil pass, largest channel difference
+  40 (not a rounding tie), every compare, both renderers; same 315 px in the c0/c1 lights shots (c0b vs c0: 0 px).
+  Bankcot (circle of transparency, 24 lights from the atlas) 2741 px, max 40, in the checker only (shots equal). Lamps, britz,
+  luna: 0 px. Total 17 of 95 compares mismatched. Open bug: a light at the bank bakes differently from its stencil pass.
+  Screens c1 vs c0 differ by 0..7.6k px (max 140-219) but so does c0 vs c0b (0..9.9k px): scene drift (animation, mobiles)
+  dominates; the lights-only target is the usable parity signal. Colour check: 24..60 (not greyscale), shots are valid.
+- **Cost, bank, frame.p50 (Gpu / Legacy):** lo0 0.612 / 0.942; lo1 +0.62 (1.229) / +0.45 (1.393); lc1 +0.27 (0.879) /
+  +0.11 (1.054); lb1 +0.12 (0.731) / -0.04 (0.896, noise). Lights phase Gpu: 0.035 -> 0.836 -> 0.439 -> 0.336. Profile split
+  of lo1 (Gpu): light_search_us 637, light_mask_us 191 (103 flushes/draw calls, 51 masked lights, 161 occluders); the cache
+  removes the search (lc1 218 us), the bake removes the mask pass (lb1: mask 0, 2 flushes, search 92 us for 49 cache hits).
+  Search cost is the same on both renderers (the light pass is shared). Bankcot (circle of transparency, bake falls back):
+  lo1 +0.69/+0.61, lc1 +0.28/+0.29, lb1 +0.28/+0.23. Lamps: lb1 -0.0 both. Britz 2.5: lo1 +0.08 Gpu/+0.17 Legacy, lb1 +0.0/+0.04.
+  Alloc/frame: unchanged (<= 1 byte-scale noise), no per-frame allocations from cache or bake.
+- **First frame vs steady state.** Not timed per frame (no per-frame trace). Counters: the first frame at bank builds 103 cache
+  entries and the bake draws 24 slots per pass (51 bakes over 3 passes), so the first 3 frames cost about lo1 plus the bakes
+  (est. +0.6 to +1 ms); steady state is the lb1 row above (misses 0, bakes 0, 49 cache hits per pass).
+- **Memory / LRU.** Cache 79 KB at bank (103 entries), 92-93 KB at luna/walk; atlas 8 MB per client (Color + D24S8). LRU:
+  entries followed the view (103 -> 35 -> 33 -> 13 -> 10), 0 evicted (1024 cap never reached), idle dropped 5 then 24 during
+  the walk; atlas reset once (full atlas) in the run.
+- **Fractional-zoom walk.** Not shown: the walk plan ran at zoom 1.0 (britz 2.5 is a static spot), so the lo-frac re-bake problem
+  is not exercised. At zoom 1.0 the walk added only 6 bakes (142 -> 148) and 340 cache rebuilds. The lo-frac fix
+  (bg/lo-frac, light_occlusion_bake_world_phase) still needs its zoom 2.5 walk job (batch-1123 lo-frac-walk.sh).
+- **Tier.** Cache: Medium (+0.27 Gpu / +0.11 Legacy bank, +0.28 bankcot; parity exact). Bake: stays High until the 315 px
+  bank mismatch is understood and the lo-frac walk is measured (+0.12 bank, but it only helps without the circle of
+  transparency). light_occlusion alone: High (+0.62 <= 1.5).
