@@ -229,13 +229,6 @@ namespace ClassicUO.Configuration
         // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
-        // light-edges round 6c (split from view_margin): static and multi lights from the chunks' emitter lists instead of
-        // the walk (Deceit's wall torches lit before they enter the view; the gradient circle of transparency no longer drops
-        // every static light), a growable ranked light list instead of the classic first 100, and no slot for a light whose
-        // halo cannot reach the view (ChunkLights). CUO_CHUNK_LIGHTS_CHECK=1 compares the band lights with a walk of those
-        // chunks; CUO_CHUNK_LIGHTS=1|0 overrides the setting in developer builds. Default off.
-        [JsonPropertyName("chunk_lights")] public bool ChunkLights { get; set; }
-
         // light-edges: a surface glow's halo (a lit window's beam: light_alpha_fade's class, lightclass.bin, else the
         // emitter's tiledata Wall/Window flags) is not drawn where another static, multi piece or ground item in front of its
         // source covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a
@@ -256,8 +249,8 @@ namespace ClassicUO.Configuration
         // developer builds. Default off.
         [JsonPropertyName("light_alpha_fade")] public bool LightAlphaFade { get; set; }
 
-        // light-edges round 6c (owner 2026-11-22: zoomed out with every light in range drawn, the light pass lagged): with
-        // chunk_lights on, a light farther from the player than light_range_tiles (0 = auto: just past the zoom-1 view plus
+        // light-edges round 6c (owner 2026-11-22: zoomed out with every light in range drawn, the light pass lagged): a
+        // light farther from the player than light_range_tiles (0 = auto: just past the zoom-1 view plus
         // the largest halo) is dropped, fading over its last 2 tiles, and at most light_budget lights are kept (the ranked
         // list's best), the lowest-ranked 16 fading by rank (LightRange). Both renderers. CUO_LIGHT_RANGE_CHECK=1 checks the
         // kept, dropped and faded lights against the rule; CUO_LIGHT_RANGE=1|0 overrides the setting in developer builds.

@@ -6,7 +6,7 @@ using ClassicUO.Configuration;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// light_range (light-edges round 6c, default off; needs chunk_lights). Owner 2026-11-22: zoomed out with chunk_lights and
+    /// light_range (light-edges round 6c, default off). Owner 2026-11-22: zoomed out with chunk_lights and
     /// light_occlusion on, every light in range was drawn (the ranked list grows to FrameLights.SafetyBound) and the light pass
     /// lagged. With the switch on:
     /// a light farther from the player than the range (tiles, Chebyshev, from its screen offset: <see cref="TileDistance"/>) takes

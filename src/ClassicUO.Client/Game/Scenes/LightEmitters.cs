@@ -81,7 +81,7 @@ namespace ClassicUO.Game.Scenes
         public static bool StaticEmits(ushort graphic, int index, Func<int, bool> hasShape) =>
             hasShape(ShapeOf(graphic, index, false)) || hasShape(ShapeOf(graphic, index, true));
 
-        /// <summary>CUO_CHUNK_LIGHTS_CHECK and the band pass: a light-flagged static's light draws a shape with this
+        /// <summary>The band pass: a light-flagged static's light draws a shape with this
         /// frame's colored-lights setting (the light add gives it a slot), independent of the table.</summary>
         public static bool StaticDrawsNow(ushort graphic, int index) => _hasShape(ShapeOf(graphic, index, ColoredNow));
 

@@ -256,10 +256,6 @@ namespace ClassicUO.Game.Scenes
                 _gpuStatics.Add(st);
                 _gpuStaticsShadowOnly.Add(true);
             }
-            else if (ViewMargin.WalkLightsStatic(st.ItemData.IsLight, ChunkStaticLights))
-            {
-                AddLightTimed(st, st.RealScreenPosition.X + 22, st.RealScreenPosition.Y + 22);
-            }
 
             GpuStaticOverride(st);
         }

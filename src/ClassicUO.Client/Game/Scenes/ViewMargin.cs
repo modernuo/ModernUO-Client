@@ -14,7 +14,7 @@ namespace ClassicUO.Game.Scenes
     /// reach. Its light part is chunk_lights since round 6c (<see cref="ChunkLights"/>): GameScene.AddChunkLights adds the
     /// light sources whose anchor is in the band between that rectangle and the rectangle grown by <see cref="LightMargin"/>
     /// (the chunks' recorded light statics and multi components, Chunk.LightSources, and their ground items) and every
-    /// emitter the walk drew. CUO_VIEW_MARGIN_CHECK=1 checks the sprite margin, CUO_CHUNK_LIGHTS_CHECK=1 the band lights.
+    /// emitter the walk drew. CUO_VIEW_MARGIN_CHECK=1 checks the sprite margin.
     /// The pure geometry lives here for the unit tests.
     /// </summary>
     internal static class ViewMargin
@@ -38,12 +38,6 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
-
-        /// <summary>Whether the world walk (or the view it draws) lights a static or multi component: never under
-        /// view_margin (<paramref name="chunkLights"/>, GameScene.ChunkStaticLights), whose chunk emitter lists already hold
-        /// it. A second walk-side entry doubles the halo (the torch flash: the Gpu fill collected an animated light static's
-        /// light on the frames its animation offset is 0).</summary>
-        public static bool WalkLightsStatic(bool isLight, bool chunkLights) => isLight && !chunkLights;
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.ViewMargin ?? false);
 
