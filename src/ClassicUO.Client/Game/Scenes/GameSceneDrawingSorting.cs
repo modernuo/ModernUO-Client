@@ -525,6 +525,7 @@ namespace ClassicUO.Game.Scenes
 
             if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
             {
+                _walkCullY++;
                 return 1;
             }
 
@@ -718,6 +719,8 @@ namespace ClassicUO.Game.Scenes
         // instead of a FrameStats.Inc per object: objects walked (this scene's) and pick tests (static: TrySelectObject is)
         private int _walkObjects;
         private static int _walkPickTests;
+        // walked objects culled by their anchor's y (FrameStats cull_y; zband)
+        private int _walkCullY;
 
         private void FlushWalkCounters()
         {
@@ -725,9 +728,11 @@ namespace ClassicUO.Game.Scenes
             {
                 FrameStats.Add(FrameCounter.Objects, _walkObjects);
                 FrameStats.Add(FrameCounter.PickTests, _walkPickTests);
+                FrameStats.Add(FrameCounter.CullY, _walkCullY);
             }
 
             _walkObjects = 0;
+            _walkCullY = 0;
             _walkPickTests = 0;
             FlushMarginCull();
             FlushMarginWalk();
@@ -952,10 +957,14 @@ namespace ClassicUO.Game.Scenes
                         {
                             int adjustedY = screenY + (meshLand.Z << 2) - (meshLand.MinZ << 2);
                             if (adjustedY < _minPixel.Y || screenY > _maxPixel.Y)
+                            {
+                                _walkCullY++;
                                 continue;
+                            }
                         }
                         else if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
                         {
+                            _walkCullY++;
                             continue;
                         }
 
@@ -1007,7 +1016,10 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
+                    {
+                        _walkCullY++;
                         continue;
+                    }
 
                     // Static or Multi — meshed objects are never foliage/trees/internal/animated
                     ref StaticTiles meshItemData = ref (obj is Static meshStatic
@@ -1119,6 +1131,7 @@ namespace ClassicUO.Game.Scenes
 
                         if (screenY > _maxPixel.Y)
                         {
+                            _walkCullY++;
                             continue;
                         }
 
@@ -1130,6 +1143,7 @@ namespace ClassicUO.Game.Scenes
 
                         if (screenY < _minPixel.Y)
                         {
+                            _walkCullY++;
                             continue;
                         }
 
@@ -1275,6 +1289,7 @@ namespace ClassicUO.Game.Scenes
 
                             if (mobileOutside)
                             {
+                                _walkCullY++;
                                 continue;
                             }
 
@@ -1362,6 +1377,7 @@ namespace ClassicUO.Game.Scenes
 
                             if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
                             {
+                                _walkCullY++;
                                 continue;
                             }
 
@@ -1403,6 +1419,7 @@ namespace ClassicUO.Game.Scenes
 
                         if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
                         {
+                            _walkCullY++;
                             continue;
                         }
 

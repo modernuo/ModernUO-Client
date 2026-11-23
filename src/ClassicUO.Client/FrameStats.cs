@@ -264,6 +264,12 @@ namespace ClassicUO
         VmRingObjectsSkipped,
         // vm-body (view_margin_body): mobiles of the walk left out by their body's reach (or that would be, switch off)
         VmBodyMobilesSkipped,
+        // zband (walk_chunk_z): chunks given chunk-level work by the fill, tiles in the walk's and the hidden pass's bands,
+        // and walked objects culled by their anchor's y
+        FillChunks,
+        WalkBandTiles,
+        HiddenBandTiles,
+        CullY,
         Count
     }
 
@@ -336,7 +342,8 @@ namespace ClassicUO
             "mwo_scans", "mwo_tiles", "mwo_objects", "mwo_cache_hits", "mwo_empty",
             "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc",
             "net_cap_bytes", "net_cap_packets", "net_cap_time", "net_cap_waiting",
-            "vm_margin_mesh", "vm_margin_culled", "vm_margin_list", "vm_ring_tiles_skipped", "vm_ring_objects_skipped", "vm_body_mobiles_skipped" };
+            "vm_margin_mesh", "vm_margin_culled", "vm_margin_list", "vm_ring_tiles_skipped", "vm_ring_objects_skipped", "vm_body_mobiles_skipped",
+            "fill_chunks", "walk_band_tiles", "hidden_band_tiles", "cull_y" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -1179,6 +1186,7 @@ namespace ClassicUO
             sb.Append(inv, $"  frame max {frameMax:0.00} ms, hitches >8 ms {hitch8}, >16 ms {hitch16}; without Present: max {cpuMax:0.00} ms, >8 ms {cpuHitch8}, >16 ms {cpuHitch16}; worst frame: {topFrame}\n");
             sb.Append(inv, $"  Update+Draw max {workMax:0.00} ms, >8 ms {workHitch8}, >16 ms {workHitch16}; worst: {topWork}\n");
             json.Append(inv, $",\"frame_max\":{frameMax:0.000},\"hitch8\":{hitch8},\"hitch16\":{hitch16},\"cpu_max\":{cpuMax:0.000},\"cpu_hitch8\":{cpuHitch8},\"cpu_hitch16\":{cpuHitch16},\"worst\":\"{topFrame}\"");
+            json.Append(inv, $",\"anim_freeze\":{(Game.AnimFreeze.On ? "true" : "false")}");
             json.Append(inv, $",\"work_max\":{workMax:0.000},\"work_hitch8\":{workHitch8},\"work_hitch16\":{workHitch16},\"worst_work\":\"{topWork}\"");
 
             json.Append(",\"counts\":{");

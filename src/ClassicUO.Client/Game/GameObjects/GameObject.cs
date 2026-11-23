@@ -167,7 +167,8 @@ namespace ClassicUO.Game.GameObjects
         private sbyte _z;
         public ushort X { get => _x; set { FunnelCheck.Write(this, FunnelField.X); _x = value; } }
         public ushort Y { get => _y; set { FunnelCheck.Write(this, FunnelField.Y); _y = value; } }
-        public sbyte Z { get => _z; set { FunnelCheck.Write(this, FunnelField.Z); _z = value; } }
+        // walk_chunk_z: a Z change on a tile grows its chunk's recorded range (Chunk.WalkZLo/Hi; the fill's per-chunk band)
+        public sbyte Z { get => _z; set { FunnelCheck.Write(this, FunnelField.Z); _z = value; TileChunk?.NoteWalkZ(value); } }
 
         public void AddDamage(int damage)
         {

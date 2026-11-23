@@ -538,7 +538,7 @@ namespace ClassicUO.Game.Scenes
         private void CollectVisible(ref FrameLights.Entry l, StaticTiles[] staticData, in LightTarget t, int rl, int rt, int rr, int rb,
             ref int n, ref OccluderSums sums)
         {
-            List<Chunk> chunks = _visibleChunks;
+            List<Chunk> chunks = OccluderChunks;
 
             for (int c = 0; c < chunks.Count; c++)
             {
@@ -833,7 +833,7 @@ namespace ClassicUO.Game.Scenes
         {
             int end = _occBase + n, refN = end;
             OccluderSums refSums = default;
-            List<Chunk> chunks = _visibleChunks;
+            List<Chunk> chunks = OccluderChunks;
 
             for (int c = 0; c < chunks.Count; c++)
             {

@@ -286,6 +286,11 @@ namespace ClassicUO.Configuration
         // its current frame would have drawn; CUO_VIEW_MARGIN_BODY=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin_body")] public bool ViewMarginBody { get; set; }
 
+        // zband: the world fill's vertical band per chunk from the chunk's recorded Z range (WalkChunkZ, Chunk.WalkZLo/Hi)
+        // instead of every sbyte Z. CUO_WALK_CHUNK_Z_CHECK=1 logs objects the full band would have walked or hidden that the
+        // tight band skipped; CUO_WALK_CHUNK_Z=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("walk_chunk_z")] public bool WalkChunkZ { get; set; }
+
         // light-edges: a surface glow's halo (a lit window's beam: light_alpha_fade's class, lightclass.bin, else the
         // emitter's tiledata Wall/Window flags) is not drawn where another static, multi piece or ground item in front of its
         // source covers the source's light point, nor past wall pieces facing away from a lit wall source, so lit windows on a
