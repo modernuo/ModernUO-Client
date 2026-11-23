@@ -84,6 +84,12 @@ namespace ClassicUO.Game.Map
         /// (MobileFrameCache keys a mobile's seat lookup on it).</summary>
         public uint ContentVersion;
 
+        /// <summary>light_occlusion_cache (GameSceneLightOcclusion): bumped when a static, multi piece or item joins or leaves
+        /// one of the chunk's tile lists, an item changes in place (GpuItemGen.Touch), or the chunk is reused; mobiles and
+        /// effects don't bump it. A light's cached occluder candidates are trusted while every chunk its search reached keeps
+        /// the value it was built at.</summary>
+        public uint OccluderVersion;
+
         /// <summary>
         /// view_margin (GameScene.AddChunkLights): the chunk's light-emitting statics and multi components (LightEmitters:
         /// tiledata Light with a light shape), in no order, kept by AddGameObject and RemoveFromTile. With the switch on the
@@ -192,6 +198,11 @@ namespace ClassicUO.Game.Map
                 // the max-Z decision skips mobiles; everything else on its tiles can change it
                 OwnerMap?.NoteContentChanged(X, Y);
 
+                if (obj is not GameEffect)
+                {
+                    OccluderVersion++;
+                }
+
                 if (!(GpuEffectsIgnored && obj is GameEffect))
                 {
                     GpuItemsDirty = true;
@@ -282,6 +293,7 @@ namespace ClassicUO.Game.Map
             c.GpuItemsDirty = true;
             c.GpuSeenFrame = uint.MaxValue - 1;
             c.ContentVersion++;
+            c.OccluderVersion++;
 
             return c;
         }

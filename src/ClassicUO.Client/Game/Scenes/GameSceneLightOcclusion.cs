@@ -33,6 +33,8 @@ namespace ClassicUO.Game.Scenes
             public bool Cot;
             // light_alpha_fade: its drawn alpha (the dithered mask's coverage)
             public byte Alpha;
+            // light_occlusion_bake: the art id drawn (the bake key)
+            public uint Art;
         }
 
         // light_occlusion's occluder sums (LightOcclusion.Mix): every occluder found, and those at least
@@ -66,12 +68,42 @@ namespace ClassicUO.Game.Scenes
         // one write and one test state per stencil reference (1..255), made on first use and kept with the scene
         private DepthStencilState[] _occWrite, _occTest;
         private BlendState _noColorBlend;
+        // FrameStats: the light pass's occluder search and masked-draw time (Stopwatch ticks), lights drawn masked and their
+        // occluder sprites
+        private long _loSearchTicks, _loMaskTicks;
+        private int _loFrameMasked, _loFrameOccluders, _loFlushes0, _loDrawCalls0;
+        // light_occlusion_cache: the table, on this pass, the pass count, the drawn chunks' signature this pass, the entry the
+        // search running records into (null: none), this pass's hits and rebuilds
+        private readonly LightOccluderTable _loTable = new LightOccluderTable();
+        private bool _loCacheOn;
+        private uint _loPass, _loVisibleSig;
+        private LightOccluderEntry _loRecord;
+        private int _loFrameHits, _loFrameMisses;
+        private long _loCacheHits, _loCacheMisses;
 
         // the light pass starts: the light target's stencil is cleared when the switch is on
         private void BeginLightOcclusion(GraphicsDevice device)
         {
+            BeginLightOcclusionState(device.Viewport.Width, device.Viewport.Height);
+
+            if (_lightOcclusion)
+            {
+                device.Clear(ClearOptions.Stencil, Vector4.Zero, 0f, 0);
+            }
+        }
+
+        // the light pass's occlusion state for a light target of width x height (light_occlusion_bake's prepass runs it before
+        // the light target is bound)
+        private void BeginLightOcclusionState(int width, int height)
+        {
             _lightOcclusion = LightOcclusion.Enabled;
             _stencilRef = 0;
+            _loSearchTicks = _loMaskTicks = 0;
+            _loFrameMasked = _loFrameOccluders = 0;
+            _loFlushes0 = UltimaBatcher2D.FrameFlushes;
+            _loDrawCalls0 = UltimaBatcher2D.FrameDrawCalls;
+            _loFrameHits = _loFrameMisses = 0;
+            BeginLightOcclusionCache();
 #if CUO_DEVTOOLS
             _loPassLights = _loPassMasked = _loPassRadial = 0;
 #endif
@@ -81,13 +113,61 @@ namespace ClassicUO.Game.Scenes
             _alphaFade = LightAlphaFade.Enabled;
             _ditherMasks = _alphaFade && _lightOcclusion;
             _minMaskAlpha = LightAlphaFade.MinMaskAlpha(_ditherMasks);
-            _lafCx = device.Viewport.Width * 0.5f;
-            _lafCy = device.Viewport.Height * 0.5f;
+            _lafCx = width * 0.5f;
+            _lafCy = height * 0.5f;
             _lafRadius = _loCot ? profile.CircleOfTransparencyRadius / Camera.Zoom : 0f;
+        }
 
-            if (_lightOcclusion)
+        // the light pass has ended: its FrameStats counters
+        private void EndLightOcclusion()
+        {
+            if (!FrameStats.On)
             {
-                device.Clear(ClearOptions.Stencil, Vector4.Zero, 0f, 0);
+                return;
+            }
+
+            FrameStats.Set(FrameCounter.LightsMasked, _loFrameMasked);
+            FrameStats.Set(FrameCounter.LightOccluders, _loFrameOccluders);
+            FrameStats.Set(FrameCounter.LightFlushes, UltimaBatcher2D.FrameFlushes - _loFlushes0);
+            FrameStats.Set(FrameCounter.LightDrawCalls, UltimaBatcher2D.FrameDrawCalls - _loDrawCalls0);
+            FrameStats.Set(FrameCounter.LightSearchUs, (int)(_loSearchTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency));
+            FrameStats.Set(FrameCounter.LightMaskUs, (int)(_loMaskTicks * 1000000 / System.Diagnostics.Stopwatch.Frequency));
+            FrameStats.Set(FrameCounter.LoCacheHits, _loFrameHits);
+            FrameStats.Set(FrameCounter.LoCacheMisses, _loFrameMisses);
+            FrameStats.Set(FrameCounter.LoBakes, _lkFrameBakes);
+            FrameStats.Set(FrameCounter.LoBakeDraws, _lkDraws);
+        }
+
+        // light_occlusion_cache: on with light_occlusion; the drawn chunks' signature (an entry built under another set is
+        // rebuilt), idle entries dropped every 256 passes; off: the table released once
+        private void BeginLightOcclusionCache()
+        {
+            _loCacheOn = _lightOcclusion && LightOcclusionCache.Enabled;
+
+            if (!_loCacheOn)
+            {
+                if (_loTable.Count > 0)
+                {
+                    _loTable.Reset();
+                }
+
+                return;
+            }
+
+            _loPass++;
+            uint sig = (uint)_visibleChunks.Count * 2654435761u;
+
+            for (int i = 0; i < _visibleChunks.Count; i++)
+            {
+                Chunk c = _visibleChunks[i];
+                sig = (sig ^ (uint)(c.X | c.Y << 16)) * 16777619u;
+            }
+
+            _loVisibleSig = sig;
+
+            if ((_loPass & 255) == 0)
+            {
+                _loTable.Sweep(_loPass);
             }
         }
 
@@ -186,7 +266,11 @@ namespace ClassicUO.Game.Scenes
 
             if (LightOcclusion.Masks(SurfaceGlow(l.Source, l.ID, Client.Game.UO.FileManager.TileData.StaticData)))
             {
-                return CollectLightOccludersCore(ref l, pos, in lightInfo);
+                long t0 = FrameStats.Stamp();
+                int found = CollectLightOccludersCore(ref l, pos, in lightInfo);
+                _loSearchTicks += FrameStats.Stamp() - t0;
+
+                return found;
             }
 
 #if CUO_DEVTOOLS
@@ -243,6 +327,8 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 #endif
+            long t0 = FrameStats.Stamp();
+
             if (++_stencilRef > 255)
             {
                 // every reference used: clear the stencil and start over
@@ -271,6 +357,9 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(_occTest[_stencilRef]);
             batcher.SetBlendState(BlendState.Additive);
             batcher.Draw(lightInfo.Texture, pos, lightInfo.UV, hue, 0f);
+            _loMaskTicks += FrameStats.Stamp() - t0;
+            _loFrameMasked++;
+            _loFrameOccluders += n;
 #if CUO_DEVTOOLS
             _loOccludedLights++;
             _loPassMasked++;
@@ -385,6 +474,68 @@ namespace ClassicUO.Game.Scenes
 
             int n = _occBase;
             sums = default;
+            LightOccluderEntry entry = null;
+            bool cached = false;
+
+            if (_loCacheOn)
+            {
+                // light_occlusion_cache: the key relative to the source's anchor (camera scroll keeps it)
+                ushort srcGraphic = src is Item keyItem ? keyItem.DisplayedGraphic : src.Graphic;
+                entry = _loTable.Find(src, l.ID, _loPass);
+                cached = entry != null && entry.KeyMatches(l.SrcX, l.SrcY, l.SrcZ, srcGraphic, t.Px - sax, t.Py - say, t.Left - sax,
+                    t.Top - say, t.Right - sax, t.Bottom - say, t.SrcTop, t.Facing, _loVisibleSig) && entry.ChunksValid();
+
+                if (cached)
+                {
+                    _loFrameHits++;
+                    _loCacheHits++;
+                }
+                else
+                {
+                    entry ??= _loTable.Take(src, l.ID, _loPass);
+                    entry.SetKey(l.SrcX, l.SrcY, l.SrcZ, srcGraphic, t.Px - sax, t.Py - say, t.Left - sax, t.Top - say, t.Right - sax,
+                        t.Bottom - say, t.SrcTop, t.Facing, _loVisibleSig);
+                    _loFrameMisses++;
+                    _loCacheMisses++;
+                }
+            }
+
+            if (cached)
+            {
+                for (int i = 0; i < entry.CandidateCount; i++)
+                {
+                    CollectCandidate(ref l, entry.Candidates[i], staticData, in t, ref n, ref sums);
+                }
+            }
+            else
+            {
+                _loRecord = entry;
+                CollectVisible(ref l, staticData, in t, rl, rt, rr, rb, ref n, ref sums);
+                _loRecord = null;
+            }
+
+            n -= _occBase;
+            hash = sums.Hash;
+#if CUO_DEVTOOLS
+            if (cached && LightOcclusionCache.Check)
+            {
+                CheckCachedOccluders(ref l, in t, rl, rt, rr, rb, n, in sums, staticData);
+            }
+
+            if (check)
+            {
+                CheckOccluders(ref l, in t, n, hash, staticData);
+            }
+#endif
+
+            return n;
+        }
+
+        // the full search: the drawn chunks that can reach the search rectangle (light_occlusion_cache: recorded into
+        // _loRecord with their versions)
+        private void CollectVisible(ref FrameLights.Entry l, StaticTiles[] staticData, in LightTarget t, int rl, int rt, int rr, int rb,
+            ref int n, ref OccluderSums sums)
+        {
             List<Chunk> chunks = _visibleChunks;
 
             for (int c = 0; c < chunks.Count; c++)
@@ -397,19 +548,40 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
+                _loRecord?.AddChunk(chunk);
                 CollectChunk(ref l, chunk, staticData, in t, rl, rr, false, ref n, ref sums);
             }
+        }
 
-            n -= _occBase;
-            hash = sums.Hash;
-#if CUO_DEVTOOLS
-            if (check)
+        // light_occlusion_cache: an object able to hide light l whatever its drawn state (LightOcclusion.Hides's terms that
+        // depend only on its position, graphic and the source), so later frames test only it
+        private static bool CacheCandidate(ref FrameLights.Entry l, in LightTarget t, GameObject o, StaticTiles[] staticData)
+        {
+            if ((uint)o.Graphic >= (uint)staticData.Length)
             {
-                CheckOccluders(ref l, in t, n, hash, staticData);
+                return false;
             }
-#endif
 
-            return n;
+            ref StaticTiles data = ref staticData[o.Graphic];
+
+            return LightOcclusion.Hides(true, ReferenceEquals(o, l.Source), o.X - l.SrcX, o.Y - l.SrcY, o.Z - l.SrcZ, t.SrcTop, ref data, true,
+                t.Facing != LightOcclusion.FacingNone && data.IsWall);
+        }
+
+        // light_occlusion_cache: one cached candidate with the full occluder test, as CollectTile tests it
+        private void CollectCandidate(ref FrameLights.Entry l, GameObject o, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums)
+        {
+            if (o is Item item)
+            {
+                if (!item.IsMulti && !item.IsCorpse && ItemOccluder(ref l, item, staticData, in t, ref n))
+                {
+                    Sum(ref sums, LightOcclusion.Mix(item.X, item.Y, item.Z, item.Graphic, true), item.AlphaHue);
+                }
+            }
+            else if (o is TileListObject to && StaticOccluder(ref l, to, staticData, in t, ref n, out byte alpha))
+            {
+                Sum(ref sums, LightOcclusion.Mix(to.X, to.Y, to.Z, to.Graphic, false), alpha);
+            }
         }
 
         // the chunk's tiles whose sprites can reach columns rl..rr (every tile with all: the checker's reference)
@@ -434,8 +606,15 @@ namespace ClassicUO.Game.Scenes
         // one tile's occluders: its statics and multi pieces, and its ground items
         private void CollectTile(ref FrameLights.Entry l, Chunk chunk, int cell, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums)
         {
+            LightOccluderEntry rec = _loRecord;
+
             for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
             {
+                if (rec != null && (o is Static || o is Multi) && CacheCandidate(ref l, in t, o, staticData))
+                {
+                    rec.AddCandidate(o);
+                }
+
                 if (StaticOccluder(ref l, o, staticData, in t, ref n, out byte alpha))
                 {
                     Sum(ref sums, LightOcclusion.Mix(o.X, o.Y, o.Z, o.Graphic, false), alpha);
@@ -449,6 +628,11 @@ namespace ClassicUO.Game.Scenes
 
             foreach (ref readonly DynamicTileIndex.Entry en in chunk.Dynamic.Cell(cell))
             {
+                if (rec != null && en.Obj is Item candidate && CacheCandidate(ref l, in t, candidate, staticData))
+                {
+                    rec.AddCandidate(candidate);
+                }
+
                 if (en.Obj is Item item && !item.IsMulti && !item.IsCorpse && ItemOccluder(ref l, item, staticData, in t, ref n))
                 {
                     Sum(ref sums, LightOcclusion.Mix(item.X, item.Y, item.Z, item.Graphic, true), item.AlphaHue);
@@ -467,7 +651,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        private void AddOccluder(int i, Texture2D texture, Rectangle uv, int x, int y, bool cot, byte alpha)
+        private void AddOccluder(int i, Texture2D texture, Rectangle uv, int x, int y, bool cot, byte alpha, uint art)
         {
             if (i == _occluders.Length)
             {
@@ -481,6 +665,7 @@ namespace ClassicUO.Game.Scenes
             o.DrawY = y;
             o.Cot = cot;
             o.Alpha = alpha;
+            o.Art = art;
         }
 
         // the cheap terms of light l's occluder test (LightOcclusion.Hides as if its art covered the light point or, a wall
@@ -544,7 +729,7 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            AddOccluder(n++, art.Texture, art.UV, x, y, cot, alpha);
+            AddOccluder(n++, art.Texture, art.UV, x, y, cot, alpha, drawn);
 
             return true;
         }
@@ -595,7 +780,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 hides |= SpriteHides(in t, ref data, sp.Id, d.Source.Width, d.Source.Height, x, y, item.X - l.SrcX, item.Y - l.SrcY, item.Z - l.SrcZ);
-                AddOccluder(n++, d.Texture, d.Source, x, y, false, (byte)Math.Clamp((int)(sp.Hue.Z * 255f + 0.5f), 0, 255));
+                AddOccluder(n++, d.Texture, d.Source, x, y, false, (byte)Math.Clamp((int)(sp.Hue.Z * 255f + 0.5f), 0, 255), sp.Id);
             }
 
             if (!hides)
@@ -680,9 +865,57 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        private long _loCacheChecked, _loCacheMismatches;
+        private uint _loCacheSummaryAt;
+
+        // CUO_LIGHT_OCCLUSION_CACHE_CHECK: a cached search's occluders (n sprites from _occBase, sums) against the full search's,
+        // appended past them and dropped: the same sprite count, hash and opaque sums, or a logged mismatch
+        private void CheckCachedOccluders(ref FrameLights.Entry l, in LightTarget t, int rl, int rt, int rr, int rb, int n, in OccluderSums sums,
+            StaticTiles[] staticData)
+        {
+            int end = _occBase + n, refN = end;
+            OccluderSums refSums = default;
+            CollectVisible(ref l, staticData, in t, rl, rt, rr, rb, ref refN, ref refSums);
+
+            for (int i = end; i < refN; i++)
+            {
+                _occluders[i].Texture = null;
+            }
+
+            _loCacheChecked++;
+
+            if (refN - end != n || refSums.Hash != sums.Hash || refSums.OpaqueHash != sums.OpaqueHash || refSums.Opaque != sums.Opaque)
+            {
+                _loCacheMismatches++;
+
+                if (_loCacheMismatches <= 20)
+                {
+                    Log.Warn($"[light-occlusion-cache-check] light {l.ID} from {l.SrcX},{l.SrcY},{l.SrcZ} (0x{l.Source.Graphic:X4}): cached " +
+                             $"{n} occluder sprites (hash {sums.Hash:X8}), full search {refN - end} (hash {refSums.Hash:X8})");
+                }
+            }
+        }
+
+        // every 5 s with CUO_LIGHT_OCCLUSION_CACHE_CHECK
+        private void LightOcclusionCacheSummary()
+        {
+            if (!LightOcclusionCache.Check || Time.Ticks < _loCacheSummaryAt)
+            {
+                return;
+            }
+
+            _loCacheSummaryAt = Time.Ticks + 5000;
+            Log.Info($"[light-occlusion-cache-check] light_occlusion_cache {(LightOcclusionCache.Enabled ? "on" : "off")} " +
+                     $"(light_occlusion {(_lightOcclusion ? "on" : "off")}): hits {_loCacheHits}, rebuilds {_loCacheMisses}, " +
+                     $"{_loCacheChecked} cached searches checked; entries {_loTable.Count}, {_loTable.Bytes() / 1024} KB, evicted " +
+                     $"{_loTable.Evictions}, idle dropped {_loTable.Dropped}; mismatches {_loCacheMismatches}");
+        }
+
         // once per light pass with the checker on
         private void LightOcclusionSummary()
         {
+            LightOcclusionCacheSummary();
+
             if (!LightOcclusion.Check)
             {
                 return;

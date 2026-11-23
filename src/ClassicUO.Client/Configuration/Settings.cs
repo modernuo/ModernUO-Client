@@ -241,6 +241,22 @@ namespace ClassicUO.Configuration
         // overrides the setting in developer builds. Default off.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
 
+        // light_occlusion_cache (with light_occlusion): each surface glow keeps the objects its occluder search found able to
+        // hide it (in front, not above, an occluder by tiledata), relative to its source, and later frames test only those
+        // with the full occluder test, until a chunk the search reached changes (Chunk.OccluderVersion), the light's source or
+        // target changes, or the drawn chunks change (LightOcclusionCache). Same occluders as the full search.
+        // CUO_LIGHT_OCCLUSION_CACHE_CHECK=1 runs the full search next to every cached one and logs each difference;
+        // CUO_LIGHT_OCCLUSION_CACHE=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("light_occlusion_cache")] public bool LightOcclusionCache { get; set; }
+
+        // light_occlusion_bake (with light_occlusion, light_occlusion_cache and light_batch): a masked surface glow is drawn once
+        // with its occluders cut out into a slot of a 1024 x 1024 atlas (8 MB with its stencil) at the light target's scale and
+        // sub-pixel phase, and later frames draw the slot as one plain quad, all baked glows in one batch; re-baked when its
+        // light, scale, phase or occluders change. Not with light_alpha_fade's dithered masks or occluders the circle of
+        // transparency reaches (LightOcclusionBake). CUO_LIGHT_OCC_BAKE_CHECK=1 compares the light target with a pass without
+        // bakes once a second; CUO_LIGHT_OCCLUSION_BAKE=1|0 overrides the setting in developer builds. Default off.
+        [JsonPropertyName("light_occlusion_bake")] public bool LightOcclusionBake { get; set; }
+
         // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
         // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
         // fade), so hidden walls leave no floating glows; radial glows (lamps, torches) keep full light. With light_occlusion

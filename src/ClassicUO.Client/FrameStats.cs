@@ -216,6 +216,20 @@ namespace ClassicUO
         UiKeyboardVisits,
         UiHitVisits,
         UiDrawVisits,
+        // light_occlusion: lights drawn masked, their occluder sprites, the light pass's batcher flushes and draw calls, and the
+        // time the occluder search and the masked draws took (us)
+        LightsMasked,
+        LightOccluders,
+        LightFlushes,
+        LightDrawCalls,
+        LightSearchUs,
+        LightMaskUs,
+        // light_occlusion_cache: searches served from cached occluder candidates, and searches that rebuilt an entry
+        LoCacheHits,
+        LoCacheMisses,
+        // light_occlusion_bake: masked glows baked into the atlas this pass, and glows drawn from it
+        LoBakes,
+        LoBakeDraws,
         Count
     }
 
@@ -282,7 +296,9 @@ namespace ClassicUO
             "fna_upload_calls", "fna_upload_bytes", "glyph_quads_built", "glyph_quads_reused", "glyph_quads", "prepare_runs",
             "text_nodes", "text_live", "text_expired", "text_nocontent", "text_drawn", "text_fwd_nodes",
             "text_exp_mobile", "text_exp_item", "text_exp_other",
-            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits" };
+            "ui_update_visits", "ui_keyboard_visits", "ui_hit_visits", "ui_draw_visits",
+            "lights_masked", "light_occluders", "light_flushes", "light_draw_calls", "light_search_us", "light_mask_us",
+            "lo_cache_hits", "lo_cache_misses", "lo_bakes", "lo_bake_draws" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
