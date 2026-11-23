@@ -8846,3 +8846,23 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
 - **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
   allocation; not timed.
+
+## 2026-11-23 lo-cache: light_occlusion occluder cache and masked-light bake (bg/lo-cache, base aa32c2440)
+
+- **Counters** (aa802e8ee, FrameStats): lights_masked, light_occluders, light_flushes, light_draw_calls, light_search_us,
+  light_mask_us (search vs masked-draw CPU per pass), lo_cache_hits/misses, lo_bakes, lo_bake_draws.
+- **light_occlusion_cache** (95ac5f3f1, default off): each surface glow keeps the objects its occluder search found able to hide
+  it whatever their drawn state (LightOcclusion.Hides's position/graphic/source terms), relative to the source; later frames run
+  the full occluder test on those only, so the result equals the full search. Rebuilt on source/light point/quad change, a
+  reached chunk's new `Chunk.OccluderVersion` (statics, multis, items joining/leaving/changing in place; not mobiles or
+  effects), or a change of the drawn chunk set. LRU table 1024 entries, idle drop after 600 passes; ~0.3 KB per entry
+  (estimate; logged by the checker). CUO_LIGHT_OCCLUSION_CACHE_CHECK=1 runs the full search beside every cached one.
+- **light_occlusion_bake** (3268e5913, default off; needs light_occlusion, _cache, light_batch): a prepass before the light
+  target is bound bakes each new or changed masked glow (stencil cut-out) into a 1024x1024 atlas (Color + Depth24Stencil8,
+  **8 MB GPU memory per client**) at the light target's scale and sub-pixel phase, storing the Additive contribution; the
+  batched pass draws all current slots in one One/One batch. Key: light, hue alpha, scale, phase, occluders' art/texture/
+  rectangle/offset. 24 bakes per pass, a full atlas starts over. Not baked: dithered masks (light_alpha_fade), occluders the
+  circle of transparency reaches. CUO_LIGHT_OCC_BAKE_CHECK=1 compares the light target with a pass without bakes each second.
+- **Measurements**: pending (main bench runner failed all jobs 16:27-16:48 with exit 66; the first bench2 run hit a server
+  that refused connections). Jobs: lo-parity-b, lo-prof2-gpu/legacy; see cuo-poc-state/handoffs/lo-cache.md. Quiet row:
+  quiet-next #21.
