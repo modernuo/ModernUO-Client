@@ -123,7 +123,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
         private static MobileWallOrder.Scan ScanAt(TileMap map, int x, int y, int z)
         {
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanAt(map, x, y, z, ref s);
 
@@ -172,17 +172,21 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [Fact]
         public void ScanAndCapDoNotAllocate()
         {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
             var map = Studio();
             float depth = MobileDepth(MX, MY, Z);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
+            var cache = new MobileFrameCache();
             float warm = 0;
 
-            // the same calls once first (type initialisers, first-call stubs)
+            // the same calls once first (type initialisers, first-call stubs, the scan and buffer pools)
             for (int i = 0; i < 200; i++)
             {
-                s = default;
+                s.Clear();
                 MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
                 warm += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
+                cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
             }
 
             long before = GC.GetAllocatedBytesForCurrentThread();
@@ -190,9 +194,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             for (int i = 0; i < 1000; i++)
             {
-                s = default;
+                s.Clear();
                 MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
                 sum += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
+                // a step back and forth: a new scan every call, kept scans from the pool
+                cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
+                // idle: the kept scan
+                cache.Wall = MobileWallOrder.Resolve(map, 1, MX - (i & 1), MY, Z, Vector3.Zero, cache, true);
             }
 
             (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
@@ -205,7 +213,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // the float round trip gives D - 1 exactly for large tile sums (Felucca's far corner, z extremes)
             foreach ((int x, int y, int z) in new[] { (0, 0, 0), (1453, 1668, 10), (5100, 4090, -120), (6143, 4095, 120), (7000, 4000, 60) })
             {
-                MobileWallOrder.Scan s = default;
+                MobileWallOrder.Scan s = new MobileWallOrder.Scan();
                 s.Active = true;
                 s.Count = 1;
                 s.Walls[0] = new MobileWallOrder.Wall { D = 100 * (x + y + 1) + 127 + z + 1, Lo = -100, Hi = 100 };
@@ -218,7 +226,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         public void CapNeverRaisesNorDropsBelowTheUpperStrip()
         {
             float depth = MobileDepth(MX, MY, Z);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Count = 1;
 
             // a wall key far ahead: + 2 stays
@@ -370,7 +378,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             // facing down (east): the lower steps ahead are under it; a box on the next lower step (z 25, top 28) too
             Add(map, Table, MX + 1, MY + 1, 25);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
             Covers(in s).Should().Be(0);
 
@@ -380,13 +388,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Add(map, Stairs, MX + 1, MY, 35);
             Add(map, Stairs, MX + 2, MY, 40);
             Add(map, Stairs, MX + 1, MY + 1, 40);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
             Covers(in s).Should().Be(0);
 
             // a block standing far above the run still covers
             Add(map, Easel, MX, MY + 1, 45);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
             Covers(in s).Should().Be(1);
         }
@@ -399,7 +407,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var map = Studio(false, false, false);
             Add(map, Stairs, MX, MY, 40);
             Add(map, Stairs, MX, MY + 1, 40);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanStep(map, MX, MY, 42, Vector3.Zero, MX, MY, ref s);
             s.Count.Should().Be(1);
@@ -414,7 +422,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // not standing on the staircase (on the land beside it): the step is not floor and covers as before
             map = Studio(false, false, false);
             Add(map, Stairs, MX, MY + 1, 40);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, 30, Vector3.Zero, MX, MY, ref s);
             for (int i = 0; i < s.Count; i++)
             {
@@ -428,7 +436,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // round 3 (owner, Felucca 1453 1660 10): a wall north of the mobile (behind it) covers its shadow, not its strips
             var map = Studio(false, false, false);
             Add(map, South, MX, MY - 1, Z);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(1);
@@ -441,7 +449,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // a wall two diagonals behind: the shadow stays over the land and background floors one diagonal behind
             map = Studio(false, false, false);
             Add(map, South, MX - 1, MY - 1, Z);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
             MobileWallOrder.ShadowAdd(in s, -60, 30, depth, out add, out _).Should().BeTrue();
             Key(depth, add).Should().Be(100 * (MX + MY - 1) + 127 + Z, "over the land and background floors (+ 126 + z), under the wall right behind (+ 128 + z)");
@@ -449,7 +457,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // a flat behind stays under the shadow
             map = Studio(false, false, false);
             Add(map, Floor, MX, MY - 1, Z);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(0);
         }
@@ -462,7 +470,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var map = Studio(false, false, false);
             Add(map, South, MX - 1, MY + 1, Z);
             Add(map, Door, MX + 1, MY - 1, Z);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
 
@@ -481,7 +489,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // on (x - 1, y + 1), the mobile's own diagonal, is in front of that tile and covers the overhang
             var map = Studio(false, false, false);
             Add(map, Table, MX - 1, MY + 1, Z);
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
             s.Count.Should().Be(1);
@@ -501,7 +509,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // the table behind the mobile's other side (x + 1, y - 1) only counts for the right overhang
             map = Studio(false, false, false);
             Add(map, Table, MX + 1, MY - 1, Z);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
             s.Count.Should().Be(1);
             s.Walls[0].Lo.Should().Be(22);
@@ -510,7 +518,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             map = Studio(false, false, false);
             Add(map, Floor, MX - 1, MY + 1, Z);
             Add(map, Table, MX + 1, MY - 1, Z - 10);
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
             s.Count.Should().Be(0);
         }
@@ -598,7 +606,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Add(map, Roof, MX, MY, roofZ);
             Add(map, Floor, MX, MY, Z); // the floor the mobile stands on
             Add(map, Table, MX + 1, MY - 1, Z); // furniture beside it on its diagonal
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(capped ? (byte)1 : (byte)0);
@@ -629,7 +637,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var map = Studio(false, false, false);
             Add(map, Roof, MX + 1, MY - 1, Z + 23);
             Add(map, Roof, MX + 1, MY, Z + 23); // the next diagonal's roof wins by key already: not scanned
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(1);
             s.Walls[0].X.Should().Be((ushort)(MX + 1));
@@ -665,7 +673,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var offset = new Vector3(4, 4, 0);
             MobileWallOrder.DepthTile(MX, MY, offset, out int bx, out int by);
             (bx, by).Should().Be((MX + 1, MY));
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = true;
             MobileWallOrder.ScanStep(map, MX, MY, Z, offset, bx, by, ref s);
             s.Count.Should().Be(1);
@@ -685,7 +693,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
             MobileWallOrder.CapAdd(0, in s, -20, 20, depth, out _).Should().Be(0);
 
             // standing on either tile: no lowered upper strip
-            s = default;
+            s = new MobileWallOrder.Scan();
             MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
             s.MinAdd.Should().Be(0);
         }
@@ -711,31 +719,249 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [InlineData(false, false, false)] // switch off
         [InlineData(true, false, true)]
         [InlineData(true, true, false)] // depth_model on: its own per-pixel walls
-        public void KeyScanBySwitch(bool on, bool depthModel, bool expected)
+        public void ResolveBySwitch(bool on, bool depthModel, bool expected)
         {
-            // the rule's state only: the tile scan itself is ScanAt's (the test world has no map)
-            var world = new World();
-            Mobile m = world.GetOrCreateMobile(0x0010_0001);
-            m.X = MX;
-            m.Y = MY;
-            m.Z = Z;
             MobileWallOrder.OverrideForTests = on;
             DepthModel.OverrideForTests = depthModel;
-            MobileWallOrder.Scan s = MobileWallOrder.KeyScan(m);
-            s.Active.Should().Be(expected);
-            s.Count.Should().Be(0);
+            MobileWallOrder.Scan s = MobileWallOrder.Resolve(Studio(), 1, MX, MY, Z, Vector3.Zero, new MobileFrameCache(), false);
+
+            if (expected || MobileWallOrder.Check)
+            {
+                s.Count.Should().Be(3);
+                s.Active.Should().Be(expected);
+            }
+            else
+            {
+                s.Should().BeSameAs(MobileWallOrder.Scan.Empty);
+            }
         }
 
         [Fact]
-        public void ScanIsPartOfTheSelectKey()
+        public void ScanVersionIsPartOfTheSelectKey()
         {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            var cache = new MobileFrameCache();
+            MobileWallOrder.Scan s = MobileWallOrder.Resolve(Studio(), 1, MX, MY, Z, Vector3.Zero, cache, false);
+            s.Version.Should().NotBe(0);
+            MobileWallOrder.Scan.Empty.Version.Should().Be(0);
             var a = new MobileFrameCache.SelectKey { X = MX, Y = MY, Z = Z };
             var b = a;
-            b.Wall = ScanAt(Studio(), MX, MY, Z);
+            b.WallVersion = s.Version;
             a.Equals(b).Should().BeFalse("a wall appearing re-records the strips");
-            var c = b;
-            c.Wall.Active = false;
-            b.Equals(c).Should().BeFalse("a flip of the rule re-records the strips");
+        }
+
+        // ---- the scan cache and the chunks' cap summaries ----
+
+        private static MobileWallOrder.Scan Reference(TileMap map, int x, int y, int z, Vector3 offset, bool shadow, bool rule = true)
+        {
+            MobileWallOrder.DepthTile(x, y, offset, out int bx, out int by);
+            var r = new MobileWallOrder.Scan();
+            MobileWallOrder.FullScan(map, x, y, z, offset, bx, by, shadow, rule, r);
+
+            return r;
+        }
+
+        private static int _itemSerial = 0x4000_0001;
+
+        private static Item AddItem(TileMap map, ushort graphic, int x, int y, int z)
+        {
+            Chunk chunk = map.GetChunk(x, y, false) ?? throw new InvalidOperationException("no chunk");
+            Item it = chunk.Owner.GetOrCreateItem((uint)System.Threading.Interlocked.Increment(ref _itemSerial));
+            it.TestSetGraphic(graphic);
+            it.X = (ushort)x;
+            it.Y = (ushort)y;
+            it.Z = (sbyte)z;
+            chunk.AddGameObject(it, x & 7, y & 7);
+
+            return it;
+        }
+
+        [Fact]
+        public void IdleMobileKeepsItsScan()
+        {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            TileMap map = Studio();
+            var cache = new MobileFrameCache();
+            MobileWallOrder.Scan first = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true);
+            cache.Wall = first;
+            first.SameAs(Reference(map, MX, MY, Z, Vector3.Zero, true)).Should().BeTrue();
+
+            MobileWallOrder.Scan again = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true);
+            again.Should().BeSameAs(first, "nothing around changed");
+            again.Version.Should().Be(first.Version);
+        }
+
+        [Fact]
+        public void OpenFieldIsEmptyWithoutAWalk()
+        {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            TileMap map = Studio(false, false, false);
+            Add(map, Floor, MX + 1, MY + 1, Z);
+            var cache = new MobileFrameCache();
+            MobileWallOrder.Quiet(map, MX, MY, Z, MX, MY, true).Should().BeTrue("a flat floor and nothing with height");
+            MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, true).Should().BeSameAs(MobileWallOrder.Scan.Empty);
+
+            Add(map, Table, MX - 1, MY - 1, Z);
+            MobileWallOrder.Quiet(map, MX, MY, Z, MX, MY, false).Should().BeTrue("behind, without a shadow");
+            MobileWallOrder.Quiet(map, MX, MY, Z, MX, MY, true).Should().BeFalse("behind, for the shadow");
+        }
+
+        [Fact]
+        public void CapSummaryFollowsPieces()
+        {
+            TileMap map = Studio(false, false, false);
+            Chunk chunk = map.GetChunk(MX, MY, false);
+            int cell = (MX & 7) << 3 | (MY & 7);
+            chunk.CapTop[cell].Should().Be(Chunk.CapNone);
+            uint v = chunk.CapVersion, f = chunk.CapFlatVersion;
+
+            Item coin = AddItem(map, Floor, MX, MY, Z + 2);
+            chunk.CapVersion.Should().Be(v, "an item without height");
+            chunk.CapFlatVersion.Should().NotBe(f);
+            chunk.CapZ[cell].Should().Be(Z + 2);
+            chunk.CapFlatZ[cell].Should().Be(Z + 2);
+            chunk.CapTop[cell].Should().Be(Chunk.CapNone);
+
+            Item table = AddItem(map, Table, MX, MY, Z);
+            chunk.CapVersion.Should().NotBe(v);
+            chunk.CapTop[cell].Should().Be(Z + 6);
+
+            v = chunk.CapVersion;
+            f = chunk.CapFlatVersion;
+            coin.RemoveFromTile();
+            chunk.CapVersion.Should().Be(v);
+            chunk.CapFlatVersion.Should().NotBe(f);
+            chunk.CapFlatZ[cell].Should().Be(sbyte.MinValue);
+            chunk.CapZ[cell].Should().Be(Z);
+
+            table.RemoveFromTile();
+            chunk.CapVersion.Should().NotBe(v);
+            chunk.CapTop[cell].Should().Be(Chunk.CapNone);
+            chunk.CapZ[cell].Should().Be(sbyte.MinValue);
+        }
+
+        [Fact]
+        public void CoinKeepsTheScanAndATableReplacesIt()
+        {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            TileMap map = Studio();
+            var cache = new MobileFrameCache();
+            cache.Wall = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, false);
+            MobileWallOrder.Scan first = cache.Wall;
+
+            AddItem(map, Floor, MX + 1, MY + 2, Z);
+            MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, false).Should().BeSameAs(first, "a coin on the floor");
+
+            AddItem(map, Table, MX + 2, MY, Z);
+            cache.Wall = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, false);
+            cache.Wall.Version.Should().NotBe(first.Version);
+            cache.Wall.SameAs(Reference(map, MX, MY, Z, Vector3.Zero, false)).Should().BeTrue();
+            cache.Wall.Count.Should().Be(4);
+        }
+
+        [Fact]
+        public void FlatItemOverheadIsSeen()
+        {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            TileMap map = Studio(false, false, false);
+            var cache = new MobileFrameCache();
+            cache.Wall = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, false);
+            cache.Wall.Should().BeSameAs(MobileWallOrder.Scan.Empty);
+
+            Item rug = AddItem(map, Floor, MX, MY, Z + 20);
+            cache.Wall = MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, false);
+            cache.Wall.Count.Should().Be(1, "an item overhead counts at any height");
+            cache.Wall.Walls[0].Overhead.Should().BeTrue();
+
+            rug.RemoveFromTile();
+            MobileWallOrder.Resolve(map, 1, MX, MY, Z, Vector3.Zero, cache, false).Should().BeSameAs(MobileWallOrder.Scan.Empty);
+        }
+
+        // every resolved scan (kept, empty from the summaries, or new) equals the full scan, over random rooms, steps,
+        // shadows and changes: the cap summaries' reach covers everything the scan reads (CUO_MOBILE_WALL_ORDER_CACHE_CHECK's
+        // property)
+        [Theory]
+        [InlineData(1)]
+        [InlineData(2)]
+        [InlineData(3)]
+        [InlineData(4)]
+        public void ResolveMatchesTheFullScan(int seed)
+        {
+            MobileWallOrder.OverrideForTests = true;
+            DepthModel.OverrideForTests = false;
+            var rnd = new Random(seed);
+            var world = new World();
+            var map = new TileMap(world, 0, 200, 220);
+
+            for (int cx = (MX - 12) >> 3; cx <= (MX + 12) >> 3; cx++)
+            {
+                for (int cy = (MY - 12) >> 3; cy <= (MY + 12) >> 3; cy++)
+                {
+                    map.LoadEmptyChunkForTest(cx, cy);
+                }
+            }
+
+            ushort[] graphics = { South, East, Corner, Table, Easel, Stairs, Roof, Floor, Door };
+
+            for (int i = 0; i < 60; i++)
+            {
+                Add(map, graphics[rnd.Next(graphics.Length)], MX + rnd.Next(-8, 9), MY + rnd.Next(-8, 9), Z + rnd.Next(-4, 5) * 5);
+            }
+
+            var items = new System.Collections.Generic.List<Item>();
+            Vector3[] offsets = { Vector3.Zero, new Vector3(5, 0, 0), new Vector3(-5, 0, 0), new Vector3(0, 5, 0), new Vector3(0, -5, 0),
+                new Vector3(5, 5, 0), new Vector3(-5, -5, 0), new Vector3(5, -5, 0), new Vector3(-5, 5, 0) };
+            var caches = new System.Collections.Generic.Dictionary<(int, int, int, bool), MobileFrameCache>();
+            int nonEmpty = 0, checks = 0;
+
+            for (int round = 0; round < 6; round++)
+            {
+                for (int x = MX - 3; x <= MX + 3; x++)
+                {
+                    for (int y = MY - 3; y <= MY + 3; y++)
+                    {
+                        for (int o = 0; o < offsets.Length; o++)
+                        {
+                            foreach (bool shadow in new[] { false, true })
+                            {
+                                if (!caches.TryGetValue((x, y, o, shadow), out MobileFrameCache cache))
+                                {
+                                    caches[(x, y, o, shadow)] = cache = new MobileFrameCache();
+                                }
+
+                                cache.Wall = MobileWallOrder.Resolve(map, 1, x, y, Z, offsets[o], cache, shadow);
+                                MobileWallOrder.Scan r = Reference(map, x, y, Z, offsets[o], shadow);
+                                cache.Wall.SameAs(r).Should().BeTrue($"seed {seed} round {round} at {x},{y} offset {o} shadow {shadow}: {cache.Wall.Count} vs {r.Count}");
+                                nonEmpty += r.Count != 0 ? 1 : 0;
+                                checks++;
+                            }
+                        }
+                    }
+                }
+
+                // changes between rounds: items with and without height come and go, some overhead
+                for (int i = 0; i < 6; i++)
+                {
+                    if (items.Count != 0 && rnd.Next(3) == 0)
+                    {
+                        int k = rnd.Next(items.Count);
+                        items[k].RemoveFromTile();
+                        items.RemoveAt(k);
+                    }
+                    else
+                    {
+                        items.Add(AddItem(map, graphics[rnd.Next(graphics.Length)], MX + rnd.Next(-7, 8), MY + rnd.Next(-7, 8), Z + rnd.Next(-2, 6) * 5));
+                    }
+                }
+            }
+
+            nonEmpty.Should().BeGreaterThan(checks / 10, "the rooms put walls around many of the tiles");
+            (checks - nonEmpty).Should().BeGreaterThan(0);
         }
 
         // ---- the extract: both switch states ----
@@ -756,7 +982,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         // a wall over every column, its key between the upper strip's and the feet strip's
         private static MobileWallOrder.Scan Everywhere(bool active)
         {
-            MobileWallOrder.Scan s = default;
+            MobileWallOrder.Scan s = new MobileWallOrder.Scan();
             s.Active = active;
             s.Count = 1;
             s.Walls[0] = new MobileWallOrder.Wall { D = 81375, Lo = -10000, Hi = 10000 };
@@ -774,7 +1000,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             for (int seed = 1; seed <= 20; seed++)
             {
-                Depths(name, Everywhere(false), seed).Should().Equal(Depths(name, default, seed), $"seed {seed}");
+                Depths(name, Everywhere(false), seed).Should().Equal(Depths(name, MobileWallOrder.Scan.Empty, seed), $"seed {seed}");
             }
         }
 
@@ -790,7 +1016,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             for (int seed = 1; seed <= 40; seed++)
             {
-                uint[] off = Depths(name, default, seed);
+                uint[] off = Depths(name, MobileWallOrder.Scan.Empty, seed);
                 uint[] on = Depths(name, Everywhere(true), seed);
                 on.Length.Should().Be(off.Length);
 
@@ -816,21 +1042,38 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [InlineData("equipped")]
         public void CompositeSpanGivesEveryLayerOneCap(string name)
         {
-            // a piece only beyond every layer's own frame: no strip moves; with the composite's span reaching it, every strip
-            // below the anchor of every layer takes the same key (a mount's capped strip never falls behind its rider's)
+            // a piece only beyond every layer's own frame and the composite: no strip moves. A narrow piece anywhere over the
+            // composite (the extract measures it before the strips): every strip below the anchor of every layer takes the
+            // same key (a mount's capped strip never falls behind its rider's)
             MobileWallOrder.Scan far = Everywhere(true);
             far.Walls[0].Lo = 5000;
             far.Walls[0].Hi = 5100;
             uint shadow = KeyOf(812.25f), upper = KeyOf(812.25f + 1f), capped = BakeJob.DepthKeyD(81374, 1000, 7);
+            int moved = 0;
 
-            for (int seed = 1; seed <= 20; seed++)
+            for (int seed = 1; seed <= 5; seed++)
             {
-                Depths(name, far, seed).Should().Equal(Depths(name, default, seed), $"seed {seed}");
-                MobileWallOrder.Scan span = far;
-                span.SpanLo = -10000;
-                span.SpanHi = 10000;
-                Depths(name, span, seed).Should().OnlyContain(d => d == shadow || d == upper || d == capped, $"seed {seed}");
+                uint[] off = Depths(name, MobileWallOrder.Scan.Empty, seed);
+                Depths(name, far, seed).Should().Equal(off, $"seed {seed}");
+                int[] lower = Enumerable.Range(0, off.Length).Where(i => off[i] != shadow && off[i] != upper).ToArray();
+
+                for (int c = -150; c <= 150; c += 6)
+                {
+                    MobileWallOrder.Scan narrow = Everywhere(true);
+                    narrow.Walls[0].Lo = (short)c;
+                    narrow.Walls[0].Hi = (short)(c + 2);
+                    uint[] on = Depths(name, narrow, seed);
+                    on.Length.Should().Be(off.Length);
+
+                    if (lower.Any(i => on[i] == capped))
+                    {
+                        lower.Should().OnlyContain(i => on[i] == capped, $"seed {seed} column {c}: one cap for every layer");
+                        moved++;
+                    }
+                }
             }
+
+            moved.Should().BeGreaterThan(0);
         }
 
         [Theory]
@@ -840,7 +1083,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             // a piece overhead over every column whose art ends 40 px above the tile centre (the fixture draws at 600, 400:
             // centre row 422): every upper strip reaching above that row is split, its top rows a key below the piece
-            MobileWallOrder.Scan over = default;
+            MobileWallOrder.Scan over = new MobileWallOrder.Scan();
             over.Active = true;
             over.Count = 1;
             over.Walls[0] = new MobileWallOrder.Wall { D = 81260, Lo = -10000, Hi = 10000, Overhead = true, Bottom = -40 };
@@ -849,7 +1092,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
 
             for (int seed = 1; seed <= 20; seed++)
             {
-                uint[] off = Depths(name, default, seed);
+                uint[] off = Depths(name, MobileWallOrder.Scan.Empty, seed);
                 uint[] on = Depths(name, over, seed);
                 on.Length.Should().BeGreaterOrEqualTo(off.Length);
                 split += on.Length - off.Length;
@@ -858,7 +1101,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
 
             split.Should().BeGreaterThan(0, "some upper strips reach above the piece's art");
-            Depths(name, over with { Active = false }, 3).Should().Equal(Depths(name, default, 3), "switch off");
+            over.Active = false;
+            Depths(name, over, 3).Should().Equal(Depths(name, MobileWallOrder.Scan.Empty, 3), "switch off");
         }
 
         [Fact]
@@ -866,8 +1110,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             for (int seed = 1; seed <= 10; seed++)
             {
-                Depths("plain", Everywhere(true), seed, true).Should().Equal(Depths("plain", default, seed, true));
-                Depths("sitting", Everywhere(true), seed).Should().Equal(Depths("sitting", default, seed));
+                Depths("plain", Everywhere(true), seed, true).Should().Equal(Depths("plain", MobileWallOrder.Scan.Empty, seed, true));
+                Depths("sitting", Everywhere(true), seed).Should().Equal(Depths("sitting", MobileWallOrder.Scan.Empty, seed));
             }
         }
     }

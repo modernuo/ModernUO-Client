@@ -33,11 +33,12 @@ namespace ClassicUO.Game.Scenes
     /// <item>Round 2 (owner): other pieces with height &gt; 0 (furniture: counters, tables, easels) count over their whole
     /// diamond; a wall found ahead continues along its line as one segment (<see cref="SegmentReach"/>); mid-step both tiles
     /// are scanned and every strip may drop to the earlier tile's key (<see cref="Scan.MinAdd"/>); shadows lose to every piece
-    /// they overlap (<see cref="ShadowAdd"/>); all layers take one cap from the composite's columns (<see cref="Scan.SpanLo"/>);
+    /// they overlap (<see cref="ShadowAdd"/>); all layers take one cap from the composite's columns (MobileSpriteExtract measures them before the strips);
     /// pieces overhead on the mobile's diagonal (bottom at or over z + <see cref="PersonHeight"/>) cap the upper strip.</item>
     /// </list>
-    /// The scan runs per mobile per frame while the rule (or the checker) is on; its result is part of the mobile's select key
-    /// (MobileFrameCache), so recorded strips follow it. <c>CUO_MOBILE_WALL_ORDER=1|0</c> overrides the setting and
+    /// While the rule (or the checker) is on each mobile's scan is resolved per frame (<see cref="Resolve"/>: the kept result while
+    /// its tile, step and the chunks' cap versions are the same, nothing when the cap summaries show no piece around, else
+    /// the full scan); its version is part of the mobile's select key (MobileFrameCache), so recorded strips follow it. <c>CUO_MOBILE_WALL_ORDER=1|0</c> overrides the setting and
     /// <c>CUO_MOBILE_WALL_ORDER_CHECK=1</c> logs each strip the rule moves (or would move, with the switch off) with the mobile,
     /// the wall and the keys, with a 5 s summary, in developer builds.
     /// </summary>
@@ -60,8 +61,14 @@ namespace ClassicUO.Game.Scenes
         /// <summary>CUO_MOBILE_WALL_ORDER_CHECK=1: the scan runs with the switch off too, and every strip the rule moves or would
         /// move is logged.</summary>
         internal static readonly bool Check = Environment.GetEnvironmentVariable("CUO_MOBILE_WALL_ORDER_CHECK") == "1";
+
+        /// <summary>CUO_MOBILE_WALL_ORDER_CACHE_CHECK=1: every scan <see cref="Resolve"/> returns (kept, empty from the cap
+        /// summaries, or new) is compared with a fresh full scan; mismatches are logged with the mobile, its tile and the
+        /// walls, with a 5 s summary.</summary>
+        internal static readonly bool CacheCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_WALL_ORDER_CACHE_CHECK") == "1";
 #else
         internal const bool Check = false;
+        internal const bool CacheCheck = false;
 #endif
 
         public static bool On
@@ -131,9 +138,18 @@ namespace ClassicUO.Game.Scenes
             private Wall _e;
         }
 
-        /// <summary>One mobile's scan: the walls in front of it whose height holds its z.</summary>
-        public struct Scan : IEquatable<Scan>
+        /// <summary>
+        /// One mobile's scan: the walls in front of it whose height holds its z. A class so no 0.5 KB value is copied per
+        /// mobile per frame: a scan is built in a scratch instance with <see cref="MaxWalls"/> entries (<see cref="Scan()"/>),
+        /// and kept on the mobile's MobileFrameCache as <see cref="Empty"/> (no walls, shared, never written) or as a pooled
+        /// instance whose wall array (Uo.Buffers.BufferPool) is sized to its count. <see cref="Version"/> is unique per kept
+        /// result (0: <see cref="Empty"/>), so the select key holds that number instead of the walls.
+        /// </summary>
+        public sealed class Scan
         {
+            /// <summary>The scan with no walls (what most mobiles have): shared, never written.</summary>
+            public static readonly Scan Empty = new Scan(Array.Empty<Wall>());
+
             /// <summary>The rule applies (<see cref="Rule"/>); false with only the checker on.</summary>
             public bool Active;
 
@@ -152,16 +168,38 @@ namespace ClassicUO.Game.Scenes
             /// the key it has standing on that tile, behind a wall ahead of the tile it is leaving.</summary>
             public sbyte MinAdd;
 
-            /// <summary>The mobile's composite columns [SpanLo, SpanHi) relative to its anchor column (its last FrameInfo: every
-            /// non-shadow layer), so all its layers' strips get one cap (a mount's strip capped while the rider's narrower one
-            /// is not let the rider's far foot through the horse). Empty (equal): each layer uses its own frame.</summary>
-            public short SpanLo, SpanHi;
+            /// <summary>The walls, [0, <see cref="Count"/>).</summary>
+            public Wall[] Walls;
 
-            public WallList Walls;
+            /// <summary>Unique per kept result; 0 for <see cref="Empty"/> and scratch scans.</summary>
+            public uint Version;
 
-            public bool Equals(Scan o)
+            /// <summary>A scratch scan with room for <see cref="MaxWalls"/> walls (tests, the scan itself).</summary>
+            public Scan() : this(new Wall[MaxWalls])
             {
-                if (Active != o.Active || Count != o.Count || Du != o.Du || Dv != o.Dv || MinAdd != o.MinAdd || SpanLo != o.SpanLo || SpanHi != o.SpanHi)
+            }
+
+            private Scan(Wall[] walls)
+            {
+                Walls = walls;
+            }
+
+            internal void Clear()
+            {
+                Active = false;
+                Count = Dropped = 0;
+                Du = Dv = MinAdd = 0;
+            }
+
+            /// <summary>The same walls and keys (what the strips' depths depend on).</summary>
+            public bool SameAs(Scan o)
+            {
+                if (ReferenceEquals(this, o))
+                {
+                    return true;
+                }
+
+                if (Count != o.Count || Count != 0 && (Active != o.Active || Du != o.Du || Dv != o.Dv || MinAdd != o.MinAdd))
                 {
                     return false;
                 }
@@ -180,9 +218,96 @@ namespace ClassicUO.Game.Scenes
                 return true;
             }
 
-            public override bool Equals(object obj) => obj is Scan s && Equals(s);
+            private static readonly System.Collections.Generic.Stack<Scan> s_pool = new System.Collections.Generic.Stack<Scan>();
+            private static uint s_version;
 
-            public override int GetHashCode() => Count | (Active ? 256 : 0);
+            /// <summary>Scans pooled (at most <see cref="PoolMax"/>), rents that allocated a new one.</summary>
+            public static int PoolCount => s_pool.Count;
+            public const int PoolMax = 256;
+            public static long PoolMisses;
+
+            /// <summary>A kept copy of scratch scan <paramref name="from"/> (main thread): <see cref="Empty"/> when it found
+            /// nothing, else a pooled instance with a new <see cref="Version"/>.</summary>
+            internal static Scan Keep(Scan from)
+            {
+                if (from.Count == 0)
+                {
+                    return Empty;
+                }
+
+                Scan k;
+
+                if (s_pool.Count != 0)
+                {
+                    k = s_pool.Pop();
+                }
+                else
+                {
+                    k = new Scan(Array.Empty<Wall>());
+                    PoolMisses++;
+                }
+
+                k.Walls = Uo.Buffers.BufferPool.Rent<Wall>(from.Count);
+                Array.Copy(from.Walls, k.Walls, from.Count);
+                k.Active = from.Active;
+                k.Count = from.Count;
+                k.Dropped = from.Dropped;
+                k.Du = from.Du;
+                k.Dv = from.Dv;
+                k.MinAdd = from.MinAdd;
+                k.Version = ++s_version;
+
+                return k;
+            }
+
+            /// <summary>Gives a kept scan back (its wall array to the buffer pool); <see cref="Empty"/> is ignored.</summary>
+            internal static void Release(Scan k)
+            {
+                if (k == null || ReferenceEquals(k, Empty) || k.Walls.Length == 0)
+                {
+                    return;
+                }
+
+                Uo.Buffers.BufferPool.Return(k.Walls);
+                k.Walls = Array.Empty<Wall>();
+                k.Count = 0;
+                k.Version = 0;
+
+                if (s_pool.Count < PoolMax)
+                {
+                    s_pool.Push(k);
+                }
+            }
+        }
+
+        /// <summary>
+        /// A mobile's last scan inputs (MobileFrameCache.WallCache): tile, z, step (depth tile and step target), shadow, rule,
+        /// and the cap versions (Chunk.CapVersion, CapFlatVersion) of the chunks around it. The scan depends only on these
+        /// (it is tile-relative: the camera and the walking offset within a step do not change it), so while they are the
+        /// same the kept result is reused.
+        /// </summary>
+        public struct ScanCache
+        {
+            public bool Valid, Active, Shadow, FlatOverhead;
+            public ushort X, Y, Bx, By, Nx, Ny;
+            public sbyte Z;
+            public int Cx0, Cy0;
+            public byte Cw, Ch;
+            public ChunkStamps Chunks;
+        }
+
+        /// <summary>A chunk the scan read and its cap versions when it did (null: not loaded).</summary>
+        public struct ChunkStamp
+        {
+            public Chunk Chunk;
+            public uint Version, Flat;
+        }
+
+        /// <summary>The chunks covering every tile the scan read: at most 3 x 3 (a wall segment reaches 5 tiles ahead).</summary>
+        [InlineArray(9)]
+        public struct ChunkStamps
+        {
+            private ChunkStamp _e;
         }
 
         // the tiles ahead of a scanned tile and, for walls, the in-front half of each (columns relative to that tile's centre
@@ -196,55 +321,331 @@ namespace ClassicUO.Game.Scenes
         private static readonly sbyte[] s_stepDx = { -1, -1, 0, -1, 0, 1, 0, 1, 1 };
         private static readonly sbyte[] s_stepDy = { 0, 1, 1, -1, 0, 1, -1, -1, 0 };
 
-        /// <summary>
-        /// The scan for <paramref name="m"/> this frame (MobileAnimationSystem.SelectCached; part of the select key): empty
-        /// unless the rule or the checker is on.
-        /// </summary>
-        public static Scan KeyScan(Mobile m) => KeyScan(m, false);
+        // the scratch scans (main thread): the one being built and the checker's reference
+        private static readonly Scan s_scratch = new Scan(), s_reference = new Scan();
 
-        /// <summary><see cref="KeyScan(Mobile)"/>; <paramref name="shadow"/>: the mobile draws a shadow, so the pieces behind it are
-        /// scanned for it too (<see cref="ScanBehind"/>).</summary>
-        public static Scan KeyScan(Mobile m, bool shadow)
+        /// <summary>
+        /// The scan for <paramref name="m"/> this frame (MobileAnimationSystem.SelectCached; its <see cref="Scan.Version"/> is
+        /// part of the select key): <see cref="Scan.Empty"/> unless the rule or the checker is on. <paramref name="shadow"/>: the
+        /// mobile draws a shadow, so the pieces behind it are scanned for it too (<see cref="ScanBehind"/>).
+        /// <list type="bullet">
+        /// <item>While the inputs in <paramref name="cache"/>'s <see cref="ScanCache"/> are the same (tile, z, step, shadow, rule,
+        /// the cap versions of the chunks around), the kept result: an idle mobile compares numbers only.</item>
+        /// <item>Otherwise, when no tile the scan reads holds a piece that could count (<see cref="Quiet"/>, the chunks' cap
+        /// summaries), <see cref="Scan.Empty"/> without walking any tile list (an open field).</item>
+        /// <item>Otherwise the full scan (<see cref="FullScan"/>); a result equal to the kept one keeps it (and its version).</item>
+        /// </list>
+        /// <c>CUO_MOBILE_WALL_ORDER_CACHE_CHECK=1</c> compares every result with a fresh full scan.
+        /// </summary>
+        internal static Scan Resolve(Mobile m, MobileFrameCache cache, bool shadow) =>
+            Resolve(m.World?.Map, m.Serial, m.X, m.Y, m.Z, m.Offset, cache, shadow);
+
+        /// <summary><see cref="Resolve(Mobile, MobileFrameCache, bool)"/> for a mobile <paramref name="serial"/> on tile
+        /// (<paramref name="x"/>, <paramref name="y"/>) at z <paramref name="mz"/> with this step offset.</summary>
+        internal static Scan Resolve(Map.Map map, uint serial, int x, int y, int mz, Vector3 offset, MobileFrameCache cache, bool shadow)
         {
             bool rule = Rule;
-            Scan s = default;
 
-            if (!rule && !Check)
+            if (!rule && !Check || map == null)
             {
-                return s;
+                Forget(cache);
+
+                return Scan.Empty;
             }
 
-            s.Active = rule;
-            Map.Map map = m.World?.Map;
-#if CUO_DEVTOOLS
-            FrameScans++;
-#endif
+            DepthTile(x, y, offset, out int bx, out int by);
+            StepTile(x, y, offset, out int nx, out int ny);
+            ref ScanCache c = ref cache.WallCache;
+            Scan result;
 
-            if (map != null)
+            if (c.Valid && c.X == x && c.Y == y && c.Z == mz && c.Bx == bx && c.By == by && c.Nx == nx && c.Ny == ny && c.Shadow == shadow &&
+                c.Active == rule && Unchanged(map, ref c, x, y, mz, nx, ny))
             {
-                Vector3 offset = m.Offset;
-                DepthTile(m.X, m.Y, offset, out int bx, out int by);
-                s.Du = (sbyte)((bx - by) - (m.X - m.Y));
-                s.Dv = (sbyte)((bx + by) - (m.X + m.Y));
-                ScanStep(map, m.X, m.Y, m.Z, offset, bx, by, ref s);
+#if CUO_DEVTOOLS
+                FrameCacheHits++;
+                TotalHits++;
+#endif
+                result = cache.Wall;
+            }
+            else
+            {
+                c.Valid = true;
+                c.X = (ushort)x;
+                c.Y = (ushort)y;
+                c.Z = (sbyte)mz;
+                c.Bx = (ushort)bx;
+                c.By = (ushort)by;
+                c.Nx = (ushort)nx;
+                c.Ny = (ushort)ny;
+                c.Shadow = shadow;
+                c.Active = rule;
+                c.FlatOverhead = FlatOverhead(map, x, y, mz, nx, ny);
+                // the neighbourhood Quiet reads; a full scan widens it to every tile it read (segments reach further)
+                s_minX = Math.Min(x, nx) - Reach;
+                s_maxX = Math.Max(x, nx) + Reach;
+                s_minY = Math.Min(y, ny) - Reach;
+                s_maxY = Math.Max(y, ny) + Reach;
 
-                if (shadow)
+                if (Quiet(map, x, y, mz, nx, ny, shadow))
                 {
-                    ScanBehind(map, m.X, m.Y, m.Z, ((m.X - m.Y) - (bx - by)) * 22, ((m.X + m.Y) - (bx + by)) * 22, ref s);
+#if CUO_DEVTOOLS
+                    FrameEmpty++;
+                    TotalEmpty++;
+#endif
+                    result = Scan.Empty;
                 }
-                Rectangle fi = m.FrameInfo;
-                s.SpanLo = (short)-fi.X;
-                s.SpanHi = (short)(fi.Width - fi.X);
+                else
+                {
+#if CUO_DEVTOOLS
+                    TotalScans++;
+#endif
+                    s_scratch.Clear();
+                    FullScan(map, x, y, mz, offset, bx, by, shadow, rule, s_scratch);
+                    result = cache.Wall != null && cache.Wall.SameAs(s_scratch) ? cache.Wall : Scan.Keep(s_scratch);
+                }
+
+                TakeVersions(map, ref c);
+
+                if (!ReferenceEquals(result, cache.Wall))
+                {
+                    Scan.Release(cache.Wall);
+                }
             }
 
 #if CUO_DEVTOOLS
             if (Check)
             {
-                Tick(rule, s.Count != 0, s.Dropped);
+                Tick(rule, result.Count != 0, result.Dropped);
+            }
+
+            if (CacheCheck)
+            {
+                Compare(map, serial, x, y, mz, offset, bx, by, nx, ny, shadow, rule, result);
             }
 #endif
 
-            return s;
+            return result;
+        }
+
+        /// <summary>Drops <paramref name="cache"/>'s kept scan (MobileFrameCache.Reset, rule off).</summary>
+        internal static void Forget(MobileFrameCache cache)
+        {
+            if (!ReferenceEquals(cache.Wall, Scan.Empty))
+            {
+                Scan.Release(cache.Wall);
+                cache.Wall = Scan.Empty;
+            }
+
+            cache.WallCache.Valid = false;
+
+            for (int i = 0; i < 9; i++)
+            {
+                cache.WallCache.Chunks[i].Chunk = null;
+            }
+        }
+
+        /// <summary>
+        /// The full scan (the reference; before the cache, every mobile ran it every frame) for a mobile on tile
+        /// (<paramref name="x"/>, <paramref name="y"/>) at z <paramref name="mz"/> into scratch scan <paramref name="s"/>
+        /// (cleared by the caller).
+        /// </summary>
+        internal static void FullScan(Map.Map map, int x, int y, int mz, Vector3 offset, int bx, int by, bool shadow, bool rule, Scan s)
+        {
+#if CUO_DEVTOOLS
+            FrameScans++;
+#endif
+            s.Active = rule;
+            s.Du = (sbyte)((bx - by) - (x - y));
+            s.Dv = (sbyte)((bx + by) - (x + y));
+            ScanStep(map, x, y, mz, offset, bx, by, ref s);
+
+            if (shadow)
+            {
+                ScanBehind(map, x, y, mz, ((x - y) - (bx - by)) * 22, ((x + y) - (bx + by)) * 22, ref s);
+            }
+        }
+
+        // the reach of the tiles Quiet reads, as tile offsets from the mobile's tile and from the step's target
+        private const int Reach = 2;
+
+        // the tiles read since Resolve set them (Quiet's neighbourhood, then every tile the full scan visits)
+        private static int s_minX, s_maxX, s_minY, s_maxY;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void Visit(int tx, int ty)
+        {
+            if (tx < s_minX) s_minX = tx;
+            if (tx > s_maxX) s_maxX = tx;
+            if (ty < s_minY) s_minY = ty;
+            if (ty > s_maxY) s_maxY = ty;
+        }
+
+        // the chunks covering the tiles read, with their cap versions
+        private static void TakeVersions(Map.Map map, ref ScanCache c)
+        {
+            int cx0 = s_minX >> 3, cx1 = s_maxX >> 3, cy0 = s_minY >> 3, cy1 = s_maxY >> 3;
+            c.Cx0 = cx0;
+            c.Cy0 = cy0;
+            c.Cw = (byte)Math.Min(3, cx1 - cx0 + 1);
+            c.Ch = (byte)Math.Min(3, cy1 - cy0 + 1);
+
+            for (int j = 0; j < c.Ch; j++)
+            {
+                for (int i = 0; i < c.Cw; i++)
+                {
+                    ref ChunkStamp st = ref c.Chunks[j * 3 + i];
+                    int cx = cx0 + i, cy = cy0 + j;
+                    st.Chunk = cx < 0 || cy < 0 ? null : map.GetChunk(cx << 3, cy << 3, false);
+                    st.Version = st.Chunk?.CapVersion ?? 0;
+                    st.Flat = st.Chunk?.CapFlatVersion ?? 0;
+                }
+            }
+        }
+
+        // the kept result still holds: every chunk it read is the same with the same cap version; a changed flat version (an
+        // item without height came or went) matters only when such an item is or was overhead
+        private static bool Unchanged(Map.Map map, ref ScanCache c, int x, int y, int mz, int nx, int ny)
+        {
+            bool flat = false;
+
+            for (int j = 0; j < c.Ch; j++)
+            {
+                for (int i = 0; i < c.Cw; i++)
+                {
+                    ref ChunkStamp st = ref c.Chunks[j * 3 + i];
+                    Chunk kept = st.Chunk;
+
+                    if (kept == null)
+                    {
+                        // not loaded when scanned: still not loaded
+                        int cx = c.Cx0 + i, cy = c.Cy0 + j;
+
+                        if (cx >= 0 && cy >= 0 && map.GetChunk(cx << 3, cy << 3, false) != null)
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (kept.CapVersion != st.Version || kept.IsDestroyed)
+                    {
+                        return false;
+                    }
+
+                    flat |= kept.CapFlatVersion != st.Flat;
+                }
+            }
+
+            if (flat)
+            {
+                if (c.FlatOverhead || FlatOverhead(map, x, y, mz, nx, ny))
+                {
+                    return false;
+                }
+
+                for (int k = 0; k < 9; k++)
+                {
+                    ref ChunkStamp st = ref c.Chunks[k];
+                    st.Flat = st.Chunk?.CapFlatVersion ?? 0;
+                }
+            }
+
+            return true;
+        }
+
+        // round 3 offsets (ScanBehind's s_bx, s_by) and the five tiles ahead (s_dx, s_dy) are read below with the sides and the
+        // overhead diagonal; the step's target adds its own tile, five ahead and its diagonal
+
+        /// <summary>
+        /// No tile the full scan reads holds a piece that could count (Chunk cap summary): the tiles ahead of the mobile's tile
+        /// and of the step's target, the side tiles, their own tiles, and the tiles behind with a shadow have no piece with
+        /// height whose top is above <paramref name="mz"/> (AddPieces, ScanBehind: a piece with a top at or under the mobile's
+        /// standing top never counts, and a standing top above <paramref name="mz"/> needs such a stair piece on its own
+        /// tile), and the overhead diagonals have no piece at or above <paramref name="mz"/> + <see cref="PersonHeight"/>
+        /// (ScanOverhead). Then the scan finds nothing. CUO_MOBILE_WALL_ORDER_CACHE_CHECK proves the reach.
+        /// </summary>
+        internal static bool Quiet(Map.Map map, int x, int y, int mz, int nx, int ny, bool shadow)
+        {
+            if (!QuietAround(map, x, y, mz))
+            {
+                return false;
+            }
+
+            if ((nx != x || ny != y) && !QuietAround(map, nx, ny, mz))
+            {
+                return false;
+            }
+
+            if (shadow)
+            {
+                for (int t = 0; t < s_bx.Length; t++)
+                {
+                    if (Capped(map, x + s_bx[t], y + s_by[t], mz, false))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        // a tile, the five ahead of it, and its diagonal neighbours (sides, overhead)
+        private static bool QuietAround(Map.Map map, int x, int y, int mz)
+        {
+            for (int k = -1; k <= 1; k++)
+            {
+                if (Capped(map, x + k, y - k, mz, true))
+                {
+                    return false;
+                }
+            }
+
+            for (int t = 0; t < s_dx.Length; t++)
+            {
+                if (Capped(map, x + s_dx[t], y + s_dy[t], mz, false))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool Capped(Map.Map map, int tx, int ty, int mz, bool overhead)
+        {
+            Chunk chunk = map.GetChunk(tx, ty, false);
+
+            if (chunk == null)
+            {
+                return false;
+            }
+
+            int cell = (tx & 7) << 3 | (ty & 7);
+
+            return chunk.CapTop[cell] > mz || overhead && chunk.CapZ[cell] >= mz + PersonHeight;
+        }
+
+        // an item without height at or above mz + PersonHeight on an overhead diagonal (the only place such items count)
+        private static bool FlatOverhead(Map.Map map, int x, int y, int mz, int nx, int ny)
+        {
+            for (int k = -1; k <= 1; k++)
+            {
+                if (FlatAt(map, x + k, y - k, mz) || (nx != x || ny != y) && FlatAt(map, nx + k, ny - k, mz))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool FlatAt(Map.Map map, int tx, int ty, int mz)
+        {
+            Chunk chunk = map.GetChunk(tx, ty, false);
+
+            return chunk != null && chunk.CapFlatZ[(tx & 7) << 3 | (ty & 7)] >= mz + PersonHeight;
         }
 
         /// <summary>The tile View.CalculateDepthZ sorts a mobile on: its own, or the next one while it steps south or east.</summary>
@@ -333,6 +734,7 @@ namespace ClassicUO.Game.Scenes
             for (int k = -1; k <= 1; k++)
             {
                 int tx = tx0 + k, ty = ty0 - k;
+                Visit(tx, ty);
                 Chunk chunk = map.GetChunk(tx, ty, false);
 
                 if (chunk == null)
@@ -577,6 +979,7 @@ namespace ClassicUO.Game.Scenes
             int standTop, int dist, int shift,
             int lo0, int hi0, int line, ref Scan s)
         {
+            Visit(tx, ty);
             Chunk chunk = map.GetChunk(tx, ty, false);
 
             if (chunk == null)
@@ -959,6 +1362,7 @@ namespace ClassicUO.Game.Scenes
             {
                 int dx = s_bx[t], dy = s_by[t];
                 int tx = x + dx, ty = y + dy;
+                Visit(tx, ty);
                 Chunk chunk = map.GetChunk(tx, ty, false);
 
                 if (chunk == null)
@@ -1104,6 +1508,60 @@ namespace ClassicUO.Game.Scenes
         }
 
 #if CUO_DEVTOOLS
+        private static long _ccCompares, _ccMismatches, _ccNextSummary;
+        internal static long TotalHits, TotalEmpty, TotalScans;
+        private static int _ccLogged;
+
+        private static void Compare(Map.Map map, uint serial, int x, int y, int mz, Vector3 offset, int bx, int by, int nx, int ny, bool shadow, bool rule, Scan result)
+        {
+            int scans = FrameScans, tiles = FrameTiles, objects = FrameObjects;
+            s_reference.Clear();
+            FullScan(map, x, y, mz, offset, bx, by, shadow, rule, s_reference);
+            // the reference scan is not the game's: keep the counters to what Resolve did
+            FrameScans = scans;
+            FrameTiles = tiles;
+            FrameObjects = objects;
+            _ccCompares++;
+
+            if (!result.SameAs(s_reference))
+            {
+                _ccMismatches++;
+
+                if (_ccLogged++ < 50)
+                {
+                    Log.Warn($"[mobile-wall-cache-check] 0x{serial:X8} at {x},{y},{mz} step to {nx},{ny} depth tile {bx},{by} shadow {shadow}: " +
+                        $"kept {Describe(result)} | full scan {Describe(s_reference)}");
+                }
+            }
+
+            long now = Environment.TickCount64;
+
+            if (now >= _ccNextSummary)
+            {
+                if (_ccNextSummary != 0)
+                {
+                    Log.Info($"[mobile-wall-cache-check] summary: mobile_wall_order={On}, rule={Rule}, compares {_ccCompares}, mismatches {_ccMismatches}; kept {TotalHits}, empty from the cap summaries {TotalEmpty}, full scans {TotalScans}; " +
+                        $"kept scans {Scan.PoolCount} pooled / {Scan.PoolMisses} new");
+                }
+
+                _ccNextSummary = now + 5000;
+            }
+        }
+
+        private static string Describe(Scan s)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"{s.Count} walls (active {s.Active}, du {s.Du} dv {s.Dv} min {s.MinAdd})");
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                ref readonly Wall w = ref s.Walls[i];
+                sb.Append($" [0x{w.Graphic:X4} {w.X},{w.Y},{w.Z} h{w.Height} D {w.D} {w.Lo}..{w.Hi}{(w.Overhead ? " over" : "")}{(w.Floor ? " floor" : "")}{(w.ShadowOnly ? " shadow" : "")}{(w.Side ? " side" : "")}]");
+            }
+
+            return sb.ToString();
+        }
+
         private static long _scans, _withWalls, _dropped, _moved, _movedApplied, _nextSummary;
         private static int _logged;
 
