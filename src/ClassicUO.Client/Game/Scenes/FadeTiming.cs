@@ -28,6 +28,6 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
 
-        public static bool TimeBased => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.FadeTimeBased ?? false);
+        public static bool TimeBased => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.FadeTimeBased ?? true);
     }
 }

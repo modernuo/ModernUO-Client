@@ -232,9 +232,10 @@ namespace ClassicUO.Configuration
         // mount-fix (owner 2026-11-23: the horse left by a dismount fades in from invisible, a flash every cycle): on, a mobile
         // the server creates starts at alpha 0 and fades in (the upstream behaviour); off, it is drawn at its target alpha
         // from its first frame (full, or 0 above the max Z). Roof, max-Z, translucency and chunk-stream fades are unchanged;
-        // items keep their fade. CUO_MOBILE_FADE_CHECK=1 counts mobiles first drawn below their target and the time until
-        // they reach it; CUO_MOBILE_FADE_IN=1|0 overrides the setting in developer builds. Default on; off is the new path.
-        [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; } = true;
+        // items follow item_fade_in. CUO_MOBILE_FADE_CHECK=1 counts mobiles first drawn below their target and the time until
+        // they reach it; CUO_MOBILE_FADE_IN=1|0 overrides the setting in developer builds. Default off (owner 2026-11-23: the
+        // dismount flash); on is kept as an option, its fade timed by fade_time_based.
+        [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; }
 
         // mount-fix (owner 2026-11-23, low priority): mobile_fade_in for items. On (default, today): an item the server places in
         // the world starts at alpha 0 and fades in; off, it is drawn at its target alpha from its first frame. Roof, max-Z and
@@ -243,8 +244,9 @@ namespace ClassicUO.Configuration
 
         // mount-fix: object fades (roof, max Z, new objects) catch up the 20 ms steps a long frame missed in every pacing
         // mode, so a fade takes the same ~220 ms at any frame rate; before, only display-paced drawing caught up and an
-        // unpaced 12 fps frame took one step (~917 ms). CUO_FADE_TIME_BASED=1|0 overrides it in developer builds. Default off.
-        [JsonPropertyName("fade_time_based")] public bool FadeTimeBased { get; set; }
+        // unpaced 12 fps frame took one step (~917 ms). CUO_FADE_TIME_BASED=1|0 overrides it in developer builds. Default on
+        // (owner 2026-11-23): mobile_fade_in stays an option, so its timing has to be right.
+        [JsonPropertyName("fade_time_based")] public bool FadeTimeBased { get; set; } = true;
 
         // mount-fix (owner 2026-11-23: a mobile entering the scene fidgets at once, a crowd in sync): on, a new mobile's
         // record starts with its idle due (IdleDue 0), so its first client-side idle plays on its first update (the upstream

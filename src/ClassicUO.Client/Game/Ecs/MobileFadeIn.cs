@@ -10,9 +10,9 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// mobile_fade_in (mount-fix, owner 2026-11-23). On (the default, upstream behaviour): a mobile the server creates starts
+    /// mobile_fade_in (mount-fix, owner 2026-11-23). On (the upstream behaviour, an option since 2026-11-23): a mobile the server creates starts
     /// at AlphaHue 0 and fades in by the scene's fade steps, so the horse a dismount leaves behind is invisible for its first
-    /// frames. Off: <see cref="WorldWriter.UpsertMobile"/> marks a created mobile (<see cref="GameObject.AlphaSnap"/>) and its
+    /// frames. Off (the default): <see cref="WorldWriter.UpsertMobile"/> marks a created mobile (<see cref="GameObject.AlphaSnap"/>) and its
     /// first walk sets its alpha to the target at once (GameScene.ProcessAlpha: full, or 0 above the max Z). Later roof,
     /// max-Z and translucency changes fade as before; items are not affected. Both renderers read the same AlphaHue.
     /// CUO_MOBILE_FADE_CHECK=1 (<see cref="MobileFadeCheck"/>) counts, in both states, the created mobiles first drawn below
@@ -37,7 +37,7 @@ namespace ClassicUO.Game
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
 
-        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.MobileFadeIn ?? true);
+        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.MobileFadeIn ?? false);
 
         /// <summary>WorldWriter.UpsertMobile: <paramref name="mobile"/> was just created.</summary>
         public static void Created(Mobile mobile)
