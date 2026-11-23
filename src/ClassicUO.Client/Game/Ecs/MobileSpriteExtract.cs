@@ -126,6 +126,7 @@ namespace ClassicUO.Game
             _atlas = null;
             _geo = Scenes.DepthModel.On;
             _submerged = false;
+            _wall = default;
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
@@ -234,6 +235,8 @@ namespace ClassicUO.Game
             // equipment, so mount, rider and equipment get the same geometric depth (depth_model)
             _geoAnchorX = drawX;
             _geoAnchorY = drawY;
+            // mobile_wall_order: the centre column of the tile the depth key sorts the mobile on
+            _wallRefX = posX + 22 + _wall.Du * 22;
             float alpha = rs.Alpha / 255f;
             bool mirror = (s.Flags & AnimStateFlags.Mirror) != 0;
             bool shadow = (s.Flags & AnimStateFlags.Shadow) != 0;
@@ -456,7 +459,17 @@ namespace ClassicUO.Game
 
             if (Scenes.ClipOrderCheck.Armed && !isShadow && _objStill && !_selectOnly)
             {
-                Scenes.ClipOrderCheck.Layer(_objX, _objY, _objZ, id, _geoAnchorX, _geoAnchorY, x, y, w, h, fe.CenterY, mountOffset, depth);
+                // the strips' adds as drawn below (mobile_wall_order caps them), so the check's key order is the drawn one
+                Span<(int Y, int H)> cs = stackalloc (int, int)[Scenes.ClipOrderCheck.MaxStrips];
+                Span<float> adds = stackalloc float[Scenes.ClipOrderCheck.MaxStrips];
+                int cn = Math.Min(AnimationRules.Strips(h, fe.CenterY, mountOffset, cs), cs.Length);
+
+                for (int i = 0; i < cn; i++)
+                {
+                    adds[i] = StripAdd(i, x, w, depth);
+                }
+
+                Scenes.ClipOrderCheck.Layer(_objX, _objY, _objZ, id, _geoAnchorX, _geoAnchorY, x, y, w, h, fe.CenterY, mountOffset, depth, adds.Slice(0, cn));
             }
 #endif
 
@@ -502,9 +515,40 @@ namespace ClassicUO.Game
             {
                 if (strips[i].H > 0)
                 {
-                    Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, _submerged ? 0 : i * 2);
+                    float add = StripAdd(i, x, w, depth);
+#if CUO_DEVTOOLS
+                    if (Scenes.MobileWallOrder.Check && i > 0 && _wall.Count != 0 && !_submerged)
+                    {
+                        float capped = Scenes.MobileWallOrder.CapAdd(i * 2, in _wall, x - _wallRefX, x - _wallRefX + w, depth, out int wall);
+
+                        if (capped < i * 2)
+                        {
+                            Scenes.MobileWallOrder.NoteMoved(in _wall, wall, _objX, _objY, _objZ, id, i, strips[i].H, x - _wallRefX, x - _wallRefX + w, depth, i * 2, capped);
+                        }
+                    }
+#endif
+                    Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, add);
                 }
             }
+        }
+
+        // the add of strip i (DepthOf kind 1): + 2i, + 0 under a wet surface (wet_surface_depth), and with mobile_wall_order the
+        // strips below the anchor capped just behind a wall ahead that the frame's columns overlap (MobileWallOrder.CapAdd)
+        private float StripAdd(int i, int x, int w, float depth)
+        {
+            if (_submerged)
+            {
+                return 0;
+            }
+
+            float add = i * 2;
+
+            if (i > 0 && _wall.Active && _wall.Count != 0)
+            {
+                add = Scenes.MobileWallOrder.CapAdd(add, in _wall, x - _wallRefX, x - _wallRefX + w, depth, out _);
+            }
+
+            return add;
         }
 
         private void AddLight(uint item, int x, int y)
@@ -604,6 +648,11 @@ namespace ClassicUO.Game
         // wet_surface_depth (key mode): the mobile is under a wet surface (MobileFrameCache.Submerged, part of the select key),
         // so every strip takes the upper strip's + 1 and the water ahead hides the feet with the legs
         private bool _submerged;
+
+        // mobile_wall_order (key mode): the mobile's wall scan (MobileFrameCache.Wall, part of the select key) and the screen
+        // column of its depth tile's centre, which the scan's wall columns are relative to
+        private Scenes.MobileWallOrder.Scan _wall;
+        private int _wallRefX;
 #if CUO_DEVTOOLS
         // CUO_CLIP_ORDER_CHECK: the mobile's tile y and whether it stands still (ClipOrderCheck.Layer)
         private int _objY;
@@ -652,6 +701,7 @@ namespace ClassicUO.Game
         public void Emit(EcsEntity e, in EcsRow data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
             _submerged = cache != null && cache.Submerged;
+            _wall = cache != null ? cache.Wall : default;
 
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
@@ -1078,6 +1128,7 @@ namespace ClassicUO.Game
         {
             BeginSelect(src);
             _submerged = cache != null && cache.Submerged;
+            _wall = cache != null ? cache.Wall : default;
 
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
