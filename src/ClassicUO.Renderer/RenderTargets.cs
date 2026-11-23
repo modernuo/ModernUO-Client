@@ -103,17 +103,13 @@ namespace ClassicUO.Renderer
             _background = background ?? throw new ArgumentNullException(nameof(background));
         }
 
-        /// <summary>
-        /// ui_border_bake (G11a, default off): the composite copies a baked border texture instead of clearing the back buffer,
-        /// drawing the background pattern over the whole window and blending the whole UI target. The border holds black, the
-        /// pattern and, outside the world viewport, the UI target over them: those pixels change only with the UI target or
-        /// the geometry, so they are baked on such a change (<see cref="BorderBakeState"/>) and copied opaque each frame. Then
-        /// the world, lights and fade go into the viewport as before, and the UI target is blended only inside the viewport
-        /// (a scissor, so each pixel gets the same blend as before). FNA still clears the back buffer when it is bound (its
-        /// RenderTargetUsage is DiscardContents); the explicit clears and blended full-window passes are what go. Set per frame
-        /// by the caller; CUO_UI_COMPOSITE_CHECK compares both composites pixel for pixel (GameControllerUiComposite).
-        /// </summary>
-        public bool BorderBake { get; set; }
+        // ui_border_bake (G11a; always on since quiet-1123): the composite copies a baked border texture instead of clearing
+        // the back buffer, drawing the background pattern over the whole window and blending the whole UI target. The border
+        // holds black, the pattern and, outside the world viewport, the UI target over them: those pixels change only with
+        // the UI target or the geometry, so they are baked on such a change (BorderBakeState) and copied opaque each frame.
+        // Then the world, lights and fade go into the viewport, and the UI target is blended only inside the viewport (a
+        // scissor, so each pixel gets the same blend as the full composite). FNA still clears the back buffer when it is bound
+        // (its RenderTargetUsage is DiscardContents). Costs one back-buffer-sized target (8 MB at 1080p, 33 MB at 4K).
 
         /// <summary>ui_border_bake: where the border texture is stale. The caller reports UI target changes here.</summary>
         public UiBorderBake BorderBakeState { get; } = new();
@@ -123,21 +119,13 @@ namespace ClassicUO.Renderer
 
         private RenderTarget2D _borderRenderTarget;
 
-        /// <summary>ui_border_bake turned off: frees the border target (the next baked composite bakes it whole again).</summary>
-        public void ReleaseBorder()
-        {
-            _borderRenderTarget?.Dispose();
-            _borderRenderTarget = null;
-        }
-
         private static readonly Vector3 BackgroundHue = new Vector3(0, 0, 0.1f);
 
-        public void Draw(UltimaBatcher2D batcher) => Draw(batcher, null, BorderBake);
-
-        /// <summary>The composite into <paramref name="target"/> (null: the back buffer), which must be bound.</summary>
-        public void Draw(UltimaBatcher2D batcher, RenderTarget2D target, bool borderBake)
+        /// <summary>The composite into the back buffer, which must be bound.</summary>
+        public void Draw(UltimaBatcher2D batcher)
         {
-            if (borderBake && EnsureBorder(batcher, target))
+            // the full composite when there is nothing to bake into (a zero-sized back buffer, no UI target)
+            if (EnsureBorder(batcher, null))
             {
                 DrawBaked(batcher);
             }

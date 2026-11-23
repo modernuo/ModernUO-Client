@@ -1146,14 +1146,6 @@ namespace ClassicUO.Game
 
                     return false;
 
-                // uiborderbake on|off: ui_border_bake (G11a, UiComposite; CUO_UI_BORDER_BAKE overrides it). Live: the next frame draws
-                // the other composite
-                case "uiborderbake" when args.Length > 0:
-                    Settings.GlobalSettings.UiBorderBake = args[0] == "on";
-                    Log.Info($"[ECS] driver: ui_border_bake {Settings.GlobalSettings.UiBorderBake} (effective {UiComposite.Enabled})");
-
-                    return false;
-
                 // shadows on|off: the profile's mobile shadows (mobile_wall_order round 2: a capture without them isolates the
                 // shadow's pixels)
                 case "shadows" when args.Length > 0 && ProfileManager.CurrentProfile is { } shadowProfile:
