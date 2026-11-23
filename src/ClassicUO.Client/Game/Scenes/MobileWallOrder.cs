@@ -265,12 +265,20 @@ namespace ClassicUO.Game.Scenes
         {
             StepTile(x, y, offset, out int nx, out int ny);
             int depthCol = bx - by;
-            ScanAt(map, x, y, mz, ((x - y) - depthCol) * 22, ref s);
+            bool stepping = nx != x || ny != y;
+            int standTop = StandTop(map, x, y, mz);
+
+            if (stepping)
+            {
+                standTop = Math.Max(standTop, StandTop(map, nx, ny, mz));
+            }
+
+            ScanAt(map, x, y, mz, standTop, ((x - y) - depthCol) * 22, ((x + y) - (bx + by)) * 22, stepping, ref s);
             ScanOverhead(map, x, y, mz, ((x - y) - depthCol) * 22, ((x + y) - (bx + by)) * 22, ref s);
 
             if (nx != x || ny != y)
             {
-                ScanAt(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ref s);
+                ScanAt(map, nx, ny, mz, standTop, ((nx - ny) - depthCol) * 22, ((nx + ny) - (bx + by)) * 22, true, ref s);
                 ScanOverhead(map, nx, ny, mz, ((nx - ny) - depthCol) * 22, ((nx + ny) - (bx + by)) * 22, ref s);
                 s.MinAdd = (sbyte)Math.Min(0, Math.Min(x + y, nx + ny) - (bx + by));
             }
@@ -347,15 +355,17 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    if (s.Count >= MaxWalls)
-                    {
-                        s.Dropped++;
+                    int d = 100 * (tx + ty) + 127 + o.PriorityZ;
+                    int slot = Slot(ref s, d);
 
+                    if (slot < 0)
+                    {
                         continue;
                     }
 
-                    ref Wall w = ref s.Walls[s.Count++];
-                    w.D = 100 * (tx + ty) + 127 + o.PriorityZ;
+                    ref Wall w = ref s.Walls[slot];
+                    w = default;
+                    w.D = d;
                     w.Lo = (short)(lo + shift);
                     w.Hi = (short)(hi + shift);
                     w.Graphic = o.Graphic;
@@ -371,7 +381,50 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>Fills <paramref name="s"/> with the walls ahead of depth tile (<paramref name="bx"/>, <paramref name="by"/>)
         /// that hold z <paramref name="mz"/>.</summary>
-        internal static void ScanAt(Map.Map map, int bx, int by, int mz, ref Scan s) => ScanAt(map, bx, by, mz, 0, ref s);
+        internal static void ScanAt(Map.Map map, int bx, int by, int mz, ref Scan s) =>
+            ScanAt(map, bx, by, mz, StandTop(map, bx, by, mz), 0, 0, false, ref s);
+
+        /// <summary>
+        /// The height a mobile at z <paramref name="mz"/> on tile (<paramref name="x"/>, <paramref name="y"/>) stands up to, as
+        /// the pathfinder raises its climb reference (Pathfinder.CalculateMinMaxZ: on a bridge or stair piece whose walkable top,
+        /// z + height / 2, is the mobile's z, the reference is the piece's full top). A mobile on stairs stands at the half
+        /// height, so the steps and items around it up to that top are under it. Otherwise <paramref name="mz"/>.
+        /// </summary>
+        internal static int StandTop(Map.Map map, int x, int y, int mz)
+        {
+            Chunk chunk = map.GetChunk(x, y, false);
+            int top = mz;
+
+            if (chunk == null)
+            {
+                return top;
+            }
+
+            StaticTiles[] data = Chunk.StaticTileData;
+
+            for (GameObject o = TileWalk.Begin(chunk, (x & 7) << 3 | (y & 7), out TileWalk walk); o != null; o = walk.Next())
+            {
+                if ((o is Static || o is Multi || o is Item { IsMulti: false }) && o.Graphic < data.Length)
+                {
+                    ref StaticTiles td = ref data[o.Graphic];
+
+                    if (Stairlike(in td) && Pathfinder.WalkableTop(o.Z, td.Height, true) == mz)
+                    {
+                        top = Math.Max(top, o.Z + td.Height);
+                    }
+                }
+            }
+
+            return top;
+        }
+
+        private static bool Stairlike(in StaticTiles td) => (td.Flags & (TileFlag.Bridge | TileFlag.StairBack | TileFlag.StairRight)) != 0;
+
+        /// <summary>A standing mobile's pieces ahead matter only where their art reaches the rows of its strips below the
+        /// anchor and of its shadow (sheared up to half the frame height above the anchor, about 35 rows for a mount): art
+        /// ending higher (screen rows relative to the depth tile's centre) is not kept. Mid-step every piece is kept (the
+        /// upper strip may drop).</summary>
+        public const int MinBottom = -48;
 
         /// <summary>
         /// Adds to <paramref name="s"/> the pieces ahead of tile (<paramref name="bx"/>, <paramref name="by"/>) that hold z
@@ -385,8 +438,9 @@ namespace ClassicUO.Game.Scenes
         /// <see cref="SegmentReach"/> tiles each way, so a wide sprite or its shadow reaching a piece further along the wall
         /// (beyond the five tiles) is capped by it too.
         /// </summary>
-        internal static void ScanAt(Map.Map map, int bx, int by, int mz, int shift, ref Scan s)
+        internal static void ScanAt(Map.Map map, int bx, int by, int mz, int standTop, int shift, int rowShift, bool stepping, ref Scan s)
         {
+            int minBottom = stepping ? int.MinValue : MinBottom;
             StaticTiles[] data = Chunk.StaticTileData;
             SpriteEntry[] sprites = SpritesForTests ?? Client.Game?.UO?.FileManager?.Arts?.PackSpriteEntries;
 
@@ -395,7 +449,8 @@ namespace ClassicUO.Game.Scenes
 
             for (int t = 0; t < s_dx.Length; t++)
             {
-                found[t] = AddPieces(map, data, sprites, bx + s_dx[t], by + s_dy[t], (s_dx[t] - s_dy[t]) * 22, mz, shift, s_lo[t], s_hi[t], LineAny, ref s);
+                found[t] = AddPieces(map, data, sprites, bx + s_dx[t], by + s_dy[t], (s_dx[t] - s_dy[t]) * 22, rowShift + (s_dx[t] + s_dy[t]) * 22, minBottom, mz,
+                    standTop, s_dx[t] + s_dy[t], shift, s_lo[t], s_hi[t], LineAny, ref s);
             }
 
             for (int t = 0; t < s_dx.Length; t++)
@@ -405,7 +460,7 @@ namespace ClassicUO.Game.Scenes
 
                 for (int k = 1; k <= SegmentReach && (lines & LineX) != 0; k++)
                 {
-                    if ((AddPieces(map, data, sprites, bx + dx + k, by + dy, (dx + k - dy) * 22, mz, shift, 0, 0, LineX, ref s) & LineX) == 0)
+                    if ((AddPieces(map, data, sprites, bx + dx + k, by + dy, (dx + k - dy) * 22, rowShift + (dx + k + dy) * 22, minBottom, mz, standTop, 1, shift, 0, 0, LineX, ref s) & LineX) == 0)
                     {
                         break;
                     }
@@ -413,7 +468,7 @@ namespace ClassicUO.Game.Scenes
 
                 for (int k = 1; k <= SegmentReach && (lines & LineX) != 0; k++)
                 {
-                    if ((AddPieces(map, data, sprites, bx + dx - k, by + dy, (dx - k - dy) * 22, mz, shift, 0, 0, LineX, ref s) & LineX) == 0)
+                    if ((AddPieces(map, data, sprites, bx + dx - k, by + dy, (dx - k - dy) * 22, rowShift + (dx - k + dy) * 22, minBottom, mz, standTop, 1, shift, 0, 0, LineX, ref s) & LineX) == 0)
                     {
                         break;
                     }
@@ -421,7 +476,7 @@ namespace ClassicUO.Game.Scenes
 
                 for (int k = 1; k <= SegmentReach && (lines & LineY) != 0; k++)
                 {
-                    if ((AddPieces(map, data, sprites, bx + dx, by + dy + k, (dx - dy - k) * 22, mz, shift, 0, 0, LineY, ref s) & LineY) == 0)
+                    if ((AddPieces(map, data, sprites, bx + dx, by + dy + k, (dx - dy - k) * 22, rowShift + (dx + dy + k) * 22, minBottom, mz, standTop, 1, shift, 0, 0, LineY, ref s) & LineY) == 0)
                     {
                         break;
                     }
@@ -429,7 +484,7 @@ namespace ClassicUO.Game.Scenes
 
                 for (int k = 1; k <= SegmentReach && (lines & LineY) != 0; k++)
                 {
-                    if ((AddPieces(map, data, sprites, bx + dx, by + dy - k, (dx - dy + k) * 22, mz, shift, 0, 0, LineY, ref s) & LineY) == 0)
+                    if ((AddPieces(map, data, sprites, bx + dx, by + dy - k, (dx - dy + k) * 22, rowShift + (dx + dy - k) * 22, minBottom, mz, standTop, 1, shift, 0, 0, LineY, ref s) & LineY) == 0)
                     {
                         break;
                     }
@@ -449,7 +504,8 @@ namespace ClassicUO.Game.Scenes
         /// in-front half), other pieces their diamond. <see cref="LineX"/> / <see cref="LineY"/>: a segment tile; only wall
         /// pieces of that line count, with their face half. Returns the lines of the wall pieces found (LineX | LineY).
         /// </summary>
-        private static int AddPieces(Map.Map map, StaticTiles[] data, SpriteEntry[] sprites, int tx, int ty, int c, int mz, int shift,
+        private static int AddPieces(Map.Map map, StaticTiles[] data, SpriteEntry[] sprites, int tx, int ty, int c, int rowC, int minBottom, int mz,
+            int standTop, int dist, int shift,
             int lo0, int hi0, int line, ref Scan s)
         {
             Chunk chunk = map.GetChunk(tx, ty, false);
@@ -485,7 +541,7 @@ namespace ClassicUO.Game.Scenes
                 ref StaticTiles td = ref data[g];
 
                 // owner rule (round 2): a piece in front covers the mobile unless it is flat or the mobile stands above it
-                if (td.Height == 0 || o.Z + td.Height <= mz || Climbable(in td, o.Z, mz))
+                if (td.Height == 0 || o.Z + td.Height <= standTop || Climbable(in td, o.Z, mz, standTop, dist))
                 {
                     continue;
                 }
@@ -495,8 +551,10 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                // the art's opaque columns: View.DrawStatic puts the art's centre column (OrigW >> 1) on the north vertex
+                // the art's opaque columns: View.DrawStatic puts the art's centre column (OrigW >> 1) on the north vertex and its
+                // bottom row on the south vertex (centre + 22), 4 px up per z
                 int artLo = c - 22, artHi = c + 22;
+                int bottom = rowC - 4 * (o.Z - mz) + 22;
                 int idx = PackConst.StaticSpriteBase + g;
 
                 if (sprites != null && idx < sprites.Length && sprites[idx].Present && sprites[idx].OrigW != 0)
@@ -504,6 +562,7 @@ namespace ClassicUO.Game.Scenes
                     ref readonly SpriteEntry sp = ref sprites[idx];
                     artLo = c - (sp.OrigW >> 1) + sp.TrimX;
                     artHi = artLo + sp.W;
+                    bottom += sp.TrimY + sp.H - sp.OrigH;
                 }
 
                 // a wall's line from where its art lies: the left half is a face along x (Y = y + 1), the right half along y
@@ -548,23 +607,25 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                // only a piece that counts ahead starts a segment
+                // only a piece that counts ahead starts a segment (a segment continues past pieces too high to matter)
                 lines |= pieceLines & (line == LineAny ? LineX | LineY : line);
 
-                if (Holds(in s, o, tx, ty))
+                if (bottom < minBottom || Holds(in s, o, tx, ty))
                 {
                     continue;
                 }
 
-                if (s.Count >= MaxWalls)
-                {
-                    s.Dropped++;
+                int d = 100 * (tx + ty) + 127 + o.PriorityZ;
+                int slot = Slot(ref s, d);
 
+                if (slot < 0)
+                {
                     continue;
                 }
 
-                ref Wall w = ref s.Walls[s.Count++];
-                w.D = 100 * (tx + ty) + 127 + o.PriorityZ;
+                ref Wall w = ref s.Walls[slot];
+                w = default;
+                w.D = d;
                 w.Lo = (short)(lo + shift);
                 w.Hi = (short)(hi + shift);
                 w.Graphic = g;
@@ -583,16 +644,45 @@ namespace ClassicUO.Game.Scenes
         /// the climb limit, or a surface whose walkable top (<see cref="Pathfinder.WalkableTop"/>) is. It is a floor for the
         /// mobile (the first stair step, the teleporter altar blocks), so it does not cover it; one higher does.
         /// </summary>
-        internal static bool Climbable(in StaticTiles td, int z, int mz)
-        {
-            int maxZ = mz + Pathfinder.ClimbLimit;
+        internal static bool Climbable(in StaticTiles td, int z, int mz) => Climbable(in td, z, mz, mz, 1);
 
-            if ((td.Flags & (TileFlag.Bridge | TileFlag.StairBack | TileFlag.StairRight)) != 0)
+        /// <summary><see cref="Climbable(in StaticTiles, int, int)"/> for a mobile standing up to <paramref name="standTop"/>
+        /// (<see cref="StandTop"/>) on a piece <paramref name="dist"/> tiles away: on stairs (standTop above its z) the run
+        /// ahead is floor too, a bridge or stair piece one step height higher per further tile (owner: a mobile on a staircase
+        /// stands over all the stair tiles around it).</summary>
+        internal static bool Climbable(in StaticTiles td, int z, int mz, int standTop, int dist)
+        {
+            int maxZ = standTop + Pathfinder.ClimbLimit;
+
+            if (Stairlike(in td))
             {
-                return z <= maxZ;
+                return z <= maxZ + (standTop > mz ? td.Height * (dist - 1) : 0);
             }
 
             return td.IsSurface && Pathfinder.WalkableTop(z, td.Height, false) <= maxZ;
+        }
+
+        /// <summary>A free entry for a piece with key <paramref name="d"/>, or when the list is full the one with the highest key
+        /// if it is higher (the lowest keys cap the most); −1: dropped (<see cref="Scan.Dropped"/>).</summary>
+        private static int Slot(ref Scan s, int d)
+        {
+            if (s.Count < MaxWalls)
+            {
+                return s.Count++;
+            }
+
+            s.Dropped++;
+            int max = -1;
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                if (max < 0 || s.Walls[i].D > s.Walls[max].D)
+                {
+                    max = i;
+                }
+            }
+
+            return s.Walls[max].D > d ? max : -1;
         }
 
         // a piece both tiles of a step see is kept once

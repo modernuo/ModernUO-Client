@@ -240,7 +240,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [InlineData(29, 3)] // still inside
         [InlineData(30, 0)] // on the walls' top (the next storey): above them
         [InlineData(9, 3)] // under their base: the walls ahead still cover it (owner rule, round 2)
-        [InlineData(-20, 3)]
+        [InlineData(-20, 0)] // 30 z under them: their art ends above the rows of its lower strips (MinBottom)
         public void WallsHoldTheMobilesZ(int mobileZ, int expected)
         {
             ScanAt(Studio(), MX, MY, mobileZ).Count.Should().Be((byte)expected);
@@ -332,6 +332,44 @@ namespace ClassicUO.UnitTests.Game.Scenes
             // a step further up, or a stair block standing from the ground well above the limit, covers like any piece
             Add(map, Stairs, MX + 2, MY, Z + Pathfinder.ClimbLimit + 1);
             ScanAt(map, MX, MY, Z).Count.Should().Be(1);
+        }
+
+        [Fact]
+        public void OnStairsTheRunAndWhatLiesOnItAreFloor()
+        {
+            // stone stairs rising east to west, one step (h 5, bridge) per tile; the mobile stands on the step at z 30 at its
+            // half height (z 32, the pathfinder's walkable top): it stands up to 35 (StandTop)
+            var map = Studio(false, false, false);
+
+            for (int k = -2; k <= 2; k++)
+            {
+                Add(map, Stairs, MX + k, MY, 30 - 5 * k);
+            }
+
+            MobileWallOrder.StandTop(map, MX, MY, 32).Should().Be(35);
+            MobileWallOrder.StandTop(map, MX, MY, 30).Should().Be(30, "not standing at a stair's walkable top");
+
+            // facing down (east): the lower steps ahead are under it; a box on the next lower step (z 25, top 28) too
+            Add(map, Table, MX + 1, MY + 1, 25);
+            MobileWallOrder.Scan s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(0);
+
+            // a staircase rising ahead (south-east), one step per tile: the run is floor, two tiles out too
+            map = Studio(false, false, false);
+            Add(map, Stairs, MX, MY, 30);
+            Add(map, Stairs, MX + 1, MY, 35);
+            Add(map, Stairs, MX + 2, MY, 40);
+            Add(map, Stairs, MX + 1, MY + 1, 40);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(0);
+
+            // a block standing far above the run still covers
+            Add(map, Easel, MX, MY + 1, 45);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(1);
         }
 
         [Theory]
