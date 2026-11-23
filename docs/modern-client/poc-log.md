@@ -8824,3 +8824,25 @@ Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studi
 - **Costs.** Switch on: per mobile per frame up to 5 tile walks ahead (x2 mid-step) + segment walks (up to 12 tiles per wall found) + 3
   overhead tiles + own-tile stand check; a 24-entry scan (~0.5 KB) copied a few times per mobile per frame; one extra strip per layer under
   a piece overhead. Not timed (machine not quiet). Off: one bool test per mobile per frame.
+
+## 2026-11-22 mobile-wall-order round 3 (owner test of poc def74bf4c: "really close", bg/mobile-wall-order)
+
+- **A. Stairs, mounted on a step facing S/SW/W (Felucca 1376 1625/1626 42).** Not the exemption: the same step on the tile south
+  is one diagonal ahead, so its key beat the upper strip (a mount's legs); only the + 3 feet strip was over it. A mobile standing
+  on a staircase now keeps the stair pieces it overlaps as floor entries and its strips rise one key over them (FloorAdd, at most
+  + 2; the pieces covering it cap after). bench-001077: the front hoof cut by the step south is whole (41-57 px), both renderers.
+- **B. Shadow over the wall behind (1453 1660 10).** With a shadow, the tiles behind and beside the mobile (dx, dy in [-2, 1],
+  dx + dy <= 0) are scanned for pieces with height on its floor; they cover only the shadow. A shadow never goes below the land and
+  background floors one diagonal behind (first build let a wall two diagonals behind take it under them: bench-001075, the shadow
+  vanished, fixed in 9e3ce544f). bench-001077: the patch on the north wall's face gone (237-374 px).
+- **C. Overhang on the own diagonal (1466 1670 0, counter 0x0B3E at 1465 1671).** Columns beyond the anchor tile's half-width stand
+  on the side tile; the pieces in front of it on the own diagonal ((x-1, y+1), (x+1, y-1)) cap every strip, the upper one to just
+  over its own floor. Trade-off: one key per strip, so a capped upper strip also falls under the feet of a mobile one diagonal
+  behind where they overlap. bench-001077: head and tail tips over the counter go behind it facing N/S/E.
+- **D. Display case 0x0AFE (1484 1667).** tiledata height 5, flags 0x4000 only (ClassicUO TileFlag.ArticleA, the grammar article;
+  8361 graphics carry it, walls included: not a rendering property). Base 0x0B01 z 0 h 3 Surface, top 0x0AFE z 3 h 5: covered by the
+  object rule. bench-001077: hooves and head behind the case in front; the shadow no longer over the case behind. Not this round:
+  the fish steak static 0x097B at z 5 draws over the case's railings on its tile.
+- **Tests.** MobileWallOrderTests 69. ClassicUO.UnitTests at 9e3ce544f: dev 8741 / 6 skipped, CuoDevTools=false 8343 / 6.
+- **Costs.** Switch on, with a shadow: 12 more tile walks per mobile per frame (behind); 2 side tiles; floor raise compares. No
+  allocation; not timed.
