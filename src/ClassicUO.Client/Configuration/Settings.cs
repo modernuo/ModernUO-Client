@@ -423,6 +423,12 @@ namespace ClassicUO.Configuration
         // CUO_WET_DEPTH_CHECK=1 logs the mobiles under a wet surface, in developer builds. Default off.
         [JsonPropertyName("wet_surface_depth")] public bool WetSurfaceDepth { get; set; }
 
+        // Depth key mode (depth_model off): a mobile's strips below its anchor row (feet, robe hem, hooves) are capped just behind
+        // a wall ahead of it (one or two diagonals, its height holding the mobile's z, its in-front half over the strip), so they
+        // no longer show on the wall's face. Game/Scenes/MobileWallOrder. CUO_MOBILE_WALL_ORDER=1|0 overrides it and
+        // CUO_MOBILE_WALL_ORDER_CHECK=1 logs every strip it moves, in developer builds. Default off.
+        [JsonPropertyName("mobile_wall_order")] public bool MobileWallOrder { get; set; }
+
         // step_drain: a non-local mobile's step lasts its learned server pace (never longer than the table time; faster
         // only when the pace is clearly faster), with a bounded drain of a real backlog, instead of the table time and the
         // "mounted when steps are queued" guess (Game/Ecs/StepDrain). CUO_STEP_DRAIN=1|0 overrides it and

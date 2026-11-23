@@ -32,6 +32,9 @@ namespace ClassicUO.Game.Scenes
 
         private const int STEP = 4, RADIUS = 2, MAX_LINES = 24;
 
+        /// <summary>The strips per layer the check samples (the rest keep the base depth).</summary>
+        public const int MaxStrips = 8;
+
         private static uint _next;
         private static World _world;
         private static int _lines, _framePairs, _frameChanged;
@@ -67,14 +70,15 @@ namespace ClassicUO.Game.Scenes
         {
             Armed = false;
             _checks++;
-            Log.Info($"[clip-order] summary: depth_model={DepthModel.On}, checks {_checks}, pairs {_pairs} (this check {_framePairs}), samples {_samples}, " +
+            Log.Info($"[clip-order] summary: depth_model={DepthModel.On}, mobile_wall_order={MobileWallOrder.Rule}, checks {_checks}, pairs {_pairs} (this check {_framePairs}), samples {_samples}, " +
                      $"changed {_changed} (this check {_frameChanged}): mobile now in front {_toFront}, now behind {_toBack}");
         }
 
         /// <summary>One drawn (non-shadow) layer of the mobile on tile (mx, my, mz): its frame's top-left and the anchor in the
-        /// extract's screen space, its size, the strips' inputs and the base depth (MobileSpriteExtract.DepthOf kind 0).</summary>
+        /// extract's screen space, its size, the strips' inputs, the base depth (MobileSpriteExtract.DepthOf kind 0) and each
+        /// strip's add as drawn (depth + 1 + add; + 2i unless wet_surface_depth or mobile_wall_order changed it).</summary>
         public static void Layer(int mx, int my, int mz, ushort body, int anchorX, int anchorY, int frameX, int frameY, int w, int h, int centerY,
-            int mountOffset, float depth)
+            int mountOffset, float depth, ReadOnlySpan<float> adds)
         {
             if (_world?.Map == null)
             {
@@ -84,7 +88,7 @@ namespace ClassicUO.Game.Scenes
             // world pixels (GeoDepth): the anchor of a standing mobile, the frame at the same offset from it as on screen
             var (ax, ay) = GeoDepth.MobileAnchor(mx, my, mz);
             int fx = ax + frameX - anchorX, fy = ay + frameY - anchorY;
-            Span<(int Y, int H)> strips = stackalloc (int, int)[8];
+            Span<(int Y, int H)> strips = stackalloc (int, int)[MaxStrips];
             int n = Math.Min(AnimationRules.Strips(h, centerY, mountOffset, strips), strips.Length);
 
             for (int ty = my - RADIUS; ty <= my + RADIUS; ty++)
@@ -135,7 +139,7 @@ namespace ClassicUO.Game.Scenes
 
                         // the static's key as baked (ClipDump's gpuD)
                         int staticD = (int)MathF.Round((o.CalculateDepthZ() + 0.5f) * 100f) - 50;
-                        Sample(o, tx, ty, z, height, wall, flat, buried, land, staticD, mx, my, ax, ay, mz, body, fx, fy, w, h, strips.Slice(0, n), depth);
+                        Sample(o, tx, ty, z, height, wall, flat, buried, land, staticD, mx, my, ax, ay, mz, body, fx, fy, w, h, strips.Slice(0, n), adds, depth);
                     }
                 }
             }
@@ -151,7 +155,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         private static void Sample(GameObject o, int tx, int ty, int z, int height, bool wall, bool flat, bool buried, bool land, int staticD,
-            int mx, int my, int ax, int ay, int mz, ushort body, int fx, int fy, int w, int h, ReadOnlySpan<(int Y, int H)> strips, float depth)
+            int mx, int my, int ax, int ay, int mz, ushort body, int fx, int fy, int w, int h, ReadOnlySpan<(int Y, int H)> strips, ReadOnlySpan<float> adds, float depth)
         {
             var (nx, ny) = GeoDepth.NorthVertex(tx, ty, z);
             int x0 = Math.Max(fx, nx - 22), x1 = Math.Min(fx + w, nx + 22);
@@ -166,7 +170,7 @@ namespace ClassicUO.Game.Scenes
 
             for (int sy = y0; sy < y1; sy += STEP)
             {
-                // the strip of this row (MobileSpriteExtract: depth + 1 + 2i), else the base depth
+                // the strip of this row (MobileSpriteExtract: depth + 1 + add), else the base depth
                 float rowDepth = depth;
 
                 for (int i = 0; i < strips.Length; i++)
@@ -175,7 +179,7 @@ namespace ClassicUO.Game.Scenes
 
                     if (r >= strips[i].Y && r < strips[i].Y + strips[i].H)
                     {
-                        rowDepth = depth + 1f + i * 2;
+                        rowDepth = depth + 1f + (i < adds.Length ? adds[i] : i * 2);
 
                         break;
                     }

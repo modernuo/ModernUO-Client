@@ -8763,3 +8763,32 @@ Owner edge case 5 (Luna, Malas 1005 513 -30, light_occlusion on): the wall piece
 - **Tests.** Masks truth table and switch override both states; scene tests from the pack's map and art (Luna candelabra 0x0B26 at 1003,511,-30 masked by wall 0x015F at 1004,512 off, not on; bank zig-zag windows keep their occluders both states; street lamps, eave lamp, Deceit wall torches radial; fire fields per frame), each with the seed light classes and with no table. Full suites at ec90e207f: dev 8658 passed / 6 skipped, CuoDevTools=false 8260 passed / 6 skipped; dev at 8ab3feeb1 one load flake (FirstSightDecoderTests, passes rerun).
 - **Counts (bench-001050, Gpu, not quiet).** Masked lights off -> on: bank 44 of 89 -> 44 (every masked light there is a window), lamps 11 -> 11, eave 3 -> 3, Deceit 0 -> 0, Luna 12 -> 11. Light targets identical except Luna's wall piece. The switch removes far fewer masks than expected at these spots; the timing is queued (quiet-next row 5).
 - **Costs.** Off: one branch per light. On: a class lookup per light, less occluder search and stencil work for radial lights that had occluders.
+
+## 2026-11-22 mobile-wall-order: `mobile_wall_order`, key-mode feet stay behind a wall in front (bg/mobile-wall-order)
+
+Owner rule (2026-11-22): a mobile inside a wall (its z in [wall z, wall z + height)) with the wall ahead of it must be drawn
+behind it. In key mode (depth_model off) the strips below a mobile's anchor row (MobileSpriteExtract.Layer, AnimationRules.Strips;
+depth + 1 + 2i, the same keys on Gpu and Legacy) are drawn at depth + 3 and beat walls up to two diagonals ahead: feet, robe hems
+and hooves on the art studio's wall faces (Felucca 1453 1668 z 10) and on closed doors.
+
+- **Switch (09a4fca22 + 5fb6e0d46, default off).** Per mobile per frame (MobileAnimationSystem.SelectCached, part of the select
+  key): the walls (tiledata Wall: statics, multi pieces, ground items; doors carry it) on tiles (1,0), (0,1), (1,1), (2,0), (0,2)
+  of the depth tile whose height holds the mobile's z, each with the columns of its art that are in front of the mobile. Wall art
+  is anchored at the south vertex: a piece of a line along x is the left half (face on Y = y + 1), along y the right half
+  (X = x + 1), so on (1,0) and (0,1) the half that continues a wall line through the mobile's own tile (a doorway) is not in
+  front. A strip whose frame columns overlap such a wall takes key D - 1 of the lowest one, never below the upper strip.
+  First version assumed back edges and cut a foot in a doorway (bench-001056); fixed in 5fb6e0d46. Env
+  `CUO_MOBILE_WALL_ORDER`, driver `mobilewall on|off`, checker `CUO_MOBILE_WALL_ORDER_CHECK=1`. CUO_CLIP_ORDER_CHECK now uses
+  the drawn strip adds.
+- **Evidence (bench runner, dev JIT build 5fb6e0d46, measure/mobile-wall-order).** bench-001058/59 off/on: studio corner feet
+  gone from the wall faces (10-35 px near the player), mounted hooves (97-102 px), feet behind the closed door ahead (11 px);
+  doorway, outside the studio, mounted beside walls, stairs, bank: 0 px near the player. Gpu = Legacy near the player at every
+  pose. bench-001062 base vs off: 0 px near the player (an NPC differs in the bank). bench-001060/61 CUO_CLIP_ORDER_CHECK
+  key vs geo: changed 4999 -> 3178 samples, now behind 4998 -> 3177, now in front 1 -> 1.
+- **Tests.** MobileWallOrderTests (31): scan of the studio (pack trims), key math across the map, cap bounds, z range, floors /
+  behind / same diagonal / wall line through the mobile's tile, depth tile per step offset, switch states, select key, extract
+  both switch states (mounted, equipped, submerged, seated), no allocation. ClassicUO.UnitTests dev 8702 / 6 skipped (09a4fca22),
+  CuoDevTools=false 8304 / 6 (5fb6e0d46).
+- **Costs.** Off: none (one bool test per mobile per frame). On: up to 5 tile-list walks per visible mobile per frame and a
+  100-byte scan in the select key; a few compares per strip; no allocation.
+- **Residue.** Walls on the mobile's own diagonal are not considered: a wide mount's hind hooves can still show on such a piece.

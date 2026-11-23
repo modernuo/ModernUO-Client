@@ -1154,6 +1154,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // mobilewall on|off: mobile_wall_order (MobileWallOrder; CUO_MOBILE_WALL_ORDER overrides it)
+                case "mobilewall" when args.Length > 0:
+                    Settings.GlobalSettings.MobileWallOrder = args[0] == "on";
+                    Log.Info($"[ECS] driver: mobile_wall_order {Settings.GlobalSettings.MobileWallOrder} (effective {MobileWallOrder.On})");
+
+                    return false;
+
                 // wetdepth on|off: wet_surface_depth (WetSurfaceDepth; CUO_WET_SURFACE_DEPTH overrides it)
                 case "wetdepth" when args.Length > 0:
                     Settings.GlobalSettings.WetSurfaceDepth = args[0] == "on";
