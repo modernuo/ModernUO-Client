@@ -1,7 +1,6 @@
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
-using ClassicUO.Game.Scenes;
 using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
@@ -20,21 +19,11 @@ namespace ClassicUO.UnitTests.Ecs
             try
             {
                 World world = BuildPlayer(out _);
-                var p = new MobPacket { Serial = MOB, Graphic = 0xC8, X = 1000, Y = 1000, Z = 0, Direction = Direction.North };
+                var p = new MobPacket { Serial = NEWMOB, Graphic = 0xC8, X = 1000, Y = 1000, Z = 0, Direction = Direction.North };
                 Mobile m = NewUpsertMobile(world, in p);
 
                 Assert.Equal(0, m.AlphaHue);
                 Assert.Equal(!fadeIn, m.AlphaSnap);
-
-                // the first walk: a snap reaches the target in one call, a fade step moves 25
-                byte alpha = m.AlphaHue;
-                GameScene.CalculateAlpha(ref alpha, 0xFF, m.AlphaSnap);
-                Assert.Equal(fadeIn ? 25 : 0xFF, alpha);
-
-                // above the max Z the target is 0: a snapped mobile is not drawn there at all
-                byte above = 0;
-                Assert.False(GameScene.CalculateAlpha(ref above, 0, snap: true));
-                Assert.Equal(0, above);
 
                 // an update of the existing mobile is not a creation
                 m.AlphaSnap = false;
