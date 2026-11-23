@@ -378,7 +378,7 @@ namespace ClassicUO.Game
                                 string ecsOff = me.HasComponent<ClassicUO.Ecs.AnimationState>() ? me.GetComponent<ClassicUO.Ecs.AnimationState>().MountOffsetY.ToString() : "-";
                                 rider = $", mount item 0x{mi.Graphic:X4} body {mb} table {AnimationRules.MountOffsetY(mi.Graphic)} shift {seat.Value}{(seat.Absolute ? " absolute" : "")} rider offset {AnimationRules.MountOffsetY(mi.Graphic, seat)} (ecs {ecsOff})";
                             }
-                            Log.Info($"[ECS] mount 0x{mm.Serial:X8} body 0x{mm.Graphic:X4}: mobile {mm.IsMounted}, ecs {me.GetComponent<ClassicUO.Ecs.EquipmentSlots>().Mounted} (rebuilt lazily), war {mm.InWarMode}, noto {mm.NotorietyFlag}, flags {mm.Flags}{rider}");
+                            Log.Info($"[ECS] mount 0x{mm.Serial:X8} body 0x{mm.Graphic:X4}: mobile {mm.IsMounted}, ecs {me.GetComponent<ClassicUO.Ecs.EquipmentSlots>().Mounted} (rebuilt lazily), war {mm.InWarMode}, noto {mm.NotorietyFlag}, flags {mm.Flags}{rider}{DrawState(mm)}");
                         }
                     }
 
@@ -1633,6 +1633,17 @@ namespace ClassicUO.Game
                 _driver.ReleaseMouse();
                 base.Dispose();
             }
+        }
+
+        // mount-fix: the mobile's last draw (the probe runs in Update, so it describes the frame drawn before it): alpha,
+        // mount_swap state, and the draw verdict (needs CUO_LOOK_PREFETCH_CHECK=1): complete, held (previous look),
+        // incomplete (a layer drawn as nothing or partial), or not drawn that frame
+        private static string DrawState(Mobile m)
+        {
+            MobileFrameCache c = m.FrameCache;
+            string verdict = c == null || c.CheckDrawSeq != LookPrefetch.DrawSeq ? "not_drawn" : c.CheckDrawHeld ? "held" : c.CheckDrawComplete ? "complete" : "incomplete";
+
+            return $", alpha {m.AlphaHue} pair_hidden {m.PairHidden} pair_hold {c?.PairHold ?? false} last_draw {verdict} seq {LookPrefetch.DrawSeq}";
         }
 
         private static uint FindWorn(PlayerMobile player)

@@ -1201,6 +1201,17 @@ namespace ClassicUO
                 MobileFadeCheck.Frame();
             }
 #endif
+            if (UO.World is { InGame: true } swapWorld)
+            {
+                swapWorld.MountSwap.Frame();
+#if CUO_DEVTOOLS
+                if (MountSwap.Check)
+                {
+                    MountSwapCheck.Frame();
+                }
+#endif
+            }
+
             LookPrefetch.BeginDraw();
             VisualDue.BeginDraw();
             FrameStats.Begin(FramePhase.Draw);

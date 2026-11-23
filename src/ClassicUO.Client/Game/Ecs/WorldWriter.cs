@@ -291,6 +291,11 @@ namespace ClassicUO.Game
             {
 #if CUO_DEVTOOLS
                 ClassicUO.Network.Harness.NetTrace.Dispatching?.Op(operation, serial);
+
+                if (LookPrefetch.Check)
+                {
+                    LookPrefetchCheck.Op(operation, serial);
+                }
 #endif
                 return true;
             }
@@ -483,6 +488,23 @@ namespace ClassicUO.Game
         /// handler placed it: after its callbacks). The ECS already holds the item's values (the placement changes none), so the
         /// placement's own Sync is folded. Consumes the placement.
         /// </summary>
+        // asset_prefetch_on_packet: a worn item leaving its wearer changes the wearer's look (a dismount: the rider's on-foot
+        // actions; a weapon: the war stance), so the wearer is noted; a Mount-layer item is a dismount for mount_swap
+        private void NoteWornLeaving(Item item)
+        {
+            if (item.Layer == Layer.Invalid || item.Container == 0 || _world.Get(item.Container) is not Mobile wearer)
+            {
+                return;
+            }
+
+            LookPrefetch.Note(wearer.Serial, LookPrefetch.Kind.Mobile);
+
+            if (item.Layer == Layer.Mount)
+            {
+                _world.MountSwap.Dismounted(wearer, item);
+            }
+        }
+
         public void PlaceWorldItem(in Placement placement)
         {
             Item item = placement.Item;
@@ -558,6 +580,7 @@ namespace ClassicUO.Game
 
             parent = _world.Get(item.Container);
             uint serial = item.Serial;
+            NoteWornLeaving(item);
             CancelSubtreePlacements(item);
 
             using (Open(item, null))
@@ -610,6 +633,11 @@ namespace ClassicUO.Game
 
             // T9 slice 3: live lookups (both uses below reject a destroyed object)
             Item item = _world.GetItem(serial);
+
+            if (item != null && !item.IsDestroyed && item.Container != containerSerial)
+            {
+                NoteWornLeaving(item);
+            }
             Mobile asItem = SerialHelper.IsMobile(serial) ? _world.GetMobile(serial) : null;
             bool removeMobile = asItem != null && !asItem.IsDestroyed;
 
@@ -1345,6 +1373,7 @@ namespace ClassicUO.Game
 
                 created = true;
                 MobileFadeIn.Created(mobile);
+                _world.MountSwap.Created(mobile);
             }
             else if (obj is Mobile m && obj.Serial == serial && Holds(m))
             {
@@ -2837,6 +2866,8 @@ namespace ClassicUO.Game
             }
 
             _world.AsyncTurn.Note(mobile.Serial);
+            // asset_prefetch_on_packet: the war stance is another action group (with anim_async_turn off nothing else notes it)
+            LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
 
             bool detached = !Holds(mobile);
 
@@ -3624,6 +3655,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            _world.MountSwap.Clear();
+
             _placements.Clear();
 
             using (Open(null, null))
@@ -3714,6 +3747,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+            NoteWornLeaving(item);
             CancelSubtreePlacements(item);
 
             using (Open(item, null))
@@ -3744,6 +3778,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            _world.MountSwap.Clear();
+
             using (Open(null, null))
             {
                 _clearingWorld = true;
@@ -3770,6 +3806,8 @@ namespace ClassicUO.Game
             {
                 return;
             }
+
+            _world.MountSwap.Clear();
 
             _placements.Clear();
 

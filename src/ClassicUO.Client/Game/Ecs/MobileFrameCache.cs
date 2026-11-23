@@ -106,12 +106,18 @@ namespace ClassicUO.Game
         /// existed before; 2: first sight); 0 once they are all resident.</summary>
         public byte EmitIncomplete;
 
+        /// <summary>mount_swap: the rider of a matched dismount keeps drawing its recorded (mounted) look (MountSwap.Frame).</summary>
+        public bool PairHold;
+
 #if CUO_DEVTOOLS
         /// <summary>CUO_LOOK_PREFETCH_CHECK: the frame (LookPrefetch.DrawSeq) of this mobile's last draw, and whether that
         /// draw drew its whole look (no layer missing, not held, not waiting for first sight): the checker's completeness
         /// test, so it agrees with the draw (p4/p5: recomputing the look counted covered layers and other groups).</summary>
         public uint CheckDrawSeq;
         public bool CheckDrawComplete;
+
+        /// <summary>CUO_LOOK_PREFETCH_CHECK: that draw replayed the previous look (a look hold or a mount_swap hold).</summary>
+        public bool CheckDrawHeld;
 #endif
 
         /// <summary>An instance relative to the draw origin; depth = Kind == 0 ? baseDepth : (baseDepth + 1f) + Add, as
