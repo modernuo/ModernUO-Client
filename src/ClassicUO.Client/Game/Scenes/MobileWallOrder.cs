@@ -622,6 +622,14 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
+                // owner 2026-11-22: walls and doors on the side tiles keep the round-2 checks only; the side overhang (round 3
+                // item C) is for furniture in front of the overhung tile, and against a wall line or an open door beside the
+                // mobile it cut heads (Hythloth 5984 39 22, studio 1453 1660 10, a door opened outward)
+                if (line == LineSide && (td.IsWall || td.IsDoor) && !floor)
+                {
+                    continue;
+                }
+
                 // the art's opaque columns: View.DrawStatic puts the art's centre column (OrigW >> 1) on the north vertex and its
                 // bottom row on the south vertex (centre + 22), 4 px up per z
                 int artLo = c - 22, artHi = c + 22;

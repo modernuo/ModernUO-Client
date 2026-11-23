@@ -31,7 +31,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
     public sealed class MobileWallOrderTests : IDisposable
     {
         private const int MX = 1453, MY = 1668, Z = 10;
-        private const ushort South = 0x0034, East = 0x0035, Corner = 0x0033, Floor = 0x0500, Table = 0x0B3E, Easel = 0x0F66, Stairs = 0x0736, Roof = 0x05A2;
+        private const ushort South = 0x0034, East = 0x0035, Corner = 0x0033, Floor = 0x0500, Table = 0x0B3E, Easel = 0x0F66, Stairs = 0x0736, Roof = 0x05A2, Door = 0x0675;
 
         private readonly StaticTiles[] _savedStaticData;
 
@@ -55,6 +55,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
             data[Stairs].Height = 5;
             data[Roof].Flags = TileFlag.Roof | TileFlag.Impassable;
             data[Roof].Height = 3;
+            // an open door: Door flag only, as the door graphics in the pack
+            data[Door].Flags = TileFlag.Door | TileFlag.Impassable;
+            data[Door].Height = 20;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
 
@@ -449,6 +452,26 @@ namespace ClassicUO.UnitTests.Game.Scenes
             s = default;
             MobileWallOrder.ScanBehind(map, MX, MY, Z, 0, 0, ref s);
             s.Count.Should().Be(0);
+        }
+
+        [Fact]
+        public void AWallOnTheSideTileDoesNotCapTheOverhang()
+        {
+            // owner 2026-11-22 (Hythloth 5984 39 22, studio 1453 1660 10): the next piece of a wall line beside the mobile, on
+            // its own diagonal, or an open door there, cut the head; walls and doors on the side tiles keep the round-2 checks only
+            var map = Studio(false, false, false);
+            Add(map, South, MX - 1, MY + 1, Z);
+            Add(map, Door, MX + 1, MY - 1, Z);
+            MobileWallOrder.Scan s = default;
+            s.Active = true;
+            MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
+
+            for (int i = 0; i < s.Count; i++)
+            {
+                s.Walls[i].Side.Should().BeFalse();
+            }
+
+            MobileWallOrder.CapAdd(0, in s, -33, 33, MobileDepth(MX, MY, Z), true, out _).Should().Be(0);
         }
 
         [Fact]
