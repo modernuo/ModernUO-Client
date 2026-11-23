@@ -8792,3 +8792,35 @@ and hooves on the art studio's wall faces (Felucca 1453 1668 z 10) and on closed
 - **Costs.** Off: none (one bool test per mobile per frame). On: up to 5 tile-list walks per visible mobile per frame and a
   100-byte scan in the select key; a few compares per strip; no allocation.
 - **Residue.** Walls on the mobile's own diagonal are not considered: a wide mount's hind hooves can still show on such a piece.
+
+## 2026-11-22 mobile-wall-order round 2 (owner manual test, bg/mobile-wall-order on poc cab7660e2)
+
+Owner: round 1 "works really well"; round 2 items at Felucca 1453 1665 10 (studio, mounted), 1445 1662 10 (art shop), 1468 1712 0 and
+1432 1724 20 (roof eaves), plus stairs. All behind `mobile_wall_order`, key mode, no graphic ids.
+
+- **1 Mounted walking clipped through walls until it stopped (f2702ed46).** View.CalculateDepthZ sorts a stepping mobile on the later
+  tile from the step's first pixel, so its body beat the pieces ahead of the tile it was leaving. Mid-step both tiles are scanned and
+  every strip, the upper one too, may drop to the earlier tile's key (Scan.MinAdd). Bursts (bench-001066): walking east along the
+  south wall, hind legs on the wall face mid-step with the switch off, none on; walking north, shadow marks on the east wall off, none on.
+- **2 Shadow on the wall face (f2702ed46).** Floors already out-key shadows; a shadow shows only over lower-keyed art, e.g. the next wall
+  pieces of a line behind the mobile's diagonal. Walls continue as segments along their line (3 tiles each way) and a shadow loses to
+  every piece it overlaps. The owner's patch at 1453 1665 is gone on both renderers (bench-001066). A driver `shadows on|off` (dev) isolates
+  shadow pixels.
+- **3 Rider's far foot through the horse: caused by round 1's rule, not old.** Not visible standing with the switch off at the owner
+  spots (bench-001063). With the rule, a mount's wide strip below the anchor was capped while the rider's narrower one was not, so the
+  rider's foot out-keyed the horse. All layers now take one cap from the composite's columns (last FrameInfo).
+- **4 Furniture, then the owner + coordinator rule (ebb8378eb).** Any piece in front over the strip's columns covers it unless flat or its
+  top is at or under the mobile's z; a piece the mobile could step onto is floor (Pathfinder.ClimbLimit / WalkableTop, exposed from the
+  pathfinder, no behaviour change). Easel south: hooves behind it; rug: unchanged; stair block from the ground: covered; altar blocks,
+  stair foot and mid-flight: unchanged (bench-001069).
+- **5 Roof eave under the rider's head (f2702ed46, rows only in ebb8378eb).** Pieces on the mobile's own diagonal with bottom at or over
+  z + 16 (UO's person height; mounted too) cap the upper strip's rows above the piece's lowest art row. Lowering the whole upper strip let
+  a mobile one diagonal behind (+3 strip, same key) draw over the body. Both roof spots: head behind the eave (bench-001066/68).
+- **Stairs (8a65e27cf).** A mobile on stairs stands at a step's half height; like the pathfinder it now stands up to the step's top, so
+  steps and items below that are under it, and the run ahead (one step per tile) is floor. A standing mobile keeps only pieces whose art
+  reaches its lower strips' and shadow's rows (MinBottom); a full list keeps the lowest keys (the broad rule overflowed: 106751 drops).
+- **Tests.** MobileWallOrderTests 68 (both switch states at the extract, segments, shadows, overhead split, steps, climbable, stairs, no
+  allocation). Full suites: see the handoff (cuo-poc-state/handoffs/mobile-wall-order.md, Round 2).
+- **Costs.** Switch on: per mobile per frame up to 5 tile walks ahead (x2 mid-step) + segment walks (up to 12 tiles per wall found) + 3
+  overhead tiles + own-tile stand check; a 24-entry scan (~0.5 KB) copied a few times per mobile per frame; one extra strip per layer under
+  a piece overhead. Not timed (machine not quiet). Off: one bool test per mobile per frame.

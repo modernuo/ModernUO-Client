@@ -31,7 +31,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
     public sealed class MobileWallOrderTests : IDisposable
     {
         private const int MX = 1453, MY = 1668, Z = 10;
-        private const ushort South = 0x0034, East = 0x0035, Corner = 0x0033, Floor = 0x0500;
+        private const ushort South = 0x0034, East = 0x0035, Corner = 0x0033, Floor = 0x0500, Table = 0x0B3E, Easel = 0x0F66, Stairs = 0x0736, Roof = 0x05A2;
 
         private readonly StaticTiles[] _savedStaticData;
 
@@ -46,6 +46,15 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
 
             data[Floor].Flags = TileFlag.Surface | TileFlag.Background;
+            // tiledata as in the pack: a counter, an easel, stone stairs
+            data[Table].Flags = TileFlag.Impassable | TileFlag.Surface;
+            data[Table].Height = 6;
+            data[Easel].Flags = TileFlag.Impassable;
+            data[Easel].Height = 12;
+            data[Stairs].Flags = TileFlag.Impassable | TileFlag.Surface | TileFlag.Bridge | TileFlag.StairRight;
+            data[Stairs].Height = 5;
+            data[Roof].Flags = TileFlag.Roof | TileFlag.Impassable;
+            data[Roof].Height = 3;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
 
@@ -54,6 +63,10 @@ namespace ClassicUO.UnitTests.Game.Scenes
             sprites[PackConst.StaticSpriteBase + South] = Art(0, 27);
             sprites[PackConst.StaticSpriteBase + East] = Art(18, 26);
             sprites[PackConst.StaticSpriteBase + Corner] = Art(0, 44);
+            sprites[PackConst.StaticSpriteBase + Table] = Art(0, 44);
+            sprites[PackConst.StaticSpriteBase + Easel] = Art(8, 30);
+            sprites[PackConst.StaticSpriteBase + Stairs] = Art(0, 44);
+            sprites[PackConst.StaticSpriteBase + Roof] = Art(0, 44);
             MobileWallOrder.SpritesForTests = sprites;
         }
 
@@ -158,8 +171,17 @@ namespace ClassicUO.UnitTests.Game.Scenes
         {
             var map = Studio();
             float depth = MobileDepth(MX, MY, Z);
-            MobileWallOrder.Scan s = ScanAt(map, MX, MY, Z);
-            MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out _);
+            MobileWallOrder.Scan s = default;
+            float warm = 0;
+
+            // the same calls once first (type initialisers, first-call stubs)
+            for (int i = 0; i < 2; i++)
+            {
+                s = default;
+                MobileWallOrder.ScanAt(map, MX, MY, Z, ref s);
+                warm += MobileWallOrder.CapAdd(2, in s, -33, 33, depth, out _);
+            }
+
             long before = GC.GetAllocatedBytesForCurrentThread();
             float sum = 0;
 
@@ -216,8 +238,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [Theory]
         [InlineData(10, 3)] // standing on the storey's floor, inside the walls
         [InlineData(29, 3)] // still inside
-        [InlineData(30, 0)] // on the walls' top (the next storey): not inside
-        [InlineData(9, 0)] // under their base
+        [InlineData(30, 0)] // on the walls' top (the next storey): above them
+        [InlineData(9, 3)] // under their base: the walls ahead still cover it (owner rule, round 2)
+        [InlineData(-20, 0)] // 30 z under them: their art ends above the rows of its lower strips (MinBottom)
         public void WallsHoldTheMobilesZ(int mobileZ, int expected)
         {
             ScanAt(Studio(), MX, MY, mobileZ).Count.Should().Be((byte)expected);
@@ -255,6 +278,273 @@ namespace ClassicUO.UnitTests.Game.Scenes
             map = Studio(false, false, false);
             Add(map, South, MX + 1, MY + 1, Z);
             ScanAt(map, MX, MY, Z).Count.Should().Be(1);
+        }
+
+        [Fact]
+        public void BoxesCountOverTheirWholeDiamond()
+        {
+            // a counter on (1, 0): its west face (X = x + 1) is in front of the mobile's right half, so the whole diamond counts,
+            // unlike a wall there (only the half with its face)
+            var map = Studio(false, false, false);
+            Add(map, Table, MX + 1, MY, Z);
+            MobileWallOrder.Scan s = ScanAt(map, MX, MY, Z);
+            s.Count.Should().Be(1);
+            s.Walls[0].Lo.Should().Be(0);
+            s.Walls[0].Hi.Should().Be(44);
+            float depth = MobileDepth(MX, MY, Z);
+            Key(depth, MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out _)).Should().Be(s.Walls[0].D - 1);
+
+            // an easel on (0, 1), cut to its art's columns ((44 >> 1) = 22 from the vertex: -22 + 8 - 22 .. + 30)
+            map = Studio(false, false, false);
+            Add(map, Easel, MX, MY + 1, Z);
+            s = ScanAt(map, MX, MY, Z);
+            s.Count.Should().Be(1);
+            s.Walls[0].Lo.Should().Be(-36);
+            s.Walls[0].Hi.Should().Be(-6);
+        }
+
+        [Theory]
+        [InlineData(Z, 1)] // an NPC behind the counter, at its base
+        [InlineData(Z + 5, 0)] // the counter top (z + 6) within its climb limit: it could step onto it
+        [InlineData(Z + 6, 0)] // standing on it
+        [InlineData(Z - 1, 1)] // under it: still covered
+        public void BoxesHoldTheMobilesZ(int mobileZ, int expected)
+        {
+            var map = Studio(false, false, false);
+            Add(map, Table, MX + 1, MY + 1, Z);
+            ScanAt(map, MX, MY, mobileZ).Count.Should().Be((byte)expected);
+        }
+
+        [Fact]
+        public void FlatsAndPiecesBelowTheMobileNeverCount()
+        {
+            // a rug ahead, and stairs going down ahead (tops at or under the mobile's z): the mobile is drawn over them
+            var map = Studio(false, false, false);
+            Add(map, Stairs, MX + 1, MY, Z - 5);
+            Add(map, Stairs, MX, MY + 1, Z - 10);
+            Add(map, Floor, MX + 1, MY + 1, Z);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(0);
+
+            // the first step rising ahead is one the mobile can climb (the pathfinder's limit): a floor, its hooves over it
+            Add(map, Stairs, MX + 1, MY + 1, Z);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(0);
+
+            // a step further up, or a stair block standing from the ground well above the limit, covers like any piece
+            Add(map, Stairs, MX + 2, MY, Z + Pathfinder.ClimbLimit + 1);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(1);
+        }
+
+        [Fact]
+        public void OnStairsTheRunAndWhatLiesOnItAreFloor()
+        {
+            // stone stairs rising east to west, one step (h 5, bridge) per tile; the mobile stands on the step at z 30 at its
+            // half height (z 32, the pathfinder's walkable top): it stands up to 35 (StandTop)
+            var map = Studio(false, false, false);
+
+            for (int k = -2; k <= 2; k++)
+            {
+                Add(map, Stairs, MX + k, MY, 30 - 5 * k);
+            }
+
+            MobileWallOrder.StandTop(map, MX, MY, 32).Should().Be(35);
+            MobileWallOrder.StandTop(map, MX, MY, 30).Should().Be(30, "not standing at a stair's walkable top");
+
+            // facing down (east): the lower steps ahead are under it; a box on the next lower step (z 25, top 28) too
+            Add(map, Table, MX + 1, MY + 1, 25);
+            MobileWallOrder.Scan s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(0);
+
+            // a staircase rising ahead (south-east), one step per tile: the run is floor, two tiles out too
+            map = Studio(false, false, false);
+            Add(map, Stairs, MX, MY, 30);
+            Add(map, Stairs, MX + 1, MY, 35);
+            Add(map, Stairs, MX + 2, MY, 40);
+            Add(map, Stairs, MX + 1, MY + 1, 40);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(0);
+
+            // a block standing far above the run still covers
+            Add(map, Easel, MX, MY + 1, 45);
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, 32, Vector3.Zero, MX, MY, ref s);
+            s.Count.Should().Be(1);
+        }
+
+        [Theory]
+        [InlineData(TileFlag.Surface | TileFlag.Impassable, 2, 0, true)] // a low platform: walkable top within the limit
+        [InlineData(TileFlag.Surface | TileFlag.Impassable, 6, 0, false)] // a counter: top 6 above
+        [InlineData(TileFlag.Surface | TileFlag.Bridge, 10, 0, true)] // the teleporter altar block (bridge base at the mobile's z)
+        [InlineData(TileFlag.Surface | TileFlag.Bridge, 10, 3, false)] // a bridge whose base is above the limit
+        [InlineData(TileFlag.StairRight, 5, 2, true)]
+        [InlineData(TileFlag.Impassable, 12, -10, false)] // an easel standing lower: not walkable
+        public void ClimbableFollowsThePathfinder(TileFlag flags, int height, int dz, bool expected)
+        {
+            var td = new StaticTiles { Flags = flags, Height = (byte)height };
+            MobileWallOrder.Climbable(in td, Z + dz, Z).Should().Be(expected);
+        }
+
+        // the owner's shadow spot (Felucca 1453 1665): the studio's east wall line (right-half pieces, a line along y at x + 1)
+        private static TileMap EastLine()
+        {
+            var map = Studio(false, false, false);
+
+            for (int k = -3; k <= 2; k++)
+            {
+                Add(map, East, MX + 1, MY + k, Z);
+            }
+
+            return map;
+        }
+
+        [Fact]
+        public void WallSegmentContinuesPastTheScannedTiles()
+        {
+            MobileWallOrder.Scan s = ScanAt(EastLine(), MX, MY, Z);
+            var walls = Enumerable.Range(0, s.Count).Select(i => s.Walls[i]).ToArray();
+
+            // (1, 0) and (1, 1) are scanned; (1, -1), (1, -2), (1, -3) and (1, 2) follow as one segment, with their face half
+            walls.Select(w => w.Y - MY).Should().BeEquivalentTo(new[] { 0, 1, -1, -2, -3, 2 });
+            walls.Should().ContainSingle(w => w.Y == MY - 1 && w.Lo == 50 && w.Hi == 66);
+            walls.Should().ContainSingle(w => w.Y == MY - 2 && w.Lo == 72 && w.Hi == 88);
+            walls.Should().OnlyContain(w => !w.Overhead);
+
+            // a line stops where its pieces stop
+            var map = Studio(false, false, false);
+            Add(map, East, MX + 1, MY, Z);
+            Add(map, East, MX + 1, MY - 2, Z);
+            ScanAt(map, MX, MY, Z).Count.Should().Be(1);
+        }
+
+        [Fact]
+        public void StandingStripsKeepTheirKeysAgainstTheSegmentBehindTheirDiagonal()
+        {
+            // the segment's pieces on the mobile's diagonal or behind it have lower keys; standing (MinAdd 0) a strip stays at
+            // the upper strip's + 1 at most, which still beats them, as before
+            MobileWallOrder.Scan s = ScanAt(EastLine(), MX, MY, Z);
+            float depth = MobileDepth(MX, MY, Z);
+            MobileWallOrder.CapAdd(0, in s, 50, 90, depth, true, out _).Should().Be(0);
+            MobileWallOrder.CapAdd(2, in s, 50, 90, depth, out _).Should().Be(0);
+        }
+
+        [Fact]
+        public void ShadowLosesToTheWallPiecesItOverlaps()
+        {
+            MobileWallOrder.Scan s = ScanAt(EastLine(), MX, MY, Z);
+            float depth = MobileDepth(MX, MY, Z);
+
+            // a mount's shadow cast north-east reaches columns 40..90: the lowest piece it overlaps is (1, -2)
+            MobileWallOrder.ShadowAdd(in s, 40, 90, depth, out float add, out int wall).Should().BeTrue();
+            s.Walls[wall].Y.Should().Be((ushort)(MY - 2));
+            Key(depth, add).Should().Be(s.Walls[wall].D - 1);
+            add.Should().BeLessThan(-1f, "below the shadow's base depth");
+
+            // a shadow clear of the line keeps its base depth (kind 0)
+            MobileWallOrder.ShadowAdd(in s, -30, 20, depth, out add, out _).Should().BeFalse();
+            add.Should().Be(-1f);
+        }
+
+        [Theory]
+        [InlineData(Z + 16, true)] // the roof's bottom at the mobile's top
+        [InlineData(Z + 23, true)] // the owner's roof (z 23 over a mobile at z 0)
+        [InlineData(Z + 15, false)] // lower: not above the mobile
+        public void PieceOverheadCapsTheUpperStrip(int roofZ, bool capped)
+        {
+            var map = Studio(false, false, false);
+            Add(map, Roof, MX, MY, roofZ);
+            Add(map, Floor, MX, MY, Z); // the floor the mobile stands on
+            Add(map, Table, MX + 1, MY - 1, Z); // furniture beside it on its diagonal
+            MobileWallOrder.Scan s = default;
+            s.Active = true;
+            MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, 0, ref s);
+            s.Count.Should().Be(capped ? (byte)1 : (byte)0);
+
+            if (!capped)
+            {
+                return;
+            }
+
+            s.Walls[0].Overhead.Should().BeTrue();
+            float depth = MobileDepth(MX, MY, Z);
+            MobileWallOrder.OverheadSplit(in s, -11, 11, depth, 0, out int splitRow, out float add, out int wall).Should().BeTrue();
+            wall.Should().Be(0);
+
+            // the rows above the roof art's bottom (90 px art on the south vertex, 4 px per z above the mobile) take the cap
+            splitRow.Should().Be(22 - 4 * (roofZ - Z));
+            Key(depth, add).Should().Be(Math.Max(s.Walls[0].D - 1, Key(depth, MobileWallOrder.OverheadMinAdd)));
+            Key(depth, add).Should().BeGreaterThan(100 * (MX + MY) + 127 + Z + 1, "still over the floor and the pieces at its z");
+
+            // the strip rules ignore pieces overhead (the upper strip's other rows, the strips below the anchor)
+            MobileWallOrder.CapAdd(0, in s, -11, 11, depth, true, out _).Should().Be(0);
+            MobileWallOrder.CapAdd(2, in s, -11, 11, depth, out _).Should().Be(2);
+        }
+
+        [Fact]
+        public void OverheadOnTheSameDiagonalCounts()
+        {
+            var map = Studio(false, false, false);
+            Add(map, Roof, MX + 1, MY - 1, Z + 23);
+            Add(map, Roof, MX + 1, MY, Z + 23); // the next diagonal's roof wins by key already: not scanned
+            MobileWallOrder.Scan s = default;
+            MobileWallOrder.ScanOverhead(map, MX, MY, Z, 0, 0, ref s);
+            s.Count.Should().Be(1);
+            s.Walls[0].X.Should().Be((ushort)(MX + 1));
+            s.Walls[0].Lo.Should().Be(22);
+            s.Walls[0].Hi.Should().Be(66);
+        }
+
+        [Theory]
+        [InlineData(1f, -1f, 0, -1)] // north
+        [InlineData(1f, 0f, 1, -1)] // north-east
+        [InlineData(1f, 1f, 1, 0)] // east
+        [InlineData(0f, 1f, 1, 1)] // south-east
+        [InlineData(-1f, 1f, 0, 1)] // south
+        [InlineData(-1f, 0f, -1, 1)] // south-west
+        [InlineData(-1f, -1f, -1, 0)] // west
+        [InlineData(0f, -1f, -1, -1)] // north-west
+        [InlineData(0f, 0f, 0, 0)] // standing
+        public void StepTileFollowsTheOffset(float ox, float oy, int dx, int dy)
+        {
+            MobileWallOrder.StepTile(MX, MY, new Vector3(ox, oy, 0), out int nx, out int ny);
+            nx.Should().Be(MX + dx);
+            ny.Should().Be(MY + dy);
+        }
+
+        // a mounted mobile stepping east from (MX, MY) along the studio's south wall line (0x0034 at y + 1): the key sorts it on
+        // (MX + 1, MY) from the step's first pixel, one diagonal past the wall piece south of the tile it leaves, so its body
+        // (strip 0) beat that piece and the hind legs showed on it until the step ended
+        [Fact]
+        public void SteppingEastKeepsTheBodyBehindTheWallAheadOfTheTileItLeaves()
+        {
+            var map = Studio(false, false, false);
+            Add(map, South, MX, MY + 1, Z);
+            var offset = new Vector3(4, 4, 0);
+            MobileWallOrder.DepthTile(MX, MY, offset, out int bx, out int by);
+            (bx, by).Should().Be((MX + 1, MY));
+            MobileWallOrder.Scan s = default;
+            s.Active = true;
+            MobileWallOrder.ScanStep(map, MX, MY, Z, offset, bx, by, ref s);
+            s.Count.Should().Be(1);
+            s.MinAdd.Should().Be(-1);
+            s.Walls[0].Lo.Should().Be(-66, "the piece's in-front half moved to the depth tile's columns");
+
+            float depth = MobileDepth(MX + 1, MY, Z);
+            int wallD = s.Walls[0].D;
+            Key(depth, 0).Should().BeGreaterThan(wallD, "before: the body beat the piece");
+
+            // hind legs over the piece: the body strip drops just behind it, no lower than standing on the tile it leaves
+            float add = MobileWallOrder.CapAdd(0, in s, -60, -10, depth, out _);
+            Key(depth, add).Should().Be(wallD - 1);
+            Key(depth, add).Should().BeGreaterOrEqualTo(Key(MobileDepth(MX, MY, Z), 0));
+
+            // columns clear of the piece keep their keys
+            MobileWallOrder.CapAdd(0, in s, -20, 20, depth, out _).Should().Be(0);
+
+            // standing on either tile: no lowered upper strip
+            s = default;
+            MobileWallOrder.ScanStep(map, MX, MY, Z, Vector3.Zero, MX, MY, ref s);
+            s.MinAdd.Should().Be(0);
         }
 
         [Theory]
@@ -376,6 +666,56 @@ namespace ClassicUO.UnitTests.Game.Scenes
             }
 
             changed.Should().BeGreaterThan(0, "some frames have a feet strip");
+        }
+
+        [Theory]
+        [InlineData("mounted")]
+        [InlineData("equipped")]
+        public void CompositeSpanGivesEveryLayerOneCap(string name)
+        {
+            // a piece only beyond every layer's own frame: no strip moves; with the composite's span reaching it, every strip
+            // below the anchor of every layer takes the same key (a mount's capped strip never falls behind its rider's)
+            MobileWallOrder.Scan far = Everywhere(true);
+            far.Walls[0].Lo = 5000;
+            far.Walls[0].Hi = 5100;
+            uint shadow = KeyOf(812.25f), upper = KeyOf(812.25f + 1f), capped = BakeJob.DepthKeyD(81374, 1000, 7);
+
+            for (int seed = 1; seed <= 20; seed++)
+            {
+                Depths(name, far, seed).Should().Equal(Depths(name, default, seed), $"seed {seed}");
+                MobileWallOrder.Scan span = far;
+                span.SpanLo = -10000;
+                span.SpanHi = 10000;
+                Depths(name, span, seed).Should().OnlyContain(d => d == shadow || d == upper || d == capped, $"seed {seed}");
+            }
+        }
+
+        [Theory]
+        [InlineData("plain")]
+        [InlineData("mounted")]
+        public void PieceOverheadSplitsTheUpperStrip(string name)
+        {
+            // a piece overhead over every column whose art ends 40 px above the tile centre (the fixture draws at 600, 400:
+            // centre row 422): every upper strip reaching above that row is split, its top rows a key below the piece
+            MobileWallOrder.Scan over = default;
+            over.Active = true;
+            over.Count = 1;
+            over.Walls[0] = new MobileWallOrder.Wall { D = 81260, Lo = -10000, Hi = 10000, Overhead = true, Bottom = -40 };
+            uint top = BakeJob.DepthKeyD(81259, 1000, 7);
+            int split = 0;
+
+            for (int seed = 1; seed <= 20; seed++)
+            {
+                uint[] off = Depths(name, default, seed);
+                uint[] on = Depths(name, over, seed);
+                on.Length.Should().BeGreaterOrEqualTo(off.Length);
+                split += on.Length - off.Length;
+                on.Count(d => d == top).Should().BeGreaterOrEqualTo(on.Length - off.Length, $"seed {seed}: a capped top part per split (a strip wholly above the row is capped whole)");
+                on.Where(d => d != top).Should().BeSubsetOf(off, $"seed {seed}: every other key as before");
+            }
+
+            split.Should().BeGreaterThan(0, "some upper strips reach above the piece's art");
+            Depths(name, over with { Active = false }, 3).Should().Equal(Depths(name, default, 3), "switch off");
         }
 
         [Fact]
