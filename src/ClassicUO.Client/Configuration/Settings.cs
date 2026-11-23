@@ -241,6 +241,12 @@ namespace ClassicUO.Configuration
         // unpaced 12 fps frame took one step (~917 ms). CUO_FADE_TIME_BASED=1|0 overrides it in developer builds. Default off.
         [JsonPropertyName("fade_time_based")] public bool FadeTimeBased { get; set; }
 
+        // mount-fix (owner 2026-11-23: a mobile entering the scene fidgets at once, a crowd in sync): on, a new mobile's
+        // record starts with its idle due (IdleDue 0), so its first client-side idle plays on its first update (the upstream
+        // behaviour); off, its first idle is drawn at the steady-state residual of the idle delay (0-60 s, mean 23.3 s, Mobile.FirstIdleDue). Later idles are
+        // unchanged. CUO_IDLE_ON_SPAWN=1|0 overrides it in developer builds. Default on; off is the new path.
+        [JsonPropertyName("idle_on_spawn")] public bool IdleOnSpawn { get; set; } = true;
+
         // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
         // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
         // Chunk.StaticOver*). Its light part is chunk_lights since round 6c. CUO_VIEW_MARGIN_CHECK=1 logs sprites reaching the

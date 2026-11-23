@@ -526,6 +526,16 @@ namespace ClassicUO.Game.GameObjects
             return Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
         }
 
+        /// <summary>idle_on_spawn off: a new mobile's first idle due time, the residual time of the 30-60 s idle renewal at
+        /// steady state (owner 2026-11-23), so a spawned crowd idles at the settled rate from its first frame.</summary>
+        internal static long FirstIdleDue() =>
+            Time.Ticks + FirstIdleDelayMs(RandomHelper.GetValue() / (double)int.MaxValue, RandomHelper.GetValue() / (double)int.MaxValue);
+
+        /// <summary>The residual of a 30-60 s uniform renewal from two uniform draws in [0, 1): a length-biased cycle
+        /// length x = sqrt(900 + 2700 u1) s (density proportional to x on 30..60), then a uniform point u2 within it.
+        /// Density 1/45 per s on 0-30 s, falling linearly to 0 at 60 s; mean 23.3 s.</summary>
+        internal static long FirstIdleDelayMs(double u1, double u2) => (long)(u2 * Math.Sqrt(900 + 2700 * u1) * 1000);
+
         /// <summary>Tests: a hash of every field the mobile update can change (the update, the steps, the timers), to show an
         /// operation changed nothing.</summary>
         internal int UpdateStateHash()
