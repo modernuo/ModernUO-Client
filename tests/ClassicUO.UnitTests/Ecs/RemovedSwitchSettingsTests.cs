@@ -58,6 +58,7 @@ namespace ClassicUO.UnitTests.Ecs
             // folded into light_occlusion (2026-11-22)
             "light_occlusion_surface_only",
             // baked in after quiet-1123
+            "walk_chunk_z",
             "anim_async_turn"
         };
 
