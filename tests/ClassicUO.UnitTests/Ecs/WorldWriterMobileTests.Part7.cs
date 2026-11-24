@@ -351,7 +351,10 @@ namespace ClassicUO.UnitTests.Ecs
 
         [Theory]
         [MemberData(nameof(RekeyCases))]
-        public void RekeyDeadMobile_Equals_The_Old_Path(Start start, RekeyStart rk)
+        // idle_on_spawn on: the off state draws a random first idle due per world, so the two worlds would differ by design
+        public void RekeyDeadMobile_Equals_The_Old_Path(Start start, RekeyStart rk) => WithIdleOnSpawn(true, () => RekeyDeadMobileCase(start, rk));
+
+        private static void RekeyDeadMobileCase(Start start, RekeyStart rk)
         {
             World oldWorld = BuildRekey(start, rk), newWorld = BuildRekey(start, rk);
             newWorld.Writer.ThrowOnViolation = true;

@@ -44,9 +44,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void Settings_DefaultOff()
+        public void Settings_DefaultOn()
         {
-            Assert.False(new ClassicUO.Configuration.Settings().LightOcclusionCache);
+            Assert.True(new ClassicUO.Configuration.Settings().LightOcclusionCache);
         }
 
         private Static NewStatic() => new Static(_world) { Graphic = 1 };
@@ -191,9 +191,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void Settings_DefaultOff()
+        public void Settings_DefaultOn()
         {
-            Assert.False(new ClassicUO.Configuration.Settings().LightOcclusionBake);
+            Assert.True(new ClassicUO.Configuration.Settings().LightOcclusionBake);
         }
 
         [Theory]
@@ -305,9 +305,9 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void Settings_DefaultOff()
+        public void Settings_DefaultOn()
         {
-            Assert.False(new ClassicUO.Configuration.Settings().LightOcclusionBakeWorldPhase);
+            Assert.True(new ClassicUO.Configuration.Settings().LightOcclusionBakeWorldPhase);
         }
 
         // a window glow 77 x 90 pixels whose emitter is at world pixel (wx, wy); the player walks south-east from tile

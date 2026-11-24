@@ -248,8 +248,8 @@ namespace ClassicUO.Configuration
         // mount-fix (owner 2026-11-23: a mobile entering the scene fidgets at once, a crowd in sync): on, a new mobile's
         // record starts with its idle due (IdleDue 0), so its first client-side idle plays on its first update (the upstream
         // behaviour); off, its first idle is drawn at the steady-state residual of the idle delay (0-60 s, mean 23.3 s, Mobile.FirstIdleDue). Later idles are
-        // unchanged. CUO_IDLE_ON_SPAWN=1|0 overrides it in developer builds. Default on; off is the new path.
-        [JsonPropertyName("idle_on_spawn")] public bool IdleOnSpawn { get; set; } = true;
+        // unchanged. CUO_IDLE_ON_SPAWN=1|0 overrides it in developer builds. Default off (owner 2026-11-23, after quiet timing showed no cost).
+        [JsonPropertyName("idle_on_spawn")] public bool IdleOnSpawn { get; set; }
 
         // light-edges (owner 2026-11-21: trees, roofs and other tall art beside the view popped in whole): the sprite margin.
         // The walk reaches the objects whose art reaches the view from beside it (the chunks' recorded overhang,
@@ -294,24 +294,26 @@ namespace ClassicUO.Configuration
         // with the full occluder test, until a chunk the search reached changes (Chunk.OccluderVersion), the light's source or
         // target changes, or the drawn chunks change (LightOcclusionCache). Same occluders as the full search.
         // CUO_LIGHT_OCCLUSION_CACHE_CHECK=1 runs the full search next to every cached one and logs each difference;
-        // CUO_LIGHT_OCCLUSION_CACHE=1|0 overrides the setting in developer builds. Default off.
-        [JsonPropertyName("light_occlusion_cache")] public bool LightOcclusionCache { get; set; }
+        // CUO_LIGHT_OCCLUSION_CACHE=1|0 overrides the setting in developer builds. Default on: it only acts with light_occlusion
+        // and only saves time (batch-1123, owner 2026-11-23).
+        [JsonPropertyName("light_occlusion_cache")] public bool LightOcclusionCache { get; set; } = true;
 
         // light_occlusion_bake (with light_occlusion, light_occlusion_cache and light_batch): a masked surface glow is drawn once
         // with its occluders cut out into a slot of a 1024 x 1024 atlas (8 MB with its stencil) at the light target's scale and
         // sub-pixel phase, and later frames draw the slot as one plain quad, all baked glows in one batch; re-baked when its
         // light, scale, phase or occluders change. Not with light_alpha_fade's dithered masks or occluders the circle of
         // transparency reaches (LightOcclusionBake). CUO_LIGHT_OCC_BAKE_CHECK=1 compares the light target with a pass without
-        // bakes once a second; CUO_LIGHT_OCCLUSION_BAKE=1|0 overrides the setting in developer builds. Default off.
-        [JsonPropertyName("light_occlusion_bake")] public bool LightOcclusionBake { get; set; }
+        // bakes once a second; CUO_LIGHT_OCCLUSION_BAKE=1|0 overrides the setting in developer builds. Default on: it only acts with light_occlusion
+        // and saves 0.01-0.25 ms against the cache alone (batch-1123, owner 2026-11-23).
+        [JsonPropertyName("light_occlusion_bake")] public bool LightOcclusionBake { get; set; } = true;
 
         // light_occlusion_bake_world_phase (with light_occlusion_bake): a baked glow's key holds the sub-pixel phase of the light's
         // world pixel at the current scale instead of the frame matrix's float phase, whose rounding changes with every camera
         // move at a fractional zoom and re-baked every glow each frame while walking (LightBakeWorldPhase). The camera keeps the
         // world on whole pixels, so the bake is still drawn at the light's own phase. CUO_LIGHT_OCC_BAKE_CHECK counts the
         // re-bakes the frame phase would have made; CUO_LIGHT_OCC_BAKE_WORLD_PHASE=1|0 overrides the setting in developer
-        // builds. Default off.
-        [JsonPropertyName("light_occlusion_bake_world_phase")] public bool LightOcclusionBakeWorldPhase { get; set; }
+        // builds. Default on with light_occlusion_bake (owner 2026-11-23).
+        [JsonPropertyName("light_occlusion_bake_world_phase")] public bool LightOcclusionBakeWorldPhase { get; set; } = true;
 
         // light-edges round 6b: a surface glow (a lit window's beam: the light shape's class in the pack's lightclass.bin,
         // else the emitter's tiledata Wall/Window flags) is drawn at its emitter's drawn alpha (circle of transparency, roof
