@@ -2654,6 +2654,16 @@ namespace ClassicUO
                     }
 
                     CheckerStep(null);
+                    // walk / lswalk: every entry starts with the same leg. The direction used to carry over from the entry
+                    // before, so arms in different plan positions walked the lane in a different phase (vmw-cost round 2:
+                    // the middle arm of an off/on/onw triple saw another part of the large scene in each window)
+                    _walkBack = false;
+
+                    if (world.Player != null && world.Player.Pathfinder.AutoWalking)
+                    {
+                        world.Player.Pathfinder.StopAutoWalk();
+                    }
+
                     GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "equip" || mode == "equipsrv" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
