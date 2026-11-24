@@ -29,6 +29,6 @@ namespace ClassicUO.Game
         /// <summary>Tests: the switch (null: the setting).</summary>
         [ThreadStatic] internal static bool? OverrideForTests;
 
-        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.IdleOnSpawn ?? true);
+        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.IdleOnSpawn ?? false);
     }
 }

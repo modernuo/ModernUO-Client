@@ -222,6 +222,21 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Clock_Timer_And_Queue_Exist_From_The_Record_Creation()
         {
+            // idle_on_spawn on: the off state gives a new mobile a residual first idle due, not AnimationTimer.MobileDefault
+            IdleOnSpawn.OverrideForTests = true;
+
+            try
+            {
+                ClockTimerAndQueueCase();
+            }
+            finally
+            {
+                IdleOnSpawn.OverrideForTests = null;
+            }
+        }
+
+        private static void ClockTimerAndQueueCase()
+        {
             var world = new World();
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.TestSetGraphic(0x190);
