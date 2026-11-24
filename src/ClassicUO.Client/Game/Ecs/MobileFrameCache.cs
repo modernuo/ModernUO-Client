@@ -82,6 +82,8 @@ namespace ClassicUO.Game
         public PackSet Pack;
         // clip-2: recorded with depth_model on (the instances carry the composite anchor, SpriteInstance.GeoMobile)
         public bool Geo;
+        // mobile_strip_order: recorded with the near rows split (MobileStripOrder)
+        public bool Strip;
         public Entry[] Entries = new Entry[8];
         public int Count;
 

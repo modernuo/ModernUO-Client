@@ -460,6 +460,12 @@ namespace ClassicUO.Configuration
         // CUO_MOBILE_WALL_ORDER_CHECK=1 logs every strip it moves, in developer builds. Default off.
         [JsonPropertyName("mobile_wall_order")] public bool MobileWallOrder { get; set; }
 
+        // Depth key mode: the rows of a mobile's strip below its anchor that stay on its own tile's diamond take + 0.75 instead
+        // of + 2, so they draw under a mobile one diagonal ahead (a horse's hooves no longer show through a player standing
+        // south of it) and still over the land and statics there. Game/Scenes/MobileStripOrder. CUO_MOBILE_STRIP_ORDER=1|0
+        // overrides it and CUO_MOBILE_STRIP_CHECK=1 compares every split with the old add, in developer builds. Default off.
+        [JsonPropertyName("mobile_strip_order")] public bool MobileStripOrder { get; set; }
+
         // step_drain: a non-local mobile's step lasts its learned server pace (never longer than the table time; faster
         // only when the pace is clearly faster), with a bounded drain of a real backlog, instead of the table time and the
         // "mounted when steps are queued" guess (Game/Ecs/StepDrain). CUO_STEP_DRAIN=1|0 overrides it and
