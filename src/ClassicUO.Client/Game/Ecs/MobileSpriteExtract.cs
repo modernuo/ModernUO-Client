@@ -125,6 +125,7 @@ namespace ClassicUO.Game
         {
             _atlas = null;
             _geo = Scenes.DepthModel.On;
+            _strip = Scenes.MobileStripOrder.On;
             _submerged = false;
             _wall = default;
             _offsetX = offsetX;
@@ -561,6 +562,35 @@ namespace ClassicUO.Game
                         continue;
                     }
 
+                    if (i != 0 && (_strip || Scenes.MobileStripOrder.Check) && !_submerged)
+                    {
+                        // mobile_strip_order: the rows on the standing tile's diamond under a mobile one diagonal ahead
+                        int near = Scenes.MobileStripOrder.NearRows(y + strips[i].Y, strips[i].H, _geoAnchorY);
+
+                        if (near > 0)
+                        {
+                            float nearAdd = StripAdd(i, x, w, depth, Scenes.MobileStripOrder.NearAdd);
+#if CUO_DEVTOOLS
+                            if (Scenes.MobileStripOrder.Check && !_selectOnly)
+                            {
+                                Scenes.MobileStripOrder.Note(_objX, _objY, _objZ, id, near, strips[i].H - near, add, nearAdd,
+                                    nearAdd != Scenes.MobileStripOrder.NearAdd);
+                            }
+#endif
+                            if (_strip)
+                            {
+                                Write(index, x, y + strips[i].Y, strips[i].Y, near, hueVec, mirror, depth, 1, nearAdd);
+
+                                if (strips[i].H > near)
+                                {
+                                    Write(index, x, y + strips[i].Y + near, strips[i].Y + near, strips[i].H - near, hueVec, mirror, depth, 1, add);
+                                }
+
+                                continue;
+                            }
+                        }
+                    }
+
                     Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, add);
                 }
             }
@@ -569,14 +599,16 @@ namespace ClassicUO.Game
         // the add of strip i (DepthOf kind 1): + 2i, + 0 under a wet surface (wet_surface_depth), and with mobile_wall_order the
         // strips below the anchor capped just behind a piece ahead that the composite's columns overlap, the upper strip just
         // behind a piece overhead (and mid-step behind a piece ahead of the tile it leaves) (MobileWallOrder.CapAdd)
-        private float StripAdd(int i, int x, int w, float depth)
+        private float StripAdd(int i, int x, int w, float depth) => StripAdd(i, x, w, depth, i * 2);
+
+        // StripAdd from another starting add (mobile_strip_order's near rows: MobileStripOrder.NearAdd)
+        private float StripAdd(int i, int x, int w, float depth, float add)
         {
             if (_submerged)
             {
                 return 0;
             }
 
-            float add = i * 2;
 
             if (_wall.Active && _wall.Count != 0)
             {
@@ -736,6 +768,15 @@ namespace ClassicUO.Game
 
         // clip-2: depth_model (DepthModel.On) at Begin; MobileFrameCache.Geo keys recorded instances on it
         private bool _geo;
+        // mobile_strip_order at Begin (recorded in MobileFrameCache.Strip, so a switch change records again)
+        private bool _strip;
+
+        /// <summary>Tests: mobile_strip_order for the emits after Begin (Begin takes the switch).</summary>
+        internal bool StripOrderForTests
+        {
+            get => _strip;
+            set => _strip = value;
+        }
 
         // wet_surface_depth (key mode): the mobile is under a wet surface (MobileFrameCache.Submerged, part of the select key),
         // so every strip takes the upper strip's + 1 and the water ahead hides the feet with the legs
@@ -811,7 +852,7 @@ namespace ClassicUO.Game
             int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
 
             if (cache.EmitValid && cache.EmitSelectGen == cache.SelectGen && cache.Alpha == rs.Alpha && cache.OverrideHue == rs.OverrideHue &&
-                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo
+                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo && cache.Strip == _strip
 #if CUO_DEVTOOLS
                 && !Scenes.ClipDump.Active // clip-1: the dump reads the layers as Layer draws them
                 && !Scenes.ClipOrderCheck.Armed // clip-2: so does the order check
@@ -882,7 +923,7 @@ namespace ClassicUO.Game
 
                 if (missing != 0)
                 {
-                    bool previous = cache.EmitValid && cache.Count != 0 && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo;
+                    bool previous = cache.EmitValid && cache.Count != 0 && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo && cache.Strip == _strip;
 
                     if (hold && previous && HoldLook(cache))
                     {
@@ -970,6 +1011,7 @@ namespace ClassicUO.Game
             cache.BodyHue = bodyHue;
             cache.Pack = _pack;
             cache.Geo = _geo;
+            cache.Strip = _strip;
             cache.EmitValid = true;
         }
 
