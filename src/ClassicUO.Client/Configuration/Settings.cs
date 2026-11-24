@@ -234,10 +234,11 @@ namespace ClassicUO.Configuration
         // dismount flash); on is kept as an option, its fade timed by fade_time_based.
         [JsonPropertyName("mobile_fade_in")] public bool MobileFadeIn { get; set; }
 
-        // mount-fix (owner 2026-11-23, low priority): mobile_fade_in for items. On (default, today): an item the server places in
-        // the world starts at alpha 0 and fades in; off, it is drawn at its target alpha from its first frame. Roof, max-Z and
-        // chunk-stream fades are unchanged. CUO_ITEM_FADE_IN=1|0 overrides the setting in developer builds.
-        [JsonPropertyName("item_fade_in")] public bool ItemFadeIn { get; set; } = true;
+        // mount-fix (owner 2026-11-23, low priority): mobile_fade_in for items. On: an item the server places in the world starts
+        // at alpha 0 and fades in (the upstream behaviour); off, it is drawn at its target alpha from its first frame. Roof, max-Z
+        // and chunk-stream fades are unchanged. CUO_ITEM_FADE_IN=1|0 overrides the setting in developer builds. Default off in
+        // every tier (owner 2026-11-24: on is kept as an option to try; it costs walking frames up to 0.16 ms at p95).
+        [JsonPropertyName("item_fade_in")] public bool ItemFadeIn { get; set; }
 
         // mount-fix: object fades (roof, max Z, new objects) catch up the 20 ms steps a long frame missed in every pacing
         // mode, so a fade takes the same ~220 ms at any frame rate; before, only display-paced drawing caught up and an
@@ -286,7 +287,8 @@ namespace ClassicUO.Configuration
         // in 2026-11-22). Per masked light, the occluders' drawn sprites go into the light target's stencil
         // (GameSceneLightOcclusion, LightOcclusion.Masks). Both renderers. CUO_LIGHT_OCCLUSION_CHECK=1 compares the occluders
         // found with a scan of every tile of the drawn chunks and logs any radial light drawn masked; CUO_LIGHT_OCCLUSION=1|0
-        // overrides the setting in developer builds. Default off.
+        // overrides the setting in developer builds. A Medium tier feature (owner 2026-11-24; with its cache and bake it costs
+        // ~0.31 ms at its worst scene, inside Medium's budget): on for a new install through the Medium preset.
         [JsonPropertyName("light_occlusion")] public bool LightOcclusion { get; set; }
 
         // light_occlusion_cache (with light_occlusion): each surface glow keeps the objects its occluder search found able to
@@ -339,7 +341,7 @@ namespace ClassicUO.Configuration
         // lights with none in one batch without the stencil, then the occluded ones with their masks as before (additive
         // blending: the same light target). Both renderers. CUO_LIGHT_BATCH_CHECK=1 renders the per-light path beside it once
         // a second and compares the light targets pixel by pixel; CUO_LIGHT_BATCH=1|0 overrides the setting in developer
-        // builds. Default off.
+        // builds. Medium tier, with light_occlusion.
         [JsonPropertyName("light_batch")] public bool LightBatch { get; set; }
 
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
