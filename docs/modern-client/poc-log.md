@@ -9307,3 +9307,12 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
   CheckZBand, WalkAnchorIn), the full-band walk branch in the fill, the off-state test. Kept: Chunk.WalkZLo/Hi, FillDiamond.ForZ,
   the occluder chunk set (full-band hidden chunks, only while light_occlusion is on), FrameStats zband counters.
 - Gates: build and unit tests pending (quiet timing running), see handoffs/bake-zband.md. Accepted costs: none new (Chunk +20 B stays).
+
+## bake-async-turn (2026-11-23)
+- anim_async_turn baked in on bg/bake-async-turn (base bg/bake-zband eac731ead), owner-approved after bench-001164 (on vs off: CPU
+  phases within 0.01 ms). Removed: the `anim_async_turn` setting, CUO_ANIM_ASYNC_TURN, the CUO_ANIM_ASYNC_TURN_CHECK checker
+  (counters, worker-vs-sync compare, DevBench step), Animations.AsyncTurn, the per-body drawn flags, LookPrefetch.HoldEnabled, the
+  main-thread prefetch branch and the off-state tests. The off path's turn gap goes with it. Kept: the AnimAsyncTurn note queue
+  (always on), the look hold (now independent of asset_prefetch_on_packet, which keeps only the first-sight wait).
+- Gates: client Release builds in both CuoDevTools variants; unit tests 8878 passed / 6 skipped (dev) and 8486 / 6 (release).
+  WriteSiteBudgetTests unchanged. Accepted costs: none new.
