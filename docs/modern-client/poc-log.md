@@ -9300,3 +9300,10 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
   customisation, corpses, moving effects, server drops.
 - **Accepted costs.** Chunk +20 B per loaded chunk; one NoteWalkZ call per tile join and Z write (not timed separately). Revisit:
   none needed.
+
+## bake-zband (2026-11-23)
+- walk_chunk_z baked in on bg/bake-zband (base bg/int-1123 a4b3b302d), owner-approved after bench-001134..37 (met the always-on bar,
+  checker 0 mismatches). Removed: the `walk_chunk_z` setting, CUO_WALK_CHUNK_Z, the CUO_WALK_CHUNK_Z_CHECK checker (WalkChunkZ.cs,
+  CheckZBand, WalkAnchorIn), the full-band walk branch in the fill, the off-state test. Kept: Chunk.WalkZLo/Hi, FillDiamond.ForZ,
+  the occluder chunk set (full-band hidden chunks, only while light_occlusion is on), FrameStats zband counters.
+- Gates: build and unit tests pending (quiet timing running), see handoffs/bake-zband.md. Accepted costs: none new (Chunk +20 B stays).
