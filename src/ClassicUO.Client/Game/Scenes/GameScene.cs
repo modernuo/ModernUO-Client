@@ -867,18 +867,8 @@ namespace ClassicUO.Game.Scenes
 
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
                     // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
-                    ulong inWalk, inHidden;
-                    bool zForce = false;
-
-                    if (_zband || _zbandCheck)
-                    {
-                        // walk_chunk_z: the S band from the chunk's recorded Z range (WalkChunkZ)
-                        inWalk = ZBandChunkMasks(chunk, chunkX, chunkY, gpuFill, in diamond, out inHidden, out zForce);
-                    }
-                    else
-                    {
-                        inWalk = FillDiamond.ChunkMasks(gpuFill, chunkX, chunkY, in diamond, out inHidden);
-                    }
+                    // the S band comes from the chunk's recorded Z range (GameSceneWalkChunkZ)
+                    ulong inWalk = ZBandChunkMasks(chunk, chunkX, chunkY, gpuFill, in diamond, out ulong inHidden, out bool zForce);
 
                     inWalk = WalkChunkMask(chunk, chunkX, chunkY, inWalk);
 #if CUO_DEVTOOLS
@@ -899,7 +889,7 @@ namespace ClassicUO.Game.Scenes
                         (chunk.Mesh.AtlasEpoch != atlasEpoch && _gpuWorld == null && chunk.Mesh.HoldsFreedPage(atlasEpoch)))
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
-                        // walk_chunk_z: the rebuild drops the range's growth from objects that left or moved
+                        // the rebuild drops the range's growth from objects that left or moved
                         chunk.RecomputeWalkZ();
                         // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
                         chunk.GpuMaskDirty = true;
@@ -1056,8 +1046,6 @@ namespace ClassicUO.Game.Scenes
                     }
                 }
             }
-
-            ZBandFrameEnd();
 
             if (FrameStats.On)
             {

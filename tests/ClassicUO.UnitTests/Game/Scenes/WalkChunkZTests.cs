@@ -11,7 +11,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Game.Scenes
 {
-    // walk_chunk_z (WalkChunkZ): the fill's S band per chunk from the chunk's recorded Z range. The tight band must keep every
+    // The per-chunk band (GameSceneWalkChunkZ): the fill's S band per chunk from the chunk's recorded Z range. The tight band must keep every
     // tile whose objects (anchored inside the range) the walk could draw or the Gpu hidden pass hide, and the range must hold
     // every object of the chunk through adds, moves, Z changes, removals, rebuilds and reloads.
     [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData is process-wide
@@ -28,7 +28,6 @@ namespace ClassicUO.UnitTests.Game.Scenes
         public void Dispose()
         {
             Chunk.StaticTileData = _saved;
-            WalkChunkZ.OverrideForTests = null;
         }
 
         public static TheoryData<int, int, int, int, int, int, int> Views => new()
@@ -182,15 +181,6 @@ namespace ClassicUO.UnitTests.Game.Scenes
                     h1.Should().Be(h0);
                 }
             }
-        }
-
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void The_switch_follows_its_override(bool on)
-        {
-            WalkChunkZ.OverrideForTests = on;
-            WalkChunkZ.Enabled.Should().Be(on);
         }
 
         private static Land NewLand(World world, sbyte z)

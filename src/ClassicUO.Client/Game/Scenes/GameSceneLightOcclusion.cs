@@ -157,7 +157,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             _loPass++;
-            // the chunk set the occluder search walks (walk_chunk_z: the full bands' chunks)
+            // the chunk set the occluder search walks (the full bands' chunks)
             List<Chunk> searched = OccluderChunks;
             uint sig = (uint)searched.Count * 2654435761u;
 

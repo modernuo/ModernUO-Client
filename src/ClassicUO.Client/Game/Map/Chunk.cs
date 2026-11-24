@@ -254,7 +254,7 @@ namespace ClassicUO.Game.Map
         /// chunks whose sprites cannot reach it whatever their art size or elevation.</summary>
         internal int OccZLo = int.MaxValue, OccZHi = int.MinValue;
 
-        /// <summary>walk_chunk_z (GameScene's fill, WalkChunkZ): the lowest and highest Z any object of the chunk's tiles is
+        /// <summary>the fill's per-chunk band (GameScene, GameSceneWalkChunkZ): the lowest and highest Z any object of the chunk's tiles is
         /// anchored at (land: its Z, MinZ and stretched corners), empty while low is above high. Set from the tiles at load and
         /// at a mesh rebuild (<see cref="RecomputeWalkZ"/>), grown by every object joining a tile (AddGameObject) and every Z
         /// change of an object on one (GameObject.Z), never shrunk in between: no object of the chunk is outside it.</summary>

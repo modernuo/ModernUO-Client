@@ -264,7 +264,7 @@ namespace ClassicUO
         VmRingObjectsSkipped,
         // vm-body (view_margin_body): mobiles of the walk left out by their body's reach (or that would be, switch off)
         VmBodyMobilesSkipped,
-        // zband (walk_chunk_z): chunks given chunk-level work by the fill, tiles in the walk's and the hidden pass's bands,
+        // zband (per-chunk Z band): chunks given chunk-level work by the fill, tiles in the walk's and the hidden pass's bands,
         // and walked objects culled by their anchor's y
         FillChunks,
         WalkBandTiles,
