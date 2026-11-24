@@ -16,13 +16,11 @@ namespace ClassicUO.Game.Scenes
             bool gpu = _gpuWorld != null;
             FillDiamond.Bands b = FillDiamond.ComputeBands(_offset.X, _offset.Y, _minPixel, _maxPixel, gpu, _gpuView, gpu ? FillDiamond.MaxStaticArtHeight(_gpuArt) : 0);
 
-            _zband = WalkChunkZ.Enabled;
-            _zbandOcc = _zband && (LightOcclusion.Enabled || LightOcclusion.Check);
-            _zbandCheck = WalkChunkZ.Check;
+            _zbandOcc = LightOcclusion.Enabled || LightOcclusion.Check;
             _fillSeq++;
 
-            // walk_chunk_z: the per-chunk S bands move with the raw edges, which can move inside a tile of the full band
-            if (!b.Equals(_diamondPrev) || _zband && (!b.Walk.RawEquals(in _diamondPrev.Walk) || !b.Hidden.RawEquals(in _diamondPrev.Hidden)))
+            // the per-chunk S bands move with the raw edges, which can move inside a tile of the full band
+            if (!b.Equals(_diamondPrev) || !b.Walk.RawEquals(in _diamondPrev.Walk) || !b.Hidden.RawEquals(in _diamondPrev.Hidden))
             {
                 UpdateDrawPosition = true;
             }

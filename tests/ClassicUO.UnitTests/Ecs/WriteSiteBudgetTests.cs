@@ -489,7 +489,7 @@ namespace ClassicUO.UnitTests.Ecs
         };
 
         // T1: the backing fields of the one-line checked setters (`set { FunnelCheck.Write(this, FunnelField.X); _x = value; }`)
-        // and their declaring type: that setter is their one allowed writer (Z's also grows its chunk's walk_chunk_z range after
+        // and their declaring type: that setter is their one allowed writer (Z's also grows its chunk's walk Z range after
         // the write, `TileChunk?.NoteWalkZ(value);`, which writes no field of the object). They are private, so only code inside their
         // declaring type can write them, in any of its partial declarations (Mobile's in MobileAnimation.cs and
         // Views/MobileView.cs, GameObject's in Views/View.cs) and its nested types (Codex audit round 2, #2). A field of the same

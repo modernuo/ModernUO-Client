@@ -37,7 +37,7 @@ namespace ClassicUO.Game.Scenes
         public struct Bounds : IEquatable<Bounds>
         {
             public int DLo, DHi, SLo, SHi;
-            /// <summary>walk_chunk_z: the S band's edges in pixels before the Z term (SLo = floor((SLoRaw + 4 * zLo) / 22) - 1,
+            /// <summary>The S band's edges in pixels before the Z term (SLo = floor((SLoRaw + 4 * zLo) / 22) - 1,
             /// SHi = floor((SHiRaw + 4 * zHi) / 22) + 1), for the per-chunk bands of <see cref="ForZ"/>.</summary>
             public double SLoRaw, SHiRaw;
 
@@ -97,7 +97,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         /// <summary>
-        /// walk_chunk_z: <paramref name="b"/> with its S band for anchors at Z <paramref name="zLo"/>..<paramref name="zHi"/>
+        /// <paramref name="b"/> with its S band for anchors at Z <paramref name="zLo"/>..<paramref name="zHi"/>
         /// only (a chunk's recorded range, Chunk.WalkZLo/Hi) instead of every sbyte Z. The D band and the art and land-stretch
         /// terms are unchanged; zLo -128 and zHi 127 give <paramref name="b"/> itself.
         /// </summary>
@@ -179,7 +179,7 @@ namespace ClassicUO.Game.Scenes
         /// (<paramref name="hidden"/>, a superset; Legacy: the same). A chunk whose hidden mask is
         /// empty gets no chunk-level work at all (perf-18).
         /// </summary>
-        /// <summary>walk_chunk_z: <see cref="ChunkMasks(bool, int, int, in Bands, out ulong)"/> for a chunk whose objects are
+        /// <summary><see cref="ChunkMasks(bool, int, int, in Bands, out ulong)"/> for a chunk whose objects are
         /// anchored at Z <paramref name="zLo"/>..<paramref name="zHi"/> (empty range: every Z).</summary>
         public static ulong ChunkMasks(bool gpu, int chunkX, int chunkY, in Bands b, int zLo, int zHi, out ulong hidden)
         {
