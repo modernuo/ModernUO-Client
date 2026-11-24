@@ -94,6 +94,26 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Equal(skips, ViewMargin.RingSkips(ViewMargin.RingKind.Art, ax, ay, 0, false, 0, 0, 0, 0, w, h, slack, L, T, R, B));
         }
 
+        [Theory]
+        [InlineData(0xFF, true)]
+        [InlineData(0, false)]
+        [InlineData(178, false)]
+        [InlineData(0xFE, false)]
+        public void Item_is_tested_by_its_art_only_once_its_fade_settled(int alpha, bool art)
+        {
+            Assert.Equal(art ? ViewMargin.RingKind.Art : ViewMargin.RingKind.Keep, ViewMargin.ItemRingKind((byte)alpha));
+        }
+
+        [Fact]
+        public void Fading_item_far_off_the_view_is_kept_settled_one_left_out()
+        {
+            // a margin item whose art box misses the view: left out once settled, walked while it fades in (vmw-cost)
+            Assert.False(ViewMargin.RingSkips(ViewMargin.ItemRingKind(0), 1200, 300, 0, false, 0, 0, 0, 0, 44, 44,
+                ViewMargin.MovingSlack, L, T, R, B));
+            Assert.True(ViewMargin.RingSkips(ViewMargin.ItemRingKind(0xFF), 1200, 300, 0, false, 0, 0, 0, 0, 44, 44,
+                ViewMargin.MovingSlack, L, T, R, B));
+        }
+
         [Fact]
         public void Dynamics_are_never_left_out()
         {

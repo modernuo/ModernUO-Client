@@ -92,6 +92,11 @@ namespace ClassicUO.Game.Scenes
         /// pieces and the items on its deck up to a tile from their anchors, and a stack's second sprite is 5 px off.</summary>
         public const int MovingSlack = 48;
 
+        /// <summary>view_margin_walk: how a margin item is tested. An item fades in only while the walk visits it (created at
+        /// alpha 0), so one that has not settled at 0xFF is kept: left out, it stays faded out, and the Gpu item cache does not
+        /// hold an unsettled item (its tile is walked whole every frame, the chunk's cache rebuilt every 30 frames).</summary>
+        public static RingKind ItemRingKind(byte alphaHue) => alphaHue == 0xFF ? RingKind.Art : RingKind.Keep;
+
         /// <summary>view_margin_walk: whether an object whose art is <paramref name="w"/> x <paramref name="h"/> can reach
         /// the view from a margin tile: its art reaches past its 44 x 44 box beside it, or more than the walk's tile of
         /// slack (44 px) above it. Such objects' tiles are kept in Chunk.ReachCells.</summary>
