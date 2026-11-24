@@ -1154,6 +1154,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // mobilestrip on|off: mobile_strip_order (MobileStripOrder; CUO_MOBILE_STRIP_ORDER overrides it)
+                case "mobilestrip" when args.Length > 0:
+                    Settings.GlobalSettings.MobileStripOrder = args[0] == "on";
+                    Log.Info($"[ECS] driver: mobile_strip_order {Settings.GlobalSettings.MobileStripOrder} (effective {MobileStripOrder.On})");
+
+                    return false;
+
                 // wetdepth on|off: wet_surface_depth (WetSurfaceDepth; CUO_WET_SURFACE_DEPTH overrides it)
                 case "wetdepth" when args.Length > 0:
                     Settings.GlobalSettings.WetSurfaceDepth = args[0] == "on";
