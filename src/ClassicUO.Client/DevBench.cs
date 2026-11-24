@@ -128,11 +128,6 @@ namespace ClassicUO
             {
                 LookPrefetchCheck.Step(where);
             }
-
-            if (AnimAsyncTurn.Check)
-            {
-                Client.Game.UO.World?.AsyncTurn.Step(where);
-            }
         }
 
         // what the 0x20 player update does for a teleport, without the server: chunks, regions and art load as on a real teleport

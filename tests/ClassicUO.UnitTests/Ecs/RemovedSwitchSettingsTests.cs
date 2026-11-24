@@ -56,7 +56,9 @@ namespace ClassicUO.UnitTests.Ecs
             "text_prune_expired",
             "text_tail_cache",
             // folded into light_occlusion (2026-11-22)
-            "light_occlusion_surface_only"
+            "light_occlusion_surface_only",
+            // baked in after quiet-1123
+            "anim_async_turn"
         };
 
         [Fact]

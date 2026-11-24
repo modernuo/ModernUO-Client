@@ -134,14 +134,12 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.False(cache.LegacyValid);
         }
 
-        // hold: anim_async_turn (default on) enables the look hold, which records an uncacheable selection as the look to
-        // hold (MobileSpriteExtract, LegacyValid); its next frame has a new SelectGen, so it is never replayed
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Legacy_Mobile_Replay_Follows_Selection_Alpha_And_Hues(bool hold)
+        // the look hold records an uncacheable selection as the look to hold (MobileSpriteExtract, LegacyValid); its next
+        // frame has a new SelectGen, so it is never replayed
+        [Fact]
+        public void Legacy_Mobile_Replay_Follows_Selection_Alpha_And_Hues()
         {
-            WithAsyncTurn(hold, () =>
+            WithHold(false, () =>
             {
                 (AnimationsLoader anims, _) = AnimFixture(5);
                 var atlas = new FakeAtlas(anims, System.Array.Empty<SpriteEntry>());
@@ -175,7 +173,7 @@ namespace ClassicUO.UnitTests.Ecs
                 cache.SelectValid = false;
                 cache.SelectGen++;
                 Frame("uncacheable selection", false);
-                Assert.Equal(hold, cache.LegacyValid);
+                Assert.True(cache.LegacyValid);
 
                 // an uncacheable selection is selected again every frame (MobileAnimationSystem: a new SelectGen)
                 cache.SelectGen++;

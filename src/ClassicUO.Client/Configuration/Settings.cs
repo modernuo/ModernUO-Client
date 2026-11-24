@@ -226,15 +226,6 @@ namespace ClassicUO.Configuration
         // states. CUO_ASSET_PREFETCH_ON_PACKET=1|0 overrides it in developer builds. Default off.
         [JsonPropertyName("asset_prefetch_on_packet")] public bool AssetPrefetchOnPacket { get; set; }
 
-        // gpu-popin round 5 (owner 2026-11-20: a brief turn delay on one mobile over a whole-frame stall): a turn or new
-        // action of a body already drawn decodes its direction on a worker (Animations.AsyncTurn) instead of on the main
-        // thread; the mobile keeps its previous look until the direction is uploaded, at most LookPrefetch.HoldMaxMs. Moves,
-        // turns and war-mode changes request the facing direction and its two neighbours early (AnimAsyncTurn).
-        // CUO_ANIM_ASYNC_TURN_CHECK=1 counts the main-thread decodes left and the turn delays in both states;
-        // CUO_ANIM_ASYNC_TURN=1|0 overrides the setting in developer builds. Default on (owner, 2026-11-22): without it the Gpu
-        // world draws a mobile part whose direction page is not resident as nothing for a frame (the first-turn flash, bg/turn-flash).
-        [JsonPropertyName("anim_async_turn")] public bool AnimAsyncTurn { get; set; } = true;
-
         // mount-fix (owner 2026-11-23: the horse left by a dismount fades in from invisible, a flash every cycle): on, a mobile
         // the server creates starts at alpha 0 and fades in (the upstream behaviour); off, it is drawn at its target alpha
         // from its first frame (full, or 0 above the max Z). Roof, max-Z, translucency and chunk-stream fades are unchanged;

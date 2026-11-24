@@ -10,36 +10,15 @@ using RendererAnimations = ClassicUO.Renderer.Animations.Animations;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // anim_async_turn: a turn of a body already drawn decodes on a worker; the draw keeps the previous look until it is
-    // uploaded (the hold, also with asset_prefetch_on_packet off), but a first sight is not waited on without that switch.
+    // A turn of a body already drawn decodes on a worker; the draw keeps the previous look until it is uploaded (the hold,
+    // also with asset_prefetch_on_packet off), but a first sight is not waited on without that switch.
     public partial class DynamicSpriteTests
     {
-        private static void WithAsyncTurn(bool on, Action body)
+        [Fact]
+        public void Legacy_Async_Turn_Keeps_The_Previous_Look()
         {
-            LookPrefetch.OverrideForTests = false;
-            AnimAsyncTurn.OverrideForTests = on;
-            LookPrefetch.TicksForTests = 1000;
-
-            try
+            WithHold(false, () =>
             {
-                body();
-            }
-            finally
-            {
-                LookPrefetch.OverrideForTests = null;
-                AnimAsyncTurn.OverrideForTests = null;
-                LookPrefetch.TicksForTests = null;
-            }
-        }
-
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Legacy_Async_Turn_Keeps_The_Previous_Look_Only_With_The_Switch(bool on)
-        {
-            WithAsyncTurn(on, () =>
-            {
-                Assert.Equal(on, LookPrefetch.HoldEnabled);
                 (AnimationsLoader anims, _) = AnimFixture(5);
                 var atlas = new FakeAtlas(anims, Array.Empty<SpriteEntry>());
                 EcsEntity e = MobileCase(new WorldMirror(), "equipped");
@@ -51,8 +30,7 @@ namespace ClassicUO.UnitTests.Ecs
                 // the turn's direction is on a worker
                 atlas.PendingBody = HUMAN;
                 Turn(e, cache);
-                List<LegacyDraw> partial = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
-                AssertSameCalls(on ? before : partial, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), on ? "held" : "partial");
+                AssertSameCalls(before, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "held");
 
                 // uploaded: the new direction in one frame
                 atlas.PendingBody = 0xFFFF;
@@ -63,12 +41,10 @@ namespace ClassicUO.UnitTests.Ecs
             });
         }
 
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Legacy_Async_Turn_Alone_Does_Not_Wait_On_A_First_Sight(bool on)
+        [Fact]
+        public void Legacy_Async_Turn_Alone_Does_Not_Wait_On_A_First_Sight()
         {
-            WithAsyncTurn(on, () =>
+            WithHold(false, () =>
             {
                 (AnimationsLoader anims, _) = AnimFixture(5);
                 var atlas = new FakeAtlas(anims, Array.Empty<SpriteEntry>()) { PendingBody = HUMAN };
@@ -82,71 +58,36 @@ namespace ClassicUO.UnitTests.Ecs
             });
         }
 
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Async_Turn_Sends_A_Drawn_Bodys_Uncached_Direction_To_A_Worker_Only_With_The_Switch(bool on)
+        [Fact]
+        public void Async_Turn_Sends_An_Uncached_Direction_To_A_Worker()
         {
             Assert.True(RendererAnimations.AsyncFirstSight);
 
-            // a turn (body drawn, chunks not cached): the worker with the switch, else the main thread (the stall)
-            Assert.Equal(on, RendererAnimations.DecodesOnWorker(sync: false, bodyDrawn: true, evicted: false, asyncTurn: on, resident: false));
+            // chunks not cached (a first sight, an evicted direction or a turn of a body already drawn): the worker
+            Assert.True(RendererAnimations.DecodesOnWorker(sync: false, resident: false));
 
-            // unchanged by the switch: first sight and evicted directions on a worker; cached chunks and sync callers here
-            Assert.True(RendererAnimations.DecodesOnWorker(false, bodyDrawn: false, evicted: false, asyncTurn: on, resident: false));
-            Assert.True(RendererAnimations.DecodesOnWorker(false, bodyDrawn: true, evicted: true, asyncTurn: on, resident: false));
-            Assert.False(RendererAnimations.DecodesOnWorker(false, bodyDrawn: true, evicted: false, asyncTurn: on, resident: true));
-            Assert.False(RendererAnimations.DecodesOnWorker(sync: true, bodyDrawn: true, evicted: false, asyncTurn: on, resident: false));
-            Assert.False(RendererAnimations.DecodesOnWorker(sync: true, bodyDrawn: false, evicted: false, asyncTurn: on, resident: false));
-        }
-
-        [Theory]
-        [InlineData(true)]
-        [InlineData(false)]
-        public void Async_Turn_Notes_Only_With_The_Switch_And_Bounds_The_Queue(bool on)
-        {
-            AnimAsyncTurn.OverrideForTests = on;
-            var queue = new AnimAsyncTurn(null);
-
-            try
-            {
-                for (uint s = 1; s <= AnimAsyncTurn.Capacity + 5; s++)
-                {
-                    queue.Note(s);
-                }
-
-                queue.Note(0);
-
-                if (!on)
-                {
-                    Assert.Equal(0, queue.Count);
-                    Assert.False(queue.TryTake(out _));
-
-                    return;
-                }
-
-                Assert.Equal(AnimAsyncTurn.Capacity, queue.Count);
-                Assert.Equal(5L, queue.Dropped);
-                Assert.True(queue.TryTake(out uint first));
-                Assert.Equal(6u, first); // the oldest went
-            }
-            finally
-            {
-                AnimAsyncTurn.OverrideForTests = null;
-            }
+            // cached chunks and sync callers: here
+            Assert.False(RendererAnimations.DecodesOnWorker(sync: false, resident: true));
+            Assert.False(RendererAnimations.DecodesOnWorker(sync: true, resident: false));
+            Assert.False(RendererAnimations.DecodesOnWorker(sync: true, resident: true));
         }
 
         [Fact]
-        public void Async_Turn_Is_On_By_Default_And_Round_Trips()
+        public void Async_Turn_Bounds_The_Queue()
         {
-            var ctx = ClassicUO.Configuration.SettingsJsonContext.RealDefault.Settings;
-            Assert.True(new ClassicUO.Configuration.Settings().AnimAsyncTurn);
-            Assert.True(System.Text.Json.JsonSerializer.Deserialize("{}", ctx).AnimAsyncTurn);
+            var queue = new AnimAsyncTurn(null);
 
-            // a saved "off" stays off
-            string json = System.Text.Json.JsonSerializer.Serialize(new ClassicUO.Configuration.Settings { AnimAsyncTurn = false }, ctx);
-            Assert.Contains("\"anim_async_turn\": false", json);
-            Assert.False(System.Text.Json.JsonSerializer.Deserialize(json, ctx).AnimAsyncTurn);
+            for (uint s = 1; s <= AnimAsyncTurn.Capacity + 5; s++)
+            {
+                queue.Note(s);
+            }
+
+            queue.Note(0);
+
+            Assert.Equal(AnimAsyncTurn.Capacity, queue.Count);
+            Assert.Equal(5L, queue.Dropped);
+            Assert.True(queue.TryTake(out uint first));
+            Assert.Equal(6u, first); // the oldest went
         }
 
         [Fact]
