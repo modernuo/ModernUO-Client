@@ -14,7 +14,7 @@ public class FadeDefaultSettingTests
         var s = new Settings();
         Assert.False(s.MobileFadeIn);
         Assert.True(s.FadeTimeBased);
-        Assert.True(s.ItemFadeIn);
+        Assert.False(s.ItemFadeIn);
     }
 
     [Fact]
@@ -25,6 +25,7 @@ public class FadeDefaultSettingTests
             Settings s = Load(path);
             Assert.False(s.MobileFadeIn);
             Assert.True(s.FadeTimeBased);
+            Assert.False(s.ItemFadeIn);
         });
     }
 

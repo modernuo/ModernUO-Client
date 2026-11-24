@@ -75,8 +75,8 @@ namespace ClassicUO.UnitTests.Configuration
             }
 
             Assert.Equal(QualityTier.High, table["view_margin"].From);
-            Assert.Equal(QualityTier.High, table["light_occlusion"].From);
-            Assert.Equal(QualityTier.High, table["light_batch"].From);
+            Assert.Equal(QualityTier.Medium, table["light_occlusion"].From);
+            Assert.Equal(QualityTier.Medium, table["light_batch"].From);
             Assert.Equal(GraphicsTiers.RowKind.Reducer, table["light_range"].Kind);
             Assert.False(table.ContainsKey("light_alpha_fade"));
         }

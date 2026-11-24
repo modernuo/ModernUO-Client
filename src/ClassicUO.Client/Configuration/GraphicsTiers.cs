@@ -68,8 +68,8 @@ namespace ClassicUO.Configuration
         {
             new Row("light_range", RowKind.Reducer, QualityTier.Low, s => s.LightRange, (s, v) => s.LightRange = v, "Low lowers the light range"),
             new Row("view_margin", RowKind.Feature, QualityTier.High, s => s.ViewMargin, (s, v) => s.ViewMargin = v, "High (proposed Medium after bg/vm-legacy)"),
-            new Row("light_occlusion", RowKind.Feature, QualityTier.High, s => s.LightOcclusion, (s, v) => s.LightOcclusion = v, "High"),
-            new Row("light_batch", RowKind.Feature, QualityTier.High, s => s.LightBatch, (s, v) => s.LightBatch = v, "follows light_occlusion")
+            new Row("light_occlusion", RowKind.Feature, QualityTier.Medium, s => s.LightOcclusion, (s, v) => s.LightOcclusion = v, "Medium (owner 2026-11-24)"),
+            new Row("light_batch", RowKind.Feature, QualityTier.Medium, s => s.LightBatch, (s, v) => s.LightBatch = v, "follows light_occlusion")
         };
 
         public static string Name(QualityTier tier) => tier switch
