@@ -212,9 +212,9 @@ namespace ClassicUO.Renderer.Animations
             {
                 if (_lru != null && _evictedAt.Count != 0 && _evictedAt.Remove(DirKey(id, action, dir), out long evictedAt))
                 {
-                    // anim_atlas_lru: an evicted direction loads again through the async first-sight path
+                    // anim_atlas_lru: an evicted direction loads again through the async path
                     _lru.OnReload(evictedAt, AtlasPageClock.NowMs);
-                    sprites = LoadDirection(id, action, dir, sync, evicted: true);
+                    sprites = LoadDirection(id, action, dir, sync);
 
                     if (_pendingSprites.Contains(sprites))
                     {
@@ -268,14 +268,13 @@ namespace ClassicUO.Renderer.Animations
         }
 
         /// <summary>
-        /// The first direction of a body never seen before decodes on a worker thread when its pack chunks are not cached
-        /// (a chunk decompress is about 3 ms, a direction up to about 12 ms). CUO_ANIM_SYNC=1 restores the synchronous load.
+        /// A direction decodes on a worker thread when its pack chunks are not cached (a chunk decompress is about 3 ms, a
+        /// direction up to about 12 ms). CUO_ANIM_SYNC=1 restores the synchronous load.
         /// </summary>
         public static bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ANIM_SYNC") != "1";
 
         private readonly DecodeQueue<DirectionJob> _queue;
         private readonly Action<DirectionJob> _retire;
-        private bool[] _bodyDrawn; // the body has at least one direction uploaded (it may be on screen)
         // main thread: the frames of the directions submitted to a worker and not yet completed, retired or superseded by a
         // sync load
         private readonly HashSet<SpriteInfo[]> _pendingSprites = new HashSet<SpriteInfo[]>(ReferenceEqualityComparer.Instance);
@@ -305,7 +304,7 @@ namespace ClassicUO.Renderer.Animations
         /// <summary>Directions finished on a worker and not uploaded yet (CUO_ASSET_WAKE_CHECK).</summary>
         public int ReadyDirections => _queue.ReadyCount;
 
-        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync, bool evicted = false, bool prefetch = false)
+        private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir, bool sync, bool prefetch = false)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies
             if (!_animationLoader.TryGetDirection(body, action, dir + 3, out var entry))
@@ -314,21 +313,17 @@ namespace ClassicUO.Renderer.Animations
             }
 
             var sprites = new SpriteInfo[entry.FrameCount];
-            _bodyDrawn ??= new bool[_animationLoader.BodyCount];
 
-            // A body with nothing uploaded yet (first sight, or its first directions still on a worker): decode on a worker
-            // unless the chunks are already cached. Until the job lands, the frames exist (count, centre and size, so
-            // animation timing and dimensions are unchanged) but have no texture, and callers draw nothing for them, as for
-            // an empty frame. Once a body has a direction uploaded, later directions and actions stay synchronous, so a
-            // visible mobile never blinks when it turns or changes action; the worker prefetches the chunks of the other
-            // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
-            // anim_atlas_lru: a direction loaded again after its page was evicted takes the same path (not drawn for a while)
-            // anim_async_turn: a body already drawn takes the worker too (a turn or a new action); the draw keeps the
-            // mobile's previous look meanwhile (MobileSpriteExtract's hold, LookPrefetch.HoldMaxMs)
-            bool turn = _bodyDrawn[body] && !evicted && !prefetch;
+            // A direction decodes on a worker unless its chunks are already cached: a first sight, a direction loaded again
+            // after its page was evicted (anim_atlas_lru), and a turn or new action of a body already drawn alike (owner
+            // 2026-11-20: a brief turn delay on one mobile over a whole-frame stall). Until the job lands, the frames exist
+            // (count, centre and size, so animation timing and dimensions are unchanged) but have no texture; callers draw
+            // nothing for them, as for an empty frame, and the draw keeps a mobile's previous look meanwhile
+            // (MobileSpriteExtract's hold, LookPrefetch.HoldMaxMs). The worker prefetches the chunks of the other directions
+            // of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
             bool resident = IsResident(entry);
 
-            if ((prefetch && AsyncFirstSight) || DecodesOnWorker(sync, _bodyDrawn[body], evicted, AsyncTurn, resident))
+            if ((prefetch && AsyncFirstSight) || DecodesOnWorker(sync, resident))
             {
                 long heldBytes = 0;
 
@@ -346,13 +341,6 @@ namespace ClassicUO.Renderer.Animations
                 }
 
                 var job = new DirectionJob(this, body, action, dir, entry, sprites);
-#if CUO_DEVTOOLS
-                if (AsyncTurnCheck && turn)
-                {
-                    job.TurnSubmitted = Stopwatch.GetTimestamp();
-                    AsyncTurnSubmitted++;
-                }
-#endif
                 Interlocked.Increment(ref _pendingJobs);
                 _pendingSprites.Add(sprites);
                 _queue.Submit(job, heldBytes, counted: true);
@@ -360,11 +348,7 @@ namespace ClassicUO.Renderer.Animations
                 return sprites;
             }
 
-            _bodyDrawn[body] = true;
             uint[] buffer = null;
-#if CUO_DEVTOOLS
-            long syncStart = AsyncTurnCheck ? Stopwatch.GetTimestamp() : 0;
-#endif
 
             try
             {
@@ -401,12 +385,6 @@ namespace ClassicUO.Renderer.Animations
                     BufferPool.Return(buffer);
                 }
             }
-#if CUO_DEVTOOLS
-            if (AsyncTurnCheck)
-            {
-                NoteSyncDecode(sync, resident, Stopwatch.GetTimestamp() - syncStart);
-            }
-#endif
 
             return sprites;
         }
@@ -759,17 +737,10 @@ namespace ClassicUO.Renderer.Animations
                 return;
             }
 
-            _bodyDrawn[job.Body] = true;
-
             try
             {
                 CompleteFrames(job);
 #if CUO_DEVTOOLS
-                if (job.TurnSubmitted != 0)
-                {
-                    NoteTurnUploaded(job);
-                }
-
                 if (LruCheck && _lru != null)
                 {
                     CheckReloaded(DirKey(job.Body, job.Action, job.Dir), job.Sprites, "uploaded");
@@ -850,9 +821,6 @@ namespace ClassicUO.Renderer.Animations
             public readonly AnimDirEntry Entry;
             public readonly SpriteInfo[] Sprites;
             public readonly FrameBuffers Buffers; // rented from the shared family (BufferPool.RentShared); returned by Upload, ReturnAll or Decode's failure
-#if CUO_DEVTOOLS
-            public long TurnSubmitted; // CUO_ANIM_ASYNC_TURN_CHECK: a turn's direction (its body was drawn before) went to a worker then
-#endif
 
             public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
             {

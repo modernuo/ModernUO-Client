@@ -11,9 +11,10 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // asset_prefetch_on_packet: a drawn mobile whose new look is not loaded keeps its previous complete look (Legacy: an atlas
-    // direction still decoding; Gpu: a page not resident), then switches in one frame; switch off: the new look is drawn
-    // as far as it is loaded (the behaviour before the switch).
+    // The look hold, whatever asset_prefetch_on_packet: a drawn mobile whose new look is not loaded keeps its previous
+    // complete look (Legacy: an atlas direction still decoding; Gpu: a page not resident), then switches in one frame.
+    // asset_prefetch_on_packet adds the first-sight wait: a mobile with no complete look yet is drawn as nothing (bounded);
+    // switch off: as far as it is loaded.
     public partial class DynamicSpriteTests
     {
         private sealed class FakeResidency : IDynamicPageResidency
@@ -26,11 +27,10 @@ namespace ClassicUO.UnitTests.Ecs
             public void Request(in SpriteInstance instance) => Requests++;
         }
 
-        // asset_prefetch_on_packet alone: anim_async_turn (default on) also enables the hold, so it is pinned off
+        // asset_prefetch_on_packet on or off, with the hold clock pinned
         private static void WithHold(bool on, Action body)
         {
             LookPrefetch.OverrideForTests = on;
-            AnimAsyncTurn.OverrideForTests = false;
             LookPrefetch.TicksForTests = 1000;
 
             try
@@ -40,7 +40,6 @@ namespace ClassicUO.UnitTests.Ecs
             finally
             {
                 LookPrefetch.OverrideForTests = null;
-                AnimAsyncTurn.OverrideForTests = null;
                 LookPrefetch.TicksForTests = null;
             }
         }
@@ -56,7 +55,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
-        public void Legacy_New_Look_Decoding_Keeps_The_Previous_Look_Only_With_The_Switch(bool on)
+        public void Legacy_New_Look_Decoding_Keeps_The_Previous_Look(bool on)
         {
             WithHold(on, () =>
             {
@@ -74,7 +73,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Turn(e, cache);
                 List<LegacyDraw> partial = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
                 List<LegacyDraw> held = DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache);
-                AssertSameCalls(on ? before : partial, held, on ? "held" : "partial");
+                AssertSameCalls(before, held, "held");
                 Assert.True(partial.Count < before.Count);
 
                 // decoded: the new look at once
@@ -116,7 +115,7 @@ namespace ClassicUO.UnitTests.Ecs
                 cache.SelectGen++;
                 List<LegacyDraw> whole = FreshLegacyCalls(extract, atlas, e, 600, 400, 812.25f, out _, out _);
                 AssertSameCalls(whole, DrawLegacyCalls(extract, atlas, e, 600, 400, 812.25f, cache), "loaded");
-                Assert.Equal(on, cache.EverComplete);
+                Assert.True(cache.EverComplete);
             });
         }
 
@@ -204,7 +203,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
-        public void Gpu_New_Look_Not_Resident_Keeps_The_Previous_Look_Only_With_The_Switch(bool on)
+        public void Gpu_New_Look_Not_Resident_Keeps_The_Previous_Look(bool on)
         {
             WithHold(on, () =>
             {
@@ -222,9 +221,8 @@ namespace ClassicUO.UnitTests.Ecs
                 Turn(e, cache);
                 SpriteInstance[] turned = EmitFresh(extract, in tables, e);
                 SpriteInstance[] got = EmitCached(extract, in tables, e, cache);
-                // switch off: the new look's instances (the renderer draws them as their pages arrive)
-                AssertSameInstances(on ? before : turned, got, on ? "held" : "new look");
-                Assert.Equal(on ? turned.Length : 0, pages.Requests);
+                AssertSameInstances(before, got, "held");
+                Assert.Equal(turned.Length, pages.Requests);
 
                 pages.AllMissing = false;
                 cache.SelectGen++;

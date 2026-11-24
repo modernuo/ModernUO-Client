@@ -2878,7 +2878,7 @@ namespace ClassicUO.Game
             }
 
             _world.AsyncTurn.Note(mobile.Serial);
-            // asset_prefetch_on_packet: the war stance is another action group (with anim_async_turn off nothing else notes it)
+            // asset_prefetch_on_packet: the war stance is another action group
             LookPrefetch.Note(mobile.Serial, LookPrefetch.Kind.Mobile);
 
             bool detached = !Holds(mobile);

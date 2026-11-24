@@ -21,10 +21,10 @@ namespace ClassicUO.Game
     /// (the oldest are dropped), <see cref="BudgetPerUpdate"/> resolved per Update, objects beyond the client view range
     /// skipped (at most <see cref="TakesPerUpdate"/> notes looked at). Main thread; no allocation (the queues are sized
     /// once).
-    /// With the switch on, a drawn mobile whose new look is not loaded yet keeps drawing its previous complete look (the
+    /// Whatever the switch, a drawn mobile whose new look is not loaded yet keeps drawing its previous complete look (the
     /// MobileFrameCache recording, Legacy and Gpu) until every layer of the new one is loaded, at most
-    /// <see cref="HoldMaxMs"/>, then switches in one frame (MobileSpriteExtract.Emit / DrawLegacy). A mobile with no
-    /// complete look yet (first sight) is drawn as nothing until its body and every equipment layer are loaded, at most
+    /// <see cref="HoldMaxMs"/>, then switches in one frame (MobileSpriteExtract.Emit / DrawLegacy). With the switch on, a
+    /// mobile with no complete look yet (first sight) is drawn as nothing until its body and every equipment layer are loaded, at most
     /// <see cref="FirstSightMaxMs"/> from the first frame it would be visible, then as far as it is loaded (owner
     /// 2026-11-20: no naked-humanoid flash, at most 25 ms unseen). Both bounds schedule a present when they expire.
     /// CUO_LOOK_PREFETCH_CHECK=1 measures, in both switch states, packet arrival to the first complete draw per kind
@@ -75,10 +75,6 @@ namespace ClassicUO.Game
         [ThreadStatic] internal static bool? OverrideForTests;
 
         public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AssetPrefetchOnPacket ?? false);
-
-        /// <summary>The draw keeps a mobile's previous complete look while its new one loads (bounded): with this switch, or
-        /// with anim_async_turn, whose turns load on a worker. The first-sight wait stays with this switch only.</summary>
-        public static bool HoldEnabled => Enabled || AnimAsyncTurn.Enabled;
 
         /// <summary>A bounded FIFO of notes, sized once; full: the oldest note goes (a burst larger than the queue keeps its
         /// newest looks).</summary>
@@ -411,7 +407,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>The look's body (or mount), mount and equipment in UO direction <paramref name="uoDir"/> of
-        /// <paramref name="group"/> (anim_async_turn requests the neighbours of the facing direction with it).</summary>
+        /// <paramref name="group"/> (the turn prefetch, AnimAsyncTurn, requests the neighbours of the facing direction with it).</summary>
         internal static void PrefetchMobile(Mobile mobile, byte uoDir, byte group)
         {
             var animations = Client.Game.UO.Animations;
@@ -516,15 +512,10 @@ namespace ClassicUO.Game
             {
                 gpu.PrefetchAnim(animations.ResolveBody(body), group, uoDir);
             }
-            else if (Renderer.Animations.Animations.AsyncTurn)
-            {
-                // anim_async_turn: on a worker also for a body already drawn, and never decoded here
-                animations.PrefetchDirection(body, group, dir, equip);
-            }
             else
             {
-                // a non-sync lookup starts the worker decode of a direction never loaded (Animations.LoadDirection)
-                animations.GetAnimationFrames(body, group, dir, out _, out _, isEquip: equip);
+                // on a worker also for a body already drawn, and never decoded here
+                animations.PrefetchDirection(body, group, dir, equip);
             }
         }
 

@@ -85,11 +85,11 @@ namespace ClassicUO.Game
         public Entry[] Entries = new Entry[8];
         public int Count;
 
-        /// <summary>asset_prefetch_on_packet: Time.Ticks of the first frame that kept drawing the recorded look because the
+        /// <summary>The look hold: Time.Ticks of the first frame that kept drawing the recorded look because the
         /// new one was not loaded (0: not holding; LookPrefetch.HoldMaxMs bounds it).</summary>
         public uint HoldSince;
 
-        /// <summary>asset_prefetch_on_packet: the hold that started at <see cref="HoldSince"/> reached
+        /// <summary>The look hold: the hold that started at <see cref="HoldSince"/> reached
         /// LookPrefetch.HoldMaxMs (the new look draws as far as it is loaded until it completes).</summary>
         public bool HoldCapped;
 

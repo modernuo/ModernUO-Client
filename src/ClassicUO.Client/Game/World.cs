@@ -69,7 +69,7 @@ namespace ClassicUO.Game
         /// <summary>T1: the mutation funnel (ecs-transition-plan.md); converted packet groups write world state through it.</summary>
         public WorldWriter Writer { get; }
 
-        /// <summary>anim_async_turn: the directions to request for mobiles that moved, turned or changed war mode.</summary>
+        /// <summary>The turn prefetch: the directions to request for mobiles that moved, turned or changed war mode.</summary>
         internal AnimAsyncTurn AsyncTurn { get; }
 
         /// <summary>idle_on_spawn off: the idle due times of mobiles that left (IdleCadenceCache).</summary>

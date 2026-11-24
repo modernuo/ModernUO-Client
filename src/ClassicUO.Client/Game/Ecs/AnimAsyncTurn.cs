@@ -1,52 +1,27 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
-using System.Diagnostics;
-using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
-using ClassicUO.Utility.Logging;
-using RendererAnimations = ClassicUO.Renderer.Animations.Animations;
 
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// anim_async_turn (gpu-popin round 5, default on since 2026-11-22; owner 2026-11-20: a brief turn delay on one mobile is preferred to a
-    /// whole-frame stall). Sets <see cref="RendererAnimations.AsyncTurn"/> every Update: a turn or new action of a body
-    /// already drawn decodes on a worker instead of the main thread, and the draw keeps the mobile's previous look meanwhile
-    /// (<see cref="LookPrefetch.HoldEnabled"/>, at most <see cref="LookPrefetch.HoldMaxMs"/>); the upload's asset signal
-    /// presents the new look (asset_ready_wake). So that most turns are already resident, the WorldWriter operations that
-    /// move, turn or change the war mode of a mobile note it here, and the next Update requests the direction it will face
-    /// (the end of its queued steps) and the two next to it, in the group it will draw (walk or run while moving, the war
-    /// stance in war mode), for body, mount and equipment. Bounded like <see cref="LookPrefetch"/>: at most
+    /// The turn prefetch (gpu-popin round 5; owner 2026-11-20: a brief turn delay on one mobile is preferred to a whole-frame
+    /// stall). A turn or new action of a body already drawn decodes on a worker (Animations.LoadDirection), and the draw keeps
+    /// the mobile's previous look meanwhile (MobileSpriteExtract's hold, at most <see cref="LookPrefetch.HoldMaxMs"/>); the
+    /// upload's asset signal presents the new look (asset_ready_wake). So that most turns are already resident, the
+    /// WorldWriter operations that move, turn or change the war mode of a mobile note it here, and the next Update requests
+    /// the direction it will face (the end of its queued steps) and the two next to it, in the group it will draw (walk or
+    /// run while moving, the war stance in war mode), for body, mount and equipment. Bounded like <see cref="LookPrefetch"/>: at most
     /// <see cref="Capacity"/> notes waiting (the oldest dropped), <see cref="BudgetPerUpdate"/> resolved an Update, mobiles
     /// beyond the view range skipped. Main thread; no allocation. One queue per <see cref="World"/> (World.AsyncTurn): a
     /// process-wide queue let one world's notes reach another world's drain (the unit suite's parallel worlds).
-    /// CUO_ANIM_ASYNC_TURN_CHECK=1 (Animations.AsyncTurnCheck) reports per plan step or every 5 s, in both states.
     /// </summary>
     internal sealed class AnimAsyncTurn
     {
         public const int Capacity = 128;
         public const int BudgetPerUpdate = 16;
-
-#if CUO_DEVTOOLS
-        private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_ANIM_ASYNC_TURN") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-
-        public static bool Check => RendererAnimations.AsyncTurnCheck;
-#else
-        private static readonly bool? _env = null;
-        public const bool Check = false;
-#endif
-
-        /// <summary>Tests: the switch (null: the setting).</summary>
-        [ThreadStatic] internal static bool? OverrideForTests;
-
-        public static bool Enabled => OverrideForTests ?? _env ?? (Settings.GlobalSettings?.AnimAsyncTurn ?? true);
 
         private readonly World _world;
         private readonly uint[] _serials = new uint[Capacity];
@@ -57,11 +32,6 @@ namespace ClassicUO.Game
 
         public int Count => _count;
 
-#if CUO_DEVTOOLS
-        private long _summaryAt;
-        private bool _stepWindows;
-#endif
-
         public AnimAsyncTurn(World world)
         {
             _world = world;
@@ -70,7 +40,7 @@ namespace ClassicUO.Game
         /// <summary>WorldWriter: <paramref name="serial"/> moved, turned or changed its war mode (main thread).</summary>
         public void Note(uint serial)
         {
-            if (serial == 0 || !Enabled)
+            if (serial == 0)
             {
                 return;
             }
@@ -115,30 +85,13 @@ namespace ClassicUO.Game
         public void Drain()
         {
             World world = _world;
-            bool on = Enabled;
-            RendererAnimations.AsyncTurn = on;
-#if CUO_DEVTOOLS
-            if (Check && !_stepWindows)
-            {
-                long now = Stopwatch.GetTimestamp();
 
-                if (_summaryAt == 0)
-                {
-                    _summaryAt = now;
-                }
-                else if (now - _summaryAt >= Stopwatch.Frequency * 5)
-                {
-                    Log.Info($"[anim-async-turn-check] {RendererAnimations.AsyncTurnSummary()}; prefetch resolved {Resolved} dropped {Dropped}");
-                    _summaryAt = now;
-                }
-            }
-#endif
             if (_count == 0)
             {
                 return;
             }
 
-            if (world?.Player == null || !on)
+            if (world?.Player == null)
             {
                 _head = _count = 0;
 
@@ -175,19 +128,5 @@ namespace ClassicUO.Game
                 }
             }
         }
-
-#if CUO_DEVTOOLS
-        /// <summary>DevBench plan step: the summary for <paramref name="tag"/> (null: a window starts, discarded).</summary>
-        public void Step(string tag)
-        {
-            _stepWindows = true;
-            string s = RendererAnimations.AsyncTurnSummary();
-
-            if (tag != null)
-            {
-                Log.Info($"[anim-async-turn-check] step={tag} {s}; prefetch resolved {Resolved} dropped {Dropped}");
-            }
-        }
-#endif
     }
 }

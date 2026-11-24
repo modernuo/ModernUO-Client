@@ -17,7 +17,7 @@ namespace ClassicUO.Game
     /// body, equipment in paint order, strips, trim, mirroring, hue mode, depth key), with no atlas and no batcher.
     /// Screen position and base depth are inputs; the Gpu world renderer and the Legacy sink draw from it.
     /// </summary>
-    /// <summary>asset_prefetch_on_packet: whether a dynamic sprite instance's page is resident in the Gpu world, and its
+    /// <summary>The look hold: whether a dynamic sprite instance's page is resident in the Gpu world, and its
     /// request (queued like a prefetch, not counted as a missing visible page).</summary>
     internal interface IDynamicPageResidency
     {
@@ -813,12 +813,12 @@ namespace ClassicUO.Game
         private int _recordStart;
 
         // the depth recipe of each instance being recorded, copied into the cache's entries when the recording commits (a
-        // held look keeps the previous entries: asset_prefetch_on_packet)
+        // held look keeps the previous entries)
         private byte[] _recKind = new byte[16];
         private float[] _recAdd = new float[16];
 
         /// <summary>The page residency of the Gpu world the instances go to (GpuWorldRenderer sets it before Emit): decides
-        /// whether a new look is complete (asset_prefetch_on_packet). Null: not checked.</summary>
+        /// whether a new look is complete (the look hold). Null: not checked.</summary>
         internal IDynamicPageResidency PageResidency;
 
         /// <summary>
@@ -929,19 +929,17 @@ namespace ClassicUO.Game
 
             int n = _count - recStart;
 
-            bool hold = LookPrefetch.HoldEnabled;
-
-            if ((hold || LookPrefetch.Check) && PageResidency != null)
+            if (PageResidency != null)
             {
-                int missing = MissingAnimPages(_out, recStart, n, hold);
+                int missing = MissingAnimPages(_out, recStart, n);
 
                 if (missing != 0)
                 {
                     bool previous = cache.EmitValid && cache.Count != 0 && ReferenceEquals(cache.Pack, _pack) && cache.Geo == _geo;
 
-                    if (hold && previous && HoldLook(cache))
+                    if (previous && HoldLook(cache))
                     {
-                        // asset_prefetch_on_packet: the previous complete look until every page of the new one is resident
+                        // the previous complete look until every page of the new one is resident
                         _count = recStart;
                         _lightCount = recLights;
                         Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, data.Get<Position>().X, baseX, baseY, data.Get<Position>().Z);
@@ -953,7 +951,7 @@ namespace ClassicUO.Game
                         return;
                     }
 
-                    if (hold && !previous && LookPrefetch.Enabled && FirstSightWait(cache))
+                    if (!previous && LookPrefetch.Enabled && FirstSightWait(cache))
                     {
                         // first sight: nothing until the body and every equipment page are resident (bounded)
                         _count = recStart;
@@ -974,10 +972,7 @@ namespace ClassicUO.Game
                 }
                 else
                 {
-                    if (hold)
-                    {
-                        LookComplete(cache);
-                    }
+                    LookComplete(cache);
 #if CUO_DEVTOOLS
                     LookPrefetch.NoteDrawn(cache, true);
 #endif
@@ -1041,9 +1036,9 @@ namespace ClassicUO.Game
         /// </list>
         /// The instances are then exposed as a view when this is the first thing emitted since Begin, else appended to _out.
         /// </summary>
-        // asset_prefetch_on_packet: the instances in [start, start + n) whose animation page is not resident (Gpu draws them as
-        // nothing); request: queue those pages (a held look draws none of them, so the renderer would not request them)
-        private int MissingAnimPages(SpriteInstance[] instances, int start, int n, bool request)
+        // the instances in [start, start + n) whose animation page is not resident (Gpu draws them as nothing), each page
+        // requested (a held look draws none of them, so the renderer would not request them)
+        private int MissingAnimPages(SpriteInstance[] instances, int start, int n)
         {
             IDynamicPageResidency pages = PageResidency;
             int missing = 0;
@@ -1055,11 +1050,7 @@ namespace ClassicUO.Game
                 if (!pages.Resident(in inst))
                 {
                     missing++;
-
-                    if (request)
-                    {
-                        pages.Request(in inst);
-                    }
+                    pages.Request(in inst);
                 }
             }
 
@@ -1083,7 +1074,7 @@ namespace ClassicUO.Game
         }
 #endif
 
-        // asset_prefetch_on_packet: whether the previous look may still be drawn (LookPrefetch.HoldMaxMs from the first held
+        // the look hold: whether the previous look may still be drawn (LookPrefetch.HoldMaxMs from the first held
         // frame)
         private static bool HoldLook(MobileFrameCache cache)
         {
@@ -1319,16 +1310,14 @@ namespace ClassicUO.Game
             FrameStats.Inc(FrameCounter.MobLegacyMisses);
             Select(e, data, posX, posY, depth);
 
-            bool hold = LookPrefetch.HoldEnabled;
-
-            if (_atlasMiss && (hold || LookPrefetch.Check))
+            if (_atlasMiss)
             {
                 bool previous = cache.LegacyValid && cache.LegacyCount != 0 && ReferenceEquals(cache.LegacySource, src) &&
                     cache.LegacyAtlasEpoch == ClassicUO.Renderer.Animations.Animations.AtlasEpoch;
 
-                if (hold && previous && HoldLook(cache))
+                if (previous && HoldLook(cache))
                 {
-                    // asset_prefetch_on_packet: the previous complete look until every direction of the new one is uploaded
+                    // the previous complete look until every direction of the new one is uploaded
                     // (the select above started their decodes)
                     _selCount = 0;
                     ReplayLegacy(batcher, cache, baseX, baseY, depth);
@@ -1340,7 +1329,7 @@ namespace ClassicUO.Game
                     return;
                 }
 
-                if (hold && !previous && LookPrefetch.Enabled && FirstSightWait(cache))
+                if (!previous && LookPrefetch.Enabled && FirstSightWait(cache))
                 {
                     // first sight: nothing until the body and every equipment direction are uploaded (bounded)
                     _selCount = 0;
@@ -1359,18 +1348,14 @@ namespace ClassicUO.Game
             LookPrefetch.NoteDrawn(cache, !_atlasMiss);
 #endif
 
-            if (!_atlasMiss && hold)
+            if (!_atlasMiss)
             {
                 LookComplete(cache);
             }
-            else if (!_atlasMiss)
-            {
-                cache.HoldSince = 0;
-            }
 
             // a seated mobile's equipment reads the body rows the last seated human body left (MobileView's statics): not
-            // replayed. asset_prefetch_on_packet: recorded also when not reusable (a walking mobile), as the look to hold.
-            bool record = (cache.SelectValid || hold) && !_atlasMiss && (s.Flags & AnimStateFlags.CharSitting) == 0;
+            // replayed. Recorded also when not reusable (a walking mobile), as the look to hold.
+            bool record = !_atlasMiss && (s.Flags & AnimStateFlags.CharSitting) == 0;
 
             if (record)
             {
