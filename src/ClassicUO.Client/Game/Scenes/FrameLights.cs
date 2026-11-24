@@ -40,6 +40,13 @@ namespace ClassicUO.Game.Scenes
         private uint _frame;
         private bool _ranked;
 
+        // light_range: past the bound every offered light needs the kept entry of largest priority; a scan per light made a
+        // full budget cost O(lights x budget) per frame. A max-heap of entry indices ordered by (priority descending, index
+        // ascending), the order the scan picked by (first index of the largest), built when the list first fills and kept
+        // through replacements; appends and Truncate drop it.
+        private int[] _heap;
+        private bool _heapValid;
+
         public FrameLights(int capacity)
         {
             _entries = new Entry[capacity + 1];
@@ -87,6 +94,7 @@ namespace ClassicUO.Game.Scenes
             _limit = ranked ? System.Math.Max(limit, 0) : System.Math.Clamp(limit, 0, _entries.Length - 1);
             Refused = 0;
             MinRefusedPriority = long.MaxValue;
+            _heapValid = false;
         }
 
         /// <summary>The next free entry (past a ranked frame's bound: a scratch entry); <see cref="Commit()"/> keeps it.
@@ -121,38 +129,108 @@ namespace ClassicUO.Game.Scenes
             {
                 EnsurePriority(_count + 1);
                 _priority[_count++] = priority;
+                _heapValid = false;
 
                 return;
             }
 
             Refused++;
-            int worst = -1;
             long worstP = priority;
 
-            for (int i = 0; i < _count; i++)
+            if (_count > 0)
             {
-                if (_priority[i] > worstP)
+                if (!_heapValid)
                 {
-                    worstP = _priority[i];
-                    worst = i;
+                    BuildHeap();
                 }
-            }
 
-            if (worst >= 0)
-            {
-                _entries[worst] = _entries[_limit];
-                _priority[worst] = priority;
+                int worst = _heap[0];
+
+                if (_priority[worst] > priority)
+                {
+                    worstP = _priority[worst];
+                    _entries[worst] = _entries[_limit];
+                    _priority[worst] = priority;
+                    SiftDown(0);
+                }
             }
 
             MinRefusedPriority = System.Math.Min(MinRefusedPriority, worstP);
         }
 
+        // a above b in the heap: larger priority, or equal priority and smaller index
+        private bool Above(int a, int b)
+        {
+            long pa = _priority[a], pb = _priority[b];
+
+            return pa > pb || pa == pb && a < b;
+        }
+
+        private void BuildHeap()
+        {
+            if (_heap == null || _heap.Length < _count)
+            {
+                System.Array.Resize(ref _heap, System.Math.Max(_count, _priority.Length));
+            }
+
+            for (int i = 0; i < _count; i++)
+            {
+                _heap[i] = i;
+            }
+
+            for (int i = (_count >> 1) - 1; i >= 0; i--)
+            {
+                SiftDown(i);
+            }
+
+            _heapValid = true;
+        }
+
+        private void SiftDown(int pos)
+        {
+            int[] heap = _heap;
+            int n = _count;
+            int item = heap[pos];
+
+            while (true)
+            {
+                int child = (pos << 1) + 1;
+
+                if (child >= n)
+                {
+                    break;
+                }
+
+                int c = heap[child];
+
+                if (child + 1 < n && Above(heap[child + 1], c))
+                {
+                    child++;
+                    c = heap[child];
+                }
+
+                if (!Above(c, item))
+                {
+                    break;
+                }
+
+                heap[pos] = c;
+                pos = child;
+            }
+
+            heap[pos] = item;
+        }
+
         /// <summary>A ranked frame's priority of entry <paramref name="index"/>.</summary>
         public long PriorityAt(int index) => _priority[index];
 
+        // FadeLowest's picks on the stack up to this many ranks (LightRange.FadeRanks is 16), pooled past it
+        private const int StackFadeRanks = 64;
+
         /// <summary>light_range: the <paramref name="ranks"/> kept entries of largest priority (the lowest ranked) get their
-        /// share times LightRange.BudgetShare by rank from the lowest. Partial selection in rank order, O(count x ranks), no
-        /// state: ties are ordered by index. Ranked frames only.</summary>
+        /// share times LightRange.BudgetShare by rank from the lowest. Ranked in (priority, index) order, largest first: ties
+        /// go to the larger index. One pass keeping the picks sorted (an entry enters only past the current last pick), no
+        /// state. Ranked frames only.</summary>
         public void FadeLowest(int ranks)
         {
             if (!_ranked)
@@ -161,35 +239,43 @@ namespace ClassicUO.Game.Scenes
             }
 
             ranks = System.Math.Min(ranks, _count);
-            long prevP = long.MaxValue;
-            int prevI = int.MaxValue;
+
+            if (ranks <= 0)
+            {
+                return;
+            }
+
+            int[] rented = ranks > StackFadeRanks ? Uo.Buffers.BufferPool.Rent<int>(ranks) : null;
+            System.Span<int> picks = rented != null ? rented : stackalloc int[StackFadeRanks];
+            int n = 0;
+
+            for (int i = 0; i < _count; i++)
+            {
+                long p = _priority[i];
+
+                // i is larger than every index picked so far, so an equal priority ranks above
+                if (n == ranks && p < _priority[picks[n - 1]])
+                {
+                    continue;
+                }
+
+                int at = n == ranks ? n - 1 : n++;
+
+                while (at > 0 && p >= _priority[picks[at - 1]])
+                {
+                    picks[at] = picks[at - 1];
+                    at--;
+                }
+
+                picks[at] = i;
+            }
 
             for (int r = 0; r < ranks; r++)
             {
-                int best = -1;
-                long bestP = long.MinValue;
-
-                for (int i = 0; i < _count; i++)
-                {
-                    long p = _priority[i];
-
-                    // below the previous pick in (priority, index) order, and the largest such
-                    if ((p < prevP || p == prevP && i < prevI) && (p > bestP || p == bestP && i > best))
-                    {
-                        bestP = p;
-                        best = i;
-                    }
-                }
-
-                if (best < 0)
-                {
-                    return;
-                }
-
-                _entries[best].Share *= LightRange.BudgetShare(r, ranks);
-                prevP = bestP;
-                prevI = best;
+                _entries[picks[r]].Share *= LightRange.BudgetShare(r, ranks);
             }
+
+            Uo.Buffers.BufferPool.Return(rented);
         }
 
         /// <summary>A light's rank past the bound (smaller is kept first): lights whose centre is in the view (left, top,
@@ -210,7 +296,11 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        public void Truncate(int count) => _count = System.Math.Min(_count, System.Math.Max(count, 0));
+        public void Truncate(int count)
+        {
+            _count = System.Math.Min(_count, System.Math.Max(count, 0));
+            _heapValid = false;
+        }
 
         /// <summary>The lights to draw in frame <paramref name="frame"/>: only the ones its own walk collected.</summary>
         public int CountFor(uint frame) => _frame == frame ? _count : 0;
