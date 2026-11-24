@@ -106,7 +106,8 @@ namespace ClassicUO.Game.Scenes
                         return false;
                     }
 
-                    kind = ViewMargin.RingKind.Art;
+                    // vmw-cost: an item still fading in is kept (ViewMargin.ItemRingKind)
+                    kind = obj is Item ? ViewMargin.ItemRingKind(obj.AlphaHue) : ViewMargin.RingKind.Art;
                     slack = obj is Static ? 0 : ViewMargin.MovingSlack;
 
                     break;
@@ -142,7 +143,8 @@ namespace ClassicUO.Game.Scenes
                     _vwSummaryAt = Time.Ticks + 5000;
                     Log.Info($"[view-margin-walk-check] view_margin_walk {(_vmWalk ? "on" : "off")}, {_vwFrames} frames: margin tiles " +
                              $"{(_vmWalk ? "skipped" : "that would be skipped")} {_vwTiles}, margin objects {(_vmWalk ? "left out" : "that would be left out")} {_vwObjects}; " +
-                             $"checked {_vwChecked} margin objects of the full margin walk, mismatches {_vwMismatch} (reaching the view, left out)");
+                             $"checked {_vwChecked} margin objects of the full margin walk and {_vwFading} fading margin items, mismatches {_vwMismatch} " +
+                             "(reaching the view or fading, left out)");
                 }
             }
 #endif
@@ -194,7 +196,7 @@ namespace ClassicUO.Game.Scenes
             _mlMaxLeft = _mlMaxRight = _mlMaxUp = 0;
         }
 
-        private long _vwFrames, _vwTiles, _vwObjects, _vwChecked, _vwMismatch;
+        private long _vwFrames, _vwTiles, _vwObjects, _vwChecked, _vwMismatch, _vwFading;
         private uint _vwSummaryAt;
         private int _vwLogged;
 
@@ -229,8 +231,43 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
+        // vmw-cost: a margin item the new path leaves out (object skip; its tile is walked, items are in the dynamic cells)
+        // must have settled its fade (AlphaHue 0xFF): the walk steps the alpha only of the objects it visits
+        private void CheckMarginWalkFading(Item item, bool tileSkipped, int offX, int offY)
+        {
+            ViewMargin.Anchor(item.X, item.Y, item.Z, offX, offY, out int ax, out int ay);
+
+            if (ax < _minPixel.X || ax > _maxPixel.X || ay < _minPixel.Y || ay > _maxPixel.Y ||
+                ViewMargin.InView(ax, ay, _viewMinPixel.X, _viewMinPixel.Y, _viewMaxPixel.X, _viewMaxPixel.Y))
+            {
+                return;
+            }
+
+            _vwFading++;
+
+            if (!tileSkipped && !RingSkipsAt(item, ax, ay))
+            {
+                return;
+            }
+
+            _vwMismatch++;
+
+            if (_vwLogged < 30)
+            {
+                _vwLogged++;
+                Log.Warn($"[view-margin-walk-check] Item 0x{item.Graphic:X4} at {item.X},{item.Y},{item.Z} left out " +
+                         $"({(tileSkipped ? "tile skipped" : "object skipped")}, view_margin_walk {(_vmWalk ? "on" : "off")}) while fading " +
+                         $"(alpha {item.AlphaHue})");
+            }
+        }
+
         private void CheckMarginWalkObject(Chunk chunk, GameObject obj, bool tileSkipped, Point vMin, Point vMax, int offX, int offY)
         {
+            if (obj is Item { IsMulti: false, IsCorpse: false, IsDestroyed: false } fading && fading.AlphaHue != 0xFF && fading.AllowedToDraw)
+            {
+                CheckMarginWalkFading(fading, tileSkipped, offX, offY);
+            }
+
             if (obj == null || obj.IsDestroyed || !obj.AllowedToDraw || obj.AlphaHue == 0 || obj is Mobile || obj is GameEffect)
             {
                 return;
