@@ -857,6 +857,7 @@ namespace ClassicUO.Game.Scenes
             // atlas_lru: a Legacy mesh drawing from a freed art/texmap page is rebuilt (the Gpu world doesn't draw meshes)
             int atlasEpoch = ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch;
 
+            long bandTicks = 0;
             long fillStart = FrameStats.Stamp();
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
@@ -868,6 +869,7 @@ namespace ClassicUO.Game.Scenes
                         continue;
 
                     long bandStart = FrameStats.Stamp();
+                    long bandFrom = bandStart;
                     FrameStats.Inc(FrameCounter.BandChunks);
 
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
@@ -882,7 +884,7 @@ namespace ClassicUO.Game.Scenes
 #endif
                     // view_margin_walk: margin tiles only where an object can reach the view (GameSceneMarginWalk)
                     inWalk = MarginWalkTiles(chunk, chunkX, chunkY, inWalk, out ulong ringWalk);
-                    FrameStats.AddSince(FramePhase.PrepBandMasks, bandStart);
+                    bandTicks += FrameStats.AddSince(FramePhase.PrepBandMasks, bandStart) - bandFrom;
 
                     if (inHidden == 0)
                         continue;
@@ -1060,7 +1062,8 @@ namespace ClassicUO.Game.Scenes
             {
                 if (!chunkStamps)
                 {
-                    FrameStats.AddSince(FramePhase.PrepWalk, loopStart);
+                    // Band masks are exclusive prepare phases on both renderers.
+                    FrameStats.AddSince(FramePhase.PrepWalk, loopStart + bandTicks);
                 }
 
                 FrameStats.Add(FrameCounter.Tiles, nTiles);

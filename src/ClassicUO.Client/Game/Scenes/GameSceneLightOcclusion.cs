@@ -542,11 +542,13 @@ namespace ClassicUO.Game.Scenes
             ref int n, ref OccluderSums sums)
         {
             List<Chunk> chunks = OccluderChunks;
+            bool stats = FrameStats.On;
+            int visited = 0;
 
             for (int c = 0; c < chunks.Count; c++)
             {
                 Chunk chunk = chunks[c];
-                FrameStats.Inc(FrameCounter.LoChunks);
+                if (stats) visited++;
 
                 if (chunk.IsDestroyed || !LightOcclusion.ChunkReaches(chunk.X, chunk.Y, chunk.StaticOverLeft, chunk.StaticOverRight,
                     chunk.StaticOverUp, chunk.OccZLo, chunk.OccZHi, _offset.X, _offset.Y, rl, rt, rr, rb))
@@ -557,6 +559,8 @@ namespace ClassicUO.Game.Scenes
                 _loRecord?.AddChunk(chunk);
                 CollectChunk(ref l, chunk, staticData, in t, rl, rr, false, ref n, ref sums);
             }
+
+            if (stats) FrameStats.Add(FrameCounter.LoChunks, visited);
         }
 
         // light_occlusion_cache: an object able to hide light l whatever its drawn state (LightOcclusion.Hides's terms that
@@ -595,6 +599,8 @@ namespace ClassicUO.Game.Scenes
             bool all, ref int n, ref OccluderSums sums)
         {
             int x0 = chunk.X << 3, y0 = chunk.Y << 3;
+            bool stats = FrameStats.On;
+            int tiles = 0, objects = 0;
 
             for (int cell = 0; cell < 64; cell++)
             {
@@ -605,19 +611,25 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                CollectTile(ref l, chunk, cell, staticData, in t, ref n, ref sums);
+                if (stats) tiles++;
+                CollectTile(ref l, chunk, cell, staticData, in t, ref n, ref sums, stats, ref objects);
+            }
+
+            if (stats)
+            {
+                FrameStats.Add(FrameCounter.LoTiles, tiles);
+                FrameStats.Add(FrameCounter.LoObjects, objects);
             }
         }
 
         // one tile's occluders: its statics and multi pieces, and its ground items
-        private void CollectTile(ref FrameLights.Entry l, Chunk chunk, int cell, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums)
+        private void CollectTile(ref FrameLights.Entry l, Chunk chunk, int cell, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums, bool stats, ref int objects)
         {
             LightOccluderEntry rec = _loRecord;
-            FrameStats.Inc(FrameCounter.LoTiles);
 
             for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
             {
-                FrameStats.Inc(FrameCounter.LoObjects);
+                if (stats) objects++;
                 if (rec != null && (o is Static || o is Multi) && CacheCandidate(ref l, in t, o, staticData))
                 {
                     rec.AddCandidate(o);
@@ -636,7 +648,7 @@ namespace ClassicUO.Game.Scenes
 
             foreach (ref readonly DynamicTileIndex.Entry en in chunk.Dynamic.Cell(cell))
             {
-                FrameStats.Inc(FrameCounter.LoObjects);
+                if (stats) objects++;
                 if (rec != null && en.Obj is Item candidate && CacheCandidate(ref l, in t, candidate, staticData))
                 {
                     rec.AddCandidate(candidate);

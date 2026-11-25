@@ -351,6 +351,8 @@ namespace ClassicUO.Game.Scenes
             ulong walk = 0, full = 0, mobiles = 0, mobileStops = 0, effects = 0;
             int minZ = int.MaxValue, maxZ = int.MinValue, halfW = 22, height = 44;
             int mobileCount = 0;
+            bool stats = FrameStats.On;
+            int objects = 0;
             // T6b: GpuMobiles is in the walk's order, so a tile with dynamics reads the merged order
             ulong mergeCells = TileWalk.MergeCells(chunk);
 
@@ -358,7 +360,6 @@ namespace ClassicUO.Game.Scenes
             {
                 for (int y = 0; y < 8; y++)
                 {
-                    FrameStats.Inc(FrameCounter.GpuMaskTiles);
                     ulong bit = 1UL << (x << 3 | y);
                     chunk.GpuMobileStart[x << 3 | y] = mobileCount;
 
@@ -366,7 +367,7 @@ namespace ClassicUO.Game.Scenes
                          obj != null;
                          obj = mergedWalk ? tileWalk.Next() : list = list.TNext)
                     {
-                        FrameStats.Inc(FrameCounter.GpuMaskObjects);
+                        if (stats) objects++;
                         if (!IsGpuBaked(obj))
                         {
                             walk |= bit;
@@ -425,6 +426,12 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
                 }
+            }
+
+            if (stats)
+            {
+                FrameStats.Add(FrameCounter.GpuMaskTiles, 64);
+                FrameStats.Add(FrameCounter.GpuMaskObjects, objects);
             }
 
             chunk.GpuWalkMask = walk;
@@ -577,21 +584,28 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            FrameStats.Inc(FrameCounter.GpuSettleChunks);
+            bool stats = FrameStats.On;
+            int objects = 0;
             for (int x = 0; x < 8; x++)
             {
                 for (int y = 0; y < 8; y++)
                 {
-                    FrameStats.Inc(FrameCounter.GpuSettleTiles);
                     for (TileListObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
                     {
-                        FrameStats.Inc(FrameCounter.GpuSettleObjects);
+                        if (stats) objects++;
                         if (IsGpuBaked(obj))
                         {
                             obj.AlphaHue = GpuSettledAlpha(obj);
                         }
                     }
                 }
+            }
+
+            if (stats)
+            {
+                FrameStats.Inc(FrameCounter.GpuSettleChunks);
+                FrameStats.Add(FrameCounter.GpuSettleTiles, 64);
+                FrameStats.Add(FrameCounter.GpuSettleObjects, objects);
             }
         }
 

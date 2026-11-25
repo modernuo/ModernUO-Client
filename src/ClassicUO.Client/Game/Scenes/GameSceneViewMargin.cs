@@ -30,6 +30,9 @@ namespace ClassicUO.Game.Scenes
             Map.Map map = _world.Map;
             StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
 
+            bool stats = FrameStats.On;
+            int chunks = 0, tiles = 0, objects = 0;
+
             for (int cx = cx0; cx <= cx1; cx++)
             {
                 for (int cy = cy0; cy <= cy1; cy++)
@@ -46,8 +49,11 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    FrameStats.Inc(FrameCounter.ChunkLightChunks);
-                    FrameStats.Add(FrameCounter.ChunkLightObjects, chunk.LightSourceCount);
+                    if (stats)
+                    {
+                        chunks++;
+                        objects += chunk.LightSourceCount;
+                    }
 
                     for (int i = 0, n = chunk.LightSourceCount; i < n; i++)
                     {
@@ -77,8 +83,11 @@ namespace ClassicUO.Game.Scenes
                     {
                         int cell = System.Numerics.BitOperations.TrailingZeroCount(cells);
                         DynamicTileIndex.Entry[] entries = dyn.RawCell(cell, out int entryCount);
-                        FrameStats.Inc(FrameCounter.ChunkLightTiles);
-                        FrameStats.Add(FrameCounter.ChunkLightObjects, entryCount);
+                        if (stats)
+                        {
+                            tiles++;
+                            objects += entryCount;
+                        }
 
                         for (int e = 0; e < entryCount; e++)
                         {
@@ -89,6 +98,13 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
                 }
+            }
+
+            if (stats)
+            {
+                FrameStats.Add(FrameCounter.ChunkLightChunks, chunks);
+                FrameStats.Add(FrameCounter.ChunkLightTiles, tiles);
+                FrameStats.Add(FrameCounter.ChunkLightObjects, objects);
             }
         }
 

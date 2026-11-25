@@ -36,4 +36,55 @@ public class FrameStatsKeysTests
         Assert.Equal("mwo_resolve", keys[(int)FramePhase.MwoResolve]);
         Assert.Equal("mwo_scan", keys[(int)FramePhase.MwoScan]);
     }
+
+    [Fact]
+    public void Counter_Keys_Line_Up_With_Their_Walk_Consumers()
+    {
+        var keys = (string[])typeof(FrameStats).GetField("_counterKeys", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+
+        Assert.Equal("band_chunks", keys[(int)FrameCounter.BandChunks]);
+        Assert.Equal("lo_chunks", keys[(int)FrameCounter.LoChunks]);
+        Assert.Equal("lo_tiles", keys[(int)FrameCounter.LoTiles]);
+        Assert.Equal("lo_objects", keys[(int)FrameCounter.LoObjects]);
+        Assert.Equal("lo_candidates", keys[(int)FrameCounter.LoCandidates]);
+        Assert.Equal("chunk_light_chunks", keys[(int)FrameCounter.ChunkLightChunks]);
+        Assert.Equal("chunk_light_tiles", keys[(int)FrameCounter.ChunkLightTiles]);
+        Assert.Equal("chunk_light_objects", keys[(int)FrameCounter.ChunkLightObjects]);
+        Assert.Equal("gpu_settle_chunks", keys[(int)FrameCounter.GpuSettleChunks]);
+        Assert.Equal("gpu_settle_tiles", keys[(int)FrameCounter.GpuSettleTiles]);
+        Assert.Equal("gpu_settle_objects", keys[(int)FrameCounter.GpuSettleObjects]);
+        Assert.Equal("gpu_mask_tiles", keys[(int)FrameCounter.GpuMaskTiles]);
+        Assert.Equal("gpu_mask_objects", keys[(int)FrameCounter.GpuMaskObjects]);
+    }
+
+    [Fact]
+    public void Prep_Rest_Excludes_Settle_And_Preserves_Inclusive_Subsets()
+    {
+        var acc = (long[])typeof(FrameStats).GetField("_acc", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        var saved = (long[])acc.Clone();
+        try
+        {
+            System.Array.Clear(acc);
+            acc[(int)FramePhase.WorldPrepare] = 1000;
+            acc[(int)FramePhase.PrepWalk] = 200;
+            acc[(int)FramePhase.PrepFoliageFinish] = 100;
+            acc[(int)FramePhase.GpuSettle] = 300;
+            acc[(int)FramePhase.PrepZBand] = 40;
+            acc[(int)FramePhase.PrepBandMasks] = 60;
+            // These are subsets of existing parents, not additional exclusive prepare phases.
+            acc[(int)FramePhase.FillLoop] = 400;
+            acc[(int)FramePhase.LightSearch] = 50;
+            acc[(int)FramePhase.ChunkLights] = 60;
+            acc[(int)FramePhase.MwoResolve] = 70;
+            acc[(int)FramePhase.MwoScan] = 30;
+
+            typeof(FrameStats).GetMethod("CompletePhases", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null);
+
+            Assert.Equal(300, acc[(int)FramePhase.PrepRest]);
+        }
+        finally
+        {
+            saved.CopyTo(acc, 0);
+        }
+    }
 }

@@ -740,7 +740,9 @@ namespace ClassicUO
                                              _acc[(int)FramePhase.PrepText] - _acc[(int)FramePhase.PrepCaptureMulti] -
                                              _acc[(int)FramePhase.PrepCaptureStatic] - _acc[(int)FramePhase.PrepCaptureItem] -
                                              _acc[(int)FramePhase.PrepCaptureMobile] - _acc[(int)FramePhase.PrepCaptureOther] -
-                                             _acc[(int)FramePhase.PrepItemCache] - _acc[(int)FramePhase.PrepCaptureCached];
+                                             _acc[(int)FramePhase.PrepItemCache] - _acc[(int)FramePhase.PrepCaptureCached] -
+                                             _acc[(int)FramePhase.GpuSettle] - _acc[(int)FramePhase.PrepZBand] -
+                                             _acc[(int)FramePhase.PrepBandMasks];
 
             _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
             _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
