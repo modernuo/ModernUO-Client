@@ -62,6 +62,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
+        public void WindowAverageIsPerFrameAndSafeForAnEmptyWindow()
+        {
+            LegacyInstancedSprites.PerFrame(300, 60).Should().Be(5d);
+            LegacyInstancedSprites.PerFrame(5, 0).Should().Be(0d);
+        }
+
+        [Fact]
         public void CheckerCountsMatchesAndMismatches()
         {
             var lines = new System.Collections.Generic.List<string>();

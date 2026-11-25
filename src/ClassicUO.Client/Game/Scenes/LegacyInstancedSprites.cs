@@ -40,6 +40,9 @@ namespace ClassicUO.Game.Scenes
         /// <summary>What the batcher is asked for: instances only inside the world lists, quads everywhere else.</summary>
         public static bool RequestFor(bool inWorldLists) => inWorldLists && Enabled;
 
+        /// <summary>Per-frame average of a counter's growth over a window; 0 for an empty window.</summary>
+        internal static double PerFrame(long delta, long frames) => frames > 0 ? (double)delta / frames : 0d;
+
 #if CUO_DEVTOOLS
         private static long _summaryAt;
 
@@ -55,18 +58,35 @@ namespace ClassicUO.Game.Scenes
             UltimaBatcher2D.InstanceMismatchLog = Log.Warn;
         }
 
-        /// <summary>Once per frame with the checker on: the 5 s summary.</summary>
+        private static long _frames, _lastFrames, _lastInst, _lastQuad, _lastSwitches;
+
+        /// <summary>Once per world frame with the checker on: the 5 s summary, with per-frame averages over the window taken from
+        /// the checker's own cumulative counters (they do not depend on FrameStats).</summary>
         public static void Summary()
         {
-            if (!Check || Time.Ticks < _summaryAt)
+            if (!Check)
+            {
+                return;
+            }
+
+            _frames++;
+
+            if (Time.Ticks < _summaryAt)
             {
                 return;
             }
 
             _summaryAt = Time.Ticks + 5000;
+            long frames = _frames - _lastFrames;
+            long inst = UltimaBatcher2D.InstanceChecked, quad = UltimaBatcher2D.CheckQuadSprites, sw = UltimaBatcher2D.CheckPathSwitches;
             Log.Info($"[legacy-instanced-check] legacy_instanced_sprites {(Enabled ? "on" : "off")}, {UltimaBatcher2D.InstanceChecked} checked, " +
-                     $"{UltimaBatcher2D.InstanceMismatches} mismatches, per frame (last, needs CUO_FRAMESTATS) {UltimaBatcher2D.FrameInstancedSprites} instanced / " +
-                     $"{UltimaBatcher2D.FrameQuadSprites} quad sprites, {UltimaBatcher2D.FramePathSwitches} path switches");
+                     $"{UltimaBatcher2D.InstanceMismatches} mismatches, per frame over {frames} frames: " +
+                     $"{PerFrame(inst - _lastInst, frames):F1} instanced / {PerFrame(quad - _lastQuad, frames):F1} quad sprites, " +
+                     $"{PerFrame(sw - _lastSwitches, frames):F2} path switches");
+            _lastFrames = _frames;
+            _lastInst = inst;
+            _lastQuad = quad;
+            _lastSwitches = sw;
         }
 #endif
     }

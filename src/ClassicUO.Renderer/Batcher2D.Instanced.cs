@@ -63,12 +63,15 @@ namespace ClassicUO.Renderer
         /// <summary>The client's log sink for mismatch lines (at most <see cref="MaxMismatchLines"/> per run).</summary>
         public static Action<string> InstanceMismatchLog;
 
+        /// <summary>Checker only (independent of FrameStats): sprites uploaded as quads and flushes forced by a path change, cumulative.</summary>
+        public static long CheckQuadSprites, CheckPathSwitches;
+
         private const int MaxMismatchLines = 20;
         private static int _mismatchLines;
 
         internal static void ResetCheck()
         {
-            InstanceChecked = InstanceMismatches = 0;
+            InstanceChecked = InstanceMismatches = CheckQuadSprites = CheckPathSwitches = 0;
             _mismatchLines = 0;
         }
 
@@ -263,6 +266,11 @@ namespace ClassicUO.Renderer
         [MethodImpl(MethodImplOptions.NoInlining)]
         private void SwitchPath()
         {
+            if (InstanceCheck)
+            {
+                CheckPathSwitches++;
+            }
+
             if (CollectFrameStats)
             {
                 FramePathSwitches++;

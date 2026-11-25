@@ -1815,6 +1815,12 @@ namespace ClassicUO.Renderer
             }
 
             _currentBufferPosition = offset + count;
+
+            if (InstanceCheck)
+            {
+                CheckQuadSprites += count;
+            }
+
             if (CollectFrameStats)
             {
                 FrameUploadCalls++;

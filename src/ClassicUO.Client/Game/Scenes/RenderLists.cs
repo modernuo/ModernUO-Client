@@ -356,54 +356,62 @@ namespace ClassicUO.Game.Scenes
                 result += DrawMeshLayer(batcher, chunk.Mesh.Land);
             batcher.ResetWorldOffset();
 
-            // Draw excluded land tiles (animated water, etc.)
-            result += DrawRenderList(batcher, _tiles, maxGroundZ);
-            result += DrawRenderList(batcher, _stretchedTiles, maxGroundZ);
-
-            // Draw chunk mesh statics from GPU buffers with per-frame visibility
-            batcher.SetWorldOffset(offsetX, offsetY);
-            foreach (var chunk in visibleChunks)
-                result += DrawMeshLayer(batcher, chunk.Mesh.Statics);
-            batcher.ResetWorldOffset();
-
-            // Draw excluded statics + animations + effects. T7b: mobiles and items through the sink, at the same list position
-            // (LegacySpriteSink); T7b part 3: effects through EffectSpriteSink
-            LegacySpriteSink.BeginFrame();
-            LegacyGeoDepth.BeginFrame(offsetX, offsetY);
-#if CUO_DEVTOOLS
-            GoldenCapture.BeginLegacy(batcher);
-#endif
-
-            // legacy_instanced_sprites: the lists below are the world (the mesh layers above draw from GPU buffers)
+            // legacy_instanced_sprites: the lists from here are the world (the mesh layers draw from GPU buffers); the finally clears it
             batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(true);
 
             try
             {
-                result += DrawWorldRenderList(batcher, _statics, maxGroundZ) +
-                       DrawWorldRenderList(batcher, _animations, maxGroundZ) +
-                       DrawEffectRenderList(batcher, _effects, maxGroundZ);
+                // Draw excluded land tiles (animated water, etc.)
+                result += DrawRenderList(batcher, _tiles, maxGroundZ);
+                result += DrawRenderList(batcher, _stretchedTiles, maxGroundZ);
 
-                if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
-                {
-                    //batcher.SetStencil(DepthStencilState.DepthRead);
-                    result += DrawWorldRenderList(batcher, _transparentObjects, maxGroundZ);
+                // Draw chunk mesh statics from GPU buffers with per-frame visibility
+                batcher.SetWorldOffset(offsetX, offsetY);
+                foreach (var chunk in visibleChunks)
+                    result += DrawMeshLayer(batcher, chunk.Mesh.Statics);
+                batcher.ResetWorldOffset();
+
+                // Draw excluded statics + animations + effects. T7b: mobiles and items through the sink, at the same list position
+                // (LegacySpriteSink); T7b part 3: effects through EffectSpriteSink
+                LegacySpriteSink.BeginFrame();
+                LegacyGeoDepth.BeginFrame(offsetX, offsetY);
 #if CUO_DEVTOOLS
-                    if (GoldenCapture.Recording)
-                    {
-                        GoldenCapture.MarkLegacy(null);
-                    }
+                GoldenCapture.BeginLegacy(batcher);
 #endif
-                    result += DrawRenderListWithAtlas(batcher, _gumpSprites);
-                    result += DrawRenderListNoAtlas(batcher, _gumpTexts);
-                    //batcher.SetStencil(null);
+
+                try
+                {
+                    result += DrawWorldRenderList(batcher, _statics, maxGroundZ) +
+                           DrawWorldRenderList(batcher, _animations, maxGroundZ) +
+                           DrawEffectRenderList(batcher, _effects, maxGroundZ);
+
+                    if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+                    {
+                        //batcher.SetStencil(DepthStencilState.DepthRead);
+                        result += DrawWorldRenderList(batcher, _transparentObjects, maxGroundZ);
+#if CUO_DEVTOOLS
+                        if (GoldenCapture.Recording)
+                        {
+                            GoldenCapture.MarkLegacy(null);
+                        }
+#endif
+                        result += DrawRenderListWithAtlas(batcher, _gumpSprites);
+                        result += DrawRenderListNoAtlas(batcher, _gumpTexts);
+                        //batcher.SetStencil(null);
+                    }
+                }
+                finally
+                {
+                    // first, so an exception in the capture or sink cleanup cannot leave instances on for the UI
+                    batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(false);
+#if CUO_DEVTOOLS
+                    GoldenCapture.EndLegacy(batcher);
+#endif
+                    LegacySpriteSink.EndFrame();
                 }
             }
             finally
             {
-#if CUO_DEVTOOLS
-                GoldenCapture.EndLegacy(batcher);
-#endif
-                LegacySpriteSink.EndFrame();
                 batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(false);
             }
 
