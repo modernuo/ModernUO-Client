@@ -1017,7 +1017,7 @@ namespace ClassicUO.Renderer
         {
             EnsureSize();
 
-            SetVertex
+            BuildQuad
             (
                 ref _vertexInfo[_numSprites],
                 sourceX, sourceY, sourceW, sourceH,
@@ -1086,7 +1086,7 @@ namespace ClassicUO.Renderer
             _customEffect = null;
         }
 
-        private void SetVertex
+        internal static void BuildQuad
         (
             ref PositionNormalTextureColor4 sprite,
             float sourceX,
