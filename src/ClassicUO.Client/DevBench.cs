@@ -2493,6 +2493,33 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex].StartsWith("lightgear:") && world.Player is { } lightPlayer)
+                    {
+                        // Local checker fixture: a real equipment funnel transition, no shard item or mouse input.
+                        const uint lightSerial = 0x7FFFFE71;
+                        bool equip = _plan[_planIndex] == "lightgear:on";
+                        if (equip)
+                        {
+                            Layer layer = lightPlayer.FindItemByLayer(Layer.OneHanded) == null ? Layer.OneHanded : Layer.TwoHanded;
+                            if (lightPlayer.FindItemByLayer(layer) == null)
+                            {
+                                var torch = world.Writer.Equip(lightSerial, 0x0A12, layer, lightPlayer.Serial, 0, out _, out _);
+                                if (torch != null && ReferenceEquals(lightPlayer.FindItemByLayer(layer), torch))
+                                    Log.Info($"[bench] lightgear equipped torch on {layer}");
+                                else Log.Warn("[bench] lightgear equipment transition refused");
+                            }
+                            else Log.Warn("[bench] lightgear unavailable: both hands occupied");
+                        }
+                        else if (world.FindItem(lightSerial) is { } lightItem)
+                        {
+                            world.Writer.RemoveWorldItem(lightItem, out _);
+                            Log.Info("[bench] lightgear unequipped torch");
+                        }
+                        _planIndex++;
+                        _stepAt = now + sec;
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("season:"))
                     {
                         var season = Enum.Parse<Game.Managers.Season>(_plan[_planIndex].Substring(7), true);

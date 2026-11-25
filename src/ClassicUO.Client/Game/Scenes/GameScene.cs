@@ -56,7 +56,7 @@ namespace ClassicUO.Game.Scenes
         private HealthLinesManager _healthLinesManager;
 
         private Point _lastSelectedMultiPositionInHouseCustomization;
-        private readonly FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
+        private FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
 #if CUO_DEVTOOLS
         // LightFrameLog: the light configuration the composite uses and the one the light target was drawn for (0 none,
         // 1 darkness, 2 alternative)
@@ -337,6 +337,11 @@ namespace ClassicUO.Game.Scenes
             // light_occlusion_bake's atlas; light_occlusion_cache's entries (their objects)
             DisposeLightBake();
             _loTable.Reset();
+            _lightSearchMeasure?.Dispose();
+            _lightSearchMeasure = null;
+#if CUO_DEVTOOLS
+            _chunkLightReference?.BeginFrame(0);
+#endif
 
 
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
@@ -479,7 +484,7 @@ namespace ClassicUO.Game.Scenes
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
 #if CUO_DEVTOOLS
-            if (LightSlotDiag.Armed)
+            if (LightSlotDiag.Armed && !_chunkLightShadow)
             {
                 byte outcome = AddLightCore(obj, lightObject, x, y);
 
@@ -667,6 +672,9 @@ namespace ClassicUO.Game.Scenes
                 light.DrawX = x;
                 light.DrawY = y;
                 light.Source = obj;
+#if CUO_DEVTOOLS
+                light.SourceLife = obj.Incarnation;
+#endif
                 light.SrcX = obj.X;
                 light.SrcY = obj.Y;
                 light.SrcZ = obj.Z;
@@ -678,6 +686,10 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 Client.Game.UO.FileManager.Lights.Extent(light.ID, out int lw, out int lh);
+#if CUO_DEVTOOLS
+                light.ShapeWidth = lw;
+                light.ShapeHeight = lh;
+#endif
 
                 if (!ViewMargin.LightReaches(x, y, lw, lh, _lvLeft, _lvTop, _lvRight, _lvBottom))
                 {
@@ -692,7 +704,7 @@ namespace ClassicUO.Game.Scenes
                     if (!LightRange.InRange(d, _lvRange))
                     {
 #if CUO_DEVTOOLS
-                        _lrDropped++;
+                        if (!_chunkLightShadow) _lrDropped++;
 #endif
                         if (_lightRange)
                         {
@@ -1837,7 +1849,7 @@ namespace ClassicUO.Game.Scenes
             // chunk_lights: the static lights from the chunks' emitter lists, and the light sources beside the walked view whose
             // halo reaches into it (ViewMargin)
             FrameStats.Begin(FramePhase.ChunkLights);
-            AddChunkLights();
+            CollectChunkLights();
             FrameStats.End(FramePhase.ChunkLights);
             int lightCount = _frameLights.CountFor(_lightsFrame);
 
@@ -1847,6 +1859,7 @@ namespace ClassicUO.Game.Scenes
                 _frameLights.FadeLowest(LightRange.FadeRanks);
             }
 #if CUO_DEVTOOLS
+            CheckChunkLightCache();
             LightRangeCheck(lightCount);
 
             if (LightSlotDiag.Armed)
@@ -1859,6 +1872,7 @@ namespace ClassicUO.Game.Scenes
             _lightTargetMode = UseAltLights ? 2 : 1;
 #endif
             // light_occlusion_bake: new or changed masked glows into the atlas before the light target is bound
+            BeginLightSearchMeasure(renderTargets.LightRenderTarget);
             LightBakePrepass(batcher, ref matrix, lightCount, renderTargets.LightRenderTarget);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
             // light_batch: the batched path runs with light_occlusion (LightBatch)

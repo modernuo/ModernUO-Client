@@ -47,6 +47,15 @@ public class FrameStatsKeysTests
         Assert.Equal("lo_tiles", keys[(int)FrameCounter.LoTiles]);
         Assert.Equal("lo_objects", keys[(int)FrameCounter.LoObjects]);
         Assert.Equal("lo_candidates", keys[(int)FrameCounter.LoCandidates]);
+        Assert.Equal("light_search_passes", keys[(int)FrameCounter.LightSearchPasses]);
+        Assert.Equal("light_candidate_reads", keys[(int)FrameCounter.LightCandidateReads]);
+        Assert.Equal("light_unique_candidates", keys[(int)FrameCounter.LightUniqueCandidates]);
+        Assert.Equal("light_result_queries", keys[(int)FrameCounter.LightResultQueries]);
+        Assert.Equal("light_result_hits", keys[(int)FrameCounter.LightResultHits]);
+        Assert.Equal("light_measure_overflow", keys[(int)FrameCounter.LightMeasureOverflow]);
+        Assert.Equal("emitter_rebuilds", keys[(int)FrameCounter.EmitterRebuilds]);
+        Assert.Equal("emitter_overflows", keys[(int)FrameCounter.EmitterOverflows]);
+        Assert.Equal("emitter_visited_bytes", keys[(int)FrameCounter.EmitterVisitedBytes]);
         Assert.Equal("chunk_light_chunks", keys[(int)FrameCounter.ChunkLightChunks]);
         Assert.Equal("chunk_light_tiles", keys[(int)FrameCounter.ChunkLightTiles]);
         Assert.Equal("chunk_light_objects", keys[(int)FrameCounter.ChunkLightObjects]);

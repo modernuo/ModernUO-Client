@@ -16,5 +16,9 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The chunk emitter pass lights an emitter the walk drew this frame (DrawnFrame, set by every walk branch
         /// that draws it, the gradient circle's PushToRenderQueue included) and that still exists.</summary>
         public static bool LightsDrawn(uint drawnFrame, uint frame, bool destroyed) => drawnFrame == frame && !destroyed;
+
+        internal static bool EdgeVisible(int z, int priorityZ, bool internalTile, bool roof, bool noRoofs, bool allowed,
+            int maxZ, int ceiling, int height = 0) =>
+            !internalTile && z < maxZ && !(noRoofs && roof) && priorityZ + (allowed ? height : 0) <= ceiling;
     }
 }

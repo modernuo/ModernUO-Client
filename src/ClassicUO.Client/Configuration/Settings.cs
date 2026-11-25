@@ -258,6 +258,8 @@ namespace ClassicUO.Configuration
         // view that the walk did not draw; CUO_VIEW_MARGIN=1|0 overrides the setting in developer builds. Default off.
         [JsonPropertyName("view_margin")] public bool ViewMargin { get; set; }
 
+        [JsonPropertyName("chunk_light_cache")] public bool ChunkLightCache { get; set; }
+
         // vm-legacy: with view_margin on, the Legacy walk leaves out the chunk-mesh sprites (land, statics, multi pieces) of
         // the margin whose quad misses the view: they would be submitted and drawn off screen (the margin's tiles are walked
         // for the few tall sprites that reach the view). CUO_VIEW_MARGIN_CHECK=1 also tests every sprite it leaves out against

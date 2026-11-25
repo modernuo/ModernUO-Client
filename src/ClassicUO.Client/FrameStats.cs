@@ -310,6 +310,15 @@ namespace ClassicUO
         LoTiles,
         LoObjects,
         LoCandidates,
+        LightSearchPasses,
+        LightCandidateReads,
+        LightUniqueCandidates,
+        LightResultQueries,
+        LightResultHits,
+        LightMeasureOverflow,
+        EmitterRebuilds,
+        EmitterOverflows,
+        EmitterVisitedBytes,
         ChunkLightChunks,
         ChunkLightTiles,
         ChunkLightObjects,
@@ -398,7 +407,10 @@ namespace ClassicUO
             "leg_spr_total", "mesh_build_bytes", "mesh_alpha_bytes", "mesh_index_bytes",
             "leg_obj_land", "leg_obj_static", "leg_obj_item", "leg_obj_corpse", "leg_obj_mobile", "leg_obj_effect", "leg_obj_other",
             "leg_inst_sprites", "leg_quad_sprites", "leg_path_switches", "leg_inst_bytes",
-            "band_chunks", "lo_chunks", "lo_tiles", "lo_objects", "lo_candidates", "chunk_light_chunks", "chunk_light_tiles", "chunk_light_objects", "gpu_settle_chunks", "gpu_settle_tiles", "gpu_settle_objects", "gpu_mask_tiles", "gpu_mask_objects" };
+            "band_chunks", "lo_chunks", "lo_tiles", "lo_objects", "lo_candidates",
+            "light_search_passes", "light_candidate_reads", "light_unique_candidates", "light_result_queries", "light_result_hits", "light_measure_overflow",
+            "emitter_rebuilds", "emitter_overflows", "emitter_visited_bytes",
+            "chunk_light_chunks", "chunk_light_tiles", "chunk_light_objects", "gpu_settle_chunks", "gpu_settle_tiles", "gpu_settle_objects", "gpu_mask_tiles", "gpu_mask_objects" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

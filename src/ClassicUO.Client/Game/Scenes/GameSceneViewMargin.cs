@@ -14,7 +14,7 @@ namespace ClassicUO.Game.Scenes
         // none: an emitter the walk drew this frame, and one beside the walked rectangle whose halo reaches into it (with the
         // ground items there, which the walk did not visit). AddLight drops the ones whose halo cannot reach the view. No
         // allocation; per frame it touches the loaded chunks of the band's rectangle, their light lists and their dynamics.
-        private void AddChunkLights()
+        private void AddChunkLights(bool cached, bool recordStats = true)
         {
             if (_lightMargin < 0)
             {
@@ -30,7 +30,7 @@ namespace ClassicUO.Game.Scenes
             Map.Map map = _world.Map;
             StaticTiles[] staticData = Client.Game.UO.FileManager.TileData.StaticData;
 
-            bool stats = FrameStats.On;
+            bool stats = recordStats && FrameStats.On;
             int chunks = 0, tiles = 0, objects = 0;
 
             for (int cx = cx0; cx <= cx1; cx++)
@@ -49,53 +49,19 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
+                    var sink = new SceneChunkLightSink
+                    {
+                        Scene = this, Left = left, Top = top, Right = right, Bottom = bottom, Margin = margin, Data = staticData
+                    };
+                    ChunkLightVisits visits = ChunkLightOffers.Collect(chunk, staticData, cached, stats, ref sink);
                     if (stats)
                     {
                         chunks++;
-                        objects += chunk.LightSourceCount;
-                    }
-
-                    for (int i = 0, n = chunk.LightSourceCount; i < n; i++)
-                    {
-                        TileListObject obj = chunk.LightSources[i];
-
-                        if (ChunkLights.LightsDrawn(obj.DrawnFrame, _drawFrame, obj.IsDestroyed))
-                        {
-                            AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
-
-                            continue;
-                        }
-
-                        if (EdgeLightCandidate(obj, staticData, left, top, right, bottom, margin, out int lx, out int ly))
-                        {
-                            AddLight(obj, obj, lx, ly);
-                        }
-                    }
-
-                    DynamicTileIndex dyn = chunk.Dynamic;
-
-                    if (dyn == null || dyn.Count == 0)
-                    {
-                        continue;
-                    }
-
-                    for (ulong cells = dyn.Cells; cells != 0; cells &= cells - 1)
-                    {
-                        int cell = System.Numerics.BitOperations.TrailingZeroCount(cells);
-                        DynamicTileIndex.Entry[] entries = dyn.RawCell(cell, out int entryCount);
-                        if (stats)
-                        {
-                            tiles++;
-                            objects += entryCount;
-                        }
-
-                        for (int e = 0; e < entryCount; e++)
-                        {
-                            if (entries[e].Obj is Item item && EdgeItemLightCandidate(item, staticData, left, top, right, bottom, margin, out int lx, out int ly))
-                            {
-                                AddLight(item, item, lx, ly);
-                            }
-                        }
+                        tiles += visits.Cells;
+                        objects += visits.Objects;
+                        FrameStats.Add(FrameCounter.EmitterRebuilds, visits.Rebuilds);
+                        FrameStats.Add(FrameCounter.EmitterOverflows, visits.Overflows);
+                        FrameStats.Add(FrameCounter.EmitterVisitedBytes, visits.VisitedBytes);
                     }
                 }
             }
@@ -105,6 +71,30 @@ namespace ClassicUO.Game.Scenes
                 FrameStats.Add(FrameCounter.ChunkLightChunks, chunks);
                 FrameStats.Add(FrameCounter.ChunkLightTiles, tiles);
                 FrameStats.Add(FrameCounter.ChunkLightObjects, objects);
+            }
+        }
+
+        private struct SceneChunkLightSink : IChunkLightSink
+        {
+            internal GameScene Scene;
+            internal int Left, Top, Right, Bottom, Margin;
+            internal StaticTiles[] Data;
+
+            public void Offer(GameObject obj, ChunkLightCache cache, int row, bool ground)
+            {
+                if (!ground && ChunkLights.LightsDrawn(obj.DrawnFrame, Scene._drawFrame, obj.IsDestroyed))
+                {
+                    Scene.AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                    return;
+                }
+                int x, y;
+                bool admitted = cache != null
+                    ? cache.EdgeCandidate(row, obj, Scene._drawFrame, Scene._offset.X, Scene._offset.Y, Left, Top, Right, Bottom,
+                        Margin, Scene._noDrawRoofs, Scene._maxZ, GPU_WALK_MAX_Z, out x, out y) && cache.DrawsNow(row)
+                    : ground
+                        ? Scene.EdgeItemLightCandidate((Item)obj, Data, Left, Top, Right, Bottom, Margin, out x, out y)
+                        : Scene.EdgeLightCandidate((TileListObject)obj, Data, Left, Top, Right, Bottom, Margin, out x, out y);
+                if (admitted) Scene.AddLight(obj, obj, x, y);
             }
         }
 
@@ -194,7 +184,7 @@ namespace ClassicUO.Game.Scenes
                 CalculateObjectHeight(ref maxObjectZ, ref data);
             }
 
-            return maxObjectZ <= GPU_WALK_MAX_Z;
+            return ChunkLights.EdgeVisible(obj.Z, maxObjectZ, data.IsInternal, data.IsRoof, _noDrawRoofs, false, _maxZ, GPU_WALK_MAX_Z);
         }
     }
 }

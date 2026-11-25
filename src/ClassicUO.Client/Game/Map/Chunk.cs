@@ -231,6 +231,35 @@ namespace ClassicUO.Game.Map
         /// </summary>
         internal TileListObject[] LightSources = Array.Empty<TileListObject>();
         internal int LightSourceCount;
+        internal Scenes.ChunkLightCache LightCache;
+
+        internal void RefreshLightSources()
+        {
+            for (int i = LightSourceCount - 1; i >= 0; i--)
+                if (!IsLightSource(LightSources[i])) ForgetLightSource(LightSources[i]);
+            for (int cell = 0; cell < 64; cell++)
+            {
+                for (TileListObject obj = HeadAt(cell); obj != null; obj = obj.TNext)
+                {
+                    if (!IsLightSource(obj)) continue;
+                    bool found = false;
+                    for (int i = 0; i < LightSourceCount; i++) found |= ReferenceEquals(LightSources[i], obj);
+                    if (!found) NoteLightSource(obj);
+                }
+            }
+        }
+
+        internal void LightGraphicChanged(TileListObject obj)
+        {
+            OccluderVersion++;
+            if (IsLightSource(obj))
+            {
+                for (int i = 0; i < LightSourceCount; i++)
+                    if (ReferenceEquals(LightSources[i], obj)) return;
+                NoteLightSource(obj);
+            }
+            else ForgetLightSource(obj);
+        }
 
         /// <summary>
         /// view_margin (sprite margin): how far the art of the chunk's statics, multi components and items reaches past its
@@ -389,6 +418,7 @@ namespace ClassicUO.Game.Map
 
         private void ClearLightSources()
         {
+            LightCache?.Dispose();
             Array.Clear(LightSources, 0, LightSourceCount);
             LightSourceCount = 0;
         }
