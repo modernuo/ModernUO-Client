@@ -75,6 +75,7 @@ namespace ClassicUO.UnitTests.Configuration
             }
 
             Assert.Equal(QualityTier.High, table["view_margin"].From);
+            Assert.Equal(table["view_margin"].From, table["view_margin_walk"].From);
             Assert.Equal(QualityTier.Medium, table["light_occlusion"].From);
             Assert.Equal(QualityTier.Medium, table["light_batch"].From);
             Assert.Equal(GraphicsTiers.RowKind.Reducer, table["light_range"].Kind);
@@ -153,8 +154,13 @@ namespace ClassicUO.UnitTests.Configuration
         [Fact]
         public void ASavedFileWithExplicitValuesLoadsUnchanged()
         {
-            Settings high = Parse("{\"light_range\":false,\"view_margin\":true,\"light_occlusion\":true,\"light_batch\":true}");
+            Settings high = Parse("{\"light_range\":false,\"view_margin\":true,\"view_margin_walk\":true,\"light_occlusion\":true,\"light_batch\":true}");
             Assert.Equal(QualityTier.High, GraphicsTiers.Detect(high));
+
+            // a High file saved before view_margin_walk joined the preset keeps its values and reads as Custom
+            Settings oldHigh = Parse("{\"light_range\":false,\"view_margin\":true,\"light_occlusion\":true,\"light_batch\":true}");
+            Assert.False(oldHigh.ViewMarginWalk);
+            Assert.Null(GraphicsTiers.Detect(oldHigh));
 
             Settings custom = Parse("{\"light_range\":true,\"view_margin\":true}");
             Assert.True(custom.ViewMargin);
