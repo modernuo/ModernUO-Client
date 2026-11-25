@@ -63,6 +63,62 @@ namespace ClassicUO.UnitTests.Renderer
                 MemoryMarshal.AsBytes(new ReadOnlySpan<UltimaBatcher2D.PositionNormalTextureColor4>(in expected))).Should().BeTrue();
         }
 
+        public static IEnumerable<object[]> ShadowCases()
+        {
+            var data = new List<object[]>();
+            var rects = new[] { (0, 0, 1, 1), (3, 5, 1, 2), (123, 457, 44, 93), (77, 901, 45, 91), (1500, 1200, 300, 301), (0, 0, 7, 0) };
+            var positions = new[] { (0f, 0f), (-37.5f, 812.25f), (1919.3f, 1079.7f), (100.125f, -10f), (12345.678f, 0.1f) };
+
+            foreach (var r in rects)
+            {
+                foreach (var p in positions)
+                {
+                    foreach (bool flip in new[] { false, true })
+                    {
+                        foreach (float depth in new[] { 0f, 0.5f, 1234.5f })
+                        {
+                            data.Add(new object[] { p.Item1, p.Item2, r.Item1, r.Item2, r.Item3, r.Item4, 2048, 2048, flip, depth });
+                        }
+                    }
+                }
+            }
+
+            return data;
+        }
+
+        [Theory]
+        [MemberData(nameof(ShadowCases))]
+        public void ShadowExpandEqualsBuildShadowQuad_Bitwise(float px, float py, int sx, int sy, int sw, int sh, int texW, int texH, bool flip, float depth)
+        {
+            var position = new Vector2(px, py);
+            var rect = new Rectangle(sx, sy, sw, sh);
+
+            var expected = new UltimaBatcher2D.PositionNormalTextureColor4();
+            UltimaBatcher2D.BuildShadowQuad(ref expected, position, rect, texW, texH, flip, depth);
+
+            LegacySpriteInstance.TryFromShadow(position, rect, texW, texH, flip, depth, out var instance).Should().BeTrue();
+            var actual = new UltimaBatcher2D.PositionNormalTextureColor4();
+            LegacySpriteInstance.Expand(in instance, ref actual);
+
+            MemoryMarshal.AsBytes(new ReadOnlySpan<UltimaBatcher2D.PositionNormalTextureColor4>(in actual)).SequenceEqual(
+                MemoryMarshal.AsBytes(new ReadOnlySpan<UltimaBatcher2D.PositionNormalTextureColor4>(in expected))).Should().BeTrue();
+        }
+
+        [Theory]
+        [InlineData(0, 4)]
+        [InlineData(4, 70000)]
+        [InlineData(4, -1)]
+        public void ShadowRejectsWhatItCannotReproduce(int w, int h)
+        {
+            LegacySpriteInstance.TryFromShadow(new Vector2(1, 2), new Rectangle(0, 0, w, h), 2048, 2048, false, 0f, out _).Should().BeFalse();
+        }
+
+        [Fact]
+        public void ShadowRejectsNonFinitePosition()
+        {
+            LegacySpriteInstance.TryFromShadow(new Vector2(float.NaN, 2), new Rectangle(0, 0, 4, 4), 2048, 2048, false, 0f, out _).Should().BeFalse();
+        }
+
         [Fact]
         public void RejectsRotationAndOrigin()
         {

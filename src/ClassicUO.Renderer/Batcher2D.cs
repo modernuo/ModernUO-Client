@@ -417,56 +417,9 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            float width = sourceRect.Width;
-            float height = sourceRect.Height * 0.5f;
-            float translatedY = position.Y + height - 10;
-            float ratio = height / width;
-
             EnsureSize();
 
-            ref PositionNormalTextureColor4 vertex = ref _vertexInfo[_numSprites];
-
-            vertex.Position0.X = position.X + width * ratio;
-            vertex.Position0.Y = translatedY;
-
-            vertex.Position1.X = position.X + width * (ratio + 1f);
-            vertex.Position1.Y = translatedY;
-
-            vertex.Position2.X = position.X;
-            vertex.Position2.Y = translatedY + height;
-
-            vertex.Position3.X = position.X + width;
-            vertex.Position3.Y = translatedY + height;
-
-            vertex.Position0.Z = depth;
-            vertex.Position1.Z = depth;
-            vertex.Position2.Z = depth;
-            vertex.Position3.Z = depth;
-
-
-            CalculateHalfPixelUVs(sourceRect, texture.Width, texture.Height,
-                out float sourceX, out float sourceY, out float sourceW, out float sourceH);
-
-            byte effects = (byte)((flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None) & (SpriteEffects)0x03);
-
-            vertex.TextureCoordinate0.X = (_cornerOffsetX[0 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate0.Y = (_cornerOffsetY[0 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate1.X = (_cornerOffsetX[1 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate1.Y = (_cornerOffsetY[1 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate2.X = (_cornerOffsetX[2 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate2.Y = (_cornerOffsetY[2 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate3.X = (_cornerOffsetX[3 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate3.Y = (_cornerOffsetY[3 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate0.Z = 0;
-            vertex.TextureCoordinate1.Z = 0;
-            vertex.TextureCoordinate2.Z = 0;
-            vertex.TextureCoordinate3.Z = 0;
-
-            SetDefaultNormals(ref vertex);
-
-            vertex.Hue0.X = vertex.Hue1.X = vertex.Hue2.X = vertex.Hue3.X = 0;
-            vertex.Hue0.Y = vertex.Hue1.Y = vertex.Hue2.Y = vertex.Hue3.Y = ShaderHueTranslator.SHADER_SHADOW;
-            vertex.Hue0.Z = vertex.Hue1.Z = vertex.Hue2.Z = vertex.Hue3.Z = 1f;
+            BuildShadowQuad(ref _vertexInfo[_numSprites], position, sourceRect, texture.Width, texture.Height, flip, depth);
 
             PushSprite(texture);
         }
@@ -1086,6 +1039,62 @@ namespace ClassicUO.Renderer
             _customEffect = null;
         }
 
+        internal static void ShadowGeometry(Vector2 position, Rectangle sourceRect, out float width, out float height, out float translatedY, out float topLeftX, out float topRightX)
+        {
+            width = sourceRect.Width;
+            height = sourceRect.Height * 0.5f;
+            translatedY = position.Y + height - 10;
+            float ratio = height / width;
+            topLeftX = position.X + width * ratio;
+            topRightX = position.X + width * (ratio + 1f);
+        }
+
+        internal static void BuildShadowQuad(ref PositionNormalTextureColor4 vertex, Vector2 position, Rectangle sourceRect, int textureWidth, int textureHeight, bool flip, float depth)
+        {
+            ShadowGeometry(position, sourceRect, out float width, out float height, out float translatedY, out float topLeftX, out float topRightX);
+
+            vertex.Position0.X = topLeftX;
+            vertex.Position0.Y = translatedY;
+
+            vertex.Position1.X = topRightX;
+            vertex.Position1.Y = translatedY;
+
+            vertex.Position2.X = position.X;
+            vertex.Position2.Y = translatedY + height;
+
+            vertex.Position3.X = position.X + width;
+            vertex.Position3.Y = translatedY + height;
+
+            vertex.Position0.Z = depth;
+            vertex.Position1.Z = depth;
+            vertex.Position2.Z = depth;
+            vertex.Position3.Z = depth;
+
+            CalculateHalfPixelUVs(sourceRect, textureWidth, textureHeight,
+                out float sourceX, out float sourceY, out float sourceW, out float sourceH);
+
+            byte effects = (byte)((flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None) & (SpriteEffects)0x03);
+
+            vertex.TextureCoordinate0.X = (_cornerOffsetX[0 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate0.Y = (_cornerOffsetY[0 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate1.X = (_cornerOffsetX[1 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate1.Y = (_cornerOffsetY[1 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate2.X = (_cornerOffsetX[2 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate2.Y = (_cornerOffsetY[2 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate3.X = (_cornerOffsetX[3 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate3.Y = (_cornerOffsetY[3 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate0.Z = 0;
+            vertex.TextureCoordinate1.Z = 0;
+            vertex.TextureCoordinate2.Z = 0;
+            vertex.TextureCoordinate3.Z = 0;
+
+            SetDefaultNormals(ref vertex);
+
+            vertex.Hue0.X = vertex.Hue1.X = vertex.Hue2.X = vertex.Hue3.X = 0;
+            vertex.Hue0.Y = vertex.Hue1.Y = vertex.Hue2.Y = vertex.Hue3.Y = ShaderHueTranslator.SHADER_SHADOW;
+            vertex.Hue0.Z = vertex.Hue1.Z = vertex.Hue2.Z = vertex.Hue3.Z = 1f;
+        }
+
         internal static void BuildQuad
         (
             ref PositionNormalTextureColor4 sprite,
@@ -1211,7 +1220,7 @@ namespace ClassicUO.Renderer
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void CalculateHalfPixelUVs(
+        internal static void CalculateHalfPixelUVs(
             Rectangle sourceRect,
             int textureWidth, int textureHeight,
             out float sourceX, out float sourceY,

@@ -32,6 +32,15 @@ namespace ClassicUO.Renderer
         public byte HueMode;
         public byte Effects;
 
+        // Shadow form (UltimaBatcher2D.BuildShadowQuad): Effects is SHADOW_FLAG + the flip bits (no sprite uses Effects > 3).
+        // The parallelogram needs six positional values and the sprite form has five float slots, so the shadow form uses:
+        //   DestinationX = position.X, DestinationY = translatedY, DestinationW = width,
+        //   DestinationH = top-left X (position.X + width * ratio), HueAlpha = top-right X (position.X + width * (ratio + 1)),
+        //   hue index (low + high * 256) = source height in pixels, so the half height is hueIndex * 0.5f as on the CPU.
+        // Both top X values come from a division (ratio = height / width), so they are precomputed. The hue is fixed at
+        // (0, SHADER_SHADOW, 1), the UVs are the half-pixel ones in Source*. A shader reads the flag as floor(effects / 4).
+        public const byte SHADOW_FLAG = 4;
+
         public const int SIZE_IN_BYTES = sizeof(float) * 10 + sizeof(byte) * 4;
 
         VertexDeclaration IVertexType.VertexDeclaration => VertexDeclaration;
@@ -110,6 +119,54 @@ namespace ClassicUO.Renderer
             return true;
         }
 
+        /// <summary>
+        /// False when the shadow quad cannot be reproduced exactly; the caller keeps the quad path.
+        /// </summary>
+        public static bool TryFromShadow
+        (
+            Vector2 position,
+            Rectangle sourceRect,
+            int textureWidth,
+            int textureHeight,
+            bool flip,
+            float depth,
+            out LegacySpriteInstance instance
+        )
+        {
+            instance = default;
+
+            if (sourceRect.Height < 0 || sourceRect.Height > ushort.MaxValue)
+            {
+                return false;
+            }
+
+            UltimaBatcher2D.ShadowGeometry(position, sourceRect, out float width, out _, out float translatedY, out float topLeftX, out float topRightX);
+
+            if (!float.IsFinite(position.X) || !float.IsFinite(width) || !float.IsFinite(translatedY) || !float.IsFinite(topLeftX) || !float.IsFinite(topRightX))
+            {
+                return false;
+            }
+
+            UltimaBatcher2D.CalculateHalfPixelUVs(sourceRect, textureWidth, textureHeight, out float sourceX, out float sourceY, out float sourceW, out float sourceH);
+
+            instance.SourceX = sourceX;
+            instance.SourceY = sourceY;
+            instance.SourceW = sourceW;
+            instance.SourceH = sourceH;
+            instance.DestinationX = position.X;
+            instance.DestinationY = translatedY;
+            instance.DestinationW = width;
+            instance.DestinationH = topLeftX;
+            instance.Depth = depth;
+            instance.HueAlpha = topRightX;
+            instance.HueIndexLow = (byte)(sourceRect.Height & 0xFF);
+            instance.HueIndexHigh = (byte)(sourceRect.Height >> 8);
+            instance.HueMode = 0;
+            instance.Effects = (byte)(SHADOW_FLAG | (flip ? (byte)SpriteEffects.FlipHorizontally : (byte)0));
+
+            return true;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool TryPack(float value, int max, out float packed)
         {
@@ -125,16 +182,31 @@ namespace ClassicUO.Renderer
         public static void Expand(in LegacySpriteInstance instance, ref UltimaBatcher2D.PositionNormalTextureColor4 quad)
         {
             float hueIndex = instance.HueIndexLow + (instance.HueIndexHigh * 256f);
-            var hue = new Vector3(hueIndex, instance.HueMode, instance.HueAlpha);
-
             float effects = instance.Effects;
+            float shadow = MathF.Floor(effects / 4f);
+            effects -= shadow * 4f;
+
+            var hue = shadow != 0f ? new Vector3(0f, ShaderHueTranslator.SHADER_SHADOW, 1f) : new Vector3(hueIndex, instance.HueMode, instance.HueAlpha);
+
             float flipY = MathF.Floor(effects / 2f);
             float flipX = effects - (flipY * 2f);
 
-            quad.Position0 = new Vector3((0f * instance.DestinationW) + instance.DestinationX, (0f * instance.DestinationH) + instance.DestinationY, instance.Depth);
-            quad.Position1 = new Vector3((1f * instance.DestinationW) + instance.DestinationX, (0f * instance.DestinationH) + instance.DestinationY, instance.Depth);
-            quad.Position2 = new Vector3((0f * instance.DestinationW) + instance.DestinationX, (1f * instance.DestinationH) + instance.DestinationY, instance.Depth);
-            quad.Position3 = new Vector3((1f * instance.DestinationW) + instance.DestinationX, (1f * instance.DestinationH) + instance.DestinationY, instance.Depth);
+            if (shadow != 0f)
+            {
+                float bottomY = instance.DestinationY + (hueIndex * 0.5f);
+
+                quad.Position0 = new Vector3(instance.DestinationH, instance.DestinationY, instance.Depth);
+                quad.Position1 = new Vector3(instance.HueAlpha, instance.DestinationY, instance.Depth);
+                quad.Position2 = new Vector3(instance.DestinationX, bottomY, instance.Depth);
+                quad.Position3 = new Vector3(instance.DestinationX + instance.DestinationW, bottomY, instance.Depth);
+            }
+            else
+            {
+                quad.Position0 = new Vector3((0f * instance.DestinationW) + instance.DestinationX, (0f * instance.DestinationH) + instance.DestinationY, instance.Depth);
+                quad.Position1 = new Vector3((1f * instance.DestinationW) + instance.DestinationX, (0f * instance.DestinationH) + instance.DestinationY, instance.Depth);
+                quad.Position2 = new Vector3((0f * instance.DestinationW) + instance.DestinationX, (1f * instance.DestinationH) + instance.DestinationY, instance.Depth);
+                quad.Position3 = new Vector3((1f * instance.DestinationW) + instance.DestinationX, (1f * instance.DestinationH) + instance.DestinationY, instance.Depth);
+            }
 
             quad.TextureCoordinate0 = Uv(in instance, 0f, 0f, flipX, flipY);
             quad.TextureCoordinate1 = Uv(in instance, 1f, 0f, flipX, flipY);
