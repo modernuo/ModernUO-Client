@@ -104,6 +104,10 @@ namespace ClassicUO.Renderer
 
         public int PendingSprites => _numSprites;
 
+        /// <summary>Sprites queued this frame, uploaded or pending (FrameStats only: the upload count is kept with
+        /// <see cref="CollectFrameStats"/>). legacy-sprite-split takes differences around each object's draw.</summary>
+        public int SpritesQueued => FrameUploadSprites + _numSprites;
+
         public void BeginSuppress()
         {
             _suppress = true;
@@ -149,12 +153,23 @@ namespace ClassicUO.Renderer
                && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
         public static int FrameFlushes, FrameDrawCalls;
         public static int FrameUploadCalls, FrameUploadBytes;
+        // legacy-sprite-split: sprites the batcher uploaded this frame, and bytes uploaded to the Legacy chunk meshes
+        // (MeshLayer builds, alpha/hue re-uploads and visible-index buffers), which FrameUploadBytes does not count
+        public static int FrameUploadSprites, FrameMeshBuildBytes, FrameMeshAlphaBytes, FrameMeshIndexBytes;
+        // the sprites the Legacy world lists queued, by object kind (RenderLists.SpriteKind: land, static/multi, item, corpse,
+        // mobile, effect, other); UI and text are the rest of FrameUploadSprites
+        public static readonly int[] FrameSpriteSplit = new int[7];
+        // the objects of each kind that queued at least one sprite
+        public static readonly int[] FrameObjectSplit = new int[7];
         public static long FrameGpuTicks;
 
         public static void ResetFrameCounters()
         {
             FrameFlushes = FrameDrawCalls = 0;
             FrameUploadCalls = FrameUploadBytes = 0;
+            FrameUploadSprites = FrameMeshBuildBytes = FrameMeshAlphaBytes = FrameMeshIndexBytes = 0;
+            Array.Clear(FrameSpriteSplit);
+            Array.Clear(FrameObjectSplit);
             FrameGpuTicks = 0;
         }
         private bool _worldOffsetActive;
@@ -1733,6 +1748,7 @@ namespace ClassicUO.Renderer
             {
                 FrameUploadCalls++;
                 FrameUploadBytes += count * PositionNormalTextureColor4.SIZE_IN_BYTES;
+                FrameUploadSprites += count;
             }
 
             return offset;

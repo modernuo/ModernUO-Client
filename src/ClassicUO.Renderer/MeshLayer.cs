@@ -349,6 +349,11 @@ namespace ClassicUO.Renderer
                     SetDataOptions.Discard
                 );
             }
+
+            if (UltimaBatcher2D.CollectFrameStats)
+            {
+                UltimaBatcher2D.FrameMeshBuildBytes += Count * PositionNormalTextureColor4.SIZE_IN_BYTES;
+            }
         }
 
         /// <summary>
@@ -456,6 +461,11 @@ namespace ClassicUO.Renderer
                     SetDataOptions.Discard
                 );
             }
+
+            if (UltimaBatcher2D.CollectFrameStats)
+            {
+                UltimaBatcher2D.FrameMeshIndexBytes += VisibleSpriteCount * 6 * sizeof(short);
+            }
         }
 
         /// <summary>
@@ -477,6 +487,11 @@ namespace ClassicUO.Renderer
                     Count * PositionNormalTextureColor4.SIZE_IN_BYTES,
                     SetDataOptions.Discard
                 );
+            }
+
+            if (UltimaBatcher2D.CollectFrameStats)
+            {
+                UltimaBatcher2D.FrameMeshAlphaBytes += Count * PositionNormalTextureColor4.SIZE_IN_BYTES;
             }
         }
 
