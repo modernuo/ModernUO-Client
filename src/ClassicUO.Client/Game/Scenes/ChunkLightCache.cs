@@ -71,7 +71,6 @@ namespace ClassicUO.Game.Scenes
             if (_handles != null) Array.Clear(_handles, 0, Count);
             Count = StaticCount = 0;
             _overflow = false;
-            if (_epoch != LightEmitters.Epoch) chunk.RefreshLightSources();
             _version = chunk.OccluderVersion;
             _itemGen = chunk.GpuItemRenderGen;
             _epoch = LightEmitters.Epoch;

@@ -233,33 +233,9 @@ namespace ClassicUO.Game.Map
         internal int LightSourceCount;
         internal Scenes.ChunkLightCache LightCache;
 
-        internal void RefreshLightSources()
-        {
-            for (int i = LightSourceCount - 1; i >= 0; i--)
-                if (!IsLightSource(LightSources[i])) ForgetLightSource(LightSources[i]);
-            for (int cell = 0; cell < 64; cell++)
-            {
-                for (TileListObject obj = HeadAt(cell); obj != null; obj = obj.TNext)
-                {
-                    if (!IsLightSource(obj)) continue;
-                    bool found = false;
-                    for (int i = 0; i < LightSourceCount; i++) found |= ReferenceEquals(LightSources[i], obj);
-                    if (!found) NoteLightSource(obj);
-                }
-            }
-        }
-
-        internal void LightGraphicChanged(TileListObject obj)
-        {
-            OccluderVersion++;
-            if (IsLightSource(obj))
-            {
-                for (int i = 0; i < LightSourceCount; i++)
-                    if (ReferenceEquals(LightSources[i], obj)) return;
-                NoteLightSource(obj);
-            }
-            else ForgetLightSource(obj);
-        }
+        // Graphic/season changes invalidate cached row data only. The reference list's membership and
+        // offer order are owned exclusively by tile insertion/removal, even while chunk_light_cache is off.
+        internal void LightGraphicChanged(TileListObject obj) => OccluderVersion++;
 
         /// <summary>
         /// view_margin (sprite margin): how far the art of the chunk's statics, multi components and items reaches past its

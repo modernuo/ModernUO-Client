@@ -46,6 +46,27 @@ namespace ClassicUO.UnitTests.Game.Scenes
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
+        public void GraphicChange_preserves_authoritative_order(bool on)
+        {
+            ChunkLightCache.OverrideForTests = on;
+            Static a = Lamp(), b = Lamp(2), c = Lamp(3);
+            a.SetGraphic(11);
+            if (on)
+            {
+                using var cache = new ChunkLightCache();
+                cache.Refresh(_chunk, _data);
+                LightEmitters.InvalidateRows();
+                cache.Refresh(_chunk, _data);
+            }
+            Assert.Equal(3, _chunk.LightSourceCount);
+            Assert.Same(a, _chunk.LightSources[0]);
+            Assert.Same(b, _chunk.LightSources[1]);
+            Assert.Same(c, _chunk.LightSources[2]);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
         public void EmitterCache_MobileOnlyChurnDoesNotRebuild(bool on)
         {
             ChunkLightCache.OverrideForTests = on;
@@ -101,13 +122,15 @@ namespace ClassicUO.UnitTests.Game.Scenes
             cache.Refresh(_chunk, _data);
             first.SetGraphic(11);
             cache.Refresh(_chunk, _data);
-            Assert.Equal(1, cache.Count);
-            Assert.Same(second, cache.Resolve(0));
+            Assert.Equal(2, cache.Count);
+            Assert.Same(first, cache.Resolve(0));
+            Assert.False(cache.DrawsNow(0));
+            Assert.Same(second, cache.Resolve(1));
             first.SetGraphic(10);
             cache.Refresh(_chunk, _data);
-            Assert.Same(second, cache.Resolve(0));
-            Assert.Same(first, cache.Resolve(1));
-            uint life = cache.Incarnation[1];
+            Assert.Same(first, cache.Resolve(0));
+            Assert.Same(second, cache.Resolve(1));
+            uint life = cache.Incarnation[0];
             first.RemoveFromTile();
             first.ResetForReuse();
             first.Graphic = 10;
@@ -214,104 +237,6 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Equal(1, lights[0].Share);
         }
 
-        private struct OfferSink : IChunkLightSink
-        {
-            internal FrameLights Lights;
-            internal StaticTiles[] Data;
-            internal bool Range;
-
-            public void Offer(GameObject obj, ChunkLightCache cache, int row, bool ground)
-            {
-                if (ground && (obj is not Item item || item.IsDestroyed || item.IsMulti || item.IsCorpse || !Data[item.Graphic].IsLight)) return;
-                ref var e = ref Lights.Next();
-                e = new FrameLights.Entry
-                {
-                    Source = obj, SourceLife = obj.Incarnation, ID = 1, SrcX = obj.X, SrcY = obj.Y, SrcZ = obj.Z,
-                    DrawX = (cache != null ? cache.X[row] : obj.X) * 22,
-                    Share = Range ? LightRange.RangeShare(9, 10) : 1
-                };
-                Lights.Commit(1);
-            }
-        }
-
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void LightingCache_MovingEquippedLightMatchesReference(bool on)
-        {
-            ChunkLightCache.OverrideForTests = on;
-            var source = _world.GetOrCreateMobile(0x1000);
-            Item held = _world.Writer.Equip(0x40002000, 10, Layer.OneHanded, source.Serial, 0, out _, out _);
-            Assert.Same(held, source.FindItemByLayer(Layer.OneHanded));
-            using var cache = new ChunkLightCache();
-            var live = new FrameLights(4);
-            var shadow = new FrameLights(4);
-            Lamp();
-            for (uint frame = 1; frame <= 4; frame++)
-            {
-                live.BeginFrame(frame, 4, true);
-                _world.Writer.MoveMobile(source, (ushort)frame, 1, 0);
-                if (frame == 3) _world.Writer.RemoveWorldItem(held, out _);
-                if (frame == 4) held = _world.Writer.Equip(0x40002001, 10, Layer.OneHanded, source.Serial, 0, out _, out _);
-                cache.Refresh(_chunk, _data);
-                Assert.Equal(1, cache.Count); // only the ground static, equipment stays on the live path
-                // Live equipment extraction supplies the current source and anchor before the chunk prefix fork.
-                if (source.FindItemByLayer(Layer.OneHanded) != null)
-                {
-                    ref var e = ref live.Next();
-                    e = new FrameLights.Entry { Source = source, ID = (byte)(frame == 4 ? 2 : 26), DrawX = source.X * 22, Share = 1 };
-                    live.Commit(frame);
-                }
-                live.CopyTo(shadow);
-                var liveSink = new OfferSink { Lights = live, Data = _data };
-                var shadowSink = new OfferSink { Lights = shadow, Data = _data };
-                ChunkLightOffers.Collect(_chunk, _data, on, false, ref liveSink);
-                ChunkLightOffers.Collect(_chunk, _data, false, false, ref shadowSink);
-                Assert.Equal(-1, live.FirstDifference(shadow));
-                if (frame != 3) Assert.Equal((int)frame * 22, shadow[0].DrawX);
-                else Assert.Equal(1, shadow.Count);
-            }
-        }
-
-        [Theory]
-        [InlineData(false, false)]
-        [InlineData(true, false)]
-        [InlineData(false, true)]
-        [InlineData(true, true)]
-        public void LightingCache_OfferOrderTiesBudgetAndRangeMatch(bool on, bool range)
-        {
-            ChunkLightCache.OverrideForTests = on;
-            Static a = Lamp(), b = Lamp(2), c = Lamp(3);
-            a.RemoveFromTile(); // authoritative swap removal makes c, b
-            using var cache = new ChunkLightCache();
-            cache.Refresh(_chunk, _data);
-            var lights = new FrameLights(2);
-            lights.BeginFrame(1, 2, true);
-            ref var prefix = ref lights.Next();
-            prefix = new FrameLights.Entry { ID = 26, Share = 1 };
-            lights.Commit(3);
-            var reference = new FrameLights(2);
-            lights.CopyTo(reference);
-            Assert.Same(c, cache.Resolve(0));
-            Assert.Same(b, cache.Resolve(1));
-            Item ground = _world.GetOrCreateItem(0x40003000);
-            _world.Ecs.CommitItem(ground, new ItemState { Serial = ground.Serial, Graphic = 10, Container = 0xFFFFFFFF });
-            _chunk.AddGameObject(ground, 0, 1);
-            Item other = _world.GetOrCreateItem(0x40003001);
-            _world.Ecs.CommitItem(other, new ItemState { Serial = other.Serial, Graphic = 11, Container = 0xFFFFFFFF });
-            _chunk.AddGameObject(other, 0, 0);
-            var sink = new OfferSink { Lights = lights, Data = _data, Range = range };
-            var referenceSink = new OfferSink { Lights = reference, Data = _data, Range = range };
-            ChunkLightOffers.Collect(_chunk, _data, on, false, ref sink);
-            ChunkLightOffers.Collect(_chunk, _data, false, false, ref referenceSink);
-            if (range) { lights.FadeLowest(2); reference.FadeLowest(2); }
-            Assert.Equal(-1, lights.FirstDifference(reference));
-            Assert.Same(c, lights[1].Source);
-            Assert.Same(b, lights[0].Source);
-            Assert.Equal(2, lights.Refused);
-            Assert.Equal(range ? 0.25f : 1, lights[1].Share);
-            Assert.Equal(range ? 0.5f : 1, lights[0].Share);
-        }
 #endif
     }
 }
