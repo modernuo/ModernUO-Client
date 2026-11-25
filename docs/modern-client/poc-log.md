@@ -9341,3 +9341,23 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
   wall neighbourhoods extend beyond its coverage, so a stream of only walked objects cannot replace them directly.
 - Follow-up: inspect final PROFILE.md and round spread/allocations, rank only consumers over 0.05 ms and preserve their
   caches plus outside-fill coverage. See consumers.md for per-object data requirements and proposed sequence.
+
+## 2026-11-25 walk-consol fix round 1 (bg/walk-consolidation, base 1e6a7bfcf)
+
+- Code fcda6ac1a fixes review of 754e0c35b: cache FrameStats.On before GPU mask/settle,
+  occlusion and chunk-light loops, accumulate visits locally only when enabled, publish after loops.
+  Explicit key assertions cover all thirteen added counters. Residual regression reproduced 700 ticks
+  instead of 300 before the fix and passes after it.
+- PrepRest subtracts GpuSettle; the audit also found Z-band and margin masks in the residual on Gpu.
+  Both are now exclusive phases; Legacy PrepWalk excludes these mask ticks before residual accounting.
+  FillLoop stays inclusive; light phases remain under Lights and wall phases under existing parents.
+- Verification: developer Release build 11 warnings / 0 errors; CuoDevTools=false Release build
+  38 warnings / 0 errors; FrameStats tests 18 passed; full unit suite 9373 passed / 6 skipped / 0 failed.
+  NativeAOT dev publish from full fcda6ac1a hash succeeded (trim/AOT analysis warnings) and replaces
+  the profile jobs' aot-new artifact. Base AOT remains pinned to 1e6a7bfcf. No Class A write changes.
+- Coordinator cancelled bench-001240..001246. Replacement six profile jobs use the same plan and
+  finalizer, with explicit full-commit provenance checks; IDs in cuo-poc-state/measure/walk-consol/jobs.txt
+  and report-job.txt. Submit-and-stop; measured timings and allocation/GC results remain pending.
+- Accepted costs: no new per-frame allocations or retained memory in this fix; original recording
+  buffers remain ~2.63 MiB/client. Instrumentation overhead awaits the profile; no measured claim.
+  Perf opportunities: none new beyond the original walk-consumer reconnaissance.
