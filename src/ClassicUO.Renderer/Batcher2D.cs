@@ -63,6 +63,8 @@ namespace ClassicUO.Renderer
             _stencil = Stencil;
 
             _basicUOEffect = new BasicUOEffect(device);
+
+            InitInstancing();
         }
 
 
@@ -102,14 +104,17 @@ namespace ClassicUO.Renderer
         /// <summary>Sprites queued and not yet drawn.</summary>
         public long GeneratedSprites { get; private set; }
 
-        public int PendingSprites => _numSprites;
+        public int PendingSprites => _numSprites + _numInstances;
 
-        /// <summary>Sprites queued this frame, uploaded or pending (FrameStats only: the upload count is kept with
-        /// <see cref="CollectFrameStats"/>). legacy-sprite-split takes differences around each object's draw.</summary>
-        public int SpritesQueued => FrameUploadSprites + _numSprites;
+        /// <summary>Sprites queued this frame, uploaded or pending, quads and instances (FrameStats only: the upload count is
+        /// kept with <see cref="CollectFrameStats"/>). legacy-sprite-split takes differences around each object's draw.</summary>
+        public int SpritesQueued => FrameUploadSprites + _numSprites + _numInstances;
 
         public void BeginSuppress()
         {
+            // the suppression drops quads queued after the mark; instances queued before it are drawn now, which is where
+            // the next flush would have drawn them (sprites queued during suppression never take the instance path)
+            FlushInstances();
             _suppress = true;
             _suppressMark = _numSprites;
             _suppressedSprites = 0;
@@ -168,6 +173,7 @@ namespace ClassicUO.Renderer
             FrameFlushes = FrameDrawCalls = 0;
             FrameUploadCalls = FrameUploadBytes = 0;
             FrameUploadSprites = FrameMeshBuildBytes = FrameMeshAlphaBytes = FrameMeshIndexBytes = 0;
+            FrameInstancedSprites = FrameQuadSprites = FramePathSwitches = FrameInstanceBytes = 0;
             Array.Clear(FrameSpriteSplit);
             Array.Clear(FrameObjectSplit);
             FrameGpuTicks = 0;
@@ -179,6 +185,7 @@ namespace ClassicUO.Renderer
         public void Dispose()
         {
             _vertexInfo = null;
+            DisposeInstancing();
             _basicUOEffect?.Dispose();
             _vertexBuffer.Dispose();
             _indexBuffer.Dispose();
@@ -241,7 +248,8 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            EnsureSize();
+            // each glyph goes through Draw, which picks its path and grows the queue
+            EnsureStarted();
 
             Texture2D textureValue = spriteFont.Texture;
             List<Rectangle> glyphData = spriteFont.GlyphData;
@@ -417,56 +425,25 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            float width = sourceRect.Width;
-            float height = sourceRect.Height * 0.5f;
-            float translatedY = position.Y + height - 10;
-            float ratio = height / width;
+            if (InstancePathOn && LegacySpriteInstance.TryFromShadow(position, sourceRect, texture.Width, texture.Height, flip, depth, out LegacySpriteInstance instance))
+            {
+                // PushSprite's rule: a disposed texture queues nothing
+                if (!texture.IsDisposed)
+                {
+                    if (InstanceCheck)
+                    {
+                        CheckShadow(in instance, position, sourceRect, texture.Width, texture.Height, flip, depth);
+                    }
+
+                    QueueInstance(texture, in instance);
+                }
+
+                return;
+            }
 
             EnsureSize();
 
-            ref PositionNormalTextureColor4 vertex = ref _vertexInfo[_numSprites];
-
-            vertex.Position0.X = position.X + width * ratio;
-            vertex.Position0.Y = translatedY;
-
-            vertex.Position1.X = position.X + width * (ratio + 1f);
-            vertex.Position1.Y = translatedY;
-
-            vertex.Position2.X = position.X;
-            vertex.Position2.Y = translatedY + height;
-
-            vertex.Position3.X = position.X + width;
-            vertex.Position3.Y = translatedY + height;
-
-            vertex.Position0.Z = depth;
-            vertex.Position1.Z = depth;
-            vertex.Position2.Z = depth;
-            vertex.Position3.Z = depth;
-
-
-            CalculateHalfPixelUVs(sourceRect, texture.Width, texture.Height,
-                out float sourceX, out float sourceY, out float sourceW, out float sourceH);
-
-            byte effects = (byte)((flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None) & (SpriteEffects)0x03);
-
-            vertex.TextureCoordinate0.X = (_cornerOffsetX[0 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate0.Y = (_cornerOffsetY[0 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate1.X = (_cornerOffsetX[1 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate1.Y = (_cornerOffsetY[1 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate2.X = (_cornerOffsetX[2 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate2.Y = (_cornerOffsetY[2 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate3.X = (_cornerOffsetX[3 ^ effects] * sourceW) + sourceX;
-            vertex.TextureCoordinate3.Y = (_cornerOffsetY[3 ^ effects] * sourceH) + sourceY;
-            vertex.TextureCoordinate0.Z = 0;
-            vertex.TextureCoordinate1.Z = 0;
-            vertex.TextureCoordinate2.Z = 0;
-            vertex.TextureCoordinate3.Z = 0;
-
-            SetDefaultNormals(ref vertex);
-
-            vertex.Hue0.X = vertex.Hue1.X = vertex.Hue2.X = vertex.Hue3.X = 0;
-            vertex.Hue0.Y = vertex.Hue1.Y = vertex.Hue2.Y = vertex.Hue3.Y = ShaderHueTranslator.SHADER_SHADOW;
-            vertex.Hue0.Z = vertex.Hue1.Z = vertex.Hue2.Z = vertex.Hue3.Z = 1f;
+            BuildShadowQuad(ref _vertexInfo[_numSprites], position, sourceRect, texture.Width, texture.Height, flip, depth);
 
             PushSprite(texture);
         }
@@ -1015,9 +992,37 @@ namespace ClassicUO.Renderer
             byte effects
         )
         {
+            if (InstancePathOn && LegacySpriteInstance.TryFromSprite
+                (
+                    sourceX, sourceY, sourceW, sourceH,
+                    destinationX, destinationY, destinationW, destinationH,
+                    color,
+                    originX, originY,
+                    rotationSin, rotationCos,
+                    depth, effects,
+                    out LegacySpriteInstance instance
+                ))
+            {
+                if (InstanceCheck)
+                {
+                    CheckSprite
+                    (
+                        in instance,
+                        sourceX, sourceY, sourceW, sourceH,
+                        destinationX, destinationY, destinationW, destinationH,
+                        color, originX, originY, rotationSin, rotationCos, depth, effects,
+                        texture.Width, texture.Height
+                    );
+                }
+
+                QueueInstance(texture, in instance);
+
+                return;
+            }
+
             EnsureSize();
 
-            SetVertex
+            BuildQuad
             (
                 ref _vertexInfo[_numSprites],
                 sourceX, sourceY, sourceW, sourceH,
@@ -1086,7 +1091,63 @@ namespace ClassicUO.Renderer
             _customEffect = null;
         }
 
-        private void SetVertex
+        internal static void ShadowGeometry(Vector2 position, Rectangle sourceRect, out float width, out float height, out float translatedY, out float topLeftX, out float topRightX)
+        {
+            width = sourceRect.Width;
+            height = sourceRect.Height * 0.5f;
+            translatedY = position.Y + height - 10;
+            float ratio = height / width;
+            topLeftX = position.X + width * ratio;
+            topRightX = position.X + width * (ratio + 1f);
+        }
+
+        internal static void BuildShadowQuad(ref PositionNormalTextureColor4 vertex, Vector2 position, Rectangle sourceRect, int textureWidth, int textureHeight, bool flip, float depth)
+        {
+            ShadowGeometry(position, sourceRect, out float width, out float height, out float translatedY, out float topLeftX, out float topRightX);
+
+            vertex.Position0.X = topLeftX;
+            vertex.Position0.Y = translatedY;
+
+            vertex.Position1.X = topRightX;
+            vertex.Position1.Y = translatedY;
+
+            vertex.Position2.X = position.X;
+            vertex.Position2.Y = translatedY + height;
+
+            vertex.Position3.X = position.X + width;
+            vertex.Position3.Y = translatedY + height;
+
+            vertex.Position0.Z = depth;
+            vertex.Position1.Z = depth;
+            vertex.Position2.Z = depth;
+            vertex.Position3.Z = depth;
+
+            CalculateHalfPixelUVs(sourceRect, textureWidth, textureHeight,
+                out float sourceX, out float sourceY, out float sourceW, out float sourceH);
+
+            byte effects = (byte)((flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None) & (SpriteEffects)0x03);
+
+            vertex.TextureCoordinate0.X = (_cornerOffsetX[0 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate0.Y = (_cornerOffsetY[0 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate1.X = (_cornerOffsetX[1 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate1.Y = (_cornerOffsetY[1 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate2.X = (_cornerOffsetX[2 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate2.Y = (_cornerOffsetY[2 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate3.X = (_cornerOffsetX[3 ^ effects] * sourceW) + sourceX;
+            vertex.TextureCoordinate3.Y = (_cornerOffsetY[3 ^ effects] * sourceH) + sourceY;
+            vertex.TextureCoordinate0.Z = 0;
+            vertex.TextureCoordinate1.Z = 0;
+            vertex.TextureCoordinate2.Z = 0;
+            vertex.TextureCoordinate3.Z = 0;
+
+            SetDefaultNormals(ref vertex);
+
+            vertex.Hue0.X = vertex.Hue1.X = vertex.Hue2.X = vertex.Hue3.X = 0;
+            vertex.Hue0.Y = vertex.Hue1.Y = vertex.Hue2.Y = vertex.Hue3.Y = ShaderHueTranslator.SHADER_SHADOW;
+            vertex.Hue0.Z = vertex.Hue1.Z = vertex.Hue2.Z = vertex.Hue3.Z = 1f;
+        }
+
+        internal static void BuildQuad
         (
             ref PositionNormalTextureColor4 sprite,
             float sourceX,
@@ -1211,7 +1272,7 @@ namespace ClassicUO.Renderer
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void CalculateHalfPixelUVs(
+        internal static void CalculateHalfPixelUVs(
             Rectangle sourceRect,
             int textureWidth, int textureHeight,
             out float sourceX, out float sourceY,
@@ -1229,6 +1290,7 @@ namespace ClassicUO.Renderer
         private void EnsureSize()
         {
             EnsureStarted();
+            EnsureQuadPath();
 
             //if (_numSprites >= MAX_SPRITES)
             //{
@@ -1297,6 +1359,8 @@ namespace ClassicUO.Renderer
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void EnsureBatchCapacity(int count)
         {
+            EnsureQuadPath();
+
             while (_numSprites + count >= _vertexInfo.Length)
             {
                 int newMax = _vertexInfo.Length + MAX_SPRITES;
@@ -1433,6 +1497,15 @@ namespace ClassicUO.Renderer
 
         private void ApplyStates()
         {
+            ApplyDeviceStates();
+            GraphicsDevice.Indices = _indexBuffer;
+            GraphicsDevice.SetVertexBuffer(_vertexBuffer);
+            ApplyEffect();
+        }
+
+        // ApplyStates without the buffers and the effect pass: the instance path binds its own streams and technique
+        private void ApplyDeviceStates()
+        {
             GraphicsDevice.BlendState = _blendState;
             GraphicsDevice.DepthStencilState = _stencil;
             GraphicsDevice.RasterizerState = _rasterizerState;
@@ -1440,9 +1513,6 @@ namespace ClassicUO.Renderer
             GraphicsDevice.SamplerStates[1] = SamplerState.PointClamp;
             GraphicsDevice.SamplerStates[2] = SamplerState.PointClamp;
             GraphicsDevice.SamplerStates[3] = SamplerState.PointClamp;
-
-            GraphicsDevice.Indices = _indexBuffer;
-            GraphicsDevice.SetVertexBuffer(_vertexBuffer);
 
             Viewport viewport = GraphicsDevice.Viewport;
 
@@ -1478,8 +1548,6 @@ namespace ClassicUO.Renderer
                 _appliedWorldIdentity = true;
                 _effectDirty = true;
             }
-
-            ApplyEffect();
         }
 
         private void Flush()
@@ -1508,6 +1576,9 @@ namespace ClassicUO.Renderer
 
         private void FlushQueue()
         {
+            // at most one queue holds sprites (a path change flushes), so drawing the instances first keeps the order
+            FlushInstances();
+
             if (_suppress)
             {
                 DropSuppressed();
@@ -1744,11 +1815,18 @@ namespace ClassicUO.Renderer
             }
 
             _currentBufferPosition = offset + count;
+
+            if (InstanceCheck)
+            {
+                CheckQuadSprites += count;
+            }
+
             if (CollectFrameStats)
             {
                 FrameUploadCalls++;
                 FrameUploadBytes += count * PositionNormalTextureColor4.SIZE_IN_BYTES;
                 FrameUploadSprites += count;
+                FrameQuadSprites += count;
             }
 
             return offset;

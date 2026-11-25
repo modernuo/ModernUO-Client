@@ -1525,6 +1525,10 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+#if CUO_DEVTOOLS
+            LegacyInstancedSprites.Summary();
+#endif
+
             if (CheckDeathScreen(batcher))
             {
                 return true;

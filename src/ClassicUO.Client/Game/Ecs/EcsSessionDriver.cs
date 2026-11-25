@@ -1139,6 +1139,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // legacyinstanced on|off: legacy_instanced_sprites (LegacyInstancedSprites; CUO_LEGACY_INSTANCED overrides it)
+                case "legacyinstanced" when args.Length > 0:
+                    Settings.GlobalSettings.LegacyInstancedSprites = args[0] == "on";
+                    Log.Info($"[ECS] driver: legacy_instanced_sprites {Settings.GlobalSettings.LegacyInstancedSprites} (effective {LegacyInstancedSprites.Enabled})");
+
+                    return false;
+
                 // shadows on|off: the profile's mobile shadows (mobile_wall_order round 2: a capture without them isolates the
                 // shadow's pixels)
                 case "shadows" when args.Length > 0 && ProfileManager.CurrentProfile is { } shadowProfile:
