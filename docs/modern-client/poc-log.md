@@ -9398,3 +9398,32 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
 - Perf opportunities: shared candidate resolution/result reuse, GameSceneLightOcclusion.cs:623 and GameSceneLightBake.cs:81;
   repeated extraction/search precedes bake validity. New U/read and structural-hit counts gate the existing Part 2 plan;
   no new saving estimate or implementation in this half.
+
+
+## 2026-11-25 — walk-consol-lights fix round 1
+
+- Base for this fix: 5cda4714efce6f2109680032f541a80d0fc51137, branch bg/walk-consolidation.
+  Code: 80234d718e365e3bb0c725ff675e2b2bbca9e3d5. Review Important and Minor fixed.
+- Graphic changes and season/pack epoch refresh no longer add/remove/reorder authoritative Chunk.LightSources.
+  The graphic hook advances OccluderVersion; cache rows rebuild from the existing ordered reference list. Rows for
+  temporarily nonemitting statics remain represented, preserving live drawn-state behavior and old offer order.
+- Red regression failed with both switch states before the fix (three authoritative entries became two).
+  Production SceneChunkLightSink/AddLight tests retain [A,B,C] and B's old equal-priority win after A changes graphic,
+  with a real prefix and one budget slot remaining, both switch/range states, exact range/budget shares.
+  Replaced synthetic OfferSink cases with scene shape/color, overhead, band, roof/maxZ, drawn-anchor, ground LightID
+  and forced-field coverage. Equipment uses production equipment rebuilding and MobileSpriteExtract.Select,
+  checks move/turn anchors and equip/unequip/re-equip requests before the checker prefix fork.
+- Independent read-only fix review found no concrete issue. Verification and replacement job IDs are recorded below
+  after the final builds/suites; cancelled bench-001300..001309 measured the superseded build and must not be used.
+- Accepted costs: no new buffers or fixed memory/per-frame allocations in this fix. Historical static rows persist until
+  tile removal, as the reference collection requires; the existing pooled-row bound/fallback remains. No measured
+  performance or allocation benefit claimed: replacement jobs are pending coordinator analysis.
+- Perf opportunities: no new opportunity beyond the held Part 2 repeated light-candidate extraction/search already listed.
+- Fix verification: Release dev build passed (18 warnings / 0 errors), Release nodev build passed (38 / 0),
+  NativeAOT dev publish passed with existing trim/AOT warnings. Targeted cache/admission tests 27 passed.
+  Final full ClassicUO suite once: 9403 passed / 6 skipped / 0 failed, 4m22s; converter once: 167 / 1 / 0, 1m51s.
+  No PackCodec allocation flake, no rerun or Class A write-budget regeneration. Corrected NativeAOT SHA256:
+  3079b923267c37f45269a83ee066ca3fab12709828b60beb8e257e3695ae0e75. Both findings are FIXED.
+- Replacement jobs submitted with the unchanged scripts: checker GPU bench-001324, Legacy bench-001325;
+  ABBA GPU rounds 1-4 bench-001326..001329, Legacy rounds 1-4 bench-001330..001333. Updated artifact pin,
+  verification.json, jobs.txt and handoffs/walk-consol-lights.md in cuo-poc-state. Submit and stop; results pending.
