@@ -9316,3 +9316,28 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
   (always on), the look hold (now independent of asset_prefetch_on_packet, which keeps only the first-sight wait).
 - Gates: client Release builds in both CuoDevTools variants; unit tests 8878 passed / 6 skipped (dev) and 8486 / 6 (release).
   WriteSiteBudgetTests unchanged. Accepted costs: none new.
+
+## 2026-11-25 walk-consol step 1: measure world-walk consumers (bg/walk-consolidation, base 1e6a7bfcf)
+
+- Code 754e0c35b: FrameStats-only phases for inclusive fill loop, Z-band masks, view-margin masks, chunk lights,
+  GPU settle, light search (reusing its timestamps), wall resolve and its full scan subset. Existing prep_walk,
+  prep_gpu_masks, prep_hidden and prep_item_cache retained. Visit counters distinguish occlusion tile walks from
+  cached candidates and count chunk-light dynamic/emitter visits, GPU mask rebuilds and settle walks. No consolidation.
+- Measurement scripts/recon/aggregation: cuo-poc-state/measure/walk-consol. Three interleaved base/new process pairs
+  per renderer, four scenes (Moonglow bank, Britain, ls, lswalk), High plus mobile_wall_order=true (not enabled by High),
+  NativeAOT, benchpin, serial bench resource, 1080p zoom 1 light 05, NPC cantwalk=false, checkers off, no anim_freeze.
+  First of three windows dropped. Each round is a separate job for shared-bench fairness. Jobs recorded in jobs.txt;
+  final analysis job writes PROFILE.md only after all six jobs succeed. Results/allocations/GC remain pending at submission.
+- Coverage: fill loop includes mask/mesh/cache/walk/hidden work; margin masks are already in that loop, not a second
+  world traversal. Light search and chunk lights run under Lights; Legacy wall scans can run under draw. Their ratios
+  to world_prepare are scale comparisons, not additive shares. GPU settle traverses static tile lists when queued.
+- Verification: both Release client variants and targeted FrameStats tests; final counts/logs in the durable handoff.
+  NativeAOT dev publishes of base and instrumented commits succeeded (trim/AOT warnings). No new Class A writes.
+- Accepted costs: no new traversal or per-frame allocation; FrameStats-only eight phase buffers and thirteen counter
+  buffers add ~2.63 MiB/client when recording, plus headers/metadata. Timestamps and visit counters perturb measured
+  phases; especially borderline 0.05 ms candidates need sampling confirmation. No gameplay cache or retained object data.
+- Perf opportunities: conditional GPU mask/item-cache rebuild walks and hidden edge walks revisit objects; quantify
+  their phases before choosing a fused stream. Main fill skips baked/cached objects; light halos, occluder chunks and
+  wall neighbourhoods extend beyond its coverage, so a stream of only walked objects cannot replace them directly.
+- Follow-up: inspect final PROFILE.md and round spread/allocations, rank only consumers over 0.05 ms and preserve their
+  caches plus outside-fill coverage. See consumers.md for per-object data requirements and proposed sequence.
