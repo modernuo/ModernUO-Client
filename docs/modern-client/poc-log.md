@@ -9361,3 +9361,40 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
 - Accepted costs: no new per-frame allocations or retained memory in this fix; original recording
   buffers remain ~2.63 MiB/client. Instrumentation overhead awaits the profile; no measured claim.
   Perf opportunities: none new beyond the original walk-consumer reconnaissance.
+
+## 2026-11-25 walk-consol step 2 Part 1: persistent chunk emitters and search counters
+
+- Branch bg/walk-consolidation, base d58a32083828e6145bcf6c9e352321e2e6588e4b. Code a87827872 + df9525841.
+  Default-off chunk_light_cache retains pooled emitter SoA and cold handles in authoritative static/multi order, then
+  ascending occupied-cell/raw ground-item order. Mobiles/equipment/effects stay live. Drawn state/anchors and final admission,
+  ranking, range and budget fading remain live. Dirty rebuilding uses OccluderVersion/item generation, static graphic
+  membership updates and explicit season/pack epochs; CommitLightId now touches item generation. Arrays retain high-water
+  capacity while loaded, release on teardown/reload; above 16384 rows the original collection runs without recurring allocation.
+- Dev-only CUO_CHUNK_LIGHT_CACHE_CHECK forks the same pre-chunk ranked prefix every active light frame, runs both collections
+  and budget fading, compares ordered source/lifetime, ID, XY/XYZ, color/hue, shape dimensions (therefore radii), priority/share,
+  counts and refusal metadata. Each mismatch and periodic totals are logged. Local DevBench lightgear:on/off exercises real
+  lit-torch equipment funnel transitions without shard inventory changes.
+- FrameStats-only counters record actual candidate reads, unique union U per logical frame light pass (bake + draw), distinct
+  search queries and structural would-be hits against the immediately preceding frame's exact target/scene and all ordered
+  OccluderChunks identities/versions, including rejected chunks. Empty/bake-hit searches participate. Part 2 remains held:
+  no snapshots/results are reused, and hits are an upper bound without resolved animation/fade/art revisions. Explicit capacity
+  overflow, emitter rebuild/fallback counts and active consulted-halo array bytes are also reported.
+- Verification: both Release client variants compiled (dev 11 warnings, release 36, no errors); NativeAOT dev publish passed
+  with existing trim/AOT warnings, pinned to df952584193508a997876e4232d4d67fe67137e7. Targeted lighting/counter tests 60 passed.
+  Final full ClassicUO suite 9393 passed / 6 skipped / 0 failed (4m25s); converter 167 / 1 / 0 (1m43s). No PackCodec allocation
+  flake or Class A write-budget change. Independent review found no remaining material issue.
+- Durable scripts/analysis: cuo-poc-state/measure/walk-consol-lights; IDs in jobs.txt and handoffs/walk-consol-lights.md. Two
+  renderer checker jobs cover bank/Britain/ls/lswalk, both switches/range tiers, torch equip/unequip and winter/summer. Eight
+  AOT timing jobs: four rounds/renderer, each scene off/on/on/off in one process; High + mobile_wall_order, kbatman2, benchpin,
+  1080p zoom 1 light 05, checkers off, live animation; three windows/arm, first dropped. User explicitly authorized submission
+  over standing parked policy. Submit and stop: checker results, phases/frame p50/p95, allocations/GC and sharing/hits remain
+  pending; no performance claim yet.
+- Accepted costs (estimates): +8 B/chunk pointer; cache object ~152 B; pooled arrays 37*C + 312 B at capacity C (16-row minimum,
+  about 0.001 MiB including object). Arrays return on eviction; dormant caches remain after toggling off. FrameStats-only
+  fixed search state ~2.30 MiB with pool rounding plus nine counter buffers 1.125 MiB/client (~3.42 MiB recording-only).
+  Dev light metadata up to ~32 KiB at 4096 lights; armed checker scratch up to ~0.25 MiB. Halo bytes exclude objects,
+  unvisited and dormant caches. Warm measurement and overflow-fallback tests allocate zero; measured scene costs/benefit
+  await jobs. Revisit retained capacities and counter overhead after measurements.
+- Perf opportunities: shared candidate resolution/result reuse, GameSceneLightOcclusion.cs:623 and GameSceneLightBake.cs:81;
+  repeated extraction/search precedes bake validity. New U/read and structural-hit counts gate the existing Part 2 plan;
+  no new saving estimate or implementation in this half.
