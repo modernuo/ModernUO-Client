@@ -69,9 +69,9 @@ The shared `ClassicUO.DevTools.Diag.Report` helper provides the common warning p
 
 ## Release guard
 
-The normal `ClassicUO.UnitTests` build prepares a separate **Release, CuoDevTools=false** client and stages its managed assembly and first-party dependencies under the test output's `release-guard/` directory. The existing variant-specific output/obj folders keep it separate from the developer build. The test inspects ECMA-335 metadata with `PEReader`, without executing the client or resolving native graphics libraries.
+The normal `ClassicUO.UnitTests` build prepares a separate **Release, CuoDevTools=false** client and stages its managed assembly and first-party dependencies under the test output's `release-guard/` directory. The nested restore and build run in separate processes, so restore-generated imports are evaluated freshly and outer solution configuration mappings cannot leak into the Release graph. A guard-only props import preserves project defaults and isolates every project's intermediate/output paths, including FNA, SDL3-CS and FileEmbed. Staging copies the current client TargetPath and resolved ReferenceCopyLocalPaths after clearing the destination; it never globs a bin directory. The test inspects ECMA-335 metadata with `PEReader`, without executing the client or resolving native graphics libraries. Mono.Cecil independently inspects IL calls and resolves their target methods (including cross-assembly and generic targets); any call to a method with `[Conditional("CUO_DEVTOOLS")]` fails, even during ratchet regeneration.
 
-It recognizes diagnostics/checker namespace and type-name patterns (including nested and generic types), plus known tooling and telemetry support types. New checker namespaces should contain `Diagnostics` and checker names should end in `Check` or `Checker`; add nonstandard tooling names to the guard predicate. It rejects those type definitions and `CUO_*_CHECK` literals, including strings in static initializers or unreachable methods. Scanning all user strings is intentionally stronger than recognizing only a direct environment-read instruction. It scans the client plus `ClassicUO.*` and `Uo.*` dependencies, because checker state also exists outside the client project. Ordinary production environment controls and gameplay UI types are not automatically diagnostics.
+It recognizes diagnostics/checker namespace and type-name patterns (including nested and generic types), plus known tooling and telemetry support types. New checker namespaces should contain `Diagnostics` and checker names should end in `Check` or `Checker`; add nonstandard tooling names to the guard predicate. It records those type definitions and `CUO_*_CHECK` literals, including strings in static initializers or unreachable methods. This is a user-string literal heuristic, not environment-read analysis. Full literals passed through helpers and used constants are caught; runtime-composed names can escape. Matching help/log strings can register even when no environment read exists. A set cannot detect extra uses of an already accepted control or extra work inside an accepted type; the separate Conditional-call check remains mandatory. It scans the client plus `ClassicUO.*` and `Uo.*` dependencies, because checker state also exists outside the client project. Ordinary production environment controls and gameplay UI types are not automatically diagnostics.
 
 A missing staged assembly fails the test; it never silently skips. `dotnet test --no-build` uses the artifacts from the preceding build, so run a normal build/test after source changes. Synthetic assembly tests prove rejection of diagnostic names, diagnostic namespaces and environment reads, and acceptance of ordinary production code. A hook test verifies that Conditional calls remove side-effecting argument evaluation.
 
@@ -84,6 +84,14 @@ dotnet test tests/ClassicUO.UnitTests -c Release
 dotnet test tests/Uo.Converter.Tests -c Release
 ```
 
-At initial adoption, the strict guard reports pre-existing release leaks. Do not hide them with a skip or a diagnostic allowlist; resolve their containment explicitly. Exact exemptions in the scanner cover production validation/status data whose names happen to contain Check, Stats or Probe.
+Existing release debt is ratcheted in `tests/ClassicUO.UnitTests/Diagnostics/ReleaseDiagnosticsAllowlist.txt`. Each sorted row is exactly `<assembly file>|type|<full metadata name>` (nested `+` and generic arity retained) or `<assembly file>|environment|<control>`. New findings and stale rows both fail; duplicate, malformed and unsorted rows fail too. Permanent production validation/status exclusions stay in the scanner, separate from this debt list. There are no Conditional-call exemptions.
+
+After deliberately removing debt, regenerate the tracked source file and review its diff:
+
+```text
+CUO_RELEASE_DIAGNOSTICS_REGEN=1 dotnet test tests/ClassicUO.UnitTests -c Release --filter Release_Client_Contains_No_Diagnostics
+```
+
+The environment assignment above uses shell syntax; set the same variable in your shell on Windows. Regeneration mirrors WriteSiteBudgetTests and never bypasses the Conditional-call assertion. Do not accept new diagnostic debt as a routine way to make the suite green.
 
 Existing checkers have not been relocated in the conventions step. The external diagnostics inventory records their containment debt and proposed targets; passing a metadata guard alone does not prove their source follows the new layout and hook conventions.
