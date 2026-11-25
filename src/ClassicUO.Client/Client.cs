@@ -250,6 +250,7 @@ namespace ClassicUO
             Settings.ApplyLanguage(Settings.GlobalSettings, FileManager.Clilocs.AvailableLanguages(), OsLanguage.Select);
             ClassicUO.Game.SharedClilocSetup.Enable(FileManager);
             FileManager.Load(Settings.GlobalSettings.Language);
+            ClassicUO.Game.Scenes.LightEmitters.Reset();
             ClassicUO.Game.SharedClilocSetup.LogLoaded(FileManager);
             ClassicUO.Game.Map.Chunk.StaticTileData = FileManager.TileData.StaticData;
 

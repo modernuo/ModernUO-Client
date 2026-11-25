@@ -114,6 +114,10 @@ namespace ClassicUO.UnitTests.Game.Scenes
             _chunk.AddGameObject(first, 1, 1);
             cache.Refresh(_chunk, _data);
             Assert.NotEqual(life, cache.Incarnation[1]);
+            LightEmitters.InvalidateRows();
+            int seasonBuilds = cache.Rebuilds;
+            cache.Refresh(_chunk, _data);
+            Assert.True(cache.Rebuilds > seasonBuilds);
             LightEmitters.Reset();
             int builds = cache.Rebuilds;
             cache.Refresh(_chunk, _data);
