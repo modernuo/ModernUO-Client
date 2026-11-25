@@ -628,8 +628,14 @@ namespace ClassicUO.Game.Scenes
                     float depth = obj.CalculateDepthZ();
                     // clip-4: the land views' shapes with depth_model on (nothing with it off)
                     LegacyGeoDepth.BeginView(batcher, obj);
+                    int queued = UltimaBatcher2D.CollectFrameStats ? batcher.SpritesQueued : 0;
                     bool drawn = obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
                     batcher.EndGeo();
+
+                    if (UltimaBatcher2D.CollectFrameStats)
+                    {
+                        CountSprites(batcher, obj, queued);
+                    }
 
                     if (drawn)
                     {
@@ -654,9 +660,16 @@ namespace ClassicUO.Game.Scenes
                     GoldenCapture.MarkLegacy(obj);
                 }
 #endif
+                int queued = UltimaBatcher2D.CollectFrameStats ? batcher.SpritesQueued : 0;
+
                 if (obj.Z <= maxGroundZ && EffectSpriteSink.DrawLegacy(batcher, Unsafe.As<GameEffect>(obj), obj.CalculateDepthZ()))
                 {
                     done++;
+                }
+
+                if (UltimaBatcher2D.CollectFrameStats)
+                {
+                    CountSprites(batcher, obj, queued);
                 }
             }
 
@@ -680,13 +693,44 @@ namespace ClassicUO.Game.Scenes
                     GoldenCapture.MarkLegacy(obj);
                 }
 #endif
+                int queued = UltimaBatcher2D.CollectFrameStats ? batcher.SpritesQueued : 0;
+
                 if (obj.Z <= maxGroundZ && LegacySpriteSink.Draw(batcher, obj, obj.CalculateDepthZ()))
                 {
                     done++;
                 }
+
+                if (UltimaBatcher2D.CollectFrameStats)
+                {
+                    CountSprites(batcher, obj, queued);
+                }
             }
 
             return done;
+        }
+
+        // legacy-sprite-split (FrameStats leg_spr_*): which kinds of world object the batcher's per-frame sprites come from,
+        // to size a Legacy vertex cache (static kinds can be kept between frames, mobiles cannot)
+        internal static int SpriteKind(GameObject obj) => obj switch
+        {
+            Land => 0,
+            Static or Multi => 1,
+            Item item => item.IsCorpse ? 3 : 2,
+            Mobile => 4,
+            GameEffect => 5,
+            _ => 6
+        };
+
+        private static void CountSprites(UltimaBatcher2D batcher, GameObject obj, int queued)
+        {
+            int n = batcher.SpritesQueued - queued;
+
+            if (n > 0)
+            {
+                int kind = SpriteKind(obj);
+                UltimaBatcher2D.FrameSpriteSplit[kind] += n;
+                UltimaBatcher2D.FrameObjectSplit[kind]++;
+            }
         }
 
         private static int DrawRenderListWithAtlas(UltimaBatcher2D batcher, List<GumpCommand> renderList)

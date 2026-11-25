@@ -270,6 +270,26 @@ namespace ClassicUO
         WalkBandTiles,
         HiddenBandTiles,
         CullY,
+        // legacy-sprite-split: batcher sprites by world object kind (RenderLists.SpriteKind), all batcher sprites uploaded,
+        // and Legacy chunk-mesh upload bytes (builds, alpha/hue re-uploads, visible indices)
+        LegSprLand,
+        LegSprStatic,
+        LegSprItem,
+        LegSprCorpse,
+        LegSprMobile,
+        LegSprEffect,
+        LegSprOther,
+        LegSprTotal,
+        MeshBuildBytes,
+        MeshAlphaBytes,
+        MeshIndexBytes,
+        LegObjLand,
+        LegObjStatic,
+        LegObjItem,
+        LegObjCorpse,
+        LegObjMobile,
+        LegObjEffect,
+        LegObjOther,
         Count
     }
 
@@ -343,7 +363,10 @@ namespace ClassicUO
             "mob_select_hits", "mob_select_misses", "mob_emit_misses", "mob_legacy_misses", "stats_self_alloc",
             "net_cap_bytes", "net_cap_packets", "net_cap_time", "net_cap_waiting",
             "vm_margin_mesh", "vm_margin_culled", "vm_margin_list", "vm_ring_tiles_skipped", "vm_ring_objects_skipped", "vm_body_mobiles_skipped",
-            "fill_chunks", "walk_band_tiles", "hidden_band_tiles", "cull_y" };
+            "fill_chunks", "walk_band_tiles", "hidden_band_tiles", "cull_y",
+            "leg_spr_land", "leg_spr_static", "leg_spr_item", "leg_spr_corpse", "leg_spr_mobile", "leg_spr_effect", "leg_spr_other",
+            "leg_spr_total", "mesh_build_bytes", "mesh_alpha_bytes", "mesh_index_bytes",
+            "leg_obj_land", "leg_obj_static", "leg_obj_item", "leg_obj_corpse", "leg_obj_mobile", "leg_obj_effect", "leg_obj_other" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -691,6 +714,17 @@ namespace ClassicUO
             _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
             _cur[(int)FrameCounter.FnaUploadCalls] = UltimaBatcher2D.FrameUploadCalls;
             _cur[(int)FrameCounter.FnaUploadBytes] = UltimaBatcher2D.FrameUploadBytes;
+
+            for (int k = 0; k < UltimaBatcher2D.FrameSpriteSplit.Length; k++)
+            {
+                _cur[(int)FrameCounter.LegSprLand + k] = UltimaBatcher2D.FrameSpriteSplit[k];
+                _cur[(int)FrameCounter.LegObjLand + k] = UltimaBatcher2D.FrameObjectSplit[k];
+            }
+
+            _cur[(int)FrameCounter.LegSprTotal] = UltimaBatcher2D.FrameUploadSprites;
+            _cur[(int)FrameCounter.MeshBuildBytes] = UltimaBatcher2D.FrameMeshBuildBytes;
+            _cur[(int)FrameCounter.MeshAlphaBytes] = UltimaBatcher2D.FrameMeshAlphaBytes;
+            _cur[(int)FrameCounter.MeshIndexBytes] = UltimaBatcher2D.FrameMeshIndexBytes;
             _cur[(int)FrameCounter.Gumps] = UIManager.Gumps.Count;
             SampleMapLoading();
 #if CUO_DEVTOOLS
