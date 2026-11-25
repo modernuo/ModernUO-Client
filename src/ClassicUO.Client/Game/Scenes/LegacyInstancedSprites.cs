@@ -10,7 +10,7 @@ namespace ClassicUO.Game.Scenes
     /// <summary>
     /// legacy_instanced_sprites (default off). The Legacy renderer's world sprites (the render lists of
     /// <see cref="RenderLists"/>) go up as 44-byte <c>LegacySpriteInstance</c>s that the vertex shader expands into the quad the
-    /// old path builds on the CPU, instead of 192-byte quads; UI, text and gumps outside the world lists stay on quads. Calls the
+    /// old path builds on the CPU, instead of 192-byte quads; the world pass includes its own text and gumps, and the UI pass stays on quads. Calls the
     /// instance cannot reproduce exactly (rotation, origin, geo mode, a capture) keep the quad path. No device instancing: quads.
     /// CUO_LEGACY_INSTANCED_CHECK=1: every call routed to the instance path also builds the old quad, expands the instance and
     /// compares the bytes (at most 20 mismatch lines logged); a summary every 5 s. CUO_LEGACY_INSTANCED=1|0 overrides the setting

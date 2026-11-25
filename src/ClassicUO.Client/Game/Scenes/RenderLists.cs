@@ -310,30 +310,22 @@ namespace ClassicUO.Game.Scenes
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
         {
-            // legacy_instanced_sprites: only the world lists request instances; UI, text and gumps outside them stay on quads
-            batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(true);
+            // legacy_instanced_sprites: this overload is the UI pass and the UI controls' child lists; it stays on quads. Only the
+            // chunk overload (the world pass) requests instances.
+            int result = DrawRenderList(batcher, _tiles, maxGroundZ) +
+                   DrawRenderList(batcher, _stretchedTiles, maxGroundZ) +
+                   DrawRenderList(batcher, _statics, maxGroundZ) +
+                   DrawRenderList(batcher, _animations, maxGroundZ) +
+                   DrawRenderList(batcher, _effects, maxGroundZ);
 
-            try
+            if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
             {
-                int result = DrawRenderList(batcher, _tiles, maxGroundZ) +
-                       DrawRenderList(batcher, _stretchedTiles, maxGroundZ) +
-                       DrawRenderList(batcher, _statics, maxGroundZ) +
-                       DrawRenderList(batcher, _animations, maxGroundZ) +
-                       DrawRenderList(batcher, _effects, maxGroundZ);
-
-                if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
-                {
-                    result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
-                    result += DrawRenderListWithAtlas(batcher, _gumpSprites);
-                    result += DrawRenderListNoAtlas(batcher, _gumpTexts);
-                }
-
-                return result;
+                result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
+                result += DrawRenderListWithAtlas(batcher, _gumpSprites);
+                result += DrawRenderListNoAtlas(batcher, _gumpTexts);
             }
-            finally
-            {
-                batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(false);
-            }
+
+            return result;
         }
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, List<Chunk> visibleChunks, int offsetX, int offsetY)
