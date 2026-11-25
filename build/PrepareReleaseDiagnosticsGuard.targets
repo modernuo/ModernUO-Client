@@ -8,11 +8,20 @@
     <ItemGroup>
       <!-- Conservative graph inputs, including resources, generators and shared external projects.
            A membership file also invalidates the stamp when an input is removed or renamed. -->
-      <_GuardInput Include="$(_GuardRoot)src/**/*;$(_GuardRoot)external/FNA/**/*;$(_GuardRoot)external/FileEmbed/**/*;$(_GuardRoot)build/**/*;$(_GuardRoot)*.props;$(_GuardRoot)*.targets;$(_GuardRoot)*.config;$(_GuardRoot)*.json;$(_GuardRoot).editorconfig;$(MSBuildAllProjects)"
+      <_GuardInput Include="$(_GuardRoot)src/**/*;$(_GuardRoot)external/**/*;$(_GuardRoot)build/**/*;$(_GuardRoot)Directory.Build.*;$(_GuardRoot)*.props;$(_GuardRoot)*.targets;$(_GuardRoot)*.config;$(_GuardRoot)*.json;$(_GuardRoot).editorconfig;$(MSBuildAllProjects)"
                    Exclude="$(_GuardRoot)**/bin/**;$(_GuardRoot)**/obj/**;$(_GuardRoot)**/bin_core/**;$(_GuardRoot)**/obj_core/**;$(_GuardRoot)**/.git/**;$(_GuardRoot)**/.git" />
       <_GuardInput Remove="@(_GuardInput)" Condition="!Exists('%(_GuardInput.Identity)')" />
     </ItemGroup>
     <WriteLinesToFile File="$(_GuardState)inputs.txt" Lines="@(_GuardInput->Distinct())" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <!-- Resolve from the same directory as the nested commands, honoring global.json roll-forward.
+         Keep version/base-path rows only: the environment section includes a per-process telemetry session ID. -->
+    <Exec Command="dotnet --info" WorkingDirectory="$(_GuardRoot)" EnvironmentVariables="DOTNET_CLI_UI_LANGUAGE=en-US" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" ItemName="_GuardSdkInfo" />
+    </Exec>
+    <ItemGroup>
+      <_GuardSdkIdentity Include="@(_GuardSdkInfo)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(_GuardSdkInfo.Identity)', '^\s*(Version|Base Path):'))" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_GuardState)sdk.txt" Lines="@(_GuardSdkIdentity)" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <ReadLinesFromFile File="$(_GuardStage)outputs.txt" Condition="Exists('$(_GuardStage)outputs.txt')">
       <Output TaskParameter="Lines" ItemName="_GuardStagedOutput" />
     </ReadLinesFromFile>
@@ -25,19 +34,19 @@
   </Target>
 
   <!-- Separate processes discard solution mappings and evaluate freshly after restore.
-       Inputs/Outputs skip process startup and graph evaluation on a no-change build. -->
+       Inputs/Outputs skip nested restore/build startup and graph evaluation on a no-change build. -->
   <Target Name="PrepareReleaseDiagnosticsGuard" AfterTargets="Build"
           DependsOnTargets="CollectReleaseDiagnosticsGuardInputs"
-          Inputs="@(_GuardInput);$(_GuardState)inputs.txt"
+          Inputs="@(_GuardInput);$(_GuardState)inputs.txt;$(_GuardState)sdk.txt"
           Outputs="$(_GuardState)complete.stamp;@(_GuardMissingOutput)">
     <PropertyGroup>
       <_GuardProperties>-p:CuoDevTools=false -p:DirectoryBuildPropsPath=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.props&quot; -p:CustomAfterMicrosoftCommonTargets=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.targets&quot; -p:ReleaseDiagnosticsGuardDir=&quot;$(_GuardStage)&quot;</_GuardProperties>
     </PropertyGroup>
-    <Exec Command="dotnet restore -p:Configuration=Release &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; $(_GuardProperties)" />
-    <Exec Command="dotnet build &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; -c Release --no-restore $(_GuardProperties)" />
+    <Exec Command="dotnet restore -p:Configuration=Release &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; $(_GuardProperties)" WorkingDirectory="$(_GuardRoot)" />
+    <Exec Command="dotnet build &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; -c Release --no-restore $(_GuardProperties)" WorkingDirectory="$(_GuardRoot)" />
     <Touch Files="$(_GuardState)complete.stamp" AlwaysCreate="true" />
     <ItemGroup>
-      <FileWrites Include="$(_GuardState)inputs.txt;$(_GuardState)complete.stamp" />
+      <FileWrites Include="$(_GuardState)inputs.txt;$(_GuardState)sdk.txt;$(_GuardState)complete.stamp" />
     </ItemGroup>
   </Target>
 </Project>
