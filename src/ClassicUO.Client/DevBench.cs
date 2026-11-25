@@ -2658,6 +2658,12 @@ namespace ClassicUO
                     // before, so arms in different plan positions walked the lane in a different phase (vmw-cost round 2:
                     // the middle arm of an off/on/onw triple saw another part of the large scene in each window)
                     _walkBack = false;
+                    // the same for the other moving modes: travel/ltravel restart the route, glide its line, bwalk its leg parity
+                    // and server-deny baseline
+                    _travelIndex = 0;
+                    _glideX = 0;
+                    _bwalkLegs = 0;
+                    _bwalkDenies = -1;
 
                     if (world.Player != null && world.Player.Pathfinder.AutoWalking)
                     {
