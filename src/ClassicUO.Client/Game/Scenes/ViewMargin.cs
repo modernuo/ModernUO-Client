@@ -56,6 +56,10 @@ namespace ClassicUO.Game.Scenes
         };
 
         public static readonly bool BodyCheck = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_BODY_CHECK") == "1";
+
+        // CUO_VIEW_MARGIN_WHATIF=1: with FrameStats on, view_margin_cull, view_margin_walk and view_margin_body count what they
+        // would leave out while switched off. Off by default so a timing arm with a switch off does not pay for its decision.
+        public static readonly bool WhatIf = Environment.GetEnvironmentVariable("CUO_VIEW_MARGIN_WHATIF") == "1";
 #else
         private static readonly bool? _env = null;
         private static readonly bool? _cullEnv = null;
@@ -64,6 +68,7 @@ namespace ClassicUO.Game.Scenes
         public const bool Check = false;
         public const bool WalkCheck = false;
         public const bool BodyCheck = false;
+        public const bool WhatIf = false;
 #endif
 
         /// <summary>Tests: the switch (null: the setting).</summary>

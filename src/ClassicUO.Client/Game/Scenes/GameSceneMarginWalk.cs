@@ -16,7 +16,7 @@ namespace ClassicUO.Game.Scenes
         // mobiles that reach the view from there. With the switch on (chunk_lights, always on, lights the margin's statics from
         // the chunks' emitter lists), a margin tile is walked only when Chunk.ReachCells or the dynamic index has it, and an
         // object whose anchor is in the margin is processed only when its box meets the view (ViewMargin.RingSkips).
-        // _vmRing: the margin decision is computed this frame (the switch, FrameStats counters or the checker).
+        // _vmRing: the margin decision is computed this frame (the switch, the CUO_VIEW_MARGIN_WHATIF counters or the checker).
         private bool _vmWalk, _vmRing;
         private FillDiamond.Bounds _vmViewBounds;
         private int _vmRingTilesSkipped, _vmRingObjectsSkipped;
@@ -24,7 +24,7 @@ namespace ClassicUO.Game.Scenes
         private void BeginMarginWalk()
         {
             _vmWalk = _vmSprites && ViewMargin.WalkEnabled;
-            _vmRing = _vmSprites && (_vmWalk || FrameStats.On || ViewMargin.WalkCheck);
+            _vmRing = _vmSprites && (_vmWalk || (FrameStats.On && ViewMargin.WhatIf) || ViewMargin.WalkCheck);
 
             if (_vmRing)
             {

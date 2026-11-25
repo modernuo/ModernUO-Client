@@ -258,11 +258,11 @@ namespace ClassicUO
         VmMarginMesh,
         VmMarginCulled,
         VmMarginList,
-        // vm-walk (view_margin_walk, both renderers): margin tiles of the walk's mask left out (or that would be, switch off),
+        // vm-walk (view_margin_walk, both renderers): margin tiles of the walk's mask left out (or that would be, switch off, with CUO_VIEW_MARGIN_WHATIF=1),
         // margin objects of walked tiles left out by their box
         VmRingTilesSkipped,
         VmRingObjectsSkipped,
-        // vm-body (view_margin_body): mobiles of the walk left out by their body's reach (or that would be, switch off)
+        // vm-body (view_margin_body): mobiles of the walk left out by their body's reach (or that would be, switch off, with CUO_VIEW_MARGIN_WHATIF=1)
         VmBodyMobilesSkipped,
         // zband (per-chunk Z band): chunks given chunk-level work by the fill, tiles in the walk's and the hidden pass's bands,
         // and walked objects culled by their anchor's y

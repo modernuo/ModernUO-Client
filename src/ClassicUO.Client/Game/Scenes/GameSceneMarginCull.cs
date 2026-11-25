@@ -21,7 +21,7 @@ namespace ClassicUO.Game.Scenes
         private void BeginMarginCull()
         {
             _vmCull = _vmSprites && _gpuWorld == null && ViewMargin.CullEnabled;
-            _vmCount = _vmSprites && _gpuWorld == null && (_vmCull || FrameStats.On || ViewMargin.Check);
+            _vmCount = _vmSprites && _gpuWorld == null && (_vmCull || (FrameStats.On && ViewMargin.WhatIf) || ViewMargin.Check);
 #if CUO_DEVTOOLS
             if (_vmCount && ViewMargin.Check)
             {

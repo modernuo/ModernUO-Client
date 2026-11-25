@@ -24,7 +24,7 @@ namespace ClassicUO.Game.Scenes
         private void BeginMarginBody()
         {
             _vmBody = _vmSprites && ViewMargin.BodyEnabled;
-            _vmBodyTest = _vmSprites && (_vmBody || FrameStats.On || ViewMargin.BodyCheck);
+            _vmBodyTest = _vmSprites && (_vmBody || (FrameStats.On && ViewMargin.WhatIf) || ViewMargin.BodyCheck);
             _vmBodyBudget = BodyReach.BudgetPerFrame;
 
             if (_vmBody)
