@@ -215,6 +215,96 @@ technique HueTechnique
 	}
 }
 
+// legacy_instanced_sprites: one LegacySpriteInstance per sprite (stream 1, instance frequency 1) and the quad's corner
+// (stream 0: 0/1 offsets in the index buffer's corner order). This is LegacySpriteInstance.Expand line for line, so the
+// vertex it builds is the one the quad path uploads, then VertexShaderFunction's transform. The sprite/shadow choice
+// selects whole values (no blend), so each form's arithmetic stays exact.
+struct VS_INSTANCED_INPUT
+{
+	float2 Corner		: POSITION0;
+	float4 Source		: TEXCOORD2; // x, y, w, h
+	float4 Destination	: TEXCOORD3; // x, y, w, h (shadow: x, translated y, width, top-left x)
+	float2 DepthAlpha	: TEXCOORD4; // depth, hue alpha (shadow: top-right x)
+	float4 Packed		: TEXCOORD5; // hue index low, high, hue mode, effects (unnormalised bytes)
+};
+
+PS_INPUT VertexShaderInstanced(VS_INSTANCED_INPUT IN)
+{
+	float hueIndex = IN.Packed.x + (IN.Packed.y * 256.0f);
+	float effects = IN.Packed.w;
+	float shadow = floor(effects / 4.0f);
+	effects -= shadow * 4.0f;
+
+	float flipY = floor(effects / 2.0f);
+	float flipX = effects - (flipY * 2.0f);
+
+	VS_INPUT v;
+	float x;
+	float y;
+
+	// [branch]: without it fxc flattens these choices into a + s * (b - a) blends, which are not exact
+	[branch]
+	if (shadow != 0.0f)
+	{
+		[branch]
+		if (IN.Corner.y != 0.0f)
+		{
+			y = IN.Destination.y + (hueIndex * 0.5f);
+
+			[branch]
+			if (IN.Corner.x != 0.0f)
+			{
+				x = IN.Destination.x + IN.Destination.z;
+			}
+			else
+			{
+				x = IN.Destination.x;
+			}
+		}
+		else
+		{
+			y = IN.Destination.y;
+
+			[branch]
+			if (IN.Corner.x != 0.0f)
+			{
+				x = IN.DepthAlpha.y;
+			}
+			else
+			{
+				x = IN.Destination.w;
+			}
+		}
+
+		v.Hue = float3(0.0f, SHADOW, 1.0f);
+	}
+	else
+	{
+		x = (IN.Corner.x * IN.Destination.z) + IN.Destination.x;
+		y = (IN.Corner.y * IN.Destination.w) + IN.Destination.y;
+		v.Hue = float3(hueIndex, IN.Packed.z, IN.DepthAlpha.y);
+	}
+
+	v.Position = float4(x, y, IN.DepthAlpha.x, 1.0f);
+
+	float offsetX = abs(IN.Corner.x - flipX);
+	float offsetY = abs(IN.Corner.y - flipY);
+
+	v.TexCoord = float3((offsetX * IN.Source.z) + IN.Source.x, (offsetY * IN.Source.w) + IN.Source.y, 0.0f);
+	v.Normal = float3(0.0f, 0.0f, 1.0f);
+
+	return VertexShaderFunction(v);
+}
+
+technique HueInstancedTechnique
+{
+	pass p0
+	{
+		VertexShader = compile vs_3_0 VertexShaderInstanced();
+		PixelShader = compile ps_3_0 PixelShader_Hue();
+	}
+}
+
 // clip-4 depth model (switch depth_model; GeoDepth.cs and sprite.hlsl GeoDepth are the same maths): HueGeoTechnique writes
 // the geometric per-pixel depth, so it loses early depth rejection; HueTechnique above is unchanged and drawn when the switch
 // is off. The shape class rides in TexCoord.z (0: the depth key; else class * 64 + 32 + base - key, LegacyGeo.Encode) and

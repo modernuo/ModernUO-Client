@@ -96,7 +96,7 @@ namespace ClassicUO.Renderer
                 return false;
             }
 
-            if (!TryPack(color.X, ushort.MaxValue, out float hueIndex) || !TryPack(color.Y, byte.MaxValue, out float hueMode))
+            if (!ExactDepth(depth) || !TryPack(color.X, ushort.MaxValue, out float hueIndex) || !TryPack(color.Y, byte.MaxValue, out float hueMode))
             {
                 return false;
             }
@@ -135,7 +135,7 @@ namespace ClassicUO.Renderer
         {
             instance = default;
 
-            if (sourceRect.Height < 0 || sourceRect.Height > ushort.MaxValue)
+            if (sourceRect.Height < 0 || sourceRect.Height > ushort.MaxValue || !ExactDepth(depth))
             {
                 return false;
             }
@@ -167,6 +167,14 @@ namespace ClassicUO.Renderer
             return true;
         }
 
+        // fxc builds the shader's (x, y, depth, 1) as depth * (0, 0, 1, 0) + (0, 0, 0, 1) in one mad: a depth of -0 would
+        // reach the matrix as +0 and a non-finite one would turn w into NaN, so those stay on the quad path
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool ExactDepth(float depth)
+        {
+            return float.IsFinite(depth) && BitConverter.SingleToInt32Bits(depth) != int.MinValue;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool TryPack(float value, int max, out float packed)
         {
@@ -176,8 +184,14 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>
-        /// The CPU twin of the vertex shader (VertexShaderInstanced in IsometricWorld.fx, Task 3), which mirrors this
-        /// line for line with float math. The corner offsets come from the per-vertex corner stream; a flip bit mirrors a UV offset as abs(offset - flip).
+        /// The CPU twin of the vertex shader (VertexShaderInstanced in IsometricWorld.fx), which mirrors this line for line
+        /// with float math and then applies HueTechnique's vertex transform. Both forms decode the flags the same way
+        /// (shadow = floor(effects / 4), then the flip bits) and mirror a UV offset as abs(corner - flip). The sprite form
+        /// places corner (cx, cy) at (cx * w + x, cy * h + y) with the instance's hue; the shadow form
+        /// (<see cref="TryFromShadow"/>) takes its four corners whole from the precomputed values (top-left x, top-right x,
+        /// x, x + width; y and y + hueIndex * 0.5) with the hue (0, SHADER_SHADOW, 1). The shader picks a form and a shadow
+        /// corner with branches, never with an arithmetic blend, so each form's values stay exact. The corner offsets come
+        /// from the per-vertex corner stream.
         /// </summary>
         public static void Expand(in LegacySpriteInstance instance, ref UltimaBatcher2D.PositionNormalTextureColor4 quad)
         {

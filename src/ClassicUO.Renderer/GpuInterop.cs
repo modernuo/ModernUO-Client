@@ -26,6 +26,10 @@ namespace ClassicUO.Renderer
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         private static partial IntPtr FNA3D_SDLGPU_GetTextureEXT(IntPtr device, IntPtr texture);
 
+        [LibraryImport("FNA3D")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        private static partial byte FNA3D_SupportsHardwareInstancing(IntPtr device);
+
         [LibraryImport("SDL3")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         private static partial byte* SDL_GetGPUDeviceDriver(IntPtr device);
@@ -70,6 +74,17 @@ namespace ClassicUO.Renderer
             FNA3D_GetSysRendererEXT(fna3d, &sys);
 
             return sys.RendererType == RENDERER_TYPE_SDL_GPU ? sys.SdlGpuDevice : IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// Whether GraphicsDevice.DrawInstancedPrimitives works on this device: FNA asks FNA3D the same question per draw and
+        /// throws when the answer is no, but does not expose it.
+        /// </summary>
+        public static bool SupportsHardwareInstancing(GraphicsDevice device)
+        {
+            IntPtr fna3d = GLDevice(device);
+
+            return fna3d != IntPtr.Zero && FNA3D_SupportsHardwareInstancing(fna3d) != 0;
         }
 
         /// <summary>FNA3D's driver for this device: "SDLGPU", "D3D11" or "OpenGL" (FNA3D_SysRendererTypeEXT), or null.</summary>

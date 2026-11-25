@@ -63,6 +63,8 @@ namespace ClassicUO.Renderer
             _stencil = Stencil;
 
             _basicUOEffect = new BasicUOEffect(device);
+
+            InitInstancing();
         }
 
 
@@ -102,14 +104,17 @@ namespace ClassicUO.Renderer
         /// <summary>Sprites queued and not yet drawn.</summary>
         public long GeneratedSprites { get; private set; }
 
-        public int PendingSprites => _numSprites;
+        public int PendingSprites => _numSprites + _numInstances;
 
-        /// <summary>Sprites queued this frame, uploaded or pending (FrameStats only: the upload count is kept with
-        /// <see cref="CollectFrameStats"/>). legacy-sprite-split takes differences around each object's draw.</summary>
-        public int SpritesQueued => FrameUploadSprites + _numSprites;
+        /// <summary>Sprites queued this frame, uploaded or pending, quads and instances (FrameStats only: the upload count is
+        /// kept with <see cref="CollectFrameStats"/>). legacy-sprite-split takes differences around each object's draw.</summary>
+        public int SpritesQueued => FrameUploadSprites + _numSprites + _numInstances;
 
         public void BeginSuppress()
         {
+            // the suppression drops quads queued after the mark; instances queued before it are drawn now, which is where
+            // the next flush would have drawn them (sprites queued during suppression never take the instance path)
+            FlushInstances();
             _suppress = true;
             _suppressMark = _numSprites;
             _suppressedSprites = 0;
@@ -168,6 +173,7 @@ namespace ClassicUO.Renderer
             FrameFlushes = FrameDrawCalls = 0;
             FrameUploadCalls = FrameUploadBytes = 0;
             FrameUploadSprites = FrameMeshBuildBytes = FrameMeshAlphaBytes = FrameMeshIndexBytes = 0;
+            FrameInstancedSprites = FrameQuadSprites = FramePathSwitches = FrameInstanceBytes = 0;
             Array.Clear(FrameSpriteSplit);
             Array.Clear(FrameObjectSplit);
             FrameGpuTicks = 0;
@@ -179,6 +185,7 @@ namespace ClassicUO.Renderer
         public void Dispose()
         {
             _vertexInfo = null;
+            DisposeInstancing();
             _basicUOEffect?.Dispose();
             _vertexBuffer.Dispose();
             _indexBuffer.Dispose();
@@ -241,7 +248,8 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            EnsureSize();
+            // each glyph goes through Draw, which picks its path and grows the queue
+            EnsureStarted();
 
             Texture2D textureValue = spriteFont.Texture;
             List<Rectangle> glyphData = spriteFont.GlyphData;
@@ -414,6 +422,17 @@ namespace ClassicUO.Renderer
         {
             if (Capture != null && Capture.Draw(texture, position, sourceRect, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), flip, false, depth, SpriteCaptureMode.Shadow))
             {
+                return;
+            }
+
+            if (InstancePathOn && LegacySpriteInstance.TryFromShadow(position, sourceRect, texture.Width, texture.Height, flip, depth, out LegacySpriteInstance instance))
+            {
+                // PushSprite's rule: a disposed texture queues nothing
+                if (!texture.IsDisposed)
+                {
+                    QueueInstance(texture, in instance);
+                }
+
                 return;
             }
 
@@ -968,6 +987,22 @@ namespace ClassicUO.Renderer
             byte effects
         )
         {
+            if (InstancePathOn && LegacySpriteInstance.TryFromSprite
+                (
+                    sourceX, sourceY, sourceW, sourceH,
+                    destinationX, destinationY, destinationW, destinationH,
+                    color,
+                    originX, originY,
+                    rotationSin, rotationCos,
+                    depth, effects,
+                    out LegacySpriteInstance instance
+                ))
+            {
+                QueueInstance(texture, in instance);
+
+                return;
+            }
+
             EnsureSize();
 
             BuildQuad
@@ -1238,6 +1273,7 @@ namespace ClassicUO.Renderer
         private void EnsureSize()
         {
             EnsureStarted();
+            EnsureQuadPath();
 
             //if (_numSprites >= MAX_SPRITES)
             //{
@@ -1306,6 +1342,8 @@ namespace ClassicUO.Renderer
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void EnsureBatchCapacity(int count)
         {
+            EnsureQuadPath();
+
             while (_numSprites + count >= _vertexInfo.Length)
             {
                 int newMax = _vertexInfo.Length + MAX_SPRITES;
@@ -1442,6 +1480,15 @@ namespace ClassicUO.Renderer
 
         private void ApplyStates()
         {
+            ApplyDeviceStates();
+            GraphicsDevice.Indices = _indexBuffer;
+            GraphicsDevice.SetVertexBuffer(_vertexBuffer);
+            ApplyEffect();
+        }
+
+        // ApplyStates without the buffers and the effect pass: the instance path binds its own streams and technique
+        private void ApplyDeviceStates()
+        {
             GraphicsDevice.BlendState = _blendState;
             GraphicsDevice.DepthStencilState = _stencil;
             GraphicsDevice.RasterizerState = _rasterizerState;
@@ -1449,9 +1496,6 @@ namespace ClassicUO.Renderer
             GraphicsDevice.SamplerStates[1] = SamplerState.PointClamp;
             GraphicsDevice.SamplerStates[2] = SamplerState.PointClamp;
             GraphicsDevice.SamplerStates[3] = SamplerState.PointClamp;
-
-            GraphicsDevice.Indices = _indexBuffer;
-            GraphicsDevice.SetVertexBuffer(_vertexBuffer);
 
             Viewport viewport = GraphicsDevice.Viewport;
 
@@ -1487,8 +1531,6 @@ namespace ClassicUO.Renderer
                 _appliedWorldIdentity = true;
                 _effectDirty = true;
             }
-
-            ApplyEffect();
         }
 
         private void Flush()
@@ -1517,6 +1559,9 @@ namespace ClassicUO.Renderer
 
         private void FlushQueue()
         {
+            // at most one queue holds sprites (a path change flushes), so drawing the instances first keeps the order
+            FlushInstances();
+
             if (_suppress)
             {
                 DropSuppressed();
@@ -1758,6 +1803,7 @@ namespace ClassicUO.Renderer
                 FrameUploadCalls++;
                 FrameUploadBytes += count * PositionNormalTextureColor4.SIZE_IN_BYTES;
                 FrameUploadSprites += count;
+                FrameQuadSprites += count;
             }
 
             return offset;
