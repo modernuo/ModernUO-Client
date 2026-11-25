@@ -69,6 +69,16 @@ namespace ClassicUO
         WorldDrawEffects,
         UiCacheRecord,
         UiCacheCompare,
+        // Inclusive chunk loop; band masks and the existing walk/mask/hidden phases are nested within it.
+        FillLoop,
+        PrepBandMasks,
+        PrepZBand,
+        ChunkLights,
+        GpuSettle,
+        // Light searches run in Lights; wall resolution can run during prepare (Gpu) or draw (Legacy).
+        LightSearch,
+        MwoResolve,
+        MwoScan,
         Count
     }
 
@@ -295,6 +305,19 @@ namespace ClassicUO
         LegQuadSprites,
         LegPathSwitches,
         LegInstBytes,
+        BandChunks,
+        LoChunks,
+        LoTiles,
+        LoObjects,
+        LoCandidates,
+        ChunkLightChunks,
+        ChunkLightTiles,
+        ChunkLightObjects,
+        GpuSettleChunks,
+        GpuSettleTiles,
+        GpuSettleObjects,
+        GpuMaskTiles,
+        GpuMaskObjects,
         Count
     }
 
@@ -331,7 +354,8 @@ namespace ClassicUO
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
             "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
             "draw other", "Draw total", "  batcher FNA calls", "Present", "frame",
-            "  UI tree walk", "  UI batcher FNA", "UI pass total", "  world draw: effects", "UI cache record", "UI cache compare"
+            "  UI tree walk", "  UI batcher FNA", "UI pass total", "  world draw: effects", "UI cache record", "UI cache compare",
+            "fill_loop", "prep_band_masks", "prep_zband", "chunk_lights", "gpu_settle", "light_search", "mwo_resolve", "mwo_scan"
         };
 
         private static readonly string[] _phaseKeys =
@@ -342,7 +366,8 @@ namespace ClassicUO
             "prep_item_cache", "prep_cap_cached", "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
             "cursor", "composite", "draw_other", "draw", "batcher_fna", "present", "frame",
-            "ui_traverse", "ui_fna", "ui_pass", "draw_fx", "ui_cache_record", "ui_cache_compare"
+            "ui_traverse", "ui_fna", "ui_pass", "draw_fx", "ui_cache_record", "ui_cache_compare",
+            "fill_loop", "prep_band_masks", "prep_zband", "chunk_lights", "gpu_settle", "light_search", "mwo_resolve", "mwo_scan"
         };
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
@@ -372,7 +397,8 @@ namespace ClassicUO
             "leg_spr_land", "leg_spr_static", "leg_spr_item", "leg_spr_corpse", "leg_spr_mobile", "leg_spr_effect", "leg_spr_other",
             "leg_spr_total", "mesh_build_bytes", "mesh_alpha_bytes", "mesh_index_bytes",
             "leg_obj_land", "leg_obj_static", "leg_obj_item", "leg_obj_corpse", "leg_obj_mobile", "leg_obj_effect", "leg_obj_other",
-            "leg_inst_sprites", "leg_quad_sprites", "leg_path_switches", "leg_inst_bytes" };
+            "leg_inst_sprites", "leg_quad_sprites", "leg_path_switches", "leg_inst_bytes",
+            "band_chunks", "lo_chunks", "lo_tiles", "lo_objects", "lo_candidates", "chunk_light_chunks", "chunk_light_tiles", "chunk_light_objects", "gpu_settle_chunks", "gpu_settle_tiles", "gpu_settle_objects", "gpu_mask_tiles", "gpu_mask_objects" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

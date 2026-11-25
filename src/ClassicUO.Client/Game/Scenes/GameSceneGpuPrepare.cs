@@ -358,6 +358,7 @@ namespace ClassicUO.Game.Scenes
             {
                 for (int y = 0; y < 8; y++)
                 {
+                    FrameStats.Inc(FrameCounter.GpuMaskTiles);
                     ulong bit = 1UL << (x << 3 | y);
                     chunk.GpuMobileStart[x << 3 | y] = mobileCount;
 
@@ -365,6 +366,7 @@ namespace ClassicUO.Game.Scenes
                          obj != null;
                          obj = mergedWalk ? tileWalk.Next() : list = list.TNext)
                     {
+                        FrameStats.Inc(FrameCounter.GpuMaskObjects);
                         if (!IsGpuBaked(obj))
                         {
                             walk |= bit;
@@ -575,12 +577,15 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            FrameStats.Inc(FrameCounter.GpuSettleChunks);
             for (int x = 0; x < 8; x++)
             {
                 for (int y = 0; y < 8; y++)
                 {
+                    FrameStats.Inc(FrameCounter.GpuSettleTiles);
                     for (TileListObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
                     {
+                        FrameStats.Inc(FrameCounter.GpuSettleObjects);
                         if (IsGpuBaked(obj))
                         {
                             obj.AlphaHue = GpuSettledAlpha(obj);

@@ -27,5 +27,13 @@ public class FrameStatsKeysTests
         Assert.Equal("update", keys[(int)FramePhase.Update]);
         Assert.Equal("draw", keys[(int)FramePhase.Draw]);
         Assert.Equal("frame", keys[(int)FramePhase.Frame]);
+        Assert.Equal("fill_loop", keys[(int)FramePhase.FillLoop]);
+        Assert.Equal("prep_band_masks", keys[(int)FramePhase.PrepBandMasks]);
+        Assert.Equal("prep_zband", keys[(int)FramePhase.PrepZBand]);
+        Assert.Equal("chunk_lights", keys[(int)FramePhase.ChunkLights]);
+        Assert.Equal("gpu_settle", keys[(int)FramePhase.GpuSettle]);
+        Assert.Equal("light_search", keys[(int)FramePhase.LightSearch]);
+        Assert.Equal("mwo_resolve", keys[(int)FramePhase.MwoResolve]);
+        Assert.Equal("mwo_scan", keys[(int)FramePhase.MwoScan]);
     }
 }

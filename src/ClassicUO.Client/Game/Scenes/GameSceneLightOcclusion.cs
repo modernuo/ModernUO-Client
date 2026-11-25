@@ -272,7 +272,7 @@ namespace ClassicUO.Game.Scenes
             {
                 long t0 = FrameStats.Stamp();
                 int found = CollectLightOccludersCore(ref l, pos, in lightInfo);
-                _loSearchTicks += FrameStats.Stamp() - t0;
+                _loSearchTicks += FrameStats.AddSince(FramePhase.LightSearch, t0) - t0;
 
                 return found;
             }
@@ -506,6 +506,7 @@ namespace ClassicUO.Game.Scenes
 
             if (cached)
             {
+                FrameStats.Add(FrameCounter.LoCandidates, entry.CandidateCount);
                 for (int i = 0; i < entry.CandidateCount; i++)
                 {
                     CollectCandidate(ref l, entry.Candidates[i], staticData, in t, ref n, ref sums);
@@ -545,6 +546,7 @@ namespace ClassicUO.Game.Scenes
             for (int c = 0; c < chunks.Count; c++)
             {
                 Chunk chunk = chunks[c];
+                FrameStats.Inc(FrameCounter.LoChunks);
 
                 if (chunk.IsDestroyed || !LightOcclusion.ChunkReaches(chunk.X, chunk.Y, chunk.StaticOverLeft, chunk.StaticOverRight,
                     chunk.StaticOverUp, chunk.OccZLo, chunk.OccZHi, _offset.X, _offset.Y, rl, rt, rr, rb))
@@ -611,9 +613,11 @@ namespace ClassicUO.Game.Scenes
         private void CollectTile(ref FrameLights.Entry l, Chunk chunk, int cell, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums)
         {
             LightOccluderEntry rec = _loRecord;
+            FrameStats.Inc(FrameCounter.LoTiles);
 
             for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
             {
+                FrameStats.Inc(FrameCounter.LoObjects);
                 if (rec != null && (o is Static || o is Multi) && CacheCandidate(ref l, in t, o, staticData))
                 {
                     rec.AddCandidate(o);
@@ -632,6 +636,7 @@ namespace ClassicUO.Game.Scenes
 
             foreach (ref readonly DynamicTileIndex.Entry en in chunk.Dynamic.Cell(cell))
             {
+                FrameStats.Inc(FrameCounter.LoObjects);
                 if (rec != null && en.Obj is Item candidate && CacheCandidate(ref l, in t, candidate, staticData))
                 {
                     rec.AddCandidate(candidate);

@@ -46,6 +46,9 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
+                    FrameStats.Inc(FrameCounter.ChunkLightChunks);
+                    FrameStats.Add(FrameCounter.ChunkLightObjects, chunk.LightSourceCount);
+
                     for (int i = 0, n = chunk.LightSourceCount; i < n; i++)
                     {
                         TileListObject obj = chunk.LightSources[i];
@@ -74,6 +77,8 @@ namespace ClassicUO.Game.Scenes
                     {
                         int cell = System.Numerics.BitOperations.TrailingZeroCount(cells);
                         DynamicTileIndex.Entry[] entries = dyn.RawCell(cell, out int entryCount);
+                        FrameStats.Inc(FrameCounter.ChunkLightTiles);
+                        FrameStats.Add(FrameCounter.ChunkLightObjects, entryCount);
 
                         for (int e = 0; e < entryCount; e++)
                         {
