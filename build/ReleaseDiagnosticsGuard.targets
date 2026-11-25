@@ -7,5 +7,7 @@
     </ItemGroup>
     <RemoveDir Directories="$(ReleaseDiagnosticsGuardDir)" />
     <Copy SourceFiles="@(_GuardOutput)" DestinationFolder="$(ReleaseDiagnosticsGuardDir)" />
+    <WriteLinesToFile File="$(ReleaseDiagnosticsGuardDir)/outputs.txt"
+                      Lines="@(_GuardOutput->'$(ReleaseDiagnosticsGuardDir)/%(Filename)%(Extension)')" Overwrite="true" />
   </Target>
 </Project>

@@ -1,0 +1,43 @@
+<Project>
+  <Target Name="CollectReleaseDiagnosticsGuardInputs">
+    <PropertyGroup>
+      <_GuardRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))/</_GuardRoot>
+      <_GuardState>$(IntermediateOutputPath)release-guard/</_GuardState>
+      <_GuardStage>$(TargetDir)release-guard/</_GuardStage>
+    </PropertyGroup>
+    <ItemGroup>
+      <!-- Conservative graph inputs, including resources, generators and shared external projects.
+           A membership file also invalidates the stamp when an input is removed or renamed. -->
+      <_GuardInput Include="$(_GuardRoot)src/**/*;$(_GuardRoot)external/FNA/**/*;$(_GuardRoot)external/FileEmbed/**/*;$(_GuardRoot)build/**/*;$(_GuardRoot)*.props;$(_GuardRoot)*.targets;$(_GuardRoot)*.config;$(_GuardRoot)*.json;$(_GuardRoot).editorconfig;$(MSBuildAllProjects)"
+                   Exclude="$(_GuardRoot)**/bin/**;$(_GuardRoot)**/obj/**;$(_GuardRoot)**/bin_core/**;$(_GuardRoot)**/obj_core/**;$(_GuardRoot)**/.git/**;$(_GuardRoot)**/.git" />
+      <_GuardInput Remove="@(_GuardInput)" Condition="!Exists('%(_GuardInput.Identity)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_GuardState)inputs.txt" Lines="@(_GuardInput->Distinct())" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ReadLinesFromFile File="$(_GuardStage)outputs.txt" Condition="Exists('$(_GuardStage)outputs.txt')">
+      <Output TaskParameter="Lines" ItemName="_GuardStagedOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_GuardStagedOutput Include="$(_GuardStage)outputs.txt;$(_GuardStage)cuo.dll" />
+      <!-- Old dependencies can predate the inputs. Compare inputs with the completion stamp,
+           but include absent outputs so losing any staged dependency forces preparation. -->
+      <_GuardMissingOutput Include="@(_GuardStagedOutput)" Condition="!Exists('%(_GuardStagedOutput.Identity)')" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Separate processes discard solution mappings and evaluate freshly after restore.
+       Inputs/Outputs skip process startup and graph evaluation on a no-change build. -->
+  <Target Name="PrepareReleaseDiagnosticsGuard" AfterTargets="Build"
+          DependsOnTargets="CollectReleaseDiagnosticsGuardInputs"
+          Inputs="@(_GuardInput);$(_GuardState)inputs.txt"
+          Outputs="$(_GuardState)complete.stamp;@(_GuardMissingOutput)">
+    <PropertyGroup>
+      <_GuardProperties>-p:CuoDevTools=false -p:DirectoryBuildPropsPath=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.props&quot; -p:CustomAfterMicrosoftCommonTargets=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.targets&quot; -p:ReleaseDiagnosticsGuardDir=&quot;$(_GuardStage)&quot;</_GuardProperties>
+    </PropertyGroup>
+    <Exec Command="dotnet restore -p:Configuration=Release &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; $(_GuardProperties)" />
+    <Exec Command="dotnet build &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; -c Release --no-restore $(_GuardProperties)" />
+    <Touch Files="$(_GuardState)complete.stamp" AlwaysCreate="true" />
+    <ItemGroup>
+      <FileWrites Include="$(_GuardState)inputs.txt;$(_GuardState)complete.stamp" />
+    </ItemGroup>
+  </Target>
+</Project>

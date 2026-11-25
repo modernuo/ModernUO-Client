@@ -56,13 +56,5 @@
     <ProjectReference Include="..\..\tools\ClassicUO.IO.Mul\ClassicUO.IO.Mul.csproj" />
   </ItemGroup>
 
-  <!-- Separate processes discard the outer build's solution mappings and evaluate freshly after restore. -->
-  <Target Name="PrepareReleaseDiagnosticsGuard" AfterTargets="Build">
-    <PropertyGroup>
-      <_GuardRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../'))</_GuardRoot>
-      <_GuardProperties>-p:CuoDevTools=false -p:DirectoryBuildPropsPath=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.props&quot; -p:CustomAfterMicrosoftCommonTargets=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.targets&quot; -p:ReleaseDiagnosticsGuardDir=&quot;$(TargetDir)release-guard&quot;</_GuardProperties>
-    </PropertyGroup>
-    <Exec Command="dotnet restore -p:Configuration=Release &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; $(_GuardProperties)" />
-    <Exec Command="dotnet build &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; -c Release --no-restore $(_GuardProperties)" />
-  </Target>
+  <Import Project="../../build/PrepareReleaseDiagnosticsGuard.targets" />
 </Project>
