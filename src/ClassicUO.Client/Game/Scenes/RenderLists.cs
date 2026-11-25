@@ -310,20 +310,30 @@ namespace ClassicUO.Game.Scenes
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
         {
-            int result = DrawRenderList(batcher, _tiles, maxGroundZ) +
-                   DrawRenderList(batcher, _stretchedTiles, maxGroundZ) +
-                   DrawRenderList(batcher, _statics, maxGroundZ) +
-                   DrawRenderList(batcher, _animations, maxGroundZ) +
-                   DrawRenderList(batcher, _effects, maxGroundZ);
+            // legacy_instanced_sprites: only the world lists request instances; UI, text and gumps outside them stay on quads
+            batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(true);
 
-            if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+            try
             {
-                result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
-                result += DrawRenderListWithAtlas(batcher, _gumpSprites);
-                result += DrawRenderListNoAtlas(batcher, _gumpTexts);
-            }
+                int result = DrawRenderList(batcher, _tiles, maxGroundZ) +
+                       DrawRenderList(batcher, _stretchedTiles, maxGroundZ) +
+                       DrawRenderList(batcher, _statics, maxGroundZ) +
+                       DrawRenderList(batcher, _animations, maxGroundZ) +
+                       DrawRenderList(batcher, _effects, maxGroundZ);
 
-            return result;
+                if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+                {
+                    result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
+                    result += DrawRenderListWithAtlas(batcher, _gumpSprites);
+                    result += DrawRenderListNoAtlas(batcher, _gumpTexts);
+                }
+
+                return result;
+            }
+            finally
+            {
+                batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(false);
+            }
         }
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, List<Chunk> visibleChunks, int offsetX, int offsetY)
@@ -364,6 +374,9 @@ namespace ClassicUO.Game.Scenes
             GoldenCapture.BeginLegacy(batcher);
 #endif
 
+            // legacy_instanced_sprites: the lists below are the world (the mesh layers above draw from GPU buffers)
+            batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(true);
+
             try
             {
                 result += DrawWorldRenderList(batcher, _statics, maxGroundZ) +
@@ -391,6 +404,7 @@ namespace ClassicUO.Game.Scenes
                 GoldenCapture.EndLegacy(batcher);
 #endif
                 LegacySpriteSink.EndFrame();
+                batcher.InstancedSprites = LegacyInstancedSprites.RequestFor(false);
             }
 
             return result;

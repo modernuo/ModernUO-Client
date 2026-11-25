@@ -344,6 +344,11 @@ namespace ClassicUO.Configuration
         // builds. Medium tier, with light_occlusion.
         [JsonPropertyName("light_batch")] public bool LightBatch { get; set; }
 
+        // Legacy renderer: world sprites (RenderLists' world lists) go up as 44-byte instances expanded in the vertex shader instead
+        // of 192-byte quads; UI, text and gumps stay on quads. Pixel-identical by construction. CUO_LEGACY_INSTANCED_CHECK=1 builds
+        // the quad beside every instance and compares the bytes; CUO_LEGACY_INSTANCED=1|0 overrides the setting in developer builds.
+        [JsonPropertyName("legacy_instanced_sprites")] public bool LegacyInstancedSprites { get; set; }
+
         // worldmap-audit P-1: with the world map open, the event loop polls at event_loop_max_wait_ms only while a map image
         // loads (task running or image not yet uploaded); otherwise the gump's work is deadlines (the 250 ms party/guild
         // query, the 1 s stale-entity prune) and packets and input wake it as before. Off: an open map keeps the loop at the

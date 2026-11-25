@@ -49,6 +49,107 @@ namespace ClassicUO.Renderer
         // instance bytes uploaded (also counted in FrameUploadBytes, as the instances are in FrameUploadSprites)
         public static int FrameInstancedSprites, FrameQuadSprites, FramePathSwitches, FrameInstanceBytes;
 
+#if CUO_DEVTOOLS
+        /// <summary>CUO_LEGACY_INSTANCED_CHECK (set by the client): every call routed to the instance path also builds the quad,
+        /// expands the instance and compares the bytes.</summary>
+        public static bool InstanceCheck;
+#else
+        public const bool InstanceCheck = false;
+#endif
+
+        /// <summary>Checker totals: calls compared and calls whose expanded instance differs from the quad.</summary>
+        public static long InstanceChecked, InstanceMismatches;
+
+        /// <summary>The client's log sink for mismatch lines (at most <see cref="MaxMismatchLines"/> per run).</summary>
+        public static Action<string> InstanceMismatchLog;
+
+        private const int MaxMismatchLines = 20;
+        private static int _mismatchLines;
+
+        internal static void ResetCheck()
+        {
+            InstanceChecked = InstanceMismatches = 0;
+            _mismatchLines = 0;
+        }
+
+        internal static void CheckSprite
+        (
+            in LegacySpriteInstance instance,
+            float sourceX, float sourceY, float sourceW, float sourceH,
+            float destinationX, float destinationY, float destinationW, float destinationH,
+            Vector3 color,
+            float originX, float originY,
+            float rotationSin, float rotationCos,
+            float depth, byte effects,
+            int textureWidth, int textureHeight
+        )
+        {
+            var quad = default(PositionNormalTextureColor4);
+            BuildQuad(ref quad, sourceX, sourceY, sourceW, sourceH, destinationX, destinationY, destinationW, destinationH, color, originX, originY, rotationSin, rotationCos, depth, effects);
+
+            if (CompareExpanded(in instance, in quad, out PositionNormalTextureColor4 expanded))
+            {
+                return;
+            }
+
+            if (_mismatchLines < MaxMismatchLines && InstanceMismatchLog != null)
+            {
+                _mismatchLines++;
+                InstanceMismatchLog
+                (
+                    $"[legacy-instanced-check] sprite mismatch: texture {textureWidth}x{textureHeight}, source ({sourceX}, {sourceY}, {sourceW}, {sourceH}), " +
+                    $"destination ({destinationX}, {destinationY}, {destinationW}, {destinationH}), hue {color}, depth {depth}, effects {effects}; " +
+                    $"quad {QuadText(in quad)}; instance {QuadText(in expanded)}"
+                );
+            }
+        }
+
+        internal static void CheckShadow
+        (
+            in LegacySpriteInstance instance,
+            Vector2 position, Rectangle sourceRect, int textureWidth, int textureHeight, bool flip, float depth
+        )
+        {
+            var quad = default(PositionNormalTextureColor4);
+            BuildShadowQuad(ref quad, position, sourceRect, textureWidth, textureHeight, flip, depth);
+
+            if (CompareExpanded(in instance, in quad, out PositionNormalTextureColor4 expanded))
+            {
+                return;
+            }
+
+            if (_mismatchLines < MaxMismatchLines && InstanceMismatchLog != null)
+            {
+                _mismatchLines++;
+                InstanceMismatchLog
+                (
+                    $"[legacy-instanced-check] shadow mismatch: texture {textureWidth}x{textureHeight}, source {sourceRect}, destination {position}, " +
+                    $"flip {flip}, depth {depth}; quad {QuadText(in quad)}; instance {QuadText(in expanded)}"
+                );
+            }
+        }
+
+        private static bool CompareExpanded(in LegacySpriteInstance instance, in PositionNormalTextureColor4 quad, out PositionNormalTextureColor4 expanded)
+        {
+            expanded = default;
+            LegacySpriteInstance.Expand(in instance, ref expanded);
+            InstanceChecked++;
+
+            if (System.Runtime.InteropServices.MemoryMarshal.AsBytes(System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(in quad, 1))
+                    .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(in expanded, 1))))
+            {
+                return true;
+            }
+
+            InstanceMismatches++;
+
+            return false;
+        }
+
+        private static string QuadText(in PositionNormalTextureColor4 q) =>
+            $"[p {q.Position0} {q.Position1} {q.Position2} {q.Position3}; uv {q.TextureCoordinate0} {q.TextureCoordinate1} {q.TextureCoordinate2} {q.TextureCoordinate3}; " +
+            $"hue {q.Hue0} {q.Hue1} {q.Hue2} {q.Hue3}; n {q.Normal0}]";
+
         private void InitInstancing()
         {
             // FNA's DrawInstancedPrimitives throws when FNA3D reports no hardware instancing; FNA asks per draw but does not
@@ -57,8 +158,10 @@ namespace ClassicUO.Renderer
             {
                 SupportsInstancing = GpuInterop.SupportsHardwareInstancing(GraphicsDevice);
             }
-            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+            catch (Exception ex)
             {
+                // a probe failure must never escape the constructor: the quad path is always available
+                Log.Warn($"Legacy batcher: the instancing probe failed ({ex.GetType().Name}: {ex.Message})");
                 SupportsInstancing = false;
             }
 

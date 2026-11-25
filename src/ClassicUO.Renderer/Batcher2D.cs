@@ -430,6 +430,11 @@ namespace ClassicUO.Renderer
                 // PushSprite's rule: a disposed texture queues nothing
                 if (!texture.IsDisposed)
                 {
+                    if (InstanceCheck)
+                    {
+                        CheckShadow(in instance, position, sourceRect, texture.Width, texture.Height, flip, depth);
+                    }
+
                     QueueInstance(texture, in instance);
                 }
 
@@ -998,6 +1003,18 @@ namespace ClassicUO.Renderer
                     out LegacySpriteInstance instance
                 ))
             {
+                if (InstanceCheck)
+                {
+                    CheckSprite
+                    (
+                        in instance,
+                        sourceX, sourceY, sourceW, sourceH,
+                        destinationX, destinationY, destinationW, destinationH,
+                        color, originX, originY, rotationSin, rotationCos, depth, effects,
+                        texture.Width, texture.Height
+                    );
+                }
+
                 QueueInstance(texture, in instance);
 
                 return;

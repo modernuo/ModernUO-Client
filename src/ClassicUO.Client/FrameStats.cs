@@ -290,6 +290,11 @@ namespace ClassicUO
         LegObjMobile,
         LegObjEffect,
         LegObjOther,
+        // legacy_instanced_sprites: sprites uploaded as instances and as quads, flushes forced by a path change, instance bytes uploaded
+        LegInstSprites,
+        LegQuadSprites,
+        LegPathSwitches,
+        LegInstBytes,
         Count
     }
 
@@ -366,7 +371,8 @@ namespace ClassicUO
             "fill_chunks", "walk_band_tiles", "hidden_band_tiles", "cull_y",
             "leg_spr_land", "leg_spr_static", "leg_spr_item", "leg_spr_corpse", "leg_spr_mobile", "leg_spr_effect", "leg_spr_other",
             "leg_spr_total", "mesh_build_bytes", "mesh_alpha_bytes", "mesh_index_bytes",
-            "leg_obj_land", "leg_obj_static", "leg_obj_item", "leg_obj_corpse", "leg_obj_mobile", "leg_obj_effect", "leg_obj_other" };
+            "leg_obj_land", "leg_obj_static", "leg_obj_item", "leg_obj_corpse", "leg_obj_mobile", "leg_obj_effect", "leg_obj_other",
+            "leg_inst_sprites", "leg_quad_sprites", "leg_path_switches", "leg_inst_bytes" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -722,6 +728,10 @@ namespace ClassicUO
             }
 
             _cur[(int)FrameCounter.LegSprTotal] = UltimaBatcher2D.FrameUploadSprites;
+            _cur[(int)FrameCounter.LegInstSprites] = UltimaBatcher2D.FrameInstancedSprites;
+            _cur[(int)FrameCounter.LegQuadSprites] = UltimaBatcher2D.FrameQuadSprites;
+            _cur[(int)FrameCounter.LegPathSwitches] = UltimaBatcher2D.FramePathSwitches;
+            _cur[(int)FrameCounter.LegInstBytes] = UltimaBatcher2D.FrameInstanceBytes;
             _cur[(int)FrameCounter.MeshBuildBytes] = UltimaBatcher2D.FrameMeshBuildBytes;
             _cur[(int)FrameCounter.MeshAlphaBytes] = UltimaBatcher2D.FrameMeshAlphaBytes;
             _cur[(int)FrameCounter.MeshIndexBytes] = UltimaBatcher2D.FrameMeshIndexBytes;

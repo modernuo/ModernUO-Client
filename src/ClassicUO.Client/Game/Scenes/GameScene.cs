@@ -1917,6 +1917,7 @@ namespace ClassicUO.Game.Scenes
             LightBakeSummary();
 
             LightBatchSummary();
+            LegacyInstancedSprites.Summary();
 #endif
 
             return true;
