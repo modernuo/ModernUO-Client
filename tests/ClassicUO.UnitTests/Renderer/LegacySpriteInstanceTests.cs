@@ -8,7 +8,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Renderer
 {
-    // The instance path must rebuild, bit for bit, the quad the batcher's SetVertex writes; Expand is the CPU twin of the
+    // The instance path must rebuild, bit for bit, the quad UltimaBatcher2D.BuildQuad writes; Expand is the CPU twin of the
     // vertex shader that does it on the GPU.
     public class LegacySpriteInstanceTests
     {

@@ -27,11 +27,12 @@ namespace ClassicUO.Renderer
         public float HueAlpha;
 
         // Byte4 on the GPU, unnormalised: hue index = byte 0 + byte 1 * 256, then the hue mode, then the flip bits.
-        public ushort HueIndex;
+        public byte HueIndexLow;
+        public byte HueIndexHigh;
         public byte HueMode;
         public byte Effects;
 
-        public const int SIZE_IN_BYTES = sizeof(float) * 10 + sizeof(ushort) + sizeof(byte) * 2;
+        public const int SIZE_IN_BYTES = sizeof(float) * 10 + sizeof(byte) * 4;
 
         VertexDeclaration IVertexType.VertexDeclaration => VertexDeclaration;
 
@@ -101,7 +102,8 @@ namespace ClassicUO.Renderer
             instance.DestinationH = destinationH;
             instance.Depth = depth;
             instance.HueAlpha = color.Z;
-            instance.HueIndex = (ushort)hueIndex;
+            instance.HueIndexLow = (byte)((int)hueIndex & 0xFF);
+            instance.HueIndexHigh = (byte)((int)hueIndex >> 8);
             instance.HueMode = (byte)hueMode;
             instance.Effects = effects;
 
@@ -118,24 +120,26 @@ namespace ClassicUO.Renderer
 
         /// <summary>
         /// The CPU twin of the vertex shader (VertexShaderInstanced in IsometricWorld.fx, Task 3), which mirrors this
-        /// line for line with float math. Corner i has x offset (i & 1) and y offset (i >> 1); the UVs use corner i ^ effects.
+        /// line for line with float math. The corner offsets come from the per-vertex corner stream; a flip bit mirrors a UV offset as abs(offset - flip).
         /// </summary>
         public static void Expand(in LegacySpriteInstance instance, ref UltimaBatcher2D.PositionNormalTextureColor4 quad)
         {
-            float hueIndex = instance.HueIndex & 0xFF;
-            hueIndex += (instance.HueIndex >> 8) * 256f;
+            float hueIndex = instance.HueIndexLow + (instance.HueIndexHigh * 256f);
             var hue = new Vector3(hueIndex, instance.HueMode, instance.HueAlpha);
 
+            float effects = instance.Effects;
+            float flipY = MathF.Floor(effects / 2f);
+            float flipX = effects - (flipY * 2f);
 
             quad.Position0 = new Vector3((0f * instance.DestinationW) + instance.DestinationX, (0f * instance.DestinationH) + instance.DestinationY, instance.Depth);
             quad.Position1 = new Vector3((1f * instance.DestinationW) + instance.DestinationX, (0f * instance.DestinationH) + instance.DestinationY, instance.Depth);
             quad.Position2 = new Vector3((0f * instance.DestinationW) + instance.DestinationX, (1f * instance.DestinationH) + instance.DestinationY, instance.Depth);
             quad.Position3 = new Vector3((1f * instance.DestinationW) + instance.DestinationX, (1f * instance.DestinationH) + instance.DestinationY, instance.Depth);
 
-            quad.TextureCoordinate0 = Uv(in instance, 0, instance.Effects);
-            quad.TextureCoordinate1 = Uv(in instance, 1, instance.Effects);
-            quad.TextureCoordinate2 = Uv(in instance, 2, instance.Effects);
-            quad.TextureCoordinate3 = Uv(in instance, 3, instance.Effects);
+            quad.TextureCoordinate0 = Uv(in instance, 0f, 0f, flipX, flipY);
+            quad.TextureCoordinate1 = Uv(in instance, 1f, 0f, flipX, flipY);
+            quad.TextureCoordinate2 = Uv(in instance, 0f, 1f, flipX, flipY);
+            quad.TextureCoordinate3 = Uv(in instance, 1f, 1f, flipX, flipY);
 
             quad.Hue0 = hue;
             quad.Hue1 = hue;
@@ -149,11 +153,12 @@ namespace ClassicUO.Renderer
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector3 Uv(in LegacySpriteInstance instance, int corner, int effects)
+        private static Vector3 Uv(in LegacySpriteInstance instance, float cornerX, float cornerY, float flipX, float flipY)
         {
-            int c = corner ^ effects;
+            float offsetX = MathF.Abs(cornerX - flipX);
+            float offsetY = MathF.Abs(cornerY - flipY);
 
-            return new Vector3(((c & 1) * instance.SourceW) + instance.SourceX, ((c >> 1) * instance.SourceH) + instance.SourceY, 0f);
+            return new Vector3((offsetX * instance.SourceW) + instance.SourceX, (offsetY * instance.SourceH) + instance.SourceY, 0f);
         }
     }
 }
