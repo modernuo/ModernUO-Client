@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <DebugType>Full</DebugType>
@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <PackageReference Include="FluentAssertions" Version="6.12.0" />
     <!-- T1 round 4: syntax trees for the write-site scanner's structural checks (fallback guards, the walk queue) -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
@@ -55,17 +56,13 @@
     <ProjectReference Include="..\..\tools\ClassicUO.IO.Mul\ClassicUO.IO.Mul.csproj" />
   </ItemGroup>
 
-  <!-- Build the release variant even when this test assembly uses CUO_DEVTOOLS. Metadata only:
-       never load the client or native libraries into the test process. Both variants already have isolated outputs. -->
+  <!-- Separate processes discard the outer build's solution mappings and evaluate freshly after restore. -->
   <Target Name="PrepareReleaseDiagnosticsGuard" AfterTargets="Build">
-    <MSBuild Projects="../../src/ClassicUO.Client/ClassicUO.Client.csproj"
-             Targets="Restore;Build" BuildInParallel="false"
-             Properties="Configuration=Release;CuoDevTools=false"
-             RemoveProperties="TargetFramework;RuntimeIdentifier;SelfContained;PublishAot" />
-    <ItemGroup>
-      <_ReleaseGuardAssembly Include="../../bin/Release-nodev/net11.0/cuo.dll;../../bin/Release-nodev/net11.0/ClassicUO.*.dll;../../bin/Release-nodev/net11.0/Uo.*.dll" />
-    </ItemGroup>
-    <RemoveDir Directories="$(TargetDir)release-guard" />
-    <Copy SourceFiles="@(_ReleaseGuardAssembly)" DestinationFolder="$(TargetDir)release-guard" />
+    <PropertyGroup>
+      <_GuardRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../'))</_GuardRoot>
+      <_GuardProperties>-p:CuoDevTools=false -p:DirectoryBuildPropsPath=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.props&quot; -p:CustomAfterMicrosoftCommonTargets=&quot;$(_GuardRoot)build/ReleaseDiagnosticsGuard.targets&quot; -p:ReleaseDiagnosticsGuardDir=&quot;$(TargetDir)release-guard&quot;</_GuardProperties>
+    </PropertyGroup>
+    <Exec Command="dotnet restore -p:Configuration=Release &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; $(_GuardProperties)" />
+    <Exec Command="dotnet build &quot;$(_GuardRoot)src/ClassicUO.Client/ClassicUO.Client.csproj&quot; -c Release --no-restore $(_GuardProperties)" />
   </Target>
 </Project>
