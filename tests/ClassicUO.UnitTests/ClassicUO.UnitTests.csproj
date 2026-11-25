@@ -55,4 +55,17 @@
     <ProjectReference Include="..\..\tools\ClassicUO.IO.Mul\ClassicUO.IO.Mul.csproj" />
   </ItemGroup>
 
+  <!-- Build the release variant even when this test assembly uses CUO_DEVTOOLS. Metadata only:
+       never load the client or native libraries into the test process. Both variants already have isolated outputs. -->
+  <Target Name="PrepareReleaseDiagnosticsGuard" AfterTargets="Build">
+    <MSBuild Projects="../../src/ClassicUO.Client/ClassicUO.Client.csproj"
+             Targets="Restore;Build" BuildInParallel="false"
+             Properties="Configuration=Release;CuoDevTools=false"
+             RemoveProperties="TargetFramework;RuntimeIdentifier;SelfContained;PublishAot" />
+    <ItemGroup>
+      <_ReleaseGuardAssembly Include="../../bin/Release-nodev/net11.0/cuo.dll;../../bin/Release-nodev/net11.0/ClassicUO.*.dll;../../bin/Release-nodev/net11.0/Uo.*.dll" />
+    </ItemGroup>
+    <RemoveDir Directories="$(TargetDir)release-guard" />
+    <Copy SourceFiles="@(_ReleaseGuardAssembly)" DestinationFolder="$(TargetDir)release-guard" />
+  </Target>
 </Project>
