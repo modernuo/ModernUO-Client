@@ -452,15 +452,20 @@ namespace ClassicUO.UnitTests.Ecs
             m.FindItemByLayer(Layer.Helmet).Should().BeNull("the ECS's helmet left, not the cached one");
         }
 
+        private static WornCache _escapedCache;
+
         [Fact]
         public void The_Read_Cache_Sizes_Are_What_The_Summary_Counts()
         {
             // ReadCacheMemory's layout-based figures: a WornCache object, and its items array
+            // published to a static so optimized JIT cannot elide or stack-allocate the non-escaping objects
             long a0 = GC.GetAllocatedBytesForCurrentThread();
             var c = new WornCache();
+            _escapedCache = c;
             long a1 = GC.GetAllocatedBytesForCurrentThread();
             c.Items = new Item[WornLayers.COUNT];
             long a2 = GC.GetAllocatedBytesForCurrentThread();
+            _escapedCache = null;
 
             (a1 - a0).Should().Be(80, "T3b: + the LayerDecision reference");
             (a2 - a1).Should().Be(24 + 8 * WornLayers.COUNT);
