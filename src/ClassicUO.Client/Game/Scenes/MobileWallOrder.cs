@@ -354,6 +354,7 @@ namespace ClassicUO.Game.Scenes
                 return Scan.Empty;
             }
 
+            long resolveStart = FrameStats.Stamp();
             DepthTile(x, y, offset, out int bx, out int by);
             StepTile(x, y, offset, out int nx, out int ny);
             ref ScanCache c = ref cache.WallCache;
@@ -401,7 +402,9 @@ namespace ClassicUO.Game.Scenes
                     TotalScans++;
 #endif
                     s_scratch.Clear();
+                    long scanStart = FrameStats.Stamp();
                     FullScan(map, x, y, mz, offset, bx, by, shadow, rule, s_scratch);
+                    FrameStats.AddSince(FramePhase.MwoScan, scanStart);
                     result = cache.Wall != null && cache.Wall.SameAs(s_scratch) ? cache.Wall : Scan.Keep(s_scratch);
                 }
 
@@ -425,6 +428,7 @@ namespace ClassicUO.Game.Scenes
             }
 #endif
 
+            FrameStats.AddSince(FramePhase.MwoResolve, resolveStart);
             return result;
         }
 

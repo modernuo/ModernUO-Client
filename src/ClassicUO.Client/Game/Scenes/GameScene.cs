@@ -56,7 +56,7 @@ namespace ClassicUO.Game.Scenes
         private HealthLinesManager _healthLinesManager;
 
         private Point _lastSelectedMultiPositionInHouseCustomization;
-        private readonly FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
+        private FrameLights _frameLights = new FrameLights(LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT);
 #if CUO_DEVTOOLS
         // LightFrameLog: the light configuration the composite uses and the one the light target was drawn for (0 none,
         // 1 darkness, 2 alternative)
@@ -337,6 +337,11 @@ namespace ClassicUO.Game.Scenes
             // light_occlusion_bake's atlas; light_occlusion_cache's entries (their objects)
             DisposeLightBake();
             _loTable.Reset();
+            _lightSearchMeasure?.Dispose();
+            _lightSearchMeasure = null;
+#if CUO_DEVTOOLS
+            _chunkLightReference?.BeginFrame(0);
+#endif
 
 
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
@@ -479,7 +484,7 @@ namespace ClassicUO.Game.Scenes
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
 #if CUO_DEVTOOLS
-            if (LightSlotDiag.Armed)
+            if (LightSlotDiag.Armed && !_chunkLightShadow)
             {
                 byte outcome = AddLightCore(obj, lightObject, x, y);
 
@@ -667,6 +672,9 @@ namespace ClassicUO.Game.Scenes
                 light.DrawX = x;
                 light.DrawY = y;
                 light.Source = obj;
+#if CUO_DEVTOOLS
+                light.SourceLife = obj.Incarnation;
+#endif
                 light.SrcX = obj.X;
                 light.SrcY = obj.Y;
                 light.SrcZ = obj.Z;
@@ -678,6 +686,10 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 Client.Game.UO.FileManager.Lights.Extent(light.ID, out int lw, out int lh);
+#if CUO_DEVTOOLS
+                light.ShapeWidth = lw;
+                light.ShapeHeight = lh;
+#endif
 
                 if (!ViewMargin.LightReaches(x, y, lw, lh, _lvLeft, _lvTop, _lvRight, _lvBottom))
                 {
@@ -692,7 +704,7 @@ namespace ClassicUO.Game.Scenes
                     if (!LightRange.InRange(d, _lvRange))
                     {
 #if CUO_DEVTOOLS
-                        _lrDropped++;
+                        if (!_chunkLightShadow) _lrDropped++;
 #endif
                         if (_lightRange)
                         {
@@ -844,7 +856,7 @@ namespace ClassicUO.Game.Scenes
                 map.RequestRing(minChunkX, minChunkY, maxChunkX, maxChunkY, Time.Ticks);
             }
 
-            // FrameStats per chunk (masks, walk, hidden) only for the Gpu world and in detail mode. Legacy times the whole
+            // FrameStats per chunk (Gpu masks, walk, hidden) only for the Gpu world and in detail mode. Legacy times the whole
             // chunk loop as PrepWalk, without two timestamps per chunk (~1,400 chunks at the 4K zoom-out, each
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
             bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
@@ -857,6 +869,9 @@ namespace ClassicUO.Game.Scenes
             // atlas_lru: a Legacy mesh drawing from a freed art/texmap page is rebuilt (the Gpu world doesn't draw meshes)
             int atlasEpoch = ClassicUO.Renderer.Animations.AtlasPageClock.FreedEpoch;
 
+            long bandTicks = 0;
+            long fillStart = FrameStats.Stamp();
+
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
                 for (var chunkY = minChunkY; chunkY <= maxChunkY; chunkY++)
@@ -865,10 +880,15 @@ namespace ClassicUO.Game.Scenes
                     if (chunk == null || chunk.IsDestroyed)
                         continue;
 
+                    long bandStart = FrameStats.Stamp();
+                    long bandFrom = bandStart;
+                    FrameStats.Inc(FrameCounter.BandChunks);
+
                     // perf-16/perf-18 world_fill_diamond: the tiles this fill walks and the (wider, Gpu) tiles its hidden pass
                     // visits. A chunk with neither can neither draw nor hide anything: no chunk-level work for it.
                     // the S band comes from the chunk's recorded Z range (GameSceneWalkChunkZ)
                     ulong inWalk = ZBandChunkMasks(chunk, chunkX, chunkY, gpuFill, in diamond, out ulong inHidden, out bool zForce);
+                    bandStart = FrameStats.AddSince(FramePhase.PrepZBand, bandStart);
 
                     inWalk = WalkChunkMask(chunk, chunkX, chunkY, inWalk);
 #if CUO_DEVTOOLS
@@ -876,6 +896,7 @@ namespace ClassicUO.Game.Scenes
 #endif
                     // view_margin_walk: margin tiles only where an object can reach the view (GameSceneMarginWalk)
                     inWalk = MarginWalkTiles(chunk, chunkX, chunkY, inWalk, out ulong ringWalk);
+                    bandTicks += FrameStats.AddSince(FramePhase.PrepBandMasks, bandStart) - bandFrom;
 
                     if (inHidden == 0)
                         continue;
@@ -1047,11 +1068,14 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            FrameStats.AddSince(FramePhase.FillLoop, fillStart);
+
             if (FrameStats.On)
             {
                 if (!chunkStamps)
                 {
-                    FrameStats.AddSince(FramePhase.PrepWalk, loopStart);
+                    // Band masks are exclusive prepare phases on both renderers.
+                    FrameStats.AddSince(FramePhase.PrepWalk, loopStart + bandTicks);
                 }
 
                 FrameStats.Add(FrameCounter.Tiles, nTiles);
@@ -1069,6 +1093,8 @@ namespace ClassicUO.Game.Scenes
 
             long foliageStart = FrameStats.Stamp();
             GpuPrepareEnd();
+            FrameStats.AddSince(FramePhase.GpuSettle, foliageStart);
+            foliageStart = FrameStats.Stamp();
 
             if (_alphaChanged)
             {
@@ -1822,7 +1848,9 @@ namespace ClassicUO.Game.Scenes
 
             // chunk_lights: the static lights from the chunks' emitter lists, and the light sources beside the walked view whose
             // halo reaches into it (ViewMargin)
-            AddChunkLights();
+            FrameStats.Begin(FramePhase.ChunkLights);
+            CollectChunkLights();
+            FrameStats.End(FramePhase.ChunkLights);
             int lightCount = _frameLights.CountFor(_lightsFrame);
 
             // light_range: past the budget the lowest-ranked kept lights fade by rank
@@ -1831,6 +1859,7 @@ namespace ClassicUO.Game.Scenes
                 _frameLights.FadeLowest(LightRange.FadeRanks);
             }
 #if CUO_DEVTOOLS
+            CheckChunkLightCache();
             LightRangeCheck(lightCount);
 
             if (LightSlotDiag.Armed)
@@ -1843,6 +1872,7 @@ namespace ClassicUO.Game.Scenes
             _lightTargetMode = UseAltLights ? 2 : 1;
 #endif
             // light_occlusion_bake: new or changed masked glows into the atlas before the light target is bound
+            BeginLightSearchMeasure(renderTargets.LightRenderTarget);
             LightBakePrepass(batcher, ref matrix, lightCount, renderTargets.LightRenderTarget);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.LightRenderTarget);
             // light_batch: the batched path runs with light_occlusion (LightBatch)

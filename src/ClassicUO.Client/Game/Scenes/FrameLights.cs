@@ -20,6 +20,10 @@ namespace ClassicUO.Game.Scenes
 
             // light_occlusion: the source (its own emitter: the glow passes through it) and its tile (LightOcclusion)
             public GameObjects.GameObject Source;
+#if CUO_DEVTOOLS
+            public uint SourceLife;
+            public int ShapeWidth, ShapeHeight;
+#endif
             public ushort SrcX,
                 SrcY;
             public sbyte SrcZ;
@@ -304,5 +308,38 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>The lights to draw in frame <paramref name="frame"/>: only the ones its own walk collected.</summary>
         public int CountFor(uint frame) => _frame == frame ? _count : 0;
+
+#if CUO_DEVTOOLS
+        internal void CopyTo(FrameLights other)
+        {
+            other.BeginFrame(_frame, _limit, _ranked);
+            if (other._entries.Length < _entries.Length) System.Array.Resize(ref other._entries, _entries.Length);
+            System.Array.Copy(_entries, other._entries, _count);
+            if (_ranked && _count > 0)
+            {
+                other.EnsurePriority(_count);
+                System.Array.Copy(_priority, other._priority, _count);
+            }
+            other._count = _count;
+            other.Refused = Refused;
+            other.MinRefusedPriority = MinRefusedPriority;
+        }
+
+        // -1: exact, -2: admission metadata differs, otherwise the first differing ordered light.
+        internal int FirstDifference(FrameLights other)
+        {
+            if (_count != other._count || Refused != other.Refused || MinRefusedPriority != other.MinRefusedPriority) return -2;
+            for (int i = 0; i < _count; i++)
+            {
+                ref Entry a = ref _entries[i];
+                ref Entry b = ref other._entries[i];
+                if (!ReferenceEquals(a.Source, b.Source) || a.SourceLife != b.SourceLife || a.ID != b.ID || a.Color != b.Color ||
+                    a.IsHue != b.IsHue || a.DrawX != b.DrawX || a.DrawY != b.DrawY || a.SrcX != b.SrcX || a.SrcY != b.SrcY ||
+                    a.SrcZ != b.SrcZ || a.ShapeWidth != b.ShapeWidth || a.ShapeHeight != b.ShapeHeight ||
+                    a.Share != b.Share || _ranked && _priority[i] != other._priority[i]) return i;
+            }
+            return -1;
+        }
+#endif
     }
 }

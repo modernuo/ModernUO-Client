@@ -370,6 +370,7 @@ namespace ClassicUO.Game
             }
 
             // the season's graphics change the tiledata flags the max-Z decision reads, without touching the tile lists
+            Scenes.LightEmitters.InvalidateRows();
             Map.InvalidateDecision();
 
             //TODO(deccer): refactor this out into _audioPlayer.PlayMusic(...)
