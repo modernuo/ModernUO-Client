@@ -80,6 +80,28 @@ namespace ClassicUO.Game.Scenes
         private LightOccluderEntry _loRecord;
         private int _loFrameHits, _loFrameMisses;
         private long _loCacheHits, _loCacheMisses;
+        private LightSearchMeasure _lightSearchMeasure;
+        private bool _measureSearch, _measureCandidates;
+        private uint _measureLightFrame;
+
+        private void BeginLightSearchMeasure(RenderTarget2D target)
+        {
+            _measureSearch = FrameStats.On;
+            if (!_measureSearch) return;
+            _lightSearchMeasure ??= new LightSearchMeasure();
+            Profile p = ProfileManager.CurrentProfile;
+            var inputs = new LightSearchMeasure.ProfileInputs(p?.HighlightGameObjects ?? false, p?.NoColorObjectsOutOfRange ?? false,
+                _world.Player != null && _world.Player.IsDead && (p?.EnableBlackWhiteEffect ?? false), p?.TreeToStumps ?? false,
+                p?.FieldsType ?? 0, _world.RangeSize.X, _world.RangeSize.Y, _world.ClientViewRange,
+                SelectedObject.Object, SelectedObject.SelectedContainer);
+            var key = new LightSearchMeasure.Scene(Camera.ViewTransformMatrix, Camera.Bounds, _viewMinPixel, _viewMaxPixel,
+                _offset, Camera.Zoom, _maxZ, _noDrawRoofs, GPU_WALK_MAX_Z, p?.UseCircleOfTransparency ?? false,
+                p?.CircleOfTransparencyType ?? 0, p?.CircleOfTransparencyRadius ?? 0, _world.Player?.Z ?? int.MinValue,
+                LightAlphaFade.Enabled, LightOcclusion.Enabled, UseAltLights, p?.UseColoredLights ?? false,
+                _lightRange, _frameLights.Limit, LightEmitters.Epoch, target?.Width ?? 0, target?.Height ?? 0, inputs);
+            _lightSearchMeasure.Begin(in key, OccluderChunks, _measureLightFrame + 1 == _lightsFrame);
+            _measureLightFrame = _lightsFrame;
+        }
 
         // the light pass starts: the light target's stencil is cleared when the switch is on
         private void BeginLightOcclusion(GraphicsDevice device)
@@ -138,6 +160,15 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Set(FrameCounter.LoBakeDraws, _lkDraws);
             FrameStats.Set(FrameCounter.LoRebakes, _lkFrameRebakes);
             FrameStats.Set(FrameCounter.LoRebakesPerSecond, _lkRebakeRate.PerSecond);
+            if (_measureSearch)
+            {
+                FrameStats.Set(FrameCounter.LightSearchPasses, 1);
+                FrameStats.Set(FrameCounter.LightCandidateReads, _lightSearchMeasure.Reads);
+                FrameStats.Set(FrameCounter.LightUniqueCandidates, _lightSearchMeasure.Unique);
+                FrameStats.Set(FrameCounter.LightResultQueries, _lightSearchMeasure.Queries);
+                FrameStats.Set(FrameCounter.LightResultHits, _lightSearchMeasure.Hits);
+                FrameStats.Set(FrameCounter.LightMeasureOverflow, _lightSearchMeasure.Overflow);
+            }
         }
 
         // light_occlusion_cache: on with light_occlusion; the drawn chunks' signature (an entry built under another set is
@@ -272,7 +303,7 @@ namespace ClassicUO.Game.Scenes
             {
                 long t0 = FrameStats.Stamp();
                 int found = CollectLightOccludersCore(ref l, pos, in lightInfo);
-                _loSearchTicks += FrameStats.Stamp() - t0;
+                _loSearchTicks += FrameStats.AddSince(FramePhase.LightSearch, t0) - t0;
 
                 return found;
             }
@@ -477,6 +508,12 @@ namespace ClassicUO.Game.Scenes
             }
 
             int n = _occBase;
+            if (_measureSearch)
+            {
+                var target = new LightSearchMeasure.Target(l.SrcX, l.SrcY, l.SrcZ, src is Item si ? si.DisplayedGraphic : src.Graphic,
+                    l.DrawX, l.DrawY, t.Px, t.Py, t.Left, t.Top, t.Right, t.Bottom, t.SrcTop, t.Facing);
+                _lightSearchMeasure.Query(src, l.ID, in target);
+            }
             sums = default;
             LightOccluderEntry entry = null;
             bool cached = false;
@@ -504,10 +541,14 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            _measureCandidates = _measureSearch;
             if (cached)
             {
+                FrameStats.Add(FrameCounter.LoCandidates, entry.CandidateCount);
+                LightSearchMeasure measure = _measureCandidates ? _lightSearchMeasure : null;
                 for (int i = 0; i < entry.CandidateCount; i++)
                 {
+                    if (measure != null) measure.Read(entry.Candidates[i]);
                     CollectCandidate(ref l, entry.Candidates[i], staticData, in t, ref n, ref sums);
                 }
             }
@@ -517,6 +558,7 @@ namespace ClassicUO.Game.Scenes
                 CollectVisible(ref l, staticData, in t, rl, rt, rr, rb, ref n, ref sums);
                 _loRecord = null;
             }
+            _measureCandidates = false;
 
             n -= _occBase;
             hash = sums.Hash;
@@ -541,10 +583,13 @@ namespace ClassicUO.Game.Scenes
             ref int n, ref OccluderSums sums)
         {
             List<Chunk> chunks = OccluderChunks;
+            bool stats = FrameStats.On;
+            int visited = 0;
 
             for (int c = 0; c < chunks.Count; c++)
             {
                 Chunk chunk = chunks[c];
+                if (stats) visited++;
 
                 if (chunk.IsDestroyed || !LightOcclusion.ChunkReaches(chunk.X, chunk.Y, chunk.StaticOverLeft, chunk.StaticOverRight,
                     chunk.StaticOverUp, chunk.OccZLo, chunk.OccZHi, _offset.X, _offset.Y, rl, rt, rr, rb))
@@ -555,6 +600,8 @@ namespace ClassicUO.Game.Scenes
                 _loRecord?.AddChunk(chunk);
                 CollectChunk(ref l, chunk, staticData, in t, rl, rr, false, ref n, ref sums);
             }
+
+            if (stats) FrameStats.Add(FrameCounter.LoChunks, visited);
         }
 
         // light_occlusion_cache: an object able to hide light l whatever its drawn state (LightOcclusion.Hides's terms that
@@ -593,6 +640,8 @@ namespace ClassicUO.Game.Scenes
             bool all, ref int n, ref OccluderSums sums)
         {
             int x0 = chunk.X << 3, y0 = chunk.Y << 3;
+            bool stats = FrameStats.On;
+            int tiles = 0, objects = 0;
 
             for (int cell = 0; cell < 64; cell++)
             {
@@ -603,17 +652,27 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                CollectTile(ref l, chunk, cell, staticData, in t, ref n, ref sums);
+                if (stats) tiles++;
+                CollectTile(ref l, chunk, cell, staticData, in t, ref n, ref sums, stats, ref objects);
+            }
+
+            if (stats)
+            {
+                FrameStats.Add(FrameCounter.LoTiles, tiles);
+                FrameStats.Add(FrameCounter.LoObjects, objects);
             }
         }
 
         // one tile's occluders: its statics and multi pieces, and its ground items
-        private void CollectTile(ref FrameLights.Entry l, Chunk chunk, int cell, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums)
+        private void CollectTile(ref FrameLights.Entry l, Chunk chunk, int cell, StaticTiles[] staticData, in LightTarget t, ref int n, ref OccluderSums sums, bool stats, ref int objects)
         {
             LightOccluderEntry rec = _loRecord;
+            LightSearchMeasure measure = _measureCandidates ? _lightSearchMeasure : null;
 
             for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
             {
+                if (measure != null && (o is Static || o is Multi)) measure.Read(o);
+                if (stats) objects++;
                 if (rec != null && (o is Static || o is Multi) && CacheCandidate(ref l, in t, o, staticData))
                 {
                     rec.AddCandidate(o);
@@ -632,6 +691,8 @@ namespace ClassicUO.Game.Scenes
 
             foreach (ref readonly DynamicTileIndex.Entry en in chunk.Dynamic.Cell(cell))
             {
+                if (measure != null && en.Obj is Item) measure.Read(en.Obj);
+                if (stats) objects++;
                 if (rec != null && en.Obj is Item candidate && CacheCandidate(ref l, in t, candidate, staticData))
                 {
                     rec.AddCandidate(candidate);

@@ -375,6 +375,7 @@ namespace ClassicUO.Game
             if (HoldsEntity(item) && Mirror.SetLightId(item.Serial, lightId))
             {
                 ExtrasWrites++;
+                ClassicUO.Game.Scenes.GpuItemGen.Touch(item);
             }
         }
 

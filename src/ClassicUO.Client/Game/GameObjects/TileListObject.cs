@@ -34,7 +34,9 @@ namespace ClassicUO.Game.GameObjects
                     TileChunk.Mesh.IsDirty = true;
                 }
 
+                bool changed = _graphic != value;
                 _graphic = value;
+                if (changed) TileChunk?.LightGraphicChanged(this);
             }
         }
 

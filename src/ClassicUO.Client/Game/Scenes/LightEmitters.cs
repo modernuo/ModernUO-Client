@@ -20,6 +20,8 @@ namespace ClassicUO.Game.Scenes
     internal static class LightEmitters
     {
         private static bool[] _static;
+        internal static uint Epoch { get; private set; }
+        internal static void InvalidateRows() => Epoch++;
 
         /// <summary>Tests: a table to use instead of the pack's.</summary>
         internal static bool[] OverrideForTests;
@@ -125,6 +127,7 @@ namespace ClassicUO.Game.Scenes
         public static void Reset()
         {
             _static = null;
+            InvalidateRows();
         }
     }
 }

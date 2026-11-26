@@ -231,6 +231,11 @@ namespace ClassicUO.Game.Map
         /// </summary>
         internal TileListObject[] LightSources = Array.Empty<TileListObject>();
         internal int LightSourceCount;
+        internal Scenes.ChunkLightCache LightCache;
+
+        // Graphic/season changes invalidate cached row data only. The reference list's membership and
+        // offer order are owned exclusively by tile insertion/removal, even while chunk_light_cache is off.
+        internal void LightGraphicChanged(TileListObject obj) => OccluderVersion++;
 
         /// <summary>
         /// view_margin (sprite margin): how far the art of the chunk's statics, multi components and items reaches past its
@@ -389,6 +394,7 @@ namespace ClassicUO.Game.Map
 
         private void ClearLightSources()
         {
+            LightCache?.Dispose();
             Array.Clear(LightSources, 0, LightSourceCount);
             LightSourceCount = 0;
         }

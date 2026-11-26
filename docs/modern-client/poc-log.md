@@ -9360,3 +9360,116 @@ absolute ms are p50 per frame at the stated size. Jobs bench-001107/1108/1111/11
 - Full Release suites, each variant once: ClassicUO.UnitTests dev 9,405 passed / 6 skipped; nodev 9,012 passed / 6 skipped. Uo.Converter.Tests dev and nodev each 167 passed / 1 skipped. Zero failures. The previous round's PackCodec allocation failure did not recur. Builds emitted existing warnings.
 - Timing remains pending: job bench-001358 contains one warmup and exactly three interleaved guard-disabled/enabled no-change pairs, preserving project timestamps, with agentnice/benchpin P-core pinning, tiered compilation off and the 8 GiB GC cap. No median or <=3 s claim yet. Contrary to the quiet-machine assumption, the shared bench queue had an active benchmark and 19 jobs ahead when submitted. Per queue rules, leave it queued and collect its measurements.json after completion. State scripts/logs: cuo-poc-state/measure/diag-conventions-fix3/; handoff: cuo-poc-state/handoffs/diag-conventions-fix3.md.
 - Accepted costs: an SDK query on each normal guard build and about 337 KiB input manifest plus a tiny SDK manifest per configuration/variant; warm wall overhead is pending measurement. No runtime memory, frame-time or allocation changes. Perf opportunities: none identified in this build-scaffolding scope. No client gates required or run.
+||||||| 1e6a7bfcf
+
+
+## 2026-11-25 walk-consol step 1: measure world-walk consumers (bg/walk-consolidation, base 1e6a7bfcf)
+
+- Code 754e0c35b: FrameStats-only phases for inclusive fill loop, Z-band masks, view-margin masks, chunk lights,
+  GPU settle, light search (reusing its timestamps), wall resolve and its full scan subset. Existing prep_walk,
+  prep_gpu_masks, prep_hidden and prep_item_cache retained. Visit counters distinguish occlusion tile walks from
+  cached candidates and count chunk-light dynamic/emitter visits, GPU mask rebuilds and settle walks. No consolidation.
+- Measurement scripts/recon/aggregation: cuo-poc-state/measure/walk-consol. Three interleaved base/new process pairs
+  per renderer, four scenes (Moonglow bank, Britain, ls, lswalk), High plus mobile_wall_order=true (not enabled by High),
+  NativeAOT, benchpin, serial bench resource, 1080p zoom 1 light 05, NPC cantwalk=false, checkers off, no anim_freeze.
+  First of three windows dropped. Each round is a separate job for shared-bench fairness. Jobs recorded in jobs.txt;
+  final analysis job writes PROFILE.md only after all six jobs succeed. Results/allocations/GC remain pending at submission.
+- Coverage: fill loop includes mask/mesh/cache/walk/hidden work; margin masks are already in that loop, not a second
+  world traversal. Light search and chunk lights run under Lights; Legacy wall scans can run under draw. Their ratios
+  to world_prepare are scale comparisons, not additive shares. GPU settle traverses static tile lists when queued.
+- Verification: both Release client variants and targeted FrameStats tests; final counts/logs in the durable handoff.
+  NativeAOT dev publishes of base and instrumented commits succeeded (trim/AOT warnings). No new Class A writes.
+- Accepted costs: no new traversal or per-frame allocation; FrameStats-only eight phase buffers and thirteen counter
+  buffers add ~2.63 MiB/client when recording, plus headers/metadata. Timestamps and visit counters perturb measured
+  phases; especially borderline 0.05 ms candidates need sampling confirmation. No gameplay cache or retained object data.
+- Perf opportunities: conditional GPU mask/item-cache rebuild walks and hidden edge walks revisit objects; quantify
+  their phases before choosing a fused stream. Main fill skips baked/cached objects; light halos, occluder chunks and
+  wall neighbourhoods extend beyond its coverage, so a stream of only walked objects cannot replace them directly.
+- Follow-up: inspect final PROFILE.md and round spread/allocations, rank only consumers over 0.05 ms and preserve their
+  caches plus outside-fill coverage. See consumers.md for per-object data requirements and proposed sequence.
+
+## 2026-11-25 walk-consol fix round 1 (bg/walk-consolidation, base 1e6a7bfcf)
+
+- Code fcda6ac1a fixes review of 754e0c35b: cache FrameStats.On before GPU mask/settle,
+  occlusion and chunk-light loops, accumulate visits locally only when enabled, publish after loops.
+  Explicit key assertions cover all thirteen added counters. Residual regression reproduced 700 ticks
+  instead of 300 before the fix and passes after it.
+- PrepRest subtracts GpuSettle; the audit also found Z-band and margin masks in the residual on Gpu.
+  Both are now exclusive phases; Legacy PrepWalk excludes these mask ticks before residual accounting.
+  FillLoop stays inclusive; light phases remain under Lights and wall phases under existing parents.
+- Verification: developer Release build 11 warnings / 0 errors; CuoDevTools=false Release build
+  38 warnings / 0 errors; FrameStats tests 18 passed; full unit suite 9373 passed / 6 skipped / 0 failed.
+  NativeAOT dev publish from full fcda6ac1a hash succeeded (trim/AOT analysis warnings) and replaces
+  the profile jobs' aot-new artifact. Base AOT remains pinned to 1e6a7bfcf. No Class A write changes.
+- Coordinator cancelled bench-001240..001246. Replacement six profile jobs use the same plan and
+  finalizer, with explicit full-commit provenance checks; IDs in cuo-poc-state/measure/walk-consol/jobs.txt
+  and report-job.txt. Submit-and-stop; measured timings and allocation/GC results remain pending.
+- Accepted costs: no new per-frame allocations or retained memory in this fix; original recording
+  buffers remain ~2.63 MiB/client. Instrumentation overhead awaits the profile; no measured claim.
+  Perf opportunities: none new beyond the original walk-consumer reconnaissance.
+
+## 2026-11-25 walk-consol step 2 Part 1: persistent chunk emitters and search counters
+
+- Branch bg/walk-consolidation, base d58a32083828e6145bcf6c9e352321e2e6588e4b. Code a87827872 + df9525841.
+  Default-off chunk_light_cache retains pooled emitter SoA and cold handles in authoritative static/multi order, then
+  ascending occupied-cell/raw ground-item order. Mobiles/equipment/effects stay live. Drawn state/anchors and final admission,
+  ranking, range and budget fading remain live. Dirty rebuilding uses OccluderVersion/item generation, static graphic
+  membership updates and explicit season/pack epochs; CommitLightId now touches item generation. Arrays retain high-water
+  capacity while loaded, release on teardown/reload; above 16384 rows the original collection runs without recurring allocation.
+- Dev-only CUO_CHUNK_LIGHT_CACHE_CHECK forks the same pre-chunk ranked prefix every active light frame, runs both collections
+  and budget fading, compares ordered source/lifetime, ID, XY/XYZ, color/hue, shape dimensions (therefore radii), priority/share,
+  counts and refusal metadata. Each mismatch and periodic totals are logged. Local DevBench lightgear:on/off exercises real
+  lit-torch equipment funnel transitions without shard inventory changes.
+- FrameStats-only counters record actual candidate reads, unique union U per logical frame light pass (bake + draw), distinct
+  search queries and structural would-be hits against the immediately preceding frame's exact target/scene and all ordered
+  OccluderChunks identities/versions, including rejected chunks. Empty/bake-hit searches participate. Part 2 remains held:
+  no snapshots/results are reused, and hits are an upper bound without resolved animation/fade/art revisions. Explicit capacity
+  overflow, emitter rebuild/fallback counts and active consulted-halo array bytes are also reported.
+- Verification: both Release client variants compiled (dev 11 warnings, release 36, no errors); NativeAOT dev publish passed
+  with existing trim/AOT warnings, pinned to df952584193508a997876e4232d4d67fe67137e7. Targeted lighting/counter tests 60 passed.
+  Final full ClassicUO suite 9393 passed / 6 skipped / 0 failed (4m25s); converter 167 / 1 / 0 (1m43s). No PackCodec allocation
+  flake or Class A write-budget change. Independent review found no remaining material issue.
+- Durable scripts/analysis: cuo-poc-state/measure/walk-consol-lights; IDs in jobs.txt and handoffs/walk-consol-lights.md. Two
+  renderer checker jobs cover bank/Britain/ls/lswalk, both switches/range tiers, torch equip/unequip and winter/summer. Eight
+  AOT timing jobs: four rounds/renderer, each scene off/on/on/off in one process; High + mobile_wall_order, kbatman2, benchpin,
+  1080p zoom 1 light 05, checkers off, live animation; three windows/arm, first dropped. User explicitly authorized submission
+  over standing parked policy. Submit and stop: checker results, phases/frame p50/p95, allocations/GC and sharing/hits remain
+  pending; no performance claim yet.
+- Accepted costs (estimates): +8 B/chunk pointer; cache object ~152 B; pooled arrays 37*C + 312 B at capacity C (16-row minimum,
+  about 0.001 MiB including object). Arrays return on eviction; dormant caches remain after toggling off. FrameStats-only
+  fixed search state ~2.30 MiB with pool rounding plus nine counter buffers 1.125 MiB/client (~3.42 MiB recording-only).
+  Dev light metadata up to ~32 KiB at 4096 lights; armed checker scratch up to ~0.25 MiB. Halo bytes exclude objects,
+  unvisited and dormant caches. Warm measurement and overflow-fallback tests allocate zero; measured scene costs/benefit
+  await jobs. Revisit retained capacities and counter overhead after measurements.
+- Perf opportunities: shared candidate resolution/result reuse, GameSceneLightOcclusion.cs:623 and GameSceneLightBake.cs:81;
+  repeated extraction/search precedes bake validity. New U/read and structural-hit counts gate the existing Part 2 plan;
+  no new saving estimate or implementation in this half.
+
+
+## 2026-11-25 — walk-consol-lights fix round 1
+
+- Base for this fix: 5cda4714efce6f2109680032f541a80d0fc51137, branch bg/walk-consolidation.
+  Code: 80234d718e365e3bb0c725ff675e2b2bbca9e3d5. Review Important and Minor fixed.
+- Graphic changes and season/pack epoch refresh no longer add/remove/reorder authoritative Chunk.LightSources.
+  The graphic hook advances OccluderVersion; cache rows rebuild from the existing ordered reference list. Rows for
+  temporarily nonemitting statics remain represented, preserving live drawn-state behavior and old offer order.
+- Red regression failed with both switch states before the fix (three authoritative entries became two).
+  Production SceneChunkLightSink/AddLight tests retain [A,B,C] and B's old equal-priority win after A changes graphic,
+  with a real prefix and one budget slot remaining, both switch/range states, exact range/budget shares.
+  Replaced synthetic OfferSink cases with scene shape/color, overhead, band, roof/maxZ, drawn-anchor, ground LightID
+  and forced-field coverage. Equipment uses production equipment rebuilding and MobileSpriteExtract.Select,
+  checks move/turn anchors and equip/unequip/re-equip requests before the checker prefix fork.
+- Independent read-only fix review found no concrete issue. Verification and replacement job IDs are recorded below
+  after the final builds/suites; cancelled bench-001300..001309 measured the superseded build and must not be used.
+- Accepted costs: no new buffers or fixed memory/per-frame allocations in this fix. Historical static rows persist until
+  tile removal, as the reference collection requires; the existing pooled-row bound/fallback remains. No measured
+  performance or allocation benefit claimed: replacement jobs are pending coordinator analysis.
+- Perf opportunities: no new opportunity beyond the held Part 2 repeated light-candidate extraction/search already listed.
+- Fix verification: Release dev build passed (18 warnings / 0 errors), Release nodev build passed (38 / 0),
+  NativeAOT dev publish passed with existing trim/AOT warnings. Targeted cache/admission tests 27 passed.
+  Final full ClassicUO suite once: 9403 passed / 6 skipped / 0 failed, 4m22s; converter once: 167 / 1 / 0, 1m51s.
+  No PackCodec allocation flake, no rerun or Class A write-budget regeneration. Corrected NativeAOT SHA256:
+  3079b923267c37f45269a83ee066ca3fab12709828b60beb8e257e3695ae0e75. Both findings are FIXED.
+- Replacement jobs submitted with the unchanged scripts: checker GPU bench-001324, Legacy bench-001325;
+  ABBA GPU rounds 1-4 bench-001326..001329, Legacy rounds 1-4 bench-001330..001333. Updated artifact pin,
+  verification.json, jobs.txt and handoffs/walk-consol-lights.md in cuo-poc-state. Submit and stop; results pending.
