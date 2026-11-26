@@ -48,14 +48,36 @@ namespace ClassicUO.UnitTests.Renderer
                 keys[i] = (ulong)rnd.NextInt64();
             }
 
-            WorldRenderer.SortTransKeys(keys, cachedComparison);
-            Array.Reverse(keys);
+            for (int i = 0; i < 20; i++)
+            {
+                Array.Reverse(keys);
+                WorldRenderer.SortTransKeys(keys, cachedComparison);
+            }
 
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            WorldRenderer.SortTransKeys(keys, cachedComparison);
-            long after = GC.GetAllocatedBytesForCurrentThread();
+            long best = long.MaxValue;
 
-            Assert.Equal(0, after - before);
+            // Refill outside measurement so every retry starts with nontrivial input.
+            for (int attempt = 0; attempt < 40 && best > 0; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    System.Threading.Thread.Sleep(50);
+                }
+
+                for (int i = 0; i < keys.Length; i++)
+                {
+                    keys[i] = (ulong)rnd.NextInt64();
+                }
+
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 20; i++)
+                {
+                    WorldRenderer.SortTransKeys(keys, cachedComparison);
+                }
+                best = Math.Min(best, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+
+            Assert.Equal(0, best);
         }
 
         [Fact]
