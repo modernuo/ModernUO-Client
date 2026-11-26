@@ -1,0 +1,13 @@
+<Project>
+  <!-- Preserve each project's normal defaults, then isolate the entire graph, including external projects. -->
+  <PropertyGroup>
+    <_OriginalDirectoryProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildProjectDirectory)'))</_OriginalDirectoryProps>
+  </PropertyGroup>
+  <Import Project="$(_OriginalDirectoryProps)" Condition="'$(_OriginalDirectoryProps)' != ''" />
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>obj/release-guard/</BaseIntermediateOutputPath>
+    <BaseOutputPath>bin/release-guard/</BaseOutputPath>
+    <CuoVariantSuffix>-release-guard</CuoVariantSuffix>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

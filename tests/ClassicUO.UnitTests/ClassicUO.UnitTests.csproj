@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <DebugType>Full</DebugType>
@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <PackageReference Include="FluentAssertions" Version="6.12.0" />
     <!-- T1 round 4: syntax trees for the write-site scanner's structural checks (fallback guards, the walk queue) -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
@@ -55,4 +56,5 @@
     <ProjectReference Include="..\..\tools\ClassicUO.IO.Mul\ClassicUO.IO.Mul.csproj" />
   </ItemGroup>
 
+  <Import Project="../../build/PrepareReleaseDiagnosticsGuard.targets" />
 </Project>

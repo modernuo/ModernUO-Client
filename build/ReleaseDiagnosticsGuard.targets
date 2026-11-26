@@ -1,0 +1,13 @@
+<Project>
+  <Target Name="StageReleaseDiagnosticsGuard" AfterTargets="Build" Condition="'$(MSBuildProjectName)' == 'ClassicUO.Client'">
+    <ItemGroup>
+      <!-- Resolved current outputs only: never enumerate an output directory that may contain stale DLLs. -->
+      <_GuardOutput Include="$(TargetPath);@(ReferenceCopyLocalPaths)" />
+      <_GuardOutput Remove="@(_GuardOutput)" Condition="'%(_GuardOutput.Extension)' != '.dll'" />
+    </ItemGroup>
+    <RemoveDir Directories="$(ReleaseDiagnosticsGuardDir)" />
+    <Copy SourceFiles="@(_GuardOutput)" DestinationFolder="$(ReleaseDiagnosticsGuardDir)" />
+    <WriteLinesToFile File="$(ReleaseDiagnosticsGuardDir)/outputs.txt"
+                      Lines="@(_GuardOutput->'$(ReleaseDiagnosticsGuardDir)/%(Filename)%(Extension)')" Overwrite="true" />
+  </Target>
+</Project>
