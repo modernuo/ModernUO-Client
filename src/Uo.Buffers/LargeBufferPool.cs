@@ -47,7 +47,10 @@ public static class LargeBufferPool
     /// their cap is one teleport's swap set, which the next teleport needs however long the player stood still.</summary>
     public const long DefaultIdleMs = 180_000;
     private const int MaxPerClass = 32;
-    private const int MaxTypes = 4;
+    // Covers poc's runtime inventory, including growable ref collections and optional measurement paths.
+    // LargePoolTypeRegistrationTests exercises every eligible type together in both registration orders.
+    // A type registered after the limit rents but drops every return, regardless of the free-byte budget.
+    private const int MaxTypes = 11;
     public const int UseCount = 3;
 
     private static readonly int MinLog2 = BitOperations.Log2((uint)MinClassBytes);
