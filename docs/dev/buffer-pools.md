@@ -38,6 +38,35 @@ Rules:
 5. `SharedFamilyPool<T>.Instance` and `LocalFamilyPool<T>.Instance` wrap the two families as an `ArrayPool<T>` for code that
    takes a pool instance (animation frame buffers; the ref collections).
 
+## Large-array element types
+
+The large pool has eleven lifetime element-type slots shared by both families and every `LargeUse`. They cover the
+current runtime inventory, including optional measurement paths and growable ref collections:
+
+- `byte`, `uint`: pack, region, page, codec, pixel and animation buffers.
+- `char`: `ValueStringBuilder` growth.
+- `ulong`, `GameObject`: chunk-light flags and handles; `GameObject` also holds light-search candidates.
+- `LightSearchMeasure.Search`: the optional light-search measurement arrays.
+- `GpuItemCache.Entry`, `SpriteInstance`: growable GPU chunk item arrays.
+- `WebLinkRect`, `HTMLDataInfo`, `Multi`: growable font HTML and house-piece ref lists.
+
+`ChunkDraw` tables use ordinary allocated arrays here and spend no slot. Bounded chunk-light `int`, `uint`, `ushort`
+and `sbyte` columns, light-search chunk references and mobile-wall scans stay at or below 64 KiB. Frame-light fade callers
+use sixteen ranks, within their stack buffer. New runtime consumers that can exceed 64 KiB must update the inventory,
+slot count and `LargePoolTypeRegistrationTests` together. A type beyond the slot limit still rents, but drops every return.
+`ResetForTesting` clears free buffers and counters while preserving lifetime registrations; registry tests load fresh
+copies of the real pool assembly to avoid depending on the rest of the test process.
+
+Struct element sizes need not divide a byte class. Rent rounds the class down to whole elements; Return accepts that
+length, and eviction accounts for the actual array payload. For example, the 80 KiB class holds 27,306 three-byte elements
+(81,918 bytes). Payload byte/count caps remain shared per use, rather than growing with the number of element types.
+
+On x64, the four-to-eleven-slot expansion and element-size table add about 16.9 KiB of immediate metadata. Each newly
+visited type/class/use bucket lazily allocates about 560 bytes of stack metadata (at most another 0.46 MiB across all
+additional buckets). These stacks remain after trimming free arrays. No arrays are prefilled; the default free payload
+budget remains 70 MiB, and host-derived caps are unchanged. More types can retain arrays within those caps. Gameplay
+allocation, GC and timing benefits require a paired measurement; deterministic reuse tests establish pooling behavior.
+
 ## Ref collections
 
 `PooledRefList<T>`, `PooledRefQueue<T>` and `ValueStringBuilder` are ModernUO copies (see `THIRD-PARTY-NOTICES.md`). They rent
