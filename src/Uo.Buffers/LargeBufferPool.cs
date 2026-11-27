@@ -47,7 +47,10 @@ public static class LargeBufferPool
     /// their cap is one teleport's swap set, which the next teleport needs however long the player stood still.</summary>
     public const long DefaultIdleMs = 180_000;
     private const int MaxPerClass = 32;
-    private const int MaxTypes = 4;
+    // Covers poc's runtime inventory, including growable ref collections and optional measurement paths.
+    // LargePoolTypeRegistrationTests exercises every eligible type together in both registration orders.
+    // A type registered after the limit rents but drops every return, regardless of the free-byte budget.
+    private const int MaxTypes = 11;
     public const int UseCount = 3;
 
     private static readonly int MinLog2 = BitOperations.Log2((uint)MinClassBytes);
@@ -58,6 +61,7 @@ public static class LargeBufferPool
     private static readonly Array[][] _free = new Array[UseCount * MaxTypes * ClassCount][];
     private static readonly long[][] _stamp = new long[UseCount * MaxTypes * ClassCount][];
     private static readonly int[] _count = new int[UseCount * MaxTypes * ClassCount];
+    private static readonly int[] _elementBytes = new int[MaxTypes];
     private static readonly long[] _classHits = new long[ClassCount];
     private static readonly long[] _classMisses = new long[ClassCount];
     private static int _typeCount;
@@ -286,7 +290,8 @@ public static class LargeBufferPool
             _useOutBytes[u] -= bytes;
             _useOutCount[u]--;
 
-            if (cls < 0 || slot < 0 || ClassBytes(cls) != bytes || bytes > _capBytes[u] || _capCount[u] == 0)
+            // Struct sizes need not divide a byte class exactly; Rent rounds down to whole elements.
+            if (cls < 0 || slot < 0 || bytes == 0 || ClassBytes(cls) / elem != array.Length || bytes > _capBytes[u] || _capCount[u] == 0)
             {
                 Dropped++;
                 _useDropped[u]++;
@@ -370,8 +375,8 @@ public static class LargeBufferPool
     {
         int n = _count[i];
         Array[] free = _free[i];
-        // only exact class sizes are stored
-        long bytes = ClassBytes(i % ClassCount);
+        int elem = _elementBytes[i % SlotsPerUse / ClassCount];
+        long bytes = (long)free[0].Length * elem;
         int u = i / SlotsPerUse;
         _retainedBytes -= bytes;
         _useFreeBytes[u] -= bytes;
@@ -478,7 +483,14 @@ public static class LargeBufferPool
         {
             int i = Interlocked.Increment(ref _typeCount) - 1;
 
-            return i < MaxTypes ? i : -1;
+            if (i >= MaxTypes)
+            {
+                return -1;
+            }
+
+            // Eviction must subtract the actual payload, including whole-element class rounding.
+            _elementBytes[i] = Unsafe.SizeOf<T>();
+            return i;
         }
     }
 }
